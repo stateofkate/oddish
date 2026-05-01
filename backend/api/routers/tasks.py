@@ -36,7 +36,7 @@ from api.schemas import (
     ExperimentUpdateResponse,
 )
 from api.services.task_archive import build_task_archive
-from api.services.trial_archive import build_trial_archive
+from api.services.trial_archive import build_probe_trials_archive, build_trial_archive
 from auth import APIKeyScope, AuthContext, require_admin, require_auth
 from models import APIKeyModel, UserModel
 from oddish.core.tasks import (
@@ -46,6 +46,7 @@ from oddish.core.tasks import (
 from oddish.db import (
     ExperimentModel,
     TaskModel,
+    TrialModel,
     get_session,
 )
 from oddish.db.storage import get_storage_client
@@ -570,6 +571,49 @@ async def get_experiment_trial_files(
     storage = get_storage_client()
     body = await build_trial_archive(storage, experiment_id=experiment_id)
     return Response(content=body, media_type="application/gzip")
+
+
+@router.get("/tasks/{task_id}/probe-trials/files")
+async def get_task_probe_trials_files(
+    task_id: str,
+    auth: Annotated[AuthContext, Depends(require_auth)],
+) -> Response:
+    """Return a tar.gz of task source + probe-trial artifacts for agent-sandbox-service."""
+    auth.require_scope(APIKeyScope.READ)
+
+    async with get_session() as session:
+        task = (
+            await session.execute(select(TaskModel).where(TaskModel.id == task_id))
+        ).scalar_one_or_none()
+        if task is None:
+            raise HTTPException(status_code=404, detail="task_not_found")
+        if task.org_id is not None and task.org_id != auth.org_id:
+            raise HTTPException(status_code=403, detail="org_mismatch")
+
+        trials = (
+            await session.execute(
+                select(TrialModel)
+                .where(TrialModel.task_id == task_id)
+                .order_by(TrialModel.started_at.desc())
+            )
+        ).scalars().all()
+
+    # Filter to probe-mode trials only.
+    probe_trials = [
+        t for t in trials
+        if (t.harbor_config or {}).get("mode") == "probe"
+    ]
+    if not probe_trials:
+        raise HTTPException(status_code=400, detail="no_probe_trials")
+
+    storage = get_storage_client()
+    return Response(
+        content=await build_probe_trials_archive(
+            storage, task_id=task_id, task=task, probe_trials=probe_trials,
+        ),
+        media_type="application/gzip",
+        headers={"X-Task-Name": task.name},
+    )
 
 
 @router.get("/tasks/{task_id}", response_model=TaskStatusResponse)
