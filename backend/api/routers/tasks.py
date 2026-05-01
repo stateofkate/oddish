@@ -36,6 +36,7 @@ from api.schemas import (
     ExperimentUpdateResponse,
 )
 from api.services.task_archive import build_task_archive
+from api.services.trial_archive import build_trial_archive
 from auth import APIKeyScope, AuthContext, require_admin, require_auth
 from models import APIKeyModel, UserModel
 from oddish.core.tasks import (
@@ -47,6 +48,7 @@ from oddish.db import (
     TaskModel,
     get_session,
 )
+from oddish.db.storage import get_storage_client
 from oddish.timing import TimingRecorder, add_server_timing_metric, elapsed_ms, now
 from oddish.queue import (
     cancel_tasks_runs,
@@ -545,6 +547,29 @@ async def get_task_definition(
             "X-Task-Verifier-Command": archive.verifier_command,
         },
     )
+
+
+@router.get("/experiments/{experiment_id}/trial-files")
+async def get_experiment_trial_files(
+    experiment_id: str,
+    auth: Annotated[AuthContext, Depends(require_auth)],
+) -> Response:
+    """Return a tar.gz of all trial artifacts for the experiment (agent-sandbox-service)."""
+    auth.require_scope(APIKeyScope.READ)
+    async with get_session() as session:
+        experiment = (
+            await session.execute(
+                select(ExperimentModel).where(ExperimentModel.id == experiment_id)
+            )
+        ).scalar_one_or_none()
+        if experiment is None:
+            raise HTTPException(status_code=404, detail="experiment_not_found")
+        if experiment.org_id is not None and experiment.org_id != auth.org_id:
+            raise HTTPException(status_code=403, detail="org_mismatch")
+
+    storage = get_storage_client()
+    body = await build_trial_archive(storage, experiment_id=experiment_id)
+    return Response(content=body, media_type="application/gzip")
 
 
 @router.get("/tasks/{task_id}", response_model=TaskStatusResponse)
