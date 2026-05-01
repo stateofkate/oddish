@@ -87,4 +87,11 @@ def build_task_submission_from_sweep(
         github_username=submission.github_username,
         harbor=submission.harbor,
         content_hash=submission.content_hash,
+        extra_instructions=submission.extra_instructions,
+        result_focus=submission.result_focus,
+        evaluation_metric=submission.evaluation_metric,
+        ratio_unit=submission.ratio_unit,
+        ratio_verb=submission.ratio_verb,
+        preset_name=submission.preset_name,
+        prior_attempts_config=submission.prior_attempts_config,
     )

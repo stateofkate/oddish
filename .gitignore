@@ -12,6 +12,7 @@ __pycache__/
 .env.local
 *.env.local
 .env.*.local
+backend/.env.local
 *.pem
 
 # Build artifacts
@@ -36,3 +37,10 @@ oddish-pulls/
 .oddish/
 **/.oddish/
 .cursor/
+jobs/
+
+# Local dev-only state
+probe-presets.json
+
+**/pnpm-lock.yaml
+.vscode/

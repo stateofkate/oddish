@@ -36,6 +36,9 @@ dependencies = [
 
     # Environment loading
     "python-dotenv==1.2.1",
+
+    # Daytona sandbox SDK for the CC chat orchestrator
+    "daytona>=0.20",
 ]
 
 [project.optional-dependencies]
@@ -46,3 +49,13 @@ dev = [
 
 [tool.uv.sources]
 oddish = { path = "../oddish", editable = true }
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+# Async tests share a single event loop for the whole session so the
+# import-time SQLAlchemy engine + asyncpg pool (created on the first
+# loop they see) keep working across tests. Without this, the second
+# DB-touching test fails with `RuntimeError: Event loop is closed`.
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
