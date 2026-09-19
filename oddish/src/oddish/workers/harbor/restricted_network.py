@@ -168,8 +168,12 @@ def reject_submitted_restricted_routes(
     Runtime model routes are a worker capability, not a trial input.  Inspect
     both the current ``agent_config`` payload and the legacy
     ``agent_overrides`` shape before building Harbor's effective AgentConfig.
-    The error deliberately names only fixed field paths; submitted values may
-    contain private endpoints or credentials and must never be reflected.
+    A route can be spelled three ways in a submission -- an allowlist, a known
+    transport env key, or the agent ``base_url`` kwarg that Harbor agents rank
+    ahead of their ``*_BASE_URL`` env keys -- and all three are rejected so
+    the env-key rule cannot be bypassed by the kwarg spelling. The error
+    deliberately names only fixed field paths; submitted values may contain
+    private endpoints or credentials and must never be reflected.
     """
 
     rejected_fields: list[str] = []
@@ -201,6 +205,14 @@ def reject_submitted_restricted_routes(
             )
 
         raw_kwargs = raw_agent.get("kwargs")
+        # Agent shapes only: environment kwargs are provider settings, not
+        # model routes, and some providers carry their own ``base_url``.
+        if (
+            root_key in ("agent_config", "agent_overrides")
+            and isinstance(raw_kwargs, Mapping)
+            and raw_kwargs.get("base_url")
+        ):
+            rejected_fields.append(f"{root_key}.kwargs.base_url")
         raw_extra_env = (
             raw_kwargs.get("extra_env") if isinstance(raw_kwargs, Mapping) else None
         )
