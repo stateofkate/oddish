@@ -98,6 +98,20 @@ ANTHROPIC_API_KEY=...
 
 # Bedrock credentials are required when direct routing is disabled.
 AWS_BEARER_TOKEN_BEDROCK=...
+
+# Google Vertex AI (--model vertex_ai/<model>, Gemini and Claude alike): a
+# service account with roles/aiplatform.user, dedicated to Oddish and rotated
+# (its key file is readable inside the trial sandbox, like every provider key).
+# Enabling a Claude model in Model Garden needs the Consumer Procurement
+# Entitlement Manager role on the person clicking. VERTEX_AI_LOCATION defaults
+# to "global". VERTEX_AI_API_KEY (an express-mode key; Vertex rejects ordinary
+# Cloud API keys) is optional and published alongside the JSON. Hosted Modal
+# deploys read these values from the dedicated oddish-vertex secret
+# (ODDISH_VERTEX_SECRET_NAME, "" to keep them in the runtime secret).
+VERTEX_AI_PROJECT_ID=...
+VERTEX_AI_CREDENTIALS_JSON='{"type":"service_account",...}'
+# VERTEX_AI_LOCATION=global
+# VERTEX_AI_API_KEY=...
 ```
 
 See `backend/.env.example` for the full list of optional knobs (CORS, GitHub

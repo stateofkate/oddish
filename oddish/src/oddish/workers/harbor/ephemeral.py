@@ -25,6 +25,7 @@ from oddish.config import (
     BEDROCK_ENV_VARS,
     anthropic_hdo_bare_model_id,
     is_anthropic_hdo_model,
+    is_vertex_ai_model,
     settings,
     to_anthropic_api_model_id,
 )
@@ -59,6 +60,8 @@ from .runner import (
     _supports_auto_restricted_agent_network,
 )
 from .model_hosts import agent_runtime_hosts, outbound_hosts_for_model
+from .vertex_ai import assigned_agent_env as _vertex_assigned_env
+from .vertex_ai import plan_for_model as _vertex_ai_plan
 
 _ENTRY_PATH = str(Path(__file__).resolve().parent / "_entry.py")
 _CHILD_PYTHON = "3.13"
@@ -160,6 +163,12 @@ def _runtime_env_overrides(
         env.update(settings.get_openai_agent_env(model=openai_model))
     if _claude_code_on_direct_anthropic(agent, model, is_probe):
         env.update({var: "" for var in BEDROCK_ENV_VARS})
+    if is_vertex_ai_model(openai_model):
+        # The child's agent env: keep the baked Bedrock flags blank for Harbor's
+        # os.environ check there too (the worker-path credential never rides
+        # this layer; see the ``vertex_ai`` payload field). Keyed on the
+        # effective requested model, like the OpenAI branch above.
+        env.update({var: "" for var in BEDROCK_ENV_VARS})
     return env
 
 
@@ -256,6 +265,11 @@ def _child_extra_agent_env(
         return env
     env.update(anthropic_env or {})
     env.update(_anthropic_hdo_credential_env(model))
+    if is_vertex_ai_model(model):
+        # The child merges this layer last: carry the Vertex profile's
+        # assignments in it so a bundle or probe value cannot restore a
+        # blanked selector (the alias pins stay a caller's to override).
+        env.update(_vertex_assigned_env(settings.vertex_ai_config(), model))
     return env
 
 
@@ -319,8 +333,33 @@ def _build_payload(
     agent_config = _child_agent_config(
         routed, raw_harbor_config=raw_harbor_config, is_probe=is_probe
     )
+    # The effective requested model (falls back to the stored agent_config
+    # when the trial row carries no model): the id the routed builder
+    # installed the provider profile for.
+    _, requested_model = _trial_requested_model(
+        agent=agent, model=model, raw_harbor_config=raw_harbor_config
+    )
     child_extra_env = _child_extra_agent_env(
-        model=model, extra_agent_env=extra_agent_env, anthropic_env=anthropic_env
+        model=requested_model,
+        extra_agent_env=extra_agent_env,
+        anthropic_env=anthropic_env,
+    )
+    # Google Vertex AI: the child applies this process env to its own
+    # os.environ before Job.create (host-side harnesses, template resolution,
+    # Harbor's Bedrock check) and registers the sandbox upload hook itself. It
+    # deliberately does NOT ride ``runtime_env``, which the child merges over
+    # the agent env and would clobber the sandbox credential path with the
+    # worker path.
+    vertex_ai = _vertex_ai_plan(requested_model, extra_agent_env=extra_agent_env)
+    vertex_ai_payload = (
+        {
+            "worker_path": (
+                str(vertex_ai.worker_path) if vertex_ai.worker_path else None
+            ),
+            "process_env": dict(vertex_ai.process_env),
+        }
+        if vertex_ai is not None
+        else None
     )
     if _supports_auto_restricted_agent_network(
         task_path=task_path,
@@ -340,8 +379,11 @@ def _build_payload(
         if resolved_agent_env:
             agent_kwargs["extra_env"] = resolved_agent_env
         inferred_hosts = [
+            # The effective requested model, not the bare argument: a trial
+            # whose row carries no model still names one in its stored
+            # agent_config, and that is the id the hosts must follow.
             *outbound_hosts_for_model(
-                model,
+                requested_model,
                 agent_env=resolved_agent_env,
                 agent_kwargs=agent_kwargs,
             ),
@@ -393,6 +435,7 @@ def _build_payload(
         "probe_task_dir": str(task_path) if is_probe else None,
         "probe_harness_dir": PROBE_HARNESS_DIR,
         "extra_agent_env": child_extra_env,
+        "vertex_ai": vertex_ai_payload,
         "agent_harbor_requirement": _agent_harbor_requirement(
             agent=agent,
             is_probe=is_probe,

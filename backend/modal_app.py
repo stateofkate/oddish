@@ -599,6 +599,23 @@ if SAURON_AWS_SECRET_NAME:
         )
     )
 
+# Google Vertex AI credentials for vertex_ai/ trials (VERTEX_AI_PROJECT_ID,
+# VERTEX_AI_LOCATION, VERTEX_AI_CREDENTIALS_JSON, VERTEX_AI_API_KEY). Kept in
+# a separate Modal secret so the Vertex service account and API key rotate
+# independently of oddish-prod. Set ODDISH_VERTEX_SECRET_NAME to override the
+# name, or to "" to skip loading (a deploy that keeps the VERTEX_AI_* values in
+# the runtime secret instead; Settings reads them from either).
+VERTEX_SECRET_NAME = os.environ.get("ODDISH_VERTEX_SECRET_NAME", "oddish-vertex")
+vertex_secret = (
+    modal.Secret.from_name(
+        VERTEX_SECRET_NAME, environment_name=MODAL_SECRET_ENVIRONMENT
+    )
+    if VERTEX_SECRET_NAME
+    else None
+)
+if vertex_secret is not None:
+    runtime_secrets.append(vertex_secret)
+
 # Optional GKE secret, gated so a GKE-less deploy references none (and still
 # boots) while a GKE-enabled deploy attaches the single oddish-gcp secret, which
 # carries the GCP creds plus (in the flag path) the runtime ODDISH_GKE_*
@@ -674,6 +691,8 @@ _broad_runtime_secret_names = {
 }
 if SAURON_AWS_SECRET_NAME:
     _broad_runtime_secret_names.add(SAURON_AWS_SECRET_NAME)
+if VERTEX_SECRET_NAME:
+    _broad_runtime_secret_names.add(VERTEX_SECRET_NAME)
 if SLACK_EXPENSE_SECRET_NAME:
     _broad_runtime_secret_names.add(SLACK_EXPENSE_SECRET_NAME)
 if MODAL_APP_NAME.startswith("oddish-pr-"):

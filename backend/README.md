@@ -292,7 +292,11 @@ Common optional settings:
 ### Where provider keys actually live
 
 Provider keys are environment variables **inside the `oddish-prod` Modal
-secret** (`main` environment), not standalone secrets of their own.
+secret** (`main` environment), not standalone secrets of their own. The one
+exception is Google Vertex AI: `VERTEX_AI_PROJECT_ID`, `VERTEX_AI_LOCATION`,
+`VERTEX_AI_CREDENTIALS_JSON`, and `VERTEX_AI_API_KEY` live in the dedicated
+`oddish-vertex` secret, mounted by default (`ODDISH_VERTEX_SECRET_NAME`, `""`
+to skip), so the Vertex account rotates on its own.
 `RUNTIME_SECRET_NAME = "oddish-prod"` in `backend/modal_runtime.py` is what the
 API containers and workers mount, so that is the only place a rotation takes
 effect.
@@ -301,10 +305,12 @@ Rotate one from the Modal dashboard:
 
     Apps -> Secrets -> oddish-prod -> Edit -> <VAR>
 
-or from the CLI:
+or from the CLI, only with the complete key set: `modal secret create` has no
+per-key update, and `--force` replaces the whole secret with exactly the keys
+given, so a single-key call would drop every other credential in `oddish-prod`:
 
 ```bash
-uv run modal secret create oddish-prod XAI_API_KEY="..." --force
+uv run modal secret create oddish-prod --from-dotenv oddish-prod.env --force
 ```
 
 A workspace secret whose name merely resembles a variable is not mounted and

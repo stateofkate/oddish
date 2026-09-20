@@ -1434,6 +1434,35 @@ Keep these routing rules in sync with `oddish/src/oddish/config.py` and
   `minimax/`, `moonshot/`, `fireworks/`, `xai/`, `meta/`, `geometric/`, and
   `anthropic-hdo/`. Add or change provider aliases in `config.py`, then update
   env injection in the Harbor runner and the network allowlist notes.
+- Google Vertex AI is the `vertex_ai/<model>` provider (aliases `vertex/`,
+  `vertex-ai/`, `google-vertex/`) for Gemini and Claude alike; the bare id
+  passes through untouched. It is agent-agnostic: `workers/harbor/vertex_ai.py`
+  publishes one standard Vertex environment (the Gen AI SDK, Gemini CLI,
+  LiteLLM, AI SDK, and Claude Code variables, the credential path, and blanks
+  for the competing Bedrock, Gemini-key, and OAuth selectors) to every
+  `vertex_ai/` trial; whether a harness honors it is the harness's business.
+  Settings: `VERTEX_AI_CREDENTIALS_JSON` + `VERTEX_AI_PROJECT_ID` (a service
+  account; an `AGENT_START` hook uploads the key as
+  `/tmp/oddish-vertex/service-account.json`, since Modal and Daytona never
+  fire the provisioned callback), optional `VERTEX_AI_API_KEY` (an express-mode
+  key, published as a `${VERTEX_AI_API_KEY}` template; alone it selects
+  Gemini-only express mode), and `VERTEX_AI_LOCATION` (default `global`);
+  hosted deploys mount them from the `oddish-vertex` secret
+  (`ODDISH_VERTEX_SECRET_NAME`). Host-side harnesses read the worker's
+  `VERTEXAI_CREDENTIALS`, so a GKE worker keeps its own ADC. The
+  `ODDISH_VERTEX_AI_MODE` marker counts only with a canonical `vertex_ai/` id,
+  so a submitted marker cannot widen another provider's restricted trial;
+  verifier judge spend attributes to the `other` route. The profile also pins
+  `GOOGLE_CLOUD_QUOTA_PROJECT`, so a key minted in another project still
+  bills the configured one. Live on `vertex_ai/gemini-3.8-flash`: gemini-cli
+  (Daytona, Modal, closed network, override Harbor), terminus-2, and
+  antigravity-cli pass; antigravity needs its ADC opt-in as a template,
+  `--ae 'AGY_ADC_AUTH=${GOOGLE_GENAI_USE_VERTEXAI}'` (a literal `true` is
+  redacted at persistence because the name matches `AUTH`), plus
+  `--ak reasoning_effort=medium` for Gemini 3.x, and reports no token usage;
+  mini-swe-agent lacks `google-auth` in its Harbor install, swe-agent fails
+  before any model call on tasks without `/testbed`, opencode wants its own
+  `google-vertex/` spelling, and the other harnesses ignore the profile.
 - Geometric is Oddish's own self-hosted vLLM endpoint, currently serving
   GLM-5.3. It exposes **both** API shapes from one server, and the route is
   chosen by harness, not by model id: `mini-swe-agent` gets the OpenAI shape
@@ -1467,7 +1496,16 @@ Keep these routing rules in sync with `oddish/src/oddish/config.py` and
   (`require_geometric_served_model_id`), never in `normalize_trial_model`,
   which must stay total for reads over stored rows whose model has since left
   the set. Keep the set in sync with `--served-model-name`.
-- Gemini model ids use the `gemini/<id>` prefix. `_build_agent_config` hands
+- Gemini model ids use the `gemini/<id>` prefix (the Gemini API key route,
+  Google AI Studio; `vertex_ai/` is a separate provider, above). The same
+  bare model runs on either route: the prefix alone decides the provider,
+  queue key (`gemini/gemini-3.8-flash` vs `vertex_ai/gemini-3.8-flash`),
+  credential (`GEMINI_API_KEY` vs the Vertex service account), and host
+  (`generativelanguage.googleapis.com` vs `aiplatform.googleapis.com`).
+  LiteLLM resolves the same way, by prefix, and a Vertex trial blanks the
+  Gemini keys in its own env so a LiteLLM harness cannot drift between the
+  two; a bare `gemini-…` id is rejected by LiteLLM and keeps Oddish's existing
+  bare-id defaults. `_build_agent_config` hands
   each agent the spelling its LLM client expects (litellm agents in
   `_LITELLM_MODEL_ID_AGENTS`, Vercel AI SDK agents in
   `_AI_SDK_MODEL_ID_AGENTS`); add a new agent to the set matching its client.
@@ -1499,8 +1537,14 @@ Keep these routing rules in sync with `oddish/src/oddish/config.py` and
   remains on its existing paths.
 - Provider secrets are referenced by env var name (`AWS_BEARER_TOKEN_BEDROCK`,
   `ANTHROPIC_HDO_API_KEY`, `ZAI_API_KEY`, `MINIMAX_API_KEY`, `MOONSHOT_API_KEY`,
-  `FIREWORKS_API_KEY`, `XAI_API_KEY`, `META_API_KEY`) and must not be persisted
-  on trial rows.
+  `FIREWORKS_API_KEY`, `XAI_API_KEY`, `META_API_KEY`,
+  `VERTEX_AI_CREDENTIALS_JSON`, `VERTEX_AI_API_KEY`) and must not be persisted
+  on trial rows. The Vertex service-account JSON never enters an agent env at
+  all: only the sandbox file path does, and Harbor's env serializer would
+  redact a literal under a CREDENTIAL-named key anyway. The uploaded file is
+  readable inside the trial sandbox, the same trust boundary as the plaintext
+  provider keys every trial carries in its env, so the deployment guidance is
+  a dedicated, minimally scoped service account (see `SELF_HOSTING.md`).
 - `grok-build` (xAI) writes a Grok CLI config whose `[model.*]` blocks pin an
   `api_backend`. Upstream Harbor hardcodes `responses` (`POST /v1/responses`),
   but not every xAI model is served there — some (e.g. newer/unreleased models)
@@ -2114,7 +2158,7 @@ silently breaks throughput or correctness — read before touching
    `gemini-…` becomes `google/…` while `gemini/…` stays `gemini/…`, splitting one
    model across two buckets.
 
-5. **No provider-level concurrency cap.** Each Bedrock/Gemini model id is its own
+5. **No provider-level concurrency cap.** Each Bedrock/Gemini/Vertex model id is its own
    bucket, but they share one AWS/Google account quota — the sum of per-model
    limits can exceed account RPM/TPM with no global throttle (a source of 429s).
 
