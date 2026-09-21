@@ -28,12 +28,12 @@ ACTIVE_VERDICT_STATUSES = frozenset(
 
 INSUFFICIENT_EVIDENCE_PREFIX = "Insufficient evidence"
 INSUFFICIENT_EVIDENCE_ERROR = (
-    f"{INSUFFICIENT_EVIDENCE_PREFIX}: no eligible solver trials for the current task version."
+    f"{INSUFFICIENT_EVIDENCE_PREFIX}: no eligible agent trials for the current task version."
 )
 
 
 def is_insufficient_evidence(error: str | None) -> bool:
-    """A failed verdict that needs solver runs, not a repaired job.
+    """A failed verdict that needs agent trials, not a repaired job.
 
     The dashboard matches the same prefix (frontend/src/lib/review.ts).
     """

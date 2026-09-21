@@ -264,20 +264,20 @@ test("QA verdict failure retains its cause and remains distinct from rejection",
   assert.equal(review.REVIEW_LABELS.accepted, "Verdict accepted");
 });
 
-test("a settled task without eligible runs is pending solver runs, not failed", () => {
+test("a legacy insufficient-evidence error displays needs agent trials", () => {
   const reason =
     "Insufficient evidence: no eligible solver trials for the current task version.";
   const noEvidence = { ...task, verdict_status: "failed", verdict_error: reason };
   assert.equal(review.taskReviewStatus(noEvidence), "no_evidence");
   assert.equal(review.taskReviewFilter(noEvidence), "unreviewed");
   const presented = badge.present!(noEvidence, "", false);
-  assert.equal(presented.title, "Verdict pending: needs solver runs");
+  assert.equal(presented.title, "Verdict pending: needs agent trials");
   assert.equal(presented.detail, reason);
   assert.equal(presented.isGood, null);
   const html = renderToStaticMarkup(
     React.createElement(exports.Chip, { task: noEvidence, ungradedSettled: 0 })
   );
-  assert.ok(html.includes("Verdict pending: needs solver runs"), html);
+  assert.ok(html.includes("Verdict pending: needs agent trials"), html);
   assert.ok(html.includes(reason), html);
   assert.ok(!html.includes("bg-amber-100"), html);
 });

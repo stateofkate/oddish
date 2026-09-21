@@ -393,7 +393,7 @@ async def test_zero_eligible_trials_wait_for_audit_then_finish(audit_task, has_f
             assert task.verdict_status == VerdictStatus.FAILED
             assert (
                 task.verdict_error
-                == "Insufficient evidence: no eligible solver trials for the current task version."
+                == "Insufficient evidence: no eligible agent trials for the current task version."
             )
         assert (
             await session.scalar(

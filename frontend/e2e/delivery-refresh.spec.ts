@@ -1743,8 +1743,8 @@ for (const group of ["none", "state"]) {
         kind: "automated",
         status: "fail",
         label: "Verdict",
-        detail: "Insufficient eligible solver evidence.",
-        failure_labels: ["Verdict pending: needs solver runs"],
+        detail: "Insufficient eligible agent trial evidence.",
+        failure_labels: ["Verdict pending: needs agent trials"],
       },
     ];
     await page.goto(`/?group=${group}`);
@@ -1755,7 +1755,7 @@ for (const group of ["none", "state"]) {
       "Pre-trial audit running",
       "Runs: 2/8",
       "Agents: 1/4",
-      "Verdict pending: needs solver runs",
+      "Verdict pending: needs agent trials",
     ])
       await expect(row.getByText(label, { exact: true })).toBeVisible();
     await expect(page.getByText("QA incomplete", { exact: true })).toHaveCount(
@@ -1776,7 +1776,7 @@ for (const group of ["none", "state"]) {
     ).toBeVisible();
     await expect(
       page.getByRole("link", {
-        name: "Verdict pending: needs solver runs Insufficient eligible solver evidence.",
+        name: "Verdict pending: needs agent trials Insufficient eligible agent trial evidence.",
         exact: true,
       })
     ).toBeVisible();
@@ -1789,7 +1789,7 @@ for (const group of ["none", "state"]) {
       })
       .getByRole("listitem");
     await expect(checkCards).toHaveCount(3);
-    await expect(checkCards.nth(0)).toContainText("Verdict pending: needs solver runs");
+    await expect(checkCards.nth(0)).toContainText("Verdict pending: needs agent trials");
     await expect(checkCards.nth(1)).toContainText("Pre-trial audit running");
     await expect(checkCards.nth(2)).toContainText("2/8 runs and 1/4 agents");
     expect(state.writes).toEqual([]);

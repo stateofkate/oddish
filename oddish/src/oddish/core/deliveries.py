@@ -1112,7 +1112,7 @@ async def _compute_board(
             if task.verdict_status == VerdictStatus.FAILED and is_insufficient_evidence(
                 task.verdict_error
             ):
-                verdict_label = "Verdict pending: needs solver runs"
+                verdict_label = "Verdict pending: needs agent trials"
                 missing_detail = task.verdict_error or f"no completed QA verdict on {vlabel}"
             elif qa_status.status == "error":
                 verdict_label, missing_detail = "Verdict failed", qa_status.detail

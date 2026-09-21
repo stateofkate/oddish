@@ -31,7 +31,7 @@ export function isInsufficientEvidence(
 export const VERDICT_LABELS = {
   ...QA_STATUS_LABELS,
   outdated: "Verdict pending: regenerate for this version",
-  no_evidence: "Verdict pending: needs solver runs",
+  no_evidence: "Verdict pending: needs agent trials",
   missing: "Verdict pending: none recorded",
 };
 

@@ -158,17 +158,17 @@ trials by classification state and reads "Analyzing".
 Task-level verdict labels now use one of four leading phrases. "Verdict
 accepted" and "Verdict rejected" are the two results. "Verdict pending:"
 is followed by what is still missing before a verdict can exist (queued,
-generating, not yet generated, regeneration needed, needs solver runs).
+generating, not yet generated, regeneration needed, needs agent trials).
 "Verdict failed" is reserved for a verdict generation run that did not
 complete; its detail is the run's error text.
 
 The change that motivated this: a task that settles with no QA-eligible
-solver runs is stored as a failed verdict whose error begins with
+agent trials is stored as a failed verdict whose error begins with
 "Insufficient evidence" (`oddish/core/verdict_state.py`,
 `INSUFFICIENT_EVIDENCE_ERROR`). It used to read "QA verdict failed", which
 looks like an infrastructure failure. The server (`is_insufficient_evidence`)
 and the dashboard (`lib/review.ts`, `isInsufficientEvidence`) both recognize
-that prefix and label it "Verdict pending: needs solver runs".
+that prefix and label it "Verdict pending: needs agent trials".
 
 | Before | After | Surfaces |
 | --- | --- | --- |
@@ -184,7 +184,7 @@ that prefix and label it "Verdict pending: needs solver runs".
 | QA verdict needs refresh | Verdict pending: regeneration needed | `lib/deliveries.ts`, `core/deliveries.py` |
 | No QA verdict for this version | Verdict pending: regenerate for this version | `lib/review.ts` |
 | No QA verdict generated | Verdict pending: none recorded | `components/task-verdict-badge.tsx`, `components/experiment-trials-table.tsx` |
-| QA verdict failed (settled task, no eligible solver runs) | Verdict pending: needs solver runs | `lib/review.ts`, `core/deliveries.py` |
+| QA verdict failed (settled task, no eligible agent trials) | Verdict pending: needs agent trials | `lib/review.ts`, `core/deliveries.py` |
 | QA verdict failed (verdict run did not complete) | Verdict failed | `lib/review.ts`, `lib/deliveries.ts`, `core/deliveries.py` |
 | QA verdict in progress / QA verdict failed / No current QA verdict (KPI chips) | Pending: generating / Failed / Pending: no current verdict | `components/experiment-detail-view.tsx` |
 | QA verdict pending (filters) | Verdict pending | `lib/tasks-filters.ts`, `app/(app)/dashboard/dashboard-client.tsx` |

@@ -355,7 +355,7 @@ def _build_aggregates_for_experiment_ids(
                 )
             ).label("verdict_needs_review"),
             # A settled task with no QA-eligible runs is stored as a failed
-            # verdict; it needs solver runs, so it counts as pending, not failed.
+            # verdict; it needs agent trials, so it counts as pending, not failed.
             func.count(
                 case(
                     (

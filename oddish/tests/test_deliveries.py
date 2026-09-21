@@ -1348,7 +1348,7 @@ async def test_review_failure_is_unknown_quality_not_a_defect(session):
     task.verdict = None
     task.verdict_status = VerdictStatus.FAILED
     failed_qa = _trial(task, experiment, version.id, kind="qa", status=TrialStatus.FAILED)
-    failed_qa.error_message = "Insufficient evidence: no eligible solver trials"
+    failed_qa.error_message = "Insufficient evidence: no eligible agent trials"
     session.add(failed_qa)
     await session.flush()
     delivery = await create_delivery_core(
@@ -1547,9 +1547,9 @@ async def test_delivery_failure_labels_identify_audit_state(
     "state, label",
     [
         ("rejected", "Verdict rejected"),
-        ("no_evidence", "Verdict pending: needs solver runs"),
-        ("stale_failed_qa", "Verdict pending: needs solver runs"),
-        ("older_version_qa", "Verdict pending: needs solver runs"),
+        ("no_evidence", "Verdict pending: needs agent trials"),
+        ("stale_failed_qa", "Verdict pending: needs agent trials"),
+        ("older_version_qa", "Verdict pending: needs agent trials"),
         ("never", "Verdict pending: not yet generated"),
         ("qa_failed", "Verdict failed"),
     ],
