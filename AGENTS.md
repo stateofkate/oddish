@@ -98,6 +98,8 @@ the existing union query. Records now include `delivery_id` and `status`. Task
 rows stay visible in delivery picking; only select-all IDs excludes existing
 members. Table columns, lab context and card/table presentation live in the URL
 without changing browse request keys unless an actual filter changes.
+Adding a task whose delivery membership has `deleted_at` set restores that row
+and appends it in request order, retaining its notes. Live members remain no-ops.
 
 ## Repository Layout
 
@@ -2361,6 +2363,8 @@ push; an older successful deployment is not proof that the app still runs.
 Successful preparation followed by a skipped backend job permits reuse of an
 older backend only when the whole workflow succeeded. A cancelled, failed, or
 unfinished workflow instead forces recovery, since the skip may follow an app stop.
+If preparation itself was interrupted and no newer preparation succeeded, the
+next push reruns database preparation even when no migration files changed.
 Database preparation retains the private CI tools image. Backend deployment uses
 Python 3.13 and uv's dependency cache on the runner; Vercel uses a cached, pinned
 CLI without downloading the Python/database image. Frontend and backend deploys

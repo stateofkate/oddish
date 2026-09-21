@@ -1722,3 +1722,75 @@ async def test_full_picker_selection_is_atomic_and_batched(session):
         )
         == 5000
     )
+
+
+@pytest.mark.asyncio
+async def test_readd_soft_deleted_members_preserves_identity_and_appends_in_order(
+    session,
+):
+    from oddish.db import DeliveryTaskModel, utcnow
+
+    tasks = [_task(f"readd-{i}") for i in range(5)]
+    session.add_all(tasks)
+    await session.flush()
+    removed, live, unselected, extra, second_removed = tasks
+    delivery = await create_delivery_core(
+        session,
+        data=DeliveryCreate(
+            name="readd",
+            customer="lab",
+            task_ids=[removed.id, live.id, unselected.id, second_removed.id],
+        ),
+        org_id=ORG,
+        user_id="u1",
+    )
+    members = {
+        row.task_id: row
+        for row in await session.scalars(
+            select(DeliveryTaskModel).where(
+                DeliveryTaskModel.delivery_id == delivery.id
+            )
+        )
+    }
+    for task in (removed, unselected, second_removed):
+        members[task.id].deleted_at = utcnow()
+    members[removed.id].internal_note = "Keep this context"
+    original_id = members[removed.id].id
+    await session.flush()
+    data = DeliveryTasksAdd(
+        task_ids=[live.id, removed.name, extra.id, removed.id, second_removed.id]
+    )
+    with count_statements() as statements:
+        added = await add_delivery_tasks_core(
+            session, delivery_id=delivery.id, org_id=ORG, data=data
+        )
+    assert added == 3
+    # One read for all restored memberships, never one read per task.
+    assert sum(sql.lstrip().upper().startswith("SELECT") for sql in statements) == 4
+    async with AsyncSession(bind=await session.connection()) as reader:
+        active = (
+            await reader.execute(
+                select(DeliveryTaskModel.task_id, DeliveryTaskModel.sort_order)
+                .where(
+                    DeliveryTaskModel.delivery_id == delivery.id,
+                    DeliveryTaskModel.deleted_at.is_(None),
+                )
+                .order_by(DeliveryTaskModel.sort_order)
+            )
+        ).all()
+        restored = await reader.get(DeliveryTaskModel, original_id)
+        assert restored.deleted_at is None
+        assert restored.internal_note == "Keep this context"
+    assert active == [
+        (live.id, 1),
+        (removed.id, 4),
+        (extra.id, 5),
+        (second_removed.id, 6),
+    ]
+    assert members[unselected.id].deleted_at is not None
+    assert (
+        await add_delivery_tasks_core(
+            session, delivery_id=delivery.id, org_id=ORG, data=data
+        )
+        == 0
+    )

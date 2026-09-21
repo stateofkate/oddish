@@ -377,27 +377,48 @@ async def _add_tasks(
         raise HTTPException(
             status_code=404, detail=f"tasks not found: {', '.join(missing[:10])}"
         )
-    existing_ids, max_order = (
+    existing_ids, removed_ids, max_order = (
         await session.execute(
             select(
                 func.array_agg(DeliveryTaskModel.task_id).filter(
-                    DeliveryTaskModel.task_id.in_(requested)
+                    DeliveryTaskModel.task_id.in_(requested),
+                    DeliveryTaskModel.deleted_at.is_(None),
+                ),
+                func.array_agg(DeliveryTaskModel.task_id).filter(
+                    DeliveryTaskModel.task_id.in_(requested),
+                    DeliveryTaskModel.deleted_at.isnot(None),
                 ),
                 func.coalesce(func.max(DeliveryTaskModel.sort_order), -1),
             ).where(DeliveryTaskModel.delivery_id == delivery.id)
         )
     ).one()
     existing = set(existing_ids or [])
+    # Removed rows still own the unique (delivery_id, task_id) pair.
+    removed = (
+        {
+            row.task_id: row
+            for row in await session.scalars(
+                select(DeliveryTaskModel).where(
+                    DeliveryTaskModel.delivery_id == delivery.id,
+                    DeliveryTaskModel.task_id.in_(removed_ids),
+                )
+            )
+        }
+        if removed_ids
+        else {}
+    )
     next_order = max_order + 1
     added = []
     for task_id in requested:
         if task_id in existing:
             continue
-        row = DeliveryTaskModel(
-            delivery_id=delivery.id, task_id=task_id, sort_order=next_order
-        )
+        row = removed.get(task_id)
+        if row is None:
+            row = DeliveryTaskModel(delivery_id=delivery.id, task_id=task_id)
+            session.add(row)
+        row.deleted_at = None
+        row.sort_order = next_order
         next_order += 1
-        session.add(row)
         added.append(row)
     await session.flush()
     return added

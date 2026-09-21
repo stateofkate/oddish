@@ -1147,8 +1147,8 @@ async def test_browse_qa_outcome_matches_verdict_and_current_version():
 
 
 async def test_delivery_picker_excludes_members_from_page_count_and_ids():
-    from oddish.core.deliveries import create_delivery_core
-    from oddish.schemas import DeliveryCreate
+    from oddish.core.deliveries import add_delivery_tasks_core, create_delivery_core
+    from oddish.schemas import DeliveryCreate, DeliveryTasksAdd
 
     engine = create_async_engine(URL)
     maker = async_sessionmaker(engine, expire_on_commit=False)
@@ -1167,6 +1167,14 @@ async def test_delivery_picker_excludes_members_from_page_count_and_ids():
             assert await _names(session, **filters) == {"alpha", "gamma"}
             assert await browse_tasks_count_core(session, org_id=ORG, **filters) == 2
             assert set(await browse_tasks_core(session, org_id=ORG, ids_only=True, **filters)) == {"t-a", "t-c"}
+            selected = await browse_tasks_core(session, org_id=ORG, ids_only=True, **filters)
+            assert await add_delivery_tasks_core(
+                session, delivery_id=delivery.id, org_id=ORG,
+                data=DeliveryTasksAdd(task_ids=selected),
+            ) == 2
+            assert await _names(session, **filters) == set()
+            assert await browse_tasks_count_core(session, org_id=ORG, **filters) == 0
+            assert await browse_tasks_core(session, org_id=ORG, ids_only=True, **filters) == []
     finally:
         await engine.dispose()
 

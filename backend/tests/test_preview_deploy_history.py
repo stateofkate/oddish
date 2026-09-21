@@ -1,6 +1,8 @@
 """Interrupted preparation must not leave the next push trusting a stopped app."""
 
 import importlib.util
+import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -168,3 +170,59 @@ def test_recovery_forces_deploy_even_after_backend_changes_are_reverted(
     )
     history.main()
     assert "backend_changed=true\n" in (tmp_path / "out").read_text()
+
+
+@pytest.mark.parametrize("prepare_result", ["cancelled", "failure", None, "success"])
+def test_preparation_recovery_reaches_deployment_plan(
+    history, monkeypatch, tmp_path, prepare_result
+):
+    found = lookup(
+        history,
+        monkeypatch,
+        [
+            {
+                "steps": [
+                    {
+                        "name": "Prepare preview database",
+                        "status": "completed" if prepare_result else "in_progress",
+                        "conclusion": prepare_result,
+                    }
+                ]
+            }
+        ],
+    )
+    output = tmp_path / "changes"
+    for key, value in {
+        "OWNER_REPO": "org/repo",
+        "EVENT_ACTION": "synchronize",
+        "HEAD_REF": "branch",
+        "GITHUB_OUTPUT": str(output),
+    }.items():
+        monkeypatch.setenv(key, value)
+    # Even if all component changes were reverted, interrupted preparation
+    # must be repaired; successful preparation only needs backend recovery.
+    monkeypatch.setattr(history, "compute_changed", lambda *a: "false")
+    monkeypatch.setattr(history, "find_last_deployed_shas", lambda *a: found)
+    history.main()
+    changes = dict(line.split("=", 1) for line in output.read_text().splitlines())
+    plan = tmp_path / "plan"
+    subprocess.run(
+        ["bash", str(Path(history.__file__).with_name("compute_deployment_plan.sh"))],
+        env={
+            **os.environ,
+            **{key.upper(): value for key, value in changes.items()},
+            "PR_BACKEND_CHANGED": changes["pr_backend"],
+            "PR_MIGRATIONS_CHANGED": changes["pr_migrations"],
+            "PR_FRONTEND_CHANGED": changes["pr_frontend"],
+            "GITHUB_OUTPUT": str(plan),
+            "GITHUB_STEP_SUMMARY": str(tmp_path / "summary"),
+        },
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    result = dict(line.split("=", 1) for line in plan.read_text().splitlines())
+    assert result["deploy_backend"] == "true"
+    assert result["run_migrations"] == (
+        "false" if prepare_result == "success" else "true"
+    )

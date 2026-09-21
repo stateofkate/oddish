@@ -137,6 +137,8 @@ def find_last_deployed_shas(owner_repo, head_ref):
             )
         ):
             found["backend_recovery"] = "true"
+            if "migrations_base" not in found:
+                found["migrations_recovery"] = "true"
             break
     return found
 
@@ -253,6 +255,8 @@ def main():
         migrations_changed = compute_changed(
             owner_repo, migrations_base, head_sha, migrations_matches
         )
+        if found.get("migrations_recovery") == "true":
+            migrations_changed = "true"
         # Workflow/script changes are diffed against the previous push, not a
         # per-component base, because they can affect any component.
         workflow_changed = compute_changed(
