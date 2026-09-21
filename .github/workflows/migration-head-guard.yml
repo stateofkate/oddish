@@ -36,7 +36,7 @@ jobs:
     # Python 3.13, uv, a warm uv cache, and pre-built venvs live in the base
     # image — refreshed weekly by .github/workflows/ci-base-image.yml.
     container:
-      image: ghcr.io/abundant-ai/oddish-ci-base:latest
+      image: ghcr.io/abundant-ai/oddish-ci-base-private:latest
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}

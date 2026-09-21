@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 #
 # Oddish CI base image.  Published weekly to
-# `ghcr.io/abundant-ai/oddish-ci-base:latest` by
+# `ghcr.io/abundant-ai/oddish-ci-base-private:latest` by
 # `.github/workflows/ci-base-image.yml`.  Consumers reference it via the
 # `container:` field on a job — see `pr-preview.yml`, `modal-deploy.yml`
 # and `staging-deploy.yml`.

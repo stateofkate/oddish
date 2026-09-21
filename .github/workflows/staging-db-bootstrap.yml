@@ -38,7 +38,7 @@ jobs:
       packages: read
       actions: write
     container:
-      image: ghcr.io/abundant-ai/oddish-ci-base:latest
+      image: ghcr.io/abundant-ai/oddish-ci-base-private:latest
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}

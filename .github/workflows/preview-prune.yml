@@ -40,7 +40,7 @@ jobs:
       # The app sweep asks the REST API whether each app's PR is still open.
       pull-requests: read
     container:
-      image: ghcr.io/abundant-ai/oddish-ci-base:latest
+      image: ghcr.io/abundant-ai/oddish-ci-base-private:latest
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}

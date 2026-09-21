@@ -100,7 +100,7 @@ jobs:
       branch_id: ${{ steps.prepare.outputs.branch_id }}
       branch_was_created: ${{ steps.prepare.outputs.branch_was_created }}
     container:
-      image: ghcr.io/abundant-ai/oddish-ci-base:latest
+      image: ghcr.io/abundant-ai/oddish-ci-base-private:latest
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -155,7 +155,7 @@ jobs:
     outputs:
       modal_api_url: ${{ steps.deploy.outputs.modal_api_url }}
     container:
-      image: ghcr.io/abundant-ai/oddish-ci-base:latest
+      image: ghcr.io/abundant-ai/oddish-ci-base-private:latest
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -242,7 +242,7 @@ jobs:
       contents: read
       packages: read
     container:
-      image: ghcr.io/abundant-ai/oddish-ci-base:latest
+      image: ghcr.io/abundant-ai/oddish-ci-base-private:latest
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -524,7 +524,7 @@ jobs:
       contents: read
       packages: read
     container:
-      image: ghcr.io/abundant-ai/oddish-ci-base:latest
+      image: ghcr.io/abundant-ai/oddish-ci-base-private:latest
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}

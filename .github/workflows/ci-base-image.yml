@@ -1,6 +1,6 @@
 name: CI Base Image
 
-# Builds and publishes ghcr.io/abundant-ai/oddish-ci-base, the container
+# Builds and publishes ghcr.io/abundant-ai/oddish-ci-base-private, the container
 # image used by pr-preview / modal-deploy / staging-deploy to
 # skip per-run tool installs.  Refreshes weekly (so upstream tooling and
 # the warm uv cache stay current) and on demand when the Dockerfile or
@@ -32,9 +32,13 @@ jobs:
     permissions:
       contents: read
       packages: write
+    outputs:
+      image: ${{ steps.tags.outputs.image }}@${{ steps.publish.outputs.digest }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -49,14 +53,25 @@ jobs:
       - name: Compute image tags
         id: tags
         run: |
-          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/oddish-ci-base"
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/oddish-ci-base-private"
           short_sha="${GITHUB_SHA::12}"
           {
             echo "image=$image"
             echo "short_sha=$short_sha"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Verify package is private before uploading source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          visibility="$(gh api "/orgs/$GITHUB_REPOSITORY_OWNER/packages/container/oddish-ci-base-private" --jq .visibility)"
+          if [ "$visibility" != private ]; then
+            echo '::error::The CI image package must already exist and be private.'
+            exit 1
+          fi
+
       - name: Build and push base image
+        id: publish
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -84,3 +99,70 @@ jobs:
             echo "- Trigger: \`${{ github.event_name }}\`"
             echo "- Commit: \`${{ github.sha }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  verify:
+    name: Verify private image on a fresh runner
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: read
+    container:
+      image: ${{ needs.build.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Verify package and cache stay private
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(gh api /orgs/abundant-ai/packages/container/oddish-ci-base-private --jq .visibility)" = private
+          gh api /orgs/abundant-ai/packages/container/oddish-ci-base-private/versions --paginate --jq '.[].metadata.container.tags[]' > /tmp/ci-image-tags
+          grep -qx buildcache /tmp/ci-image-tags
+          python3.13 - <<'PYTHON'
+          import json
+          import urllib.error
+          import urllib.request
+
+          package = "abundant-ai/oddish-ci-base-private"
+          for tag in ("latest", "buildcache"):
+              try:
+                  with urllib.request.urlopen(f"https://ghcr.io/token?service=ghcr.io&scope=repository:{package}:pull", timeout=30) as response:
+                      token = json.load(response)["token"]
+                  request = urllib.request.Request(
+                      f"https://ghcr.io/v2/{package}/manifests/{tag}",
+                      headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.oci.image.manifest.v1+json"},
+                  )
+                  with urllib.request.urlopen(request, timeout=30):
+                      raise SystemExit(f"Anonymous access unexpectedly allowed: {tag}")
+              except urllib.error.HTTPError as error:
+                  if error.code not in (401, 403):
+                      raise
+                  print(f"PASS: anonymous {tag} access denied ({error.code})")
+          PYTHON
+      - name: Verify build tools
+        run: |
+          python3.13 --version
+          uv --version
+          node --version
+          gh --version
+      - name: Sync and import backend dependencies
+        working-directory: backend
+        env:
+          UV_PROJECT_ENVIRONMENT: /opt/venvs/backend
+        run: |
+          uv sync --frozen
+          uv run python -c 'import oddish, fastapi, modal; print("PASS: private image and backend dependencies")'
+      - name: Sync and import core dependencies
+        working-directory: oddish
+        env:
+          UV_PROJECT_ENVIRONMENT: /opt/venvs/oddish
+        run: |
+          uv sync --frozen --extra server
+          uv run oddish --help
