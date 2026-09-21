@@ -447,10 +447,11 @@ async def test_explicit_author_token_uses_partial_canonical_name() -> None:
 
 
 class _PeopleRows:
-    def all(self) -> list[tuple[str, str | None, str | None]]:
+    def all(self) -> list[tuple[str, str, str | None]]:
         return [
-            ("user_kyle", "Kyle", "kyle"),
-            ("user_handle", None, "handle-only"),
+            ("user_kyle", "kyle@example.com", "kyle"),
+            ("user_handle", "handle@example.com", "handle-only"),
+            ("user_email", "email-only@example.com", None),
         ]
 
 
@@ -464,7 +465,7 @@ class _PeopleSession:
 
 
 @pytest.mark.asyncio
-async def test_people_search_is_member_visible_and_never_serializes_email(
+async def test_people_search_is_member_visible_and_returns_email_labels(
     monkeypatch,
 ) -> None:
     session = _PeopleSession()
@@ -494,18 +495,24 @@ async def test_people_search_is_member_visible_and_never_serializes_email(
         "items": [
             {
                 "id": "user_kyle",
-                "display_name": "Kyle",
+                "email": "kyle@example.com",
+                "display_name": "kyle@example.com",
                 "github_username": "kyle",
             },
             {
                 "id": "user_handle",
-                "display_name": "@handle-only",
+                "email": "handle@example.com",
+                "display_name": "handle@example.com",
                 "github_username": "handle-only",
+            },
+            {
+                "id": "user_email",
+                "email": "email-only@example.com",
+                "display_name": "email-only@example.com",
+                "github_username": None,
             },
         ]
     }
-    assert "email" not in response.text
-    assert "@example.com" not in response.text
 
     sql = _compiled(session.statements[0])
     assert "users.org_id = 'org_current'" in sql
@@ -515,7 +522,7 @@ async def test_people_search_is_member_visible_and_never_serializes_email(
     assert "escape" in sql
     assert "users.id = '@kyl'" in sql
     assert "limit 25" in sql
-    assert "users.email" not in sql
+    assert "users.email ilike" in sql
 
 
 @pytest.mark.asyncio

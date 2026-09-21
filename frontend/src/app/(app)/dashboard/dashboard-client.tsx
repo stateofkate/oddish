@@ -141,7 +141,7 @@ function formatTaskAuthor(author: DashboardExperimentAuthor | null): string {
 
 type PeopleSearchItem = {
   id: string;
-  display_name: string;
+  email: string;
   github_username: string | null;
 };
 
@@ -216,7 +216,7 @@ function MemberFilterTypeahead({
           <span className="flex min-w-0 items-center gap-1.5">
             <Users className="h-3.5 w-3.5 shrink-0 opacity-60" />
             <span className="truncate">
-              {selectedPerson?.display_name ?? "Members"}
+              {selectedPerson?.email ?? "Members"}
             </span>
           </span>
           <ChevronDown className="h-4 w-4 opacity-50" />
@@ -255,7 +255,7 @@ function MemberFilterTypeahead({
                     )}
                   />
                   <span className="flex min-w-0 flex-col">
-                    <span className="truncate">{person.display_name}</span>
+                    <span className="truncate">{person.email}</span>
                     {person.github_username && (
                       <span className="text-muted-foreground truncate text-[10px]">
                         @{person.github_username}

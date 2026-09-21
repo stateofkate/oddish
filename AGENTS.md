@@ -749,8 +749,15 @@ into `oddish.core.dashboard`; the self-hostable core must not import the hosted
 page predicate before ordering and pagination so AND, OR, exclusion, and quoted
 phrase semantics stay intact. The mapping is part of the experiments cache key.
 `GET /people/search` is the ordinary READ-scope typeahead endpoint: it is
-active-user and organization scoped, returns only `id`, `display_name`, and
-`github_username`, and must never search or serialize email addresses.
+active-user and organization scoped, and returns `id`, `email`,
+`display_name` (the email label), and `github_username`. The Members picker
+shows account emails and submits stable user IDs. Search matches email, name,
+and GitHub handle; results rank exact IDs, exact emails, then email prefixes,
+with case-insensitive email ordering and ID ties before applying the limit.
+An empty search lists accounts alphabetically by email, including accounts
+without a name or GitHub handle. Dashboard author enrichment selects identity
+columns directly to avoid loading organization and API-key relationships;
+its existing historical-account and ambiguous-alias behavior is preserved.
 
 The admin `GET /admin/costs` response includes analysis spend time series both
 by model (`series_qa_by_model`) and by analyzer job kind

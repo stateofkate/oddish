@@ -2,6 +2,7 @@ import { defineConfig, devices } from "@playwright/test";
 export default defineConfig({
   testDir: "e2e",
   testMatch: [
+    "dashboard-member-filter.spec.ts",
     "review-meaning.spec.ts",
     "ui-duplication.spec.ts",
     "qa-rejection-state.spec.ts",

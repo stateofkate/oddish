@@ -391,7 +391,7 @@ export function TaskCard({ task }: { task: TaskBrowseItem }) {
                   className="w-fit border-transparent bg-[#6f88b4]/20 text-[11px] text-[#3f5a8a] dark:text-[#a8b8d2]"
                   title="One of your tasks"
                 >
-                  yours
+                  mine
                 </Badge>
               ) : null}
               {(() => {

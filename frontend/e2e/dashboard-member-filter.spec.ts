@@ -1,61 +1,67 @@
-import { test } from "@playwright/test";
-import { clerk, setupClerkTestingToken } from "@clerk/testing/playwright";
+import { expect, test } from "@playwright/test";
 
-const CLERK_EMAIL = process.env.E2E_CLERK_EMAIL;
-const CLERK_SECRET = process.env.CLERK_SECRET_KEY;
-const CLERK_PUBLISHABLE = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
-const hasClerkEnv = !!CLERK_EMAIL && !!CLERK_SECRET && !!CLERK_PUBLISHABLE;
-
-test.describe("dashboard member filter", () => {
-  test.skip(
-    !hasClerkEnv,
-    "needs E2E_CLERK_EMAIL + CLERK_SECRET_KEY + NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"
+test("member picker shows emails and selects a stable account ID", async ({
+  page,
+}) => {
+  const people = [
+    {
+      id: "email_only",
+      email: "alpha@example.com",
+      display_name: "alpha@example.com",
+      github_username: null,
+    },
+    {
+      id: "user_kyle",
+      email: "kyle@example.com",
+      display_name: "kyle@example.com",
+      github_username: "kyle",
+    },
+  ];
+  await page.route("**/api/**", (route) =>
+    route.fulfill({
+      json: {
+        queues: null,
+        model_usage: [],
+        job_usage: [],
+        leaders: [],
+        items: [],
+        limit_usd: 100,
+        used_usd: 0,
+      },
+    })
   );
-
-  test("selecting a person navigates with their stable user id", async ({
-    page,
-  }) => {
-    test.setTimeout(60_000);
-
-    await setupClerkTestingToken({ page });
-    await page.goto("/");
-    await clerk.signIn({ page, emailAddress: CLERK_EMAIL! });
-
-    await page.route("**/api/people/search?*", async (route) => {
-      const query = new URL(route.request().url()).searchParams.get("q");
-      await route.fulfill({
-        contentType: "application/json",
-        body: JSON.stringify({
-          items:
-            query === "@kyl" || query === "user_kyle"
-              ? [
-                  {
-                    id: "user_kyle",
-                    display_name: "Kyle",
-                    github_username: "kyle",
-                  },
-                ]
-              : [],
-        }),
-      });
+  await page.route("**/api/people/search?*", (route) => {
+    const query = new URL(route.request().url()).searchParams.get("q") ?? "";
+    return route.fulfill({
+      json: {
+        items: people.filter(
+          (person) => person.id === query || person.email.includes(query)
+        ),
+      },
     });
-
-    // The dashboard streams experiment rows behind Suspense, while this
-    // control is part of the first shell. Let the locator below own readiness
-    // instead of waiting for the unrelated stream to finish loading.
-    await page.goto("/dashboard", { waitUntil: "commit" });
-    await page
-      .getByRole("combobox", { name: "Filter experiments by member" })
-      .click();
-    await page.getByPlaceholder("Search members…").fill("@kyl");
-
-    const authorNavigation = page.waitForURL(
-      (url) =>
-        url.pathname.endsWith("/dashboard") &&
-        url.searchParams.get("author") === "user_kyle",
-      { timeout: 30_000, waitUntil: "commit" }
-    );
-    await page.getByRole("option", { name: /Kyle/ }).click();
-    await authorNavigation;
   });
+
+  await page.goto("/dashboard");
+  const picker = page.getByRole("combobox", {
+    name: "Filter experiments by member",
+  });
+  await picker.click();
+  await expect(page.getByRole("option")).toHaveText([
+    "alpha@example.com",
+    "kyle@example.com@kyle",
+  ]);
+  await page.getByPlaceholder("Search members…").fill("alpha@example.com");
+  await expect(page.getByRole("option")).toHaveCount(1);
+  await page.getByRole("option", { name: "alpha@example.com" }).click();
+  await expect(page).toHaveURL(/author=email_only/);
+  await expect(picker).toContainText("alpha@example.com");
+
+  // A saved URL must also resolve its selected account ID to an email label.
+  await page.reload();
+  await expect(picker).toContainText("alpha@example.com");
+  await picker.click();
+  await page.getByPlaceholder("Search members…").fill("kyle@example.com");
+  await page.getByRole("option", { name: /kyle@example.com/ }).click();
+  await expect(page).toHaveURL(/author=user_kyle/);
+  await expect(picker).toContainText("kyle@example.com");
 });

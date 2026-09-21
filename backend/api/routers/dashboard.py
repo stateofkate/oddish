@@ -5,6 +5,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import case, func, or_, select
+from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import APIKeyScope, AuthContext, require_auth
@@ -37,6 +38,7 @@ class CostLeaderboardResponse(BaseModel):
 
 class PeopleSearchItem(BaseModel):
     id: str
+    email: str
     display_name: str
     github_username: str | None
 
@@ -51,54 +53,53 @@ async def search_people(
     q: str = Query("", max_length=200),
     limit: int = Query(10),
 ) -> PeopleSearchResponse:
-    """Return active organization members using only safe identity fields."""
+    """Search active organization accounts, labeled and ordered by email."""
     auth.require_scope(APIKeyScope.READ)
     effective_limit = min(25, max(1, limit))
     normalized_query = q.strip()
     partial = f"%{escape_like(normalized_query)}%"
     github_query = normalized_query.lstrip("@") or normalized_query
     github_partial = f"%{escape_like(github_query)}%"
+    email_prefix = f"{escape_like(normalized_query)}%"
 
     async with get_read_session() as session:
         rows = await session.execute(
             select(
                 UserModel.id,
-                UserModel.name,
+                UserModel.email,
                 UserModel.github_username,
             )
             .where(
                 UserModel.org_id == auth.org_id,
                 UserModel.is_active.is_(True),
                 or_(
-                    func.length(func.btrim(UserModel.name)) > 0,
-                    func.length(func.btrim(UserModel.github_username)) > 0,
-                ),
-                or_(
                     UserModel.id == normalized_query,
+                    UserModel.email.ilike(partial, escape="\\"),
                     UserModel.name.ilike(partial, escape="\\"),
                     UserModel.github_username.ilike(github_partial, escape="\\"),
                 ),
             )
             .order_by(
-                case((UserModel.id == normalized_query, 0), else_=1),
-                UserModel.name.asc().nulls_last(),
-                UserModel.github_username.asc().nulls_last(),
+                case(
+                    (UserModel.id == normalized_query, 0),
+                    (func.lower(UserModel.email) == normalized_query.lower(), 1),
+                    (UserModel.email.ilike(email_prefix, escape="\\"), 2),
+                    else_=3,
+                ),
+                func.lower(UserModel.email).asc(),
                 UserModel.id.asc(),
             )
             .limit(effective_limit)
         )
 
     items: list[PeopleSearchItem] = []
-    for user_id, name, github_username in rows.all():
-        safe_name = (name or "").strip()
+    for user_id, email, github_username in rows.all():
         safe_handle = (github_username or "").strip().lstrip("@")
-        display_name = safe_name or (f"@{safe_handle}" if safe_handle else "")
-        if not display_name:
-            continue
         items.append(
             PeopleSearchItem(
                 id=user_id,
-                display_name=display_name,
+                email=email,
+                display_name=email,
                 github_username=safe_handle or None,
             )
         )
@@ -205,16 +206,16 @@ async def get_cost_leaderboard(
     return CostLeaderboardResponse(leaders=leaders)
 
 
-def _member_label(user: UserModel) -> dict[str, str] | None:
+def _member_label(user: RowMapping) -> dict[str, str] | None:
     """Canonical label for a resolved member: name beats handle, else nothing.
 
     Email is deliberately not a fallback -- it must never be *promoted* into a
     dashboard label (PII on a widely-visible page).
     """
-    if user.name:
-        return {"name": user.name, "source": "member"}
-    if user.github_username:
-        return {"name": user.github_username, "source": "github"}
+    if user["name"]:
+        return {"name": user["name"], "source": "member"}
+    if user["github_username"]:
+        return {"name": user["github_username"], "source": "github"}
     return None
 
 
@@ -260,7 +261,8 @@ async def _enrich_experiment_authors(
     with a name/handle, never the reverse. At most two queries per request:
     the org's active users, plus one ``include_deleted=True`` id lookup for
     referenced ids not found among them (historical/deactivated owners --
-    mirrors the cost path).
+    mirrors the cost path). Select identity columns directly so label reads
+    do not also load account relationships (organizations and API keys).
 
     The experiment row dicts are the *same objects* the core layer stores in
     its module-level experiments cache, so this function must never mutate
@@ -282,26 +284,32 @@ async def _enrich_experiment_authors(
         if user_id
     }
 
-    users_by_id: dict[str, UserModel] = {}
-    by_email: dict[str, UserModel] = {}
-    by_handle: dict[str, UserModel] = {}
+    identity_columns = (
+        UserModel.id,
+        UserModel.name,
+        UserModel.email,
+        UserModel.github_username,
+    )
+    users_by_id: dict[str, RowMapping] = {}
+    by_email: dict[str, RowMapping] = {}
+    by_handle: dict[str, RowMapping] = {}
 
     if org_id:
         rows = await session.execute(
-            select(UserModel).where(
+            select(*identity_columns).where(
                 UserModel.org_id == org_id,
                 UserModel.is_active.is_(True),
             )
         )
-        email_buckets: dict[str, list[UserModel]] = {}
-        handle_buckets: dict[str, list[UserModel]] = {}
-        for user in rows.scalars():
-            users_by_id[user.id] = user
-            if user.email:
-                email_buckets.setdefault(user.email.strip().lower(), []).append(user)
-            if user.github_username:
+        email_buckets: dict[str, list[RowMapping]] = {}
+        handle_buckets: dict[str, list[RowMapping]] = {}
+        for user in rows.mappings():
+            users_by_id[user["id"]] = user
+            if user["email"]:
+                email_buckets.setdefault(user["email"].strip().lower(), []).append(user)
+            if user["github_username"]:
                 handle_buckets.setdefault(
-                    user.github_username.strip().lower(), []
+                    user["github_username"].strip().lower(), []
                 ).append(user)
         # Exactly-one semantics (mirrors ``lookup_users_by_github_username`` on
         # the submission path): a handle -- or, defensively, an email -- shared
@@ -312,12 +320,12 @@ async def _enrich_experiment_authors(
     missing_ids = {i for i in referenced_ids if i not in users_by_id}
     if missing_ids:
         rows = await session.execute(
-            select(UserModel)
+            select(*identity_columns)
             .where(UserModel.id.in_(missing_ids))
             .execution_options(include_deleted=True)
         )
-        for user in rows.scalars():
-            users_by_id[user.id] = user
+        for user in rows.mappings():
+            users_by_id[user["id"]] = user
 
     def _resolve(row: dict[str, Any], id_key: str, value_key: str) -> dict | None:
         # Tiers 1+2: the internal user id, labeled name-then-handle. An id is

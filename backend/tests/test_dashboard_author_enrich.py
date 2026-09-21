@@ -7,7 +7,7 @@ promotes canonical org-member labels into ``author`` (from the experiment's
 handle (name-less users from JWT provisioning), and raw-string match against
 exactly one active org member's email/handle (legacy rows with NULL ids).
 No database is touched -- a tiny fake session returns queued ``UserModel``
-result sets in execute-call order (call 1 = active org users, call 2 = the
+identity mappings in execute-call order (call 1 = active org users, call 2 = the
 ``include_deleted`` id lookup).
 """
 
@@ -33,12 +33,18 @@ def _user(**overrides) -> UserModel:
     return UserModel(**base)
 
 
-class _FakeScalars:
+class _FakeRows:
     def __init__(self, users: list[UserModel]) -> None:
         self._users = users
 
-    def scalars(self):
-        return iter(self._users)
+    def mappings(self):
+        return [
+            {
+                field: getattr(user, field)
+                for field in ("id", "name", "email", "github_username")
+            }
+            for user in self._users
+        ]
 
 
 class _FakeSession:
@@ -57,7 +63,7 @@ class _FakeSession:
         idx = self.calls
         self.calls += 1
         users = self._result_sets[idx] if idx < len(self._result_sets) else []
-        return _FakeScalars(users)
+        return _FakeRows(users)
 
 
 # ---------------------------------------------------------------------------
