@@ -175,6 +175,11 @@ High-level flow:
    rows and the old attempts point to those replacements through
    `superseded_by_trial_id`. This preserves retry history without leaving the
    failed attempts in normal UI/API trial sets.
+   External orchestrators that need strictly additive work set
+   `add_trials=true`, provide the exact current `task_version_id`, and provide
+   an `external_request_id`. That external identity has long-lived, replay-only
+   semantics: retries return the original `new_trials` (including each version
+   pin) and never reinterpret a failed leaf as new work.
    Hosted sweep identity is resolved once into `SweepAttribution` before the
    core call. New tasks and experiments receive their creator, API-key, owner,
    display-owner, and link provenance in their constructors; returning an
@@ -944,6 +949,19 @@ moving an experiment onto the task's current content. It resolves per task, so
 one flag covers a sweep whose tasks sit on different versions. It pins to the
 task default rather than the numerically highest version, so the appended
 trials are the ones the grid pivots to and stay visible.
+
+Sherpa-native orchestration is the explicit-version exception to ordinary
+append resolution. It supplies the selected `task_version_id`, `add_trials=true`,
+and a durable `external_request_id`. Under the task row lock, Oddish rejects a
+stale version with 409 rather than falling back to another version. Sherpa polls
+hosted `POST /trials/status/query` and cancels through hosted
+`POST /trials/cancel/batch`; both are bounded, org-scoped, exact-ID operations.
+Exact-ID cancellation must settle cancelled audit state and resolve any
+baseline gate before task QA admission, so no version or BLOCKED solver is
+stranded.
+Oddish owns admission and execution, while Sherpa owns Temporal orchestration,
+projection, and any reward-hack analyzer fan-out. Do not add Temporal or Sherpa
+analyzer dependencies to Oddish for this integration.
 
 `GET /experiments/{experiment_id}/cost-totals` reports both cost and token
 usage across every trial owned by the experiment, including older versions,

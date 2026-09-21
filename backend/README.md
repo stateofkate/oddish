@@ -503,7 +503,9 @@ All routes require auth unless marked public.
 | POST | `/tasks/upload/complete` | Finalize a direct-to-S3 task upload after the client PUT succeeds |
 | POST | `/trials/import/init` | Register an off-oddish trial and return a presigned artifact URL |
 | POST | `/trials/import/complete` | Finalize an imported trial after the client PUT succeeds |
-| POST | `/tasks/sweep` | Expand one task into multiple trials; accepts optional `max_trial_attempts` for newly-created trials |
+| POST | `/tasks/sweep` | Expand one task into trials; supports `max_trial_attempts` and the additive exact-version orchestration fields `add_trials`, `task_version_id`, and `external_request_id` |
+| POST | `/trials/status/query` | Read a bounded status snapshot for exact org-owned trial IDs |
+| POST | `/trials/cancel/batch` | Cancel only the supplied org-owned trial IDs |
 | GET | `/tasks` | List tasks (org-scoped, paginated/filtered) |
 | GET | `/tasks/browse` | Browse tasks at their selected current version, with pagination and search |
 | GET | `/tasks/{task_id}` | Task details |

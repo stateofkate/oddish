@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from oddish.config import settings  # noqa: E402
 from oddish.core.baseline_gate import GATE_SKIP_MESSAGE  # noqa: E402
 from oddish.core.cost_basis import CANCELLED_HARBOR_STAGE  # noqa: E402
+from oddish.core.trial_control import cancel_trials_by_id  # noqa: E402
 from oddish.db import (  # noqa: E402
     TaskModel,
     TaskStatus,
@@ -68,14 +69,20 @@ async def _finish_clean_audit(task_id: str, monkeypatch) -> None:
     from unittest.mock import AsyncMock
     from oddish.workers import analysis_trials
 
-    monkeypatch.setattr(analysis_trials, "read_analysis_artifact", AsyncMock(return_value={"items": []}))
-    monkeypatch.setattr(analysis_trials, "read_own_trajectory", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        analysis_trials, "read_analysis_artifact", AsyncMock(return_value={"items": []})
+    )
+    monkeypatch.setattr(
+        analysis_trials, "read_own_trajectory", AsyncMock(return_value=None)
+    )
     async with get_session() as session:
         task = await session.get(TaskModel, task_id)
         assert task.status in (TaskStatus.PENDING, TaskStatus.RUNNING)
-        audit = await session.scalar(select(TrialModel).where(
-            TrialModel.task_id == task_id, TrialModel.kind == "audit"
-        ))
+        audit = await session.scalar(
+            select(TrialModel).where(
+                TrialModel.task_id == task_id, TrialModel.kind == "audit"
+            )
+        )
         audit.status = TrialStatus.SUCCESS
     await analysis_trials.handle_analysis_trial_settled(audit.id)
 
@@ -483,8 +490,8 @@ async def test_gate_is_experiment_scoped(monkeypatch, cleanup_task_ids):
                     .join(WorkerJobModel, WorkerJobModel.subject_id == TrialModel.id)
                     .where(
                         TrialModel.task_id == task_id,
-                    TrialModel.agent == _LLM_AGENT,
-                    TrialModel.kind == "agent",
+                        TrialModel.agent == _LLM_AGENT,
+                        TrialModel.kind == "agent",
                     )
                 )
             ).all()
@@ -812,6 +819,40 @@ async def test_release_still_works_after_flag_disabled(monkeypatch, cleanup_task
     )
     async with get_session() as session:
         assert await maybe_gate_llm_trials(session, baseline_id) is True
+    assert (await _job_status_by_agent(task_id))[_LLM_AGENT] == WorkerJobStatus.QUEUED
+
+
+@pytest.mark.asyncio
+async def test_exact_baseline_cancel_releases_blocked_llm(
+    monkeypatch, cleanup_task_ids
+):
+    monkeypatch.setattr(settings, "gate_llm_on_baselines", True)
+    task_id = f"exact-cancel-release-{_RUN}"
+    org_id = f"{task_id}-org"
+    cleanup_task_ids.append(task_id)
+    async with get_session() as session:
+        await create_task(
+            session,
+            _mixed_submission("exact cancel release"),
+            task_id=task_id,
+            org_id=org_id,
+        )
+        rows = list(
+            await session.scalars(
+                select(TrialModel).where(
+                    TrialModel.task_id == task_id, TrialModel.kind == "agent"
+                )
+            )
+        )
+        baseline_ids = [row.id for row in rows if row.agent in {"nop", "oracle"}]
+        llm_id = next(row.id for row in rows if row.agent == _LLM_AGENT)
+
+        result = await cancel_trials_by_id(
+            session, trial_ids=baseline_ids, org_id=org_id
+        )
+
+    assert set(result["cancelled_trial_ids"]) == set(baseline_ids)
+    assert result["released_trial_ids"] == [llm_id]
     assert (await _job_status_by_agent(task_id))[_LLM_AGENT] == WorkerJobStatus.QUEUED
 
 

@@ -15,6 +15,7 @@ from oddish.registry_auth import DOCKER_HUB_AUTH_KEY, normalize_registry_host
 # unrelated endpoints in the future without colliding.
 SWEEP_ROUTE = "POST /tasks/sweep"
 IDEMPOTENCY_TTL = timedelta(hours=24)
+EXTERNAL_REQUEST_IDEMPOTENCY_TTL = timedelta(days=3650)
 
 STATUS_IN_PROGRESS = "in_progress"
 STATUS_COMPLETED = "completed"
@@ -88,6 +89,11 @@ def compute_request_hash(submission: Any) -> str:
     # deployment; only the explicit additive operation changes request identity.
     if not payload.get("add_trials"):
         payload.pop("add_trials", None)
+    # Additive server fields preserve hashes for older clients that omit them.
+    if payload.get("task_version_id") is None:
+        payload.pop("task_version_id", None)
+    if payload.get("external_request_id") is None:
+        payload.pop("external_request_id", None)
     # Same for requires_gpu: clients that predate it never send it, and an
     # honest retry of their body must keep matching its stored hash.
     if not payload.get("requires_gpu"):
@@ -166,6 +172,7 @@ async def reserve_idempotency_slot(
     raw_key: str,
     request_hash: str,
     now: datetime,
+    ttl: timedelta = IDEMPOTENCY_TTL,
 ) -> Reservation:
     key_hash = hash_idempotency_key(raw_key)
 
@@ -176,7 +183,7 @@ async def reserve_idempotency_slot(
             key_hash,
             request_hash,
             now,
-            now + IDEMPOTENCY_TTL,
+            now + ttl,
         ):
             return Reservation(key_hash=key_hash)
 

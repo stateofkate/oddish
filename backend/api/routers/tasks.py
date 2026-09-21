@@ -78,6 +78,7 @@ from oddish.core.sharing.helpers import (
 )
 from api.services.task_file_source import resolve_authorized_task_file_source
 from oddish.core.idempotency import (
+    EXTERNAL_REQUEST_IDEMPOTENCY_TTL,
     IdempotencyReplay,
     SWEEP_ROUTE,
     compute_request_hash,
@@ -338,13 +339,20 @@ async def create_task_sweep(
     A retried submission carrying the same ``Idempotency-Key`` replays the
     original response instead of creating duplicate trials while its current
     trial leaves are non-failed. Failed leaves turn the same declarative sweep
-    into immutable replacement trials.
+    into immutable replacement trials. ``external_request_id`` is a durable
+    integration identity that always replays the original exact trial set.
     """
     auth.require_scope(APIKeyScope.TASKS)
 
     from oddish.core.sweeps import validate_sweep_submission
 
     validate_sweep_submission(submission)
+
+    strict_external_replay = submission.external_request_id is not None
+    if strict_external_replay:
+        # A caller-owned integration identity is not the CLI's retry-intent
+        # key. Keep it stable so workflow recovery always gets the same IDs.
+        idempotency_key = f"external:{submission.external_request_id}"
 
     # Fingerprint the raw client submission BEFORE the backend mutates it
     # (identity / GitHub attribution). Those defaults can resolve differently
@@ -369,7 +377,8 @@ async def create_task_sweep(
             )
             if replay_json is not None:
                 if (
-                    not submission.add_trials
+                    not strict_external_replay
+                    and not submission.add_trials
                     and await replay_has_retryable_failed_trials(
                         session, replay_json, org_id=auth.org_id
                     )
@@ -405,6 +414,9 @@ async def create_task_sweep(
                 idempotency_key=idempotency_key,
                 idempotency_store=SubmissionIdempotencyStore(session),
                 request_hash=request_hash,
+                idempotency_ttl=(
+                    EXTERNAL_REQUEST_IDEMPOTENCY_TTL if strict_external_replay else None
+                ),
             )
         except TimeoutError as exc:
             # asyncpg raises bare TimeoutError on DB wait timeouts.

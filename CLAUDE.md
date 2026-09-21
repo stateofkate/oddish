@@ -15,6 +15,20 @@ state, S3 log storage. End users replace `harbor run` with `oddish run`. The
 hosted layer (`backend/` + `frontend/`) is deployed on Modal and surfaces a
 dashboard at oddish.app.
 
+## Sherpa-native orchestration contract
+
+Sherpa owns the Temporal control plane; Oddish remains the authoritative trial
+admission and execution service. A native submission appends with its exact
+current `task_version_id`, `add_trials=true`, and a durable
+`external_request_id`. Under the task lock, reject stale versions with 409.
+External-identity replays must return the original `new_trials`, including each
+version pin, and must never reinterpret failed leaves as new work.
+
+Sherpa polls `POST /trials/status/query` and cancels through
+`POST /trials/cancel/batch`; both are bounded, org-scoped, exact-ID operations.
+Oddish must not host Sherpa's Temporal workflows or reward-hack analyzer. See
+`AGENTS.md` for the locking, idempotency, and cancellation invariants.
+
 ## Git workflow
 
 Read `CONTRIBUTING.md` first; it is the process guide. Summary:

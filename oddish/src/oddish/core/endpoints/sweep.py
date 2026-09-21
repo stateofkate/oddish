@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from collections.abc import Awaitable, Callable, Collection, Sequence
 from dataclasses import dataclass
+from datetime import timedelta
 
 from fastapi import HTTPException
 from harbor.models.environment_type import EnvironmentType
@@ -20,6 +21,7 @@ from oddish.core.harbor_source import (
     stamp_gke_harbor_source,
 )
 from oddish.core.idempotency import (
+    IDEMPOTENCY_TTL,
     SWEEP_ROUTE,
     IdempotencyConflict,
     IdempotencyStore,
@@ -172,6 +174,10 @@ def build_task_sweep_response(
         experiment_name=primary.name if primary else None,
         created_at=task.created_at,
         new_trial_ids=[trial.id for trial in response_trials],
+        new_trials=[
+            {"id": trial.id, "task_version_id": trial.task_version_id}
+            for trial in response_trials
+        ],
     )
 
 
@@ -441,6 +447,7 @@ async def create_task_sweep_core(
     idempotency_key: str | None = None,
     idempotency_store: IdempotencyStore | None = None,
     request_hash: str | None = None,
+    idempotency_ttl: timedelta | None = None,
 ) -> tuple[TaskModel, list[TrialModel], bool, ExperimentModel | None]:
     """
     Expands a sweep submission into trials and either appends to an existing task
@@ -495,6 +502,7 @@ async def create_task_sweep_core(
                 raw_key=idempotency_key,
                 request_hash=effective_request_hash,
                 now=utcnow(),
+                ttl=idempotency_ttl or IDEMPOTENCY_TTL,
             )
         except IdempotencyConflict as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -508,6 +516,12 @@ async def create_task_sweep_core(
         existing = await session.get(TaskModel, submission.task_id)
         if existing is not None and (org_id is None or existing.org_id == org_id):
             submission = submission.model_copy(update={"append_to_task": True})
+
+    if submission.task_version_id is not None and not submission.append_to_task:
+        raise HTTPException(
+            status_code=422,
+            detail="task_version_id is only valid when appending to an existing task",
+        )
 
     # Appended trials INHERIT the existing task's environment (its oldest trial).
     # The stamp below MUST see that inherited environment, or a GKE task appended
@@ -656,13 +670,24 @@ async def create_task_sweep_core(
         # Resolved after the row lock above so it reads the committed default.
         # Only an explicitly targeted experiment pins the version: an implicit
         # primary is not a request to run that experiment's older content.
-        append_version_id = await resolve_append_version_id(
-            session,
-            task=task,
-            experiment_id=new_experiment_id,
-            uploaded_content_hash=submission.content_hash,
-            use_default_version=submission.use_default_version,
-        )
+        if submission.task_version_id is not None:
+            if submission.task_version_id != task.current_version_id:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "Task version changed before submission: expected "
+                        f"{submission.task_version_id}, current {task.current_version_id}"
+                    ),
+                )
+            append_version_id = submission.task_version_id
+        else:
+            append_version_id = await resolve_append_version_id(
+                session,
+                task=task,
+                experiment_id=new_experiment_id,
+                uploaded_content_hash=submission.content_hash,
+                use_default_version=submission.use_default_version,
+            )
 
         trials, supersede_by_spec = await _plan_append_trials(
             session,

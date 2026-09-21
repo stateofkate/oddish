@@ -397,6 +397,22 @@ class TaskSweepSubmission(BaseModel):
         False,
         description="On append, create n_trials new trials per config instead of topping up existing counts.",
     )
+    task_version_id: str | None = Field(
+        None,
+        description=(
+            "Exact current task version required for this append. The server rejects "
+            "the submission if the task's current version changed before admission."
+        ),
+    )
+    external_request_id: str | None = Field(
+        None,
+        min_length=1,
+        max_length=160,
+        description=(
+            "Durable caller-owned submission identity. Replays always return the "
+            "original trials and never implicitly retry failed leaves."
+        ),
+    )
     name: str | None = Field(
         None,
         description="Human-readable task name (derived from task_id if not provided)",
@@ -1478,6 +1494,36 @@ class UserTagRef(BaseModel):
     older: bool = False
 
 
+class TrialStatusQueryRequest(BaseModel):
+    trial_ids: list[str] = Field(min_length=1, max_length=500)
+
+
+class TrialStatusItem(BaseModel):
+    id: str
+    task_id: str
+    task_version_id: str | None = None
+    status: TrialStatus
+    error_message: str | None = None
+    has_trajectory: bool | None = None
+    superseded_by_trial_id: str | None = None
+    updated_at: datetime
+    finished_at: datetime | None = None
+
+
+class TrialStatusQueryResponse(BaseModel):
+    trials: list[TrialStatusItem]
+    missing_trial_ids: list[str] = Field(default_factory=list)
+
+
+class TrialBatchCancelRequest(BaseModel):
+    trial_ids: list[str] = Field(min_length=1, max_length=500)
+
+
+class SweepTrialRef(BaseModel):
+    id: str
+    task_version_id: str | None = None
+
+
 class TaskResponse(BaseModel):
     id: str
     name: str
@@ -1497,6 +1543,10 @@ class TaskResponse(BaseModel):
             "this to filter status/watch views to only the trials they just "
             "submitted."
         ),
+    )
+    new_trials: list[SweepTrialRef] = Field(
+        default_factory=list,
+        description="Newly-created trial identities with their exact task-version pins.",
     )
     user_tags: list[UserTagRef] = Field(default_factory=list)
 

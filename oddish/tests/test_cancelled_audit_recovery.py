@@ -21,6 +21,7 @@ from oddish.db import (
     WorkerJobStatus,
     utcnow,
 )
+from oddish.core.trial_control import cancel_trials_by_id
 from oddish.queue import cancel_tasks_runs
 from oddish.workers.queue.cleanup import (
     _heal_cancelled_audits,
@@ -35,16 +36,20 @@ pytestmark = pytest.mark.skipif(
 @pytest_asyncio.fixture
 async def cancelled_audit(session):
     task_id = "cancel-audit-" + uuid.uuid4().hex[:8]
+    org_id = task_id + "-org"
     task = TaskModel(
         id=task_id,
         name=task_id,
+        org_id=org_id,
         user="tester",
         task_path="s3://test/task",
         status=TaskStatus.RUNNING,
         run_analysis=True,
     )
     session.add(task)
-    session.add(ExperimentModel(id=task_id + "-exp", name="audit recovery"))
+    session.add(
+        ExperimentModel(id=task_id + "-exp", name="audit recovery", org_id=org_id)
+    )
     await session.flush()
     version = TaskVersionModel(
         id=task_id + "-v1",
@@ -63,6 +68,7 @@ async def cancelled_audit(session):
         experiment_id=task_id + "-exp",
         task_id=task_id,
         task_version_id=version.id,
+        org_id=org_id,
         kind="audit",
         agent="claude-code",
         provider="anthropic",
@@ -124,6 +130,37 @@ async def test_general_cancellation_updates_audit_version_in_same_transaction(
     result = await cancel_tasks_runs(session, [task.id])
     await session.refresh(job)
     assert result["trials_cancelled"] == 1
+    assert job.status == WorkerJobStatus.CANCELLED
+    assert version.pre_trial_status == VerdictStatus.FAILED
+    assert version.pre_trial_error == "Cancelled by user"
+    assert version.pre_trial_finished_at == audit.finished_at
+
+
+@pytest.mark.asyncio
+async def test_exact_trial_cancellation_settles_audit_before_qa(
+    session, cancelled_audit
+):
+    task, version, audit = cancelled_audit
+    audit.status = TrialStatus.RUNNING
+    audit.harbor_stage = "agent"
+    audit.finished_at = None
+    audit.error_message = None
+    job = WorkerJobModel(
+        kind=WorkerJobKind.TRIAL,
+        status=WorkerJobStatus.RUNNING,
+        subject_table="trials",
+        subject_id=audit.id,
+        queue_key=audit.queue_key,
+    )
+    session.add(job)
+    await session.flush()
+
+    result = await cancel_trials_by_id(
+        session, trial_ids=[audit.id], org_id=task.org_id
+    )
+
+    await session.refresh(job)
+    assert result["cancelled_trial_ids"] == [audit.id]
     assert job.status == WorkerJobStatus.CANCELLED
     assert version.pre_trial_status == VerdictStatus.FAILED
     assert version.pre_trial_error == "Cancelled by user"

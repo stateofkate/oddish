@@ -4,6 +4,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
+from sqlalchemy import select
 from oddish.core.dashboard import invalidate_dashboard_cache
 from oddish.core.endpoints import (
     delete_trial_core,
@@ -23,6 +24,7 @@ from oddish.core.trial_io import (
     read_trial_trajectory,
 )
 from oddish.core.trial_live import read_trial_live_for_id
+from oddish.core.trial_control import cancel_trials_by_id
 from oddish.core.ingest.trial_imports import (
     complete_trial_import,
     initialize_trial_import,
@@ -64,7 +66,11 @@ from oddish.schemas import (
     TrialImportCompleteResponse,
     TrialImportInitRequest,
     TrialImportInitResponse,
+    TrialBatchCancelRequest,
     TrialResponse,
+    TrialStatusItem,
+    TrialStatusQueryRequest,
+    TrialStatusQueryResponse,
 )
 
 import logging
@@ -84,6 +90,59 @@ async def _get_authorized_trial(
         )
         session.expunge(trial)
         return trial
+
+
+@router.post("/trials/status/query", response_model=TrialStatusQueryResponse)
+async def query_trial_statuses(
+    payload: TrialStatusQueryRequest,
+    auth: Annotated[AuthContext, Depends(require_auth)],
+) -> TrialStatusQueryResponse:
+    """Return a bounded status snapshot for exact org-owned trial IDs."""
+    auth.require_scope(APIKeyScope.READ)
+    if not auth.org_id:
+        raise HTTPException(status_code=403, detail="Organization scope is required")
+    requested = list(dict.fromkeys(payload.trial_ids))
+    async with get_read_session() as session:
+        rows = await session.execute(
+            select(TrialModel).where(
+                TrialModel.id.in_(requested), TrialModel.org_id == auth.org_id
+            )
+        )
+        by_id = {trial.id: trial for trial in rows.scalars().all()}
+    return TrialStatusQueryResponse(
+        trials=[
+            TrialStatusItem.model_validate(by_id[trial_id], from_attributes=True)
+            for trial_id in requested
+            if trial_id in by_id
+        ],
+        missing_trial_ids=[trial_id for trial_id in requested if trial_id not in by_id],
+    )
+
+
+@router.post("/trials/cancel/batch")
+async def cancel_trial_batch(
+    payload: TrialBatchCancelRequest,
+    auth: Annotated[AuthContext, Depends(require_auth)],
+) -> dict:
+    """Cancel only the exact org-owned trial IDs supplied by the caller."""
+    auth.require_scope(APIKeyScope.TASKS)
+    if not auth.org_id:
+        raise HTTPException(status_code=403, detail="Organization scope is required")
+    async with get_session() as session:
+        result = await cancel_trials_by_id(
+            session, trial_ids=payload.trial_ids, org_id=auth.org_id
+        )
+        await session.commit()
+
+    from oddish.core.helpers import terminate_run_harvest
+
+    modal_cancelled = await terminate_run_harvest(result)
+    return {
+        "trial_ids": result["trial_ids"],
+        "missing_trial_ids": result["missing_trial_ids"],
+        "cancelled_trial_ids": result["cancelled_trial_ids"],
+        "modal_calls_cancelled": modal_cancelled,
+    }
 
 
 @router.get("/tasks/{task_id}/trials/{index}", response_model=TrialResponse)
