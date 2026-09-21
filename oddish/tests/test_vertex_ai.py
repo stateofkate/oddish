@@ -841,10 +841,14 @@ def test_restricted_antigravity_profile_accepts_the_marked_profile(service_accou
         import_path="oddish.workers.agents.antigravity_cli:OddishAntigravityCli",
         model_name="vertex_ai/gemini-3.8-flash",
     )
+    marked = vertex_ai.vertex_ai_agent_env(service_account, config.model_name)
+    # The service-account profile would put agy into ADC mode, whose hosts the
+    # profile cannot bound, so it fails closed; an explicit opt-out keeps the
+    # bounded key path and the marked Vertex hosts.
+    with pytest.raises(RestrictedNetworkProfileError, match="ADC"):
+        _antigravity_profile(OddishAntigravityCli, config, marked)
     profile = _antigravity_profile(
-        OddishAntigravityCli,
-        config,
-        vertex_ai.vertex_ai_agent_env(service_account, config.model_name),
+        OddishAntigravityCli, config, {**marked, "AGY_ADC_AUTH": "false"}
     )
     assert profile.outbound_hosts[0] == "aiplatform.googleapis.com"
     for host in ANTIGRAVITY_STARTUP_HOSTS:

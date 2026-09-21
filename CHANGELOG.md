@@ -22,6 +22,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   key as a template, each when configured; which credential a harness reads
   is the harness's business. Hosted deploys mount the four values from a
   dedicated `oddish-vertex` Modal secret (`ODDISH_VERTEX_SECRET_NAME`).
+- antigravity-cli prefers Vertex AI: its Oddish wrapper turns on agy's ADC
+  mode for the service-account profile (express mode keeps the key path;
+  `--ae 'AGY_ADC_AUTH=${AGY_ADC_AUTH:-false}'` opts out) and defaults
+  `reasoning_effort` to `high` for Gemini 3 models, so
+  `--model vertex/<model>` needs no extra flags.
 
 ## [2026-08-28]
 

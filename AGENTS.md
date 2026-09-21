@@ -1456,10 +1456,19 @@ Keep these routing rules in sync with `oddish/src/oddish/config.py` and
   `GOOGLE_CLOUD_QUOTA_PROJECT`, so a key minted in another project still
   bills the configured one. Live on `vertex_ai/gemini-3.8-flash`: gemini-cli
   (Daytona, Modal, closed network, override Harbor), terminus-2, and
-  antigravity-cli pass; antigravity needs its ADC opt-in as a template,
-  `--ae 'AGY_ADC_AUTH=${GOOGLE_GENAI_USE_VERTEXAI}'` (a literal `true` is
-  redacted at persistence because the name matches `AUTH`), plus
-  `--ak reasoning_effort=medium` for Gemini 3.x, and reports no token usage;
+  antigravity-cli pass; antigravity's Oddish wrapper turns on agy's ADC mode
+  for the service-account profile (marker plus credential file; express mode
+  stays on agy's key path) unless the run sets `AGY_ADC_AUTH` itself, and
+  defaults `reasoning_effort` to `high` for Gemini 3 models
+  (`--ak reasoning_effort=...` overrides), so `-m vertex/<model>` needs no
+  flags; the name matches `AUTH`, so a literal `AGY_ADC_AUTH` value is
+  redacted to `****` at persistence and fails agy's boolean parse on the
+  worker: opt out with `--ae 'AGY_ADC_AUTH=${AGY_ADC_AUTH:-false}'`, whose
+  template survives; restricted networks fail closed for the implicit opt-in,
+  since agy's ADC hosts are unbounded; the override-Harbor child runs stock
+  Harbor and still needs `--ae 'AGY_ADC_AUTH=${GOOGLE_GENAI_USE_VERTEXAI}'`
+  plus `--ak reasoning_effort=<level>` for Gemini 3; antigravity reports no
+  token usage;
   mini-swe-agent lacks `google-auth` in its Harbor install, swe-agent fails
   before any model call on tasks without `/testbed`, opencode wants its own
   `google-vertex/` spelling, and the other harnesses ignore the profile.

@@ -917,6 +917,9 @@ def _build_agent_config(
     _apply_codex_oddish_wrapper(agent_config)
     _apply_grok_build_oddish_wrapper(agent_config)
     _apply_opencode_oddish_wrapper(agent_config)
+    # Every shape, not only the restricted ones: the wrapper is what turns the
+    # Vertex profile into agy's ADC mode and supplies its effort default.
+    _apply_antigravity_cli_oddish_wrapper(agent_config)
     _apply_meta_mini_swe_agent(agent_config)
     _apply_geometric_mini_swe_agent(agent_config)
     _apply_mini_swe_agent(agent_config)
