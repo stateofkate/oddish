@@ -40,7 +40,7 @@ def publish(
     """Publish an experiment for public, read-only access.
 
     Returns the shareable public URL. Anyone with the link can view the
-    experiment (trial analysis and verdicts stay hidden from public viewers).
+    experiment. QA stays hidden unless an admin enables Show QA in the dashboard.
 
     Examples:
         oddish publish my-experiment

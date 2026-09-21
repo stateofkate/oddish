@@ -148,6 +148,13 @@ The frontend proxies backend requests through `src/app/api/*`. Main groups:
 - `/api/admin/*` for queue slots, queue status, orphaned state, and the unified `worker-jobs` matrix (`/api/admin/worker-jobs`)
 - `/api/public/*` for public experiment, dataset, task-file, and trial artifact access
 
+The experiment share dialog has a **Show QA** switch. It is off by default.
+Publishing sends `show_qa` to the backend; **Save changes** updates the same
+link. When QA is on, the share page shows read-only task checks and trial
+reviews. The public task checks proxy is
+`/api/public/experiments/[token]/tasks/[task_id]/qa`; it forwards the task
+version and returns 404 when QA is off or the task is outside the share link.
+
 ## Project Structure
 
 ```text

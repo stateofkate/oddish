@@ -215,6 +215,13 @@ class ExperimentShareResponse(BaseModel):
     # grades; a graded experiment points at its shadow.
     shadow_of: str | None = None
     qa_report_experiment_id: str | None = None
+    show_qa: bool = False
+
+
+class ExperimentPublishRequest(BaseModel):
+    """Options for a public experiment link."""
+
+    show_qa: bool | None = None
 
 
 class ModelRenameRequest(BaseModel):

@@ -1417,6 +1417,7 @@ export interface PublicExperimentInfo {
   name: string;
   public_token: string;
   description: string | null;
+  show_qa?: boolean;
 }
 
 export interface ExperimentShareInfo {
@@ -1428,6 +1429,7 @@ export interface ExperimentShareInfo {
   // grades; a graded experiment points at its shadow.
   shadow_of?: string | null;
   qa_report_experiment_id?: string | null;
+  show_qa?: boolean;
 }
 
 // ---------------------------------------------------------------------------

@@ -101,6 +101,7 @@ function trialLabel(trial: Trial): string {
 export function TaskOverviewPanel({
   taskId,
   apiBaseUrl = "/api",
+  readOnly = false,
   version,
   scopeTrials,
   scopeLoading,
@@ -127,6 +128,7 @@ export function TaskOverviewPanel({
   experiments?: { id: string; name: string }[];
   taskId: string | null;
   apiBaseUrl?: string;
+  readOnly?: boolean;
   /** Version the pane is scoped to: a number pins, null deliberately
    *  aggregates every trial, and undefined means still resolving — the
    *  trial aggregation waits instead of briefly spanning all versions. */
@@ -146,7 +148,7 @@ export function TaskOverviewPanel({
   checksTrialId?: string | null;
   checksStatus?: string | null;
   checksError?: string | null;
-  onRerunChecks: () => void;
+  onRerunChecks?: () => void;
   checksRerunning: boolean;
   checksQueueError?: string | null;
   /** The checks state is still being fetched: an absent status must not
@@ -173,7 +175,7 @@ export function TaskOverviewPanel({
   // carries trials across many versions and experiments, and every full row
   // ships its whole analysis payload.
   const trialsKey =
-    taskId && versionKnown
+    taskId && versionKnown && !readOnly
       ? `${apiBaseUrl}/tasks/${taskId}/trials?probe=false${
           version !== null ? `&version=${version}` : ""
         }`
@@ -344,7 +346,7 @@ export function TaskOverviewPanel({
   }
 
   const taskTrialHref = (trial: Trial): string | null => {
-    if (!taskId) return null;
+    if (!taskId || readOnly) return null;
     const params = new URLSearchParams();
     if (trial.task_version_id) params.set("version", trial.task_version_id);
     params.set("trial", trial.id);
@@ -410,7 +412,7 @@ export function TaskOverviewPanel({
 
   // Votes persist through the hosted API only; a public share pane has no
   // feedback route, so it renders no controls.
-  const canVote = apiBaseUrl === "/api" && Boolean(taskId);
+  const canVote = !readOnly && apiBaseUrl === "/api" && Boolean(taskId);
   const postFeedback = async (
     trialId: string | undefined,
     record: FeedbackRecord
@@ -446,7 +448,7 @@ export function TaskOverviewPanel({
       ? `${mustFixCount} Must fix`
       : findingItems.length > 0
         ? `${findingItems.length} finding${findingItems.length === 1 ? "" : "s"}`
-        : checksLoading || !versionKnown || (trials == null && !trialsError)
+        : checksLoading || !versionKnown || (displayTrials == null && !trialsError)
           ? "…"
           : checksLoadError || trialsError
             ? "Unavailable"
@@ -478,7 +480,7 @@ export function TaskOverviewPanel({
           items={findingItems}
           selectedFinding={selectedFinding}
           findingLink={
-            taskId && version != null
+            !readOnly && taskId && version != null
               ? (item, file) => findingHref(taskId, version, item, file)
               : undefined
           }
@@ -634,7 +636,7 @@ export function TaskOverviewPanel({
             variant="inline"
             qaActive={qaActive}
             mustFixCount={mustFixCount}
-            action={executionReviewAction}
+            action={readOnly ? undefined : executionReviewAction}
             error={executionReviewError}
           />
         </div>
@@ -644,7 +646,7 @@ export function TaskOverviewPanel({
         {selectedFinding &&
         !checksLoading &&
         !trialsError &&
-        trials &&
+        displayTrials &&
         !findingItems.some(
           (item) =>
             item.id === selectedFinding || item.links_to === selectedFinding
@@ -669,16 +671,18 @@ export function TaskOverviewPanel({
                 label="the task's findings"
               />
             ) : null}
-            <button
-              type="button"
-              disabled={checksRerunning || auditRunning || checksStateUnknown}
-              onClick={onRerunChecks}
-              className="text-muted-foreground hover:text-foreground border-border rounded border px-2 py-0.5 font-mono text-[10px] font-medium disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {checksRerunning
-                ? "Queuing…"
-                : `Run pre-trial audit${verdictTask?.current_version != null ? ` v${verdictTask.current_version}` : ""}`}
-            </button>
+            {!readOnly && onRerunChecks ? (
+              <button
+                type="button"
+                disabled={checksRerunning || auditRunning || checksStateUnknown}
+                onClick={onRerunChecks}
+                className="text-muted-foreground hover:text-foreground border-border rounded border px-2 py-0.5 font-mono text-[10px] font-medium disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {checksRerunning
+                  ? "Queuing…"
+                  : `Run pre-trial audit${verdictTask?.current_version != null ? ` v${verdictTask.current_version}` : ""}`}
+              </button>
+            ) : null}
           </div>
         </div>
 
@@ -691,7 +695,7 @@ export function TaskOverviewPanel({
 
       <div className="flex flex-col gap-3 p-4">
         <div className="flex flex-wrap items-center gap-2">
-          {!verdictTask && (
+          {!readOnly && !verdictTask && (
             <div className="ml-auto">{executionReviewAction}</div>
           )}
           <span className="text-muted-foreground font-mono text-[11px]">
@@ -714,7 +718,7 @@ export function TaskOverviewPanel({
           </p>
         )}
         {trialQaBody()}
-        {additionalRuns.length > 0 && (
+        {!readOnly && additionalRuns.length > 0 && (
           <section className="mt-3 space-y-2 border-t pt-3">
             <h3 className="text-sm font-medium">Other experiments</h3>
             <p className="text-muted-foreground text-xs">

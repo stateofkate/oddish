@@ -86,6 +86,7 @@ from oddish.core.idempotency import (
 )
 from idempotency_store import SubmissionIdempotencyStore
 from api.schemas import (
+    ExperimentPublishRequest,
     ExperimentShareResponse,
     ExperimentUpdateRequest,
     ExperimentUpdateResponse,
@@ -1347,6 +1348,7 @@ async def get_experiment_share(
         description=experiment.description,
         shadow_of=experiment.shadow_of,
         qa_report_experiment_id=qa_report_experiment_id,
+        show_qa=bool(experiment.show_qa),
     )
 
 
@@ -1482,6 +1484,7 @@ async def unlink_task_from_experiment(
 async def publish_experiment(
     experiment_id: str,
     auth: Annotated[AuthContext, Depends(require_admin)],
+    payload: ExperimentPublishRequest | None = None,
 ) -> ExperimentShareResponse:
     """Publish an experiment for public read-only access."""
 
@@ -1496,6 +1499,8 @@ async def publish_experiment(
         if not experiment:
             raise HTTPException(status_code=404, detail="Experiment not found")
 
+        if payload is not None and payload.show_qa is not None:
+            experiment.show_qa = payload.show_qa
         await ensure_experiment_public(session, experiment)
         await session.commit()
 
@@ -1503,6 +1508,8 @@ async def publish_experiment(
             name=experiment.name,
             is_public=True,
             public_token=experiment.public_token,
+            description=experiment.description,
+            show_qa=bool(experiment.show_qa),
         )
 
 
@@ -1535,6 +1542,8 @@ async def unpublish_experiment(
             name=experiment.name,
             is_public=False,
             public_token=experiment.public_token,
+            description=experiment.description,
+            show_qa=bool(experiment.show_qa),
         )
 
 

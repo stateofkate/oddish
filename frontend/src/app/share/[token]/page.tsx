@@ -21,7 +21,8 @@ export default function PublicExperimentPage() {
 
   const { data: experimentInfo } = useSWR<PublicExperimentInfo>(
     publicBase,
-    fetcher
+    fetcher,
+    { refreshInterval: 30000 }
   );
 
   const {
@@ -99,7 +100,7 @@ export default function PublicExperimentPage() {
             }
             readOnly
             allowRetry={false}
-            showAnalysis={false}
+            showAnalysis={experimentInfo?.show_qa === true}
             apiBaseUrl={scopedApiBaseUrl}
           />
         </div>

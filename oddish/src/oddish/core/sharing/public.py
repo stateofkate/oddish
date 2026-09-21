@@ -13,7 +13,11 @@ from oddish.core.endpoints.experiment_page import (
     get_public_experiment_trial_page_core,
 )
 from oddish.core.endpoints.experiment_cost import get_experiment_cost_totals
-from oddish.core.helpers import build_task_status_response, fetch_trial_queue_info
+from oddish.core.helpers import (
+    build_task_status_response,
+    fetch_trial_queue_info,
+    resolve_effective_version_id,
+)
 from oddish.core.model_display_names import (
     apply_model_display_names,
     experiment_display_names,
@@ -31,6 +35,7 @@ from oddish.core.trial_io import (
     read_trial_trajectory,
 )
 from .helpers import (
+    apply_public_task_qa_visibility,
     get_public_experiment,
     get_public_task_for_experiment,
     get_public_trial_for_experiment,
@@ -44,6 +49,7 @@ from .helpers import (
 )
 from oddish.db import (
     ExperimentModel,
+    TaskVersionModel,
     TrialModel,
     get_read_session,
     task_experiments,
@@ -56,6 +62,7 @@ from oddish.schemas import (
     PublicExperimentOpenResponse,
     PublicExperimentResponse,
     PublicTaskStatusResponse,
+    PublicTaskQaResponse,
     TaskBrowseExperiment,
     TaskStatusResponse,
     TrialResponse,
@@ -157,6 +164,7 @@ async def get_public_experiment_info(public_token: str) -> PublicExperimentRespo
             name=experiment.name,
             public_token=experiment.public_token or public_token,
             description=experiment.description,
+            show_qa=bool(experiment.show_qa),
         )
 
 
@@ -180,6 +188,16 @@ async def get_public_experiment_cost_totals(
         totals.verifier_cost_usd = 0.0
         totals.owned_verifier_cost_usd = 0.0
         totals.verifier_has_estimated = False
+        if not experiment.show_qa:
+            totals.qa_cost_usd = 0.0
+            totals.owned_qa_cost_usd = 0.0
+            totals.qa_has_estimated = False
+            totals.qa_cost_complete = True
+            totals.qa_unpriced_count = 0
+            totals.qa_pending_count = 0
+            totals.owned_qa_cost_complete = True
+            totals.owned_qa_unpriced_count = 0
+            totals.owned_qa_pending_count = 0
         return totals
 
 
@@ -346,9 +364,61 @@ async def get_public_task_status(
             response, public_exps.get(task.id, []), preferred_id=exp.id
         )
         apply_model_display_names(response.trials or [], experiment_display_names(exp))
+        apply_public_task_qa_visibility(response, show_qa=bool(exp.show_qa))
         public_response = PublicTaskStatusResponse.model_validate(response)
         public_response.github_meta = public_task_github_meta(response.github_meta)
         return public_response
+
+
+@router.get(
+    "/public/experiments/{public_token}/tasks/{task_id}/qa",
+    response_model=PublicTaskQaResponse,
+)
+async def get_public_task_qa(
+    public_token: str,
+    task_id: str,
+    version: int | None = Query(None, ge=1),
+) -> PublicTaskQaResponse:
+    """Read source checks for a task version exposed by this QA-enabled link."""
+    async with get_read_session() as session:
+        resolved = await get_public_task_for_experiment(session, public_token, task_id)
+        if resolved is None or not resolved[0].show_qa:
+            raise HTTPException(status_code=404, detail="Task QA not found")
+        experiment, task, gathered_ids = resolved
+        effective_version_id = resolve_effective_version_id(
+            task,
+            experiment_context_id=experiment.id,
+            gathered_trial_ids=gathered_ids,
+        )
+        query = select(TaskVersionModel).where(TaskVersionModel.task_id == task.id)
+        if version is not None:
+            visible_version_ids = {
+                trial.task_version_id
+                for trial in task.trials
+                if trial.superseded_by_trial_id is None and not trial.is_probe
+            }
+            if effective_version_id is not None:
+                visible_version_ids.add(effective_version_id)
+            query = query.where(
+                TaskVersionModel.version == version,
+                TaskVersionModel.id.in_(visible_version_ids),
+            )
+        else:
+            if effective_version_id is None:
+                return PublicTaskQaResponse()
+            query = query.where(TaskVersionModel.id == effective_version_id)
+        row = (await session.execute(query)).scalar_one_or_none()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Task QA not found")
+        return PublicTaskQaResponse(
+            version=row.version,
+            version_id=row.id,
+            pre_trial_findings=[
+                report["finding"] for report in getattr(row, "reported_findings", None) or []
+            ] + ((row.pre_trial or {}).get("items") or []),
+            pre_trial_status=row.pre_trial_status,
+            pre_trial_error=row.pre_trial_error,
+        )
 
 
 @router.get(

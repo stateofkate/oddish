@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { markOpenIntent } from "@/lib/open-intent";
 import dynamic from "next/dynamic";
 import Image from "next/image";
+import useSWR from "swr";
 import {
   ResizableDrawer,
   DrawerHeader,
@@ -191,11 +192,10 @@ interface TrialDetailPanelProps {
   onDelete?: (trial: Trial, task: Task | null) => Promise<void>;
   apiBaseUrl?: string;
   allowRetry?: boolean;
-  /**
-   * When false, the analysis card and run-analysis action are hidden
-   * entirely — used by the public read-only share view.
-   */
+  /** When false, hide all QA reports and actions. */
   showAnalysis?: boolean;
+  /** Public QA uses shared reports without private logs or run controls. */
+  readOnly?: boolean;
   /** Load fields omitted from compact task and experiment trial rows. */
   requireTrialDetail?: boolean;
   allowDelete?: boolean;
@@ -230,6 +230,7 @@ function TrialAnalysisCard({
   trial: trialProp,
   taskQaInProgress,
   apiBaseUrl,
+  readOnly = false,
   actionsReady,
   onQueued,
   activeQaTrial,
@@ -239,6 +240,7 @@ function TrialAnalysisCard({
   trial: Trial;
   taskQaInProgress: boolean;
   apiBaseUrl: string;
+  readOnly?: boolean;
   actionsReady: boolean;
   onQueued?: () => void | Promise<void>;
   activeQaTrial: Trial | null;
@@ -267,7 +269,7 @@ function TrialAnalysisCard({
   // Always SHOW the button when the feature is on. Disable it (with the
   // reason) when a run cannot be queued right now. The action targets this
   // selected agent trial, while active task-level QA blocks concurrent runs.
-  const showQueueButton = ENABLE_RERUN_ANALYSIS_BUTTON;
+  const showQueueButton = !readOnly && ENABLE_RERUN_ANALYSIS_BUTTON;
   // Mirrors _ANALYSIS_CLAIM_TTL_MINUTES: past the lease the backend treats
   // the worker as dead and allows a re-run, so the button must too. A
   // running row with no start time has no live lease, and the backend
@@ -295,7 +297,7 @@ function TrialAnalysisCard({
   if (!hasAnalysis && !showQueueButton) return null;
 
   const queueRun = async () => {
-    if (queuing || !actionsReady || queueBlockedReason) return;
+    if (readOnly || queuing || !actionsReady || queueBlockedReason) return;
     setQueuing(true);
     setQueueError(null);
     try {
@@ -391,7 +393,7 @@ function TrialAnalysisCard({
         )}
         {/* Disabled buttons swallow hover, so the title alone never shows.
             While a run is in progress the card body already says so. */}
-        {queueBlockedReason && !inProgress && (
+        {!readOnly && queueBlockedReason && !inProgress && (
           <p className="text-muted-foreground mb-2 text-[11px]">
             {queueBlockedReason}
           </p>
@@ -421,9 +423,9 @@ function TrialAnalysisCard({
               actionItems={trial.analysis?.action_items}
               duration={analysisDuration}
               raw={trial.analysis}
-              onFeedback={onFeedback}
+              onFeedback={readOnly ? undefined : onFeedback}
             />
-            {trial.analysis?._graded_by && (
+            {!readOnly && trial.analysis?._graded_by && (
               <p className="mt-2 flex flex-wrap items-baseline gap-x-2 font-mono text-[11px]">
                 <a
                   href={`/tasks/${encodeURIComponent(trial.task_id)}?trial=${encodeURIComponent(trial.analysis._graded_by)}&tab=trajectory`}
@@ -470,7 +472,7 @@ function TrialAnalysisCard({
                       {progressLine}
                     </span>
                   )}
-                  {activeQaTrial && onOpenActiveQaTrial && (
+                  {!readOnly && activeQaTrial && onOpenActiveQaTrial && (
                     <button
                       type="button"
                       onClick={() => onOpenActiveQaTrial(activeQaTrial)}
@@ -763,18 +765,31 @@ export function TrialDetailPanel({
   apiBaseUrl = "/api",
   allowRetry = true,
   showAnalysis = true,
+  readOnly = false,
   requireTrialDetail = true,
   allowDelete = false,
   contentOnly = false,
   paneAction,
 }: TrialDetailPanelProps) {
-  const taskQaInProgress = taskHasActiveVerdict(task);
+  // Public result pages carry compact trial rows. Read the shared task to
+  // fill in report evidence without using the private trial-detail route.
+  const { data: publicTask } = useSWR<Task>(
+    isOpen && readOnly && showAnalysis && task?.id
+      ? `${apiBaseUrl}/tasks/${encodeURIComponent(task.id)}`
+      : null,
+    fetcher,
+    { refreshInterval: 30000 }
+  );
+  const taskQaInProgress = taskHasActiveVerdict(
+    readOnly ? (publicTask ?? task) : task
+  );
+  const loadTrialDetail = !readOnly && requireTrialDetail;
   const {
     data: refreshedTrial,
     error: trialDetailError,
     isValidating: isValidatingTrialDetail,
     mutate: revalidateTrial,
-  } = useTrial(isOpen && requireTrialDetail ? selectedTrial?.id : null, {
+  } = useTrial(isOpen && loadTrialDetail ? selectedTrial?.id : null, {
     apiBaseUrl,
   });
   const previousTaskQaRef = useRef({
@@ -796,7 +811,7 @@ export function TrialDetailPanel({
 
     if (
       isOpen &&
-      requireTrialDetail &&
+      loadTrialDetail &&
       selectedTrial?.id &&
       previous.taskId === current.taskId &&
       previous.inProgress &&
@@ -806,24 +821,29 @@ export function TrialDetailPanel({
     }
   }, [
     isOpen,
-    requireTrialDetail,
+    loadTrialDetail,
     revalidateTrial,
     selectedTrial?.id,
     task?.id,
     taskQaInProgress,
   ]);
-  const canonicalTrial =
-    refreshedTrial?.id === selectedTrial?.id ? refreshedTrial : null;
+  const canonicalTrial = readOnly
+    ? (publicTask?.trials?.find((row) => row.id === selectedTrial?.id) ?? null)
+    : refreshedTrial?.id === selectedTrial?.id
+      ? refreshedTrial
+      : null;
   const trialDetailFailed =
-    requireTrialDetail && canonicalTrial === null && trialDetailError != null;
-  const actionsReady = !requireTrialDetail || canonicalTrial !== null;
+    loadTrialDetail && canonicalTrial === null && trialDetailError != null;
+  const actionsReady = !loadTrialDetail || canonicalTrial !== null;
   const trial = canonicalTrial ?? selectedTrial;
   const verifierSummary = embeddedCtrfSummary(trial?.result);
 
   // QA votes require authenticated routes and an experiment anchor. Public
   // share drawers use a different apiBaseUrl, so they do not render controls.
   const feedbackExperimentId =
-    apiBaseUrl === "/api" ? (trial?.experiment_id ?? null) : null;
+    !readOnly && apiBaseUrl === "/api"
+      ? (trial?.experiment_id ?? null)
+      : null;
   async function handleQaFeedback(record: FeedbackRecord): Promise<void> {
     if (!feedbackExperimentId || !trial) {
       throw new Error("QA feedback is unavailable for this trial");
@@ -1034,11 +1054,13 @@ export function TrialDetailPanel({
   // Agent rows only: the generic retry endpoint refuses qa/audit kinds, so
   // offering the button on their drawers would only ever render its 400.
   const showRetry =
+    !readOnly &&
     allowRetry &&
     Boolean(trial && isAgentTrial(trial)) &&
     (trial?.status === "failed" || trial?.status === "success");
   const canRetry = actionsReady && showRetry;
-  const showDelete = allowDelete && Boolean(onDelete) && Boolean(trial);
+  const showDelete =
+    !readOnly && allowDelete && Boolean(onDelete) && Boolean(trial);
   const canDelete = actionsReady && showDelete;
   const handleRetry = async () => {
     if (!trial || retrying || !canRetry) return;
@@ -1207,7 +1229,8 @@ export function TrialDetailPanel({
     trial.error_message
   );
   const showLive =
-    isWorkerOwnedTrialStatus(trial.status) || trial.status === "retrying";
+    !readOnly &&
+    (isWorkerOwnedTrialStatus(trial.status) || trial.status === "retrying");
   const effectiveTab =
     activeTab === "live" && !showLive ? "summary" : activeTab;
   const trialDetailErrorContent = (
@@ -1698,6 +1721,7 @@ export function TrialDetailPanel({
                   trial={trial}
                   taskQaInProgress={taskQaInProgress}
                   apiBaseUrl={apiBaseUrl}
+                  readOnly={readOnly}
                   actionsReady={actionsReady}
                   activeQaTrial={activeQaTrial}
                   onFeedback={
@@ -1812,7 +1836,7 @@ export function TrialDetailPanel({
               )}
 
               {/* Equivalent retry command — hidden from public viewers */}
-              {showAnalysis && (
+              {!readOnly && showAnalysis && (
                 <div>
                   <p className="text-muted-foreground mb-1 text-[11px]">
                     Equivalent retry command, reconstructed.
@@ -1901,7 +1925,7 @@ export function TrialDetailPanel({
                 trialId={trial.id}
                 hasTrajectory={trial.has_trajectory}
                 apiBaseUrl={apiBaseUrl}
-                canRegenerateSummary={showAnalysis}
+                canRegenerateSummary={!readOnly && showAnalysis}
               />
             )}
           </ActiveTabContent>

@@ -161,6 +161,11 @@ uv run alembic upgrade head
 
 Re-run these whenever you pull changes that touch either `alembic/` directory.
 
+Apply core migration `shareqa_001` before running the version with the
+**Show QA** share setting. It adds `experiments.show_qa` and sets it to false
+for existing experiments. QA stays hidden on existing share links until an
+admin turns it on.
+
 ---
 
 ## Configure Clerk

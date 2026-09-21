@@ -1186,6 +1186,7 @@ class PublicExperimentOpenResponse(BaseModel):
     name: str
     created_at: datetime
     revision: datetime
+    show_qa: bool = False
     has_active_trials: bool = False
     summary: ExperimentPageSummary | None = None
     tasks: list[PublicExperimentTaskRow] = Field(default_factory=list)
@@ -2322,6 +2323,17 @@ class PublicExperimentResponse(BaseModel):
     name: str
     public_token: str
     description: str | None = None
+    show_qa: bool = False
+
+
+class PublicTaskQaResponse(BaseModel):
+    """Source checks for one task version visible through a share link."""
+
+    version: int | None = None
+    version_id: str | None = None
+    pre_trial_findings: list[dict] = Field(default_factory=list)
+    pre_trial_status: str | None = None
+    pre_trial_error: str | None = None
 
 
 class PublicExperimentListItem(BaseModel):

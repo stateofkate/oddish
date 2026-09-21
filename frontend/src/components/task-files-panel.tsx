@@ -66,6 +66,7 @@ import type {
   Task,
   TaskDetailResponse,
   TaskPanelResponse,
+  TaskVersionSummary,
   Trial,
 } from "@/lib/types";
 import { isAgentTrial } from "@/lib/types";
@@ -141,6 +142,11 @@ type FilePreview = { sourceHash?: string | null } & (
   | { kind: "binary"; url: string; size: number | null }
 );
 
+type PublicTaskQa = Pick<
+  TaskVersionSummary,
+  "pre_trial_findings" | "pre_trial_status" | "pre_trial_error"
+> & { version: number | null };
+
 interface TaskFilesPanelProps {
   isOpen: boolean;
   onClose: () => void;
@@ -158,12 +164,10 @@ interface TaskFilesPanelProps {
    */
   cancelExperimentId?: string;
   allowRetry?: boolean;
-  /**
-   * When false, analysis/verdict UI (the verdict badge and the run
-   * analysis/verdict actions) is hidden entirely — used by the public
-   * read-only share view.
-   */
+  /** When false, hide all QA reports and actions. */
   showAnalysis?: boolean;
+  /** Public viewers can read shared QA but cannot start or change runs. */
+  readOnly?: boolean;
   /** Whether the task drawer offers and may fetch the capability analysis. */
   /** The route host owns this because the drawer can mount two task panes. */
   activePane: TaskPane;
@@ -468,6 +472,7 @@ export function TaskFilesPanel({
   cancelExperimentId,
   allowRetry = true,
   showAnalysis = true,
+  readOnly = false,
   activePane,
   onActivePaneChange,
   onRetryComplete,
@@ -488,14 +493,14 @@ export function TaskFilesPanel({
   // panes (which pass taskId={null}); staticChecksTaskId supplies the id there.
   const effectiveChecksTaskId = taskId ?? staticChecksTaskId ?? null;
   const checksKey =
-    isOpen && effectiveChecksTaskId && showAnalysis
+    isOpen && effectiveChecksTaskId && showAnalysis && !readOnly
       ? `${baseUrl}/tasks/${encodeURIComponent(effectiveChecksTaskId)}/panel${
           taskVersion != null ? `?version=${taskVersion}` : ""
         }`
       : null;
   const {
     data: panel,
-    error: checksLoadError,
+    error: privateChecksLoadError,
     mutate: mutateChecks,
   } = useSWR<TaskPanelResponse>(checksKey, fetcher, {
     refreshInterval: (data) =>
@@ -505,32 +510,59 @@ export function TaskFilesPanel({
           ? 30000
           : 0,
   });
-  const task = cancelExperimentId
-    ? taskSnapshot
-    : (panel?.task ?? taskSnapshot);
+  const publicChecksKey =
+    isOpen && effectiveChecksTaskId && showAnalysis && readOnly
+      ? `${baseUrl}/tasks/${encodeURIComponent(effectiveChecksTaskId)}/qa${
+          taskVersion != null ? `?version=${taskVersion}` : ""
+        }`
+      : null;
+  const { data: publicChecks, error: publicChecksLoadError } =
+    useSWR<PublicTaskQa>(publicChecksKey, fetcher, {
+      refreshInterval: (data) =>
+        isActivePipelineStatus(data?.pre_trial_status) ? 5000 : 30000,
+    });
+  const { data: publicTask, isLoading: publicTaskLoading } = useSWR<Task>(
+    isOpen && effectiveChecksTaskId && showAnalysis && readOnly
+      ? `${baseUrl}/tasks/${encodeURIComponent(effectiveChecksTaskId)}`
+      : null,
+    fetcher,
+    { refreshInterval: 30000 }
+  );
+  const checksLoadError = readOnly
+    ? publicChecksLoadError
+    : privateChecksLoadError;
+  const checksData = readOnly ? publicChecks : panel;
+  const task = readOnly
+    ? (publicTask ?? taskSnapshot)
+    : cancelExperimentId
+      ? taskSnapshot
+      : (panel?.task ?? taskSnapshot);
   // Overview pages can still be loading after panel metadata and the
   // experiment snapshot are ready to drive actions.
-  const actionsReady = panel !== undefined;
+  const actionsReady = !readOnly && panel !== undefined;
   const checksVersion = panel?.version;
+  const sourceChecks = readOnly ? publicChecks : checksVersion;
   const overviewVersion =
     taskVersion !== undefined
       ? taskVersion
-      : panel
-        ? (checksVersion?.version ?? null)
+      : checksData
+        ? (sourceChecks?.version ?? null)
         : undefined;
   const overviewAvailable = effectiveChecksTaskId !== null && showAnalysis;
   const taskPaneExists = overviewAvailable;
   // Missing metadata is unknown; never enable an audit rerun while it loads.
-  const checksLoading = overviewAvailable && !panel && !checksLoadError;
+  const checksLoading = overviewAvailable && !checksData && !checksLoadError;
   const checksLoadFailure =
-    checksLoadError && !panel
+    checksLoadError && !checksData
       ? "Unable to load the pre-trial audit state."
       : null;
   const checksFindings = [
-    ...(checksVersion?.retained_findings ?? []),
-    ...(checksVersion?.pre_trial_findings ?? []),
+    ...(readOnly ? [] : (checksVersion?.retained_findings ?? [])),
+    ...(sourceChecks?.pre_trial_findings ?? []),
   ];
-  const taskQaActive = panel?.qa_active ?? false;
+  const taskQaActive = readOnly
+    ? isActivePipelineStatus(task?.verdict_status)
+    : (panel?.qa_active ?? false);
   const resolvedFilesUrl = filesUrl ?? `${baseUrl}/tasks/${taskId}/files`;
   // Trial file routes stream the file itself; task file routes answer with a
   // JSON envelope ({path, content, key}, or {url} when presigning). Read that
@@ -1127,7 +1159,7 @@ export function TaskFilesPanel({
     setChecksRerunning(false);
   }, [effectiveChecksTaskId]);
   const handleRerunChecks = useCallback(async () => {
-    if (!effectiveChecksTaskId || checksRerunning || !panel) return;
+    if (readOnly || !effectiveChecksTaskId || checksRerunning || !panel) return;
     setChecksRerunning(true);
     setChecksQueueError(null);
     try {
@@ -1149,7 +1181,14 @@ export function TaskFilesPanel({
     } finally {
       setChecksRerunning(false);
     }
-  }, [baseUrl, effectiveChecksTaskId, panel, checksRerunning, mutateChecks]);
+  }, [
+    baseUrl,
+    effectiveChecksTaskId,
+    panel,
+    checksRerunning,
+    mutateChecks,
+    readOnly,
+  ]);
 
   // Conventional task directories are presented as section contents rather
   // than folder rows. Fetch only those directory pages, using the same bounded
@@ -2105,13 +2144,18 @@ export function TaskFilesPanel({
                 <TaskOverviewPanel
                   taskId={effectiveChecksTaskId}
                   apiBaseUrl={baseUrl}
+                  readOnly={readOnly}
                   version={overviewVersion}
                   // Only experiments distinguish their runs from other runs
                   // of this task. The task page's 20-row preview is not a scope.
                   scopeTrials={
-                    cancelExperimentId ? (taskSnapshot?.trials ?? []) : null
+                    readOnly
+                      ? (publicTask?.trials ?? taskSnapshot?.trials ?? [])
+                      : cancelExperimentId
+                        ? (taskSnapshot?.trials ?? [])
+                        : null
                   }
-                  scopeLoading={overviewTrialsLoading}
+                  scopeLoading={overviewTrialsLoading || publicTaskLoading}
                   // Panes with their own header render the verdict card there;
                   // the filesUrl-driven panes have no header, so the overview
                   // carries the verdict itself.
@@ -2119,9 +2163,9 @@ export function TaskFilesPanel({
                   experiments={checksVersion?.experiments}
                   checksFindings={checksFindings}
                   checksTrialId={checksVersion?.pre_trial_trial_id}
-                  checksStatus={checksVersion?.pre_trial_status}
-                  checksError={checksVersion?.pre_trial_error}
-                  onRerunChecks={handleRerunChecks}
+                  checksStatus={sourceChecks?.pre_trial_status}
+                  checksError={sourceChecks?.pre_trial_error}
+                  onRerunChecks={readOnly ? undefined : handleRerunChecks}
                   checksRerunning={checksRerunning}
                   checksQueueError={checksQueueError}
                   checksLoading={checksLoading}
@@ -2150,6 +2194,7 @@ export function TaskFilesPanel({
                     onActivePaneChange?.("file");
                   }}
                   executionReviewAction={
+                    !readOnly &&
                     showAnalysis &&
                     task && (
                       <Button
@@ -2212,7 +2257,7 @@ export function TaskFilesPanel({
         {/* Combined navigation row */}
         {(onNavigateToFirstTrial ||
           hasNavigation ||
-          allowRetry ||
+          (!readOnly && allowRetry) ||
           canRunQA) && (
           <div className="text-muted-foreground space-y-2 pt-2 text-xs">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -2304,7 +2349,7 @@ export function TaskFilesPanel({
                     {isCancelling ? "Cancelling..." : cancelActionLabel}
                   </Button>
                 )}
-                {allowRetry && (
+                {!readOnly && allowRetry && (
                   <Button
                     type="button"
                     variant="outline"

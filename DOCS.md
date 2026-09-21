@@ -1008,6 +1008,10 @@ oddish publish <experiment_id> --json
 oddish unpublish <experiment_id>
 ```
 
+QA is hidden by default. An org admin can turn on **Show QA** in the
+dashboard's share dialog to include checks and reviews. `oddish publish`
+keeps that saved choice when called again for the same experiment.
+
 Options
 
 - `EXPERIMENT_ID` - Experiment ID (or name) to publish/unpublish

@@ -2,6 +2,12 @@
 
 from collections.abc import Mapping
 
+from oddish.schemas import (
+    ExperimentTrialAnalysis,
+    ExperimentTrialCell,
+    PublicExperimentTaskRow,
+)
+
 PUBLIC_TASK_GITHUB_META_KEYS = frozenset(
     {
         "category",
@@ -31,3 +37,23 @@ def public_task_github_meta(
         if key in PUBLIC_TASK_GITHUB_META_KEYS
     }
     return projected or None
+
+
+def apply_public_task_row_qa_visibility(
+    task: PublicExperimentTaskRow, *, show_qa: bool
+) -> None:
+    """Keep compact public task rows free of QA unless the share allows it."""
+    if not show_qa:
+        task.run_analysis = False
+        task.review_version_matches = None
+        task.verdict = None
+        task.verdict_status = None
+        task.verdict_error = None
+
+
+def apply_public_trial_cell_qa_visibility(
+    trial: ExperimentTrialCell, *, show_qa: bool
+) -> None:
+    """Apply the share setting to the bounded trial row used by the grid."""
+    if not show_qa:
+        trial.analysis = ExperimentTrialAnalysis()

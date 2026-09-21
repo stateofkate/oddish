@@ -9,7 +9,7 @@ import { decodeExperimentRouteParam } from "@/lib/utils";
 import { isOrgAdminRole } from "@/lib/org-roles";
 
 export async function POST(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ experiment: string }> },
 ) {
   try {
@@ -42,7 +42,8 @@ export async function POST(
     const res = await fetch(url, {
       method: "POST",
       cache: "no-store",
-      headers: getAuthHeaders(token),
+      headers: { ...getAuthHeaders(token), "Content-Type": "application/json" },
+      body: (await request.text()) || undefined,
     });
 
     const text = await res.text();

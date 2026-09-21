@@ -98,7 +98,7 @@ reference. The main commands are:
 - `oddish collect` / `oddish experiment create` — build read-only trial collections; `collect` can auto-publish a share link.
 - `oddish link` — print the dashboard URL for a task or trial (built locally; needs no API key).
 - `oddish delete` — delete trials against hosted Oddish (admin key); whole-task/experiment deletes are refused for Modal-hosted APIs, and a standalone core server has no delete endpoints at all.
-- `oddish publish` / `oddish unpublish` — toggle public read-only experiment sharing.
+- `oddish publish` / `oddish unpublish` — toggle public read-only experiment sharing. QA is hidden by default; admins can enable **Show QA** in the dashboard.
 - `oddish backfill-analysis` and `oddish probe` — specialized QA/probe tools.
 - `oddish delivery` — create and manage delivery checklists; `customers` / `create-customer` manage destinations, and `create` / `add --tasks-file` accept a complete `oddish ls --ids --json` selection. `oddish ls --delivery-history` shows recorded shipments. `oddish ls --share-selection NAME` saves matching task IDs for the organization; `--selection-id ID` reopens them.
 - `oddish assign` — assign QA review ownership by task IDs or `--tasks-file`; active delivery boards show the owner.

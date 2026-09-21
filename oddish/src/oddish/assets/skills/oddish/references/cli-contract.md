@@ -36,6 +36,9 @@ Current top-level commands are `run`, `upload`, `preflight`, `ls`, `status`,
 `costs`, `cost-exclusions`, `collect`, `delete`, `admin`, `experiment`, `link`,
 `pull`, `publish`, `unpublish`, `probe`, `delivery`, `assign`, and `qa`.
 
+`publish` keeps the experiment's saved QA sharing choice. QA is hidden by
+default; an org admin can enable **Show QA** in the dashboard's share dialog.
+
 `oddish assign task-1 task-2 --to alice@example.com` assigns QA review ownership
 to an org member identified by email, user ID, or GitHub handle. For a large
 batch use `--tasks-file task-ids.txt` (whitespace-separated IDs, up to 1,000

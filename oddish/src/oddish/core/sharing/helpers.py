@@ -36,12 +36,46 @@ from oddish.db import (
     get_storage_client,
     task_experiments,
 )
-from oddish.schemas import TrialResponse
+from oddish.schemas import TaskStatusResponse, TrialResponse
 
 
 def generate_public_token() -> str:
     """Generate a URL-safe token for public sharing."""
     return secrets.token_urlsafe(32)
+
+
+def apply_public_trial_qa_visibility(
+    response: TrialResponse, *, show_qa: bool
+) -> None:
+    """Remove QA data unless the owner opted in for this share link."""
+    if show_qa:
+        return
+    response.analysis = None
+    response.analysis_status = None
+    response.analysis_error = None
+    response.analysis_started_at = None
+    response.analysis_finished_at = None
+    response.pre_trial_findings = []
+    response.pre_trial_status = None
+    response.pre_trial_error = None
+    response.pre_trial_cost_usd = None
+    response.qa_cost_usd = None
+    response.jobs = [job for job in response.jobs if job.kind == "TRIAL"]
+
+
+def apply_public_task_qa_visibility(
+    response: TaskStatusResponse, *, show_qa: bool
+) -> None:
+    """Apply the share setting to the task and all nested trials."""
+    if not show_qa:
+        response.run_analysis = False
+        response.review_version_matches = None
+        response.verdict = None
+        response.verdict_status = None
+        response.verdict_error = None
+        response.jobs = [job for job in response.jobs if job.kind == "TRIAL"]
+    for trial in response.trials or []:
+        apply_public_trial_qa_visibility(trial, show_qa=show_qa)
 
 
 async def ensure_experiment_public(
@@ -302,6 +336,8 @@ async def list_task_trials_for_public_experiment(
         for trial, task_path in rows
     ]
     apply_model_display_names(responses, experiment_display_names(experiment))
+    for response in responses:
+        apply_public_trial_qa_visibility(response, show_qa=bool(experiment.show_qa))
     return responses
 
 

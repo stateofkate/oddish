@@ -412,7 +412,8 @@ def test_experiment_open_sql_reuses_visibility_and_version_rules():
     assert "trials." not in page_select_list
 
 
-def test_public_experiment_open_never_queries_or_serializes_task_owners(monkeypatch):
+@pytest.mark.parametrize("show_qa", [False, True])
+def test_public_experiment_open_never_queries_or_serializes_task_owners(monkeypatch, show_qa):
     task = _task(
         1,
         user="private-owner",
@@ -433,6 +434,7 @@ def test_public_experiment_open_never_queries_or_serializes_task_owners(monkeypa
         created_at=NOW,
         updated_at=NOW,
         last_activity_at=NOW + timedelta(minutes=1),
+        show_qa=show_qa,
     )
 
     async def public_experiment(_session, _token):
@@ -466,8 +468,11 @@ def test_public_experiment_open_never_queries_or_serializes_task_owners(monkeypa
         "world": "World_7",
     }
     assert "Private QA finding" not in response.model_dump_json()
-    assert "primary_issue" not in payload["tasks"][0]["verdict"]
-    assert "must_fix" not in payload["tasks"][0]["verdict"]
+    assert payload["show_qa"] is show_qa
+    assert bool(payload["tasks"][0]["verdict"]) is show_qa
+    if show_qa:
+        assert "primary_issue" not in payload["tasks"][0]["verdict"]
+        assert "must_fix" not in payload["tasks"][0]["verdict"]
     assert "private-owner" not in response.model_dump_json()
     assert "private/repository" not in response.model_dump_json()
     task_query_sql = _sql(session.calls[1])
@@ -832,7 +837,8 @@ def test_results_stream_checks_access_before_starting_http_response(monkeypatch)
     assert session.closed and not session.stream_queries
 
 
-def test_public_results_stream_uses_public_projection_and_model_aliases(monkeypatch):
+@pytest.mark.parametrize("show_qa", [False, True])
+def test_public_results_stream_uses_public_projection_and_model_aliases(monkeypatch, show_qa):
     import json
 
     session = _StreamSession(task_count=1, trial_count=1)
@@ -840,6 +846,10 @@ def test_public_results_stream_uses_public_projection_and_model_aliases(monkeypa
     session.cursors[0].rows = [
         _task(1, must_fix_count=7, verdict_primary_issue="Private finding")
     ]
+    session.cursors[1].rows = [
+        _trial_page_row(_trial(1), classification="GOOD_SUCCESS", evidence="QA evidence")
+    ]
+    session.results[0] = _Result([_summary(has_active_trials=False)])
     module = _install_stream_session(monkeypatch, session)
 
     async def shared(_session, token):
@@ -852,6 +862,7 @@ def test_public_results_stream_uses_public_projection_and_model_aliases(monkeypa
             updated_at=NOW,
             last_activity_at=NOW,
             public_model_renames={"openai/gpt-5.6": "Shared model"},
+            show_qa=show_qa,
         )
 
     monkeypatch.setattr(module, "get_public_experiment", shared)
@@ -867,7 +878,16 @@ def test_public_results_stream_uses_public_projection_and_model_aliases(monkeypa
     records = asyncio.run(consume())
     task = records[1]["task"]
     assert "user" not in task and "must_fix_count" not in task
-    assert "primary_issue" not in task["verdict"]
+    assert bool(task["verdict"]) is show_qa
+    assert task["run_analysis"] is show_qa
+    if show_qa:
+        assert "primary_issue" not in task["verdict"]
+    metadata = records[0]["experiment"]
+    assert metadata["show_qa"] is show_qa
+    assert metadata["has_active_trials"] is show_qa
+    assert bool(metadata["summary"]["qa_accepted"]) is show_qa
+    analysis = records[2]["trial"]["analysis"]
+    assert bool(analysis["classification"]) is show_qa
     assert "Private finding" not in json.dumps(records)
     assert records[2]["trial"]["model"] == "Shared model"
     assert records[-1] == {"type": "complete"}

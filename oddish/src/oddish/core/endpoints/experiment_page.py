@@ -28,7 +28,11 @@ from oddish.core.model_display_names import (
     experiment_display_names,
 )
 from oddish.core.sharing.helpers import get_public_experiment
-from oddish.core.sharing.public_projection import public_task_github_meta
+from oddish.core.sharing.public_projection import (
+    apply_public_task_row_qa_visibility,
+    apply_public_trial_cell_qa_visibility,
+    public_task_github_meta,
+)
 from oddish.db import (
     ACTIVE_TRIAL_STATUSES,
     ExperimentModel,
@@ -386,14 +390,18 @@ def _task_row(row: Mapping[str, Any]) -> ExperimentTaskRow:
     return ExperimentTaskRow.model_validate(values)
 
 
-def _public_task_row(row: Mapping[str, Any]) -> PublicExperimentTaskRow:
+def _public_task_row(
+    row: Mapping[str, Any], *, show_qa: bool = False
+) -> PublicExperimentTaskRow:
     values = _task_row_values(row)
     values["github_meta"] = public_task_github_meta(_parse_github_meta(row["tags"]))
-    return PublicExperimentTaskRow.model_validate(values)
+    response = PublicExperimentTaskRow.model_validate(values)
+    apply_public_task_row_qa_visibility(response, show_qa=show_qa)
+    return response
 
 
 async def _experiment_summary(
-    session: AsyncSession, *, experiment_id: str, org_id: str
+    session: AsyncSession, *, experiment_id: str, org_id: str, include_qa: bool = True
 ):
     tasks = _experiment_task_rows(experiment_id=experiment_id, org_id=org_id).subquery(
         "experiment_open_tasks"
@@ -476,7 +484,14 @@ async def _experiment_summary(
         harness_error_count=failed,
     )
     summary = ExperimentPageSummary.model_validate(values)
-    active = bool(row["has_active_trials"]) or int(row["qa_running"] or 0) > 0
+    active = bool(row["has_active_trials"]) or (
+        include_qa and int(row["qa_running"] or 0) > 0
+    )
+    if not include_qa:
+        summary.qa_accepted = 0
+        summary.qa_rejected = 0
+        summary.qa_running = 0
+        summary.qa_failed = 0
     return summary, active
 
 
@@ -559,7 +574,8 @@ async def get_experiment_open_core(
     summary = None
     if include_summary:
         summary, has_active_trials = await _experiment_summary(
-            session, experiment_id=experiment_id, org_id=org_id
+            session, experiment_id=experiment_id, org_id=org_id,
+            include_qa=not _public or bool(experiment.get("show_qa", False)),
         )
 
     response_type = PublicExperimentOpenResponse if _public else ExperimentOpenResponse
@@ -573,9 +589,13 @@ async def get_experiment_open_core(
         # the first ``qa_running`` response would stop its own refresh loop.
         has_active_trials=has_active_trials,
         summary=summary,
-        tasks=[_public_task_row(row) if _public else _task_row(row) for row in rows],
+        tasks=[
+            _public_task_row(row, show_qa=bool(experiment.get("show_qa", False)))
+            if _public else _task_row(row)
+            for row in rows
+        ],
         **(
-            {}
+            {"show_qa": bool(experiment.get("show_qa", False))}
             if _public
             else {"owner": experiment["owner"], "link": experiment["link"]}
         ),
@@ -740,15 +760,23 @@ async def get_experiment_focus_core(
     response_type = (
         PublicExperimentFocusResponse if _public else ExperimentFocusResponse
     )
-    return response_type(
+    response = response_type(
         revision=experiment["revision"],
-        task=_public_task_row(task_row) if _public else _task_row(task_row),
+        task=(
+            _public_task_row(task_row, show_qa=bool(experiment.get("show_qa", False)))
+            if _public else _task_row(task_row)
+        ),
         trial=(
             build_experiment_trial_cell(trial_row, exclusions=exclusions)
             if trial_row is not None
             else None
         ),
     )
+    if _public and response.trial is not None:
+        apply_public_trial_cell_qa_visibility(
+            response.trial, show_qa=bool(experiment.get("show_qa", False))
+        )
+    return response
 
 
 async def get_experiment_trial_page_core(
@@ -813,6 +841,7 @@ def _public_experiment_identity(experiment: ExperimentModel) -> Mapping[str, Any
     return {
         "id": experiment.id,
         "name": experiment.name,
+        "show_qa": bool(experiment.show_qa),
         "created_at": experiment.created_at,
         "revision": (
             experiment.last_activity_at
@@ -897,6 +926,8 @@ async def get_public_experiment_trial_page_core(
         _include_cost_exclusion_labels=False,
     )
     apply_model_display_names(response.trials, experiment_display_names(experiment))
+    for trial in response.trials:
+        apply_public_trial_cell_qa_visibility(trial, show_qa=bool(experiment.show_qa))
     return response
 
 
@@ -978,7 +1009,8 @@ async def stream_experiment_results(
                 session, experiment_id=experiment_id, org_id=org_id
             )
         summary, active = await _experiment_summary(
-            session, experiment_id=experiment_id, org_id=org_id
+            session, experiment_id=experiment_id, org_id=org_id,
+            include_qa=not public or bool(experiment.get("show_qa", False)),
         )
         response_type = (
             PublicExperimentOpenResponse if public else ExperimentOpenResponse
@@ -991,7 +1023,7 @@ async def stream_experiment_results(
             has_active_trials=active,
             summary=summary,
             **(
-                {}
+                {"show_qa": bool(experiment.get("show_qa", False))}
                 if public
                 else {"owner": experiment["owner"], "link": experiment["link"]}
             ),
@@ -1012,7 +1044,10 @@ async def stream_experiment_results(
         )
         try:
             async for row in task_rows:
-                task = _public_task_row(row) if public else _task_row(row)
+                task = (
+                    _public_task_row(row, show_qa=bool(experiment.get("show_qa", False)))
+                    if public else _task_row(row)
+                )
                 yield (
                     json.dumps({"type": "task", "task": task.model_dump(mode="json")})
                     + "\n"
@@ -1033,6 +1068,9 @@ async def stream_experiment_results(
                 trial = build_experiment_trial_cell(row, exclusions=exclusions)
                 if public:
                     apply_model_display_names([trial], display_names)
+                    apply_public_trial_cell_qa_visibility(
+                        trial, show_qa=bool(experiment.get("show_qa", False))
+                    )
                 yield (
                     json.dumps(
                         {"type": "trial", "trial": trial.model_dump(mode="json")}

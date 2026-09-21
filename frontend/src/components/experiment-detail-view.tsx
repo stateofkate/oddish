@@ -1052,7 +1052,7 @@ export function ExperimentDetailView({
   const { data: experimentTags, mutate: mutateExperimentTags } = useSWR<
     UserTagRef[]
   >(
-    experimentId
+    experimentId && !readOnly
       ? `/api/tags/for-target?scope=EXPERIMENT&target_id=${encodeURIComponent(experimentId)}`
       : null,
     fetcher,
@@ -2096,6 +2096,7 @@ export function ExperimentDetailView({
               apiBaseUrl={apiBaseUrl}
               cancelExperimentId={experimentId}
               showAnalysis={showAnalysis}
+              readOnly={readOnly}
               loadFilesLazily
               contentOnly={true}
             />
@@ -2115,6 +2116,7 @@ export function ExperimentDetailView({
               allowRetry={allowRetry}
               cancelExperimentId={experimentId}
               showAnalysis={showAnalysis}
+              readOnly={readOnly}
               loadFilesLazily
               onNavigate={(nextTask, nextIndex) => {
                 if (!drawerState) return;
@@ -2162,6 +2164,7 @@ export function ExperimentDetailView({
                 onDelete={onTrialDelete}
                 allowRetry={allowRetry}
                 showAnalysis={showAnalysis}
+                readOnly={readOnly}
                 requireTrialDetail={loadFullTrialOnOpen}
                 allowDelete={Boolean(onTrialDelete)}
                 apiBaseUrl={apiBaseUrl}

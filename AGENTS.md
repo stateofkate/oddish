@@ -1327,6 +1327,19 @@ token-scoped focus route and retain the grid visibility rules, including the
 probe exclusion, plus `/cost-totals`; paginated trial rows are never treated as
 final spend or token totals.
 
+Share links hide QA by default. `experiments.show_qa` stores the setting.
+`POST /experiments/{id}/publish` accepts an optional `show_qa` boolean and
+can change it on an existing link without changing its token. A request
+with no setting keeps the stored choice. The share status and public
+experiment metadata both return `show_qa`. Public task and trial responses
+remove QA findings, verdicts, status, errors, times, and costs when it is off.
+When it is on, `GET /public/experiments/{token}/tasks/{id}/qa` returns the
+source checks for the task's displayed trial version. An optional `version`
+query selects a version used by a live, non-probe trial in that share, or
+the displayed task version when the share has no trials yet.
+The route returns 404 when QA is off or the task/version is outside the link.
+Public QA has no edit or run controls; org/admin checks still guard publishing.
+
 ### Configuration and model routing
 
 Settings are loaded from `oddish/.env`; see `oddish/env.example`,

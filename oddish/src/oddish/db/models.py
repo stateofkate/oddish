@@ -526,6 +526,9 @@ class ExperimentModel(TimestampedMixin, Base):
     # Public sharing (nullable until published)
     is_public: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     public_token: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    show_qa: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
 
     # Operator aliases from a real model id to the name rendered on THIS
     # experiment's published share pages. Display-only: cost accounting and
