@@ -9,6 +9,7 @@ from typing import Any
 from harbor.agents.installed.gemini_cli import GeminiCli
 from harbor.environments.base import BaseEnvironment
 
+from .trusted_cli_bundle import stage_trusted_cli_bundle
 
 _WEB_TOOLS = ("google_web_search", "web_fetch")
 _SYSTEM_SETTINGS_PATH = "/etc/gemini-cli/settings.json"
@@ -22,12 +23,32 @@ class OddishGeminiCli(GeminiCli):
     network namespace.
     """
 
-    def __init__(self, *args: Any, disable_web_tools: bool = False, **kwargs: Any):
+    def __init__(
+        self,
+        *args: Any,
+        disable_web_tools: bool = False,
+        trusted_cli_bundle: bool = False,
+        **kwargs: Any,
+    ):
         self._oddish_disable_web_tools = disable_web_tools
+        self._oddish_trusted_cli_bundle = trusted_cli_bundle
         super().__init__(*args, **kwargs)
 
     async def install(self, environment: BaseEnvironment) -> None:
-        await super().install(environment)
+        if self._oddish_trusted_cli_bundle:
+            if self._version is not None:
+                raise ValueError("Trusted Gemini CLI bundle requires an unpinned CLI version")
+            await stage_trusted_cli_bundle(self, environment, cli="gemini")
+            await self.exec_as_agent(
+                environment,
+                command=(
+                    "mkdir -p ~/.gemini && "
+                    "printf '%s\\n' '{\"experimental\":{\"skills\":true}}' "
+                    "> ~/.gemini/settings.json && gemini --version"
+                ),
+            )
+        else:
+            await super().install(environment)
         if not self._oddish_disable_web_tools:
             return
 

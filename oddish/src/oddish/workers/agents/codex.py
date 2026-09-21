@@ -3,12 +3,13 @@ from __future__ import annotations
 import re
 import shlex
 
-from harbor.agents.installed.codex import Codex
 from harbor.agents.installed.base import NonZeroAgentExitCodeError
+from harbor.agents.installed.codex import Codex
+from harbor.environments.base import BaseEnvironment
 
 from .codex_stdout_trajectory import write_trajectory_if_richer
 from .network import normalize_domain_or_url
-
+from .trusted_cli_bundle import stage_trusted_cli_bundle
 
 _AZURE_CODEX_PROVIDER = "oddish_azure_openai"
 _AZURE_CODEX_RETRY_CONFIG_PARAMS = {
@@ -25,6 +26,17 @@ def _toml_quote(value: str) -> str:
 
 class OddishCodex(Codex):
     """Oddish's Codex wrapper for compatibility with current Codex CLI output."""
+
+    def __init__(self, *args, trusted_cli_bundle: bool = False, **kwargs):
+        self._oddish_trusted_cli_bundle = trusted_cli_bundle
+        super().__init__(*args, **kwargs)
+
+    async def install(self, environment: BaseEnvironment) -> None:
+        if self._oddish_trusted_cli_bundle:
+            if self._version is not None:
+                raise ValueError("Trusted Codex CLI bundle requires an unpinned CLI version")
+            await stage_trusted_cli_bundle(self, environment, cli="codex")
+        await super().install(environment)
 
     def _ensure_codex_config_override(self, command: str, key: str, value: str) -> str:
         if "codex exec " not in command or f" -c {key}=" in command:

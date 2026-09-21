@@ -1119,6 +1119,27 @@ def _build_worker_image(harbor_override: "HarborVariant | None" = None) -> modal
             "git",
             "curl",
             "openssh-client",
+            "ripgrep",
+        )
+        # The EC2/k3s task proxy is active before Harbor installs Codex or
+        # Gemini. Build their public CLI dependencies on the trusted worker,
+        # then upload the bundle through Harbor instead of opening npm/GitHub
+        # to the benchmark agent at runtime.
+        .run_commands(
+            "mkdir -p /opt/oddish-agent-cli && "
+            "curl -fsSL https://nodejs.org/dist/v22.16.0/node-v22.16.0-linux-x64.tar.xz "
+            "| tar -xJ -C /opt/oddish-agent-cli --strip-components=1",
+            "PATH=/opt/oddish-agent-cli/bin:$PATH "
+            "/opt/oddish-agent-cli/bin/npm install --global "
+            "--prefix /opt/oddish-agent-cli --no-audit --no-fund "
+            "@openai/codex@latest @google/gemini-cli@latest",
+            "cp /usr/bin/rg /opt/oddish-agent-cli/bin/rg && "
+            "tar --exclude=oddish-agent-cli/lib/node_modules/@google/gemini-cli "
+            "--exclude=oddish-agent-cli/bin/gemini "
+            "-czf /opt/oddish-agent-cli-codex.tgz -C /opt oddish-agent-cli && "
+            "tar --exclude=oddish-agent-cli/lib/node_modules/@openai/codex "
+            "--exclude=oddish-agent-cli/bin/codex "
+            "-czf /opt/oddish-agent-cli-gemini.tgz -C /opt oddish-agent-cli",
         )
         # Install Claude Code for trial analysis jobs that shell out to `claude -p`.
         .run_commands(

@@ -1407,6 +1407,14 @@ def _apply_restricted_agent_network_defaults(
         _apply_gemini_cli_oddish_wrapper(agent_config)
         _apply_antigravity_cli_oddish_wrapper(agent_config)
         _apply_cursor_cli_oddish_wrapper(agent_config)
+        if agent_config.import_path in {
+            "oddish.workers.agents.codex:OddishCodex",
+            "oddish.workers.agents.codex:AzureCompatibleCodex",
+            "oddish.workers.agents.gemini_cli:OddishGeminiCli",
+        }:
+            kwargs = dict(agent_config.kwargs or {})
+            kwargs["trusted_cli_bundle"] = True
+            agent_config.kwargs = kwargs
         _inject_kube_chart_agent_model_hosts(
             task_path=task_path,
             environment_config=environment_config,
