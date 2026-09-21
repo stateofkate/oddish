@@ -1482,10 +1482,17 @@ Keep these routing rules in sync with `oddish/src/oddish/config.py` and
   flags; the name matches `AUTH`, so a literal `AGY_ADC_AUTH` value is
   redacted to `****` at persistence and fails agy's boolean parse on the
   worker: opt out with `--ae 'AGY_ADC_AUTH=${AGY_ADC_AUTH:-false}'`, whose
-  template survives; restricted networks fail closed for the implicit opt-in,
-  since agy's ADC hosts are unbounded; the override-Harbor child runs stock
-  Harbor and still needs `--ae 'AGY_ADC_AUTH=${GOOGLE_GENAI_USE_VERTEXAI}'`
-  plus `--ak reasoning_effort=<level>` for Gemini 3; antigravity reports no
+  template survives; restricted networks grant agy's ADC egress on the
+  service-account profile, captured live (`oauth2.googleapis.com` for the
+  token, the location's endpoint for the model calls, agy's startup probes;
+  proven on the `global` location): the Compose and kube shapes take that
+  set from the antigravity profile, which still refuses an
+  `AGY_ADC_AUTH=true` with no such profile behind it, while the Daytona and
+  Modal single-container shape infers the same hosts from the model and
+  agent without consulting the profile; the override-Harbor child runs
+  stock Harbor and still needs
+  `--ae 'AGY_ADC_AUTH=${GOOGLE_GENAI_USE_VERTEXAI}'` plus
+  `--ak reasoning_effort=<level>` for Gemini 3; antigravity reports no
   token usage;
   mini-swe-agent lacks `google-auth` in its Harbor install, swe-agent fails
   before any model call on tasks without `/testbed`, opencode wants its own

@@ -545,15 +545,10 @@ def test_antigravity_vertex_requires_explicit_base_url(monkeypatch) -> None:
     assert "Antigravity" in str(exc_info.value)
     assert "Vertex routing" in str(exc_info.value)
 
-    # An explicit base URL alongside Vertex routing is accepted: agy ignores
-    # Vertex variables and always runs API-key auth against the pinned host.
-    # This calls the profile factory directly rather than through
-    # restricted_network_profile_for_config: _coerce_profile unconditionally
-    # requires server_web_disabled=True on any non-raising return, but this
-    # profile deliberately reports False (see _antigravity_profile), so the
-    # dispatch path would fail closed here even on a legitimate route. Direct
-    # invocation is the only way to observe a successful antigravity profile
-    # until that constant flips to True post-E2E.
+    # An explicit base URL alongside an unmarked Vertex flag is accepted: the
+    # custom endpoint is the pinned transport, and without Oddish's marked
+    # profile the wrapper leaves agy on its API-key path. The factory is called
+    # directly so this stays a unit test of the profile's host selection.
     from oddish.workers.harbor.restricted_network import _antigravity_profile
 
     profile = _antigravity_profile(
@@ -597,10 +592,11 @@ def test_antigravity_profile_keeps_startup_hosts_with_custom_base_url():
     assert len(profile.outbound_hosts) == len(set(profile.outbound_hosts))
 
 
-def test_antigravity_profile_rejects_adc_auth():
-    """AGY_ADC_AUTH selects agy's enterprise ADC path, whose service hosts are
-    not bounded by this profile -- a restricted phase must fail closed rather
-    than hand an ADC run a Gemini-API-shaped allowlist."""
+def test_antigravity_profile_rejects_adc_auth_without_the_vertex_profile():
+    """AGY_ADC_AUTH selects agy's enterprise ADC path. Its egress is attested
+    only on Oddish's Vertex service-account profile, which fixes the endpoint;
+    a bare opt-in (unknown credential, unknown location) must fail closed
+    rather than get a Gemini-API-shaped allowlist."""
     from oddish.workers.agents.antigravity_cli import OddishAntigravityCli
     from oddish.workers.harbor.restricted_network import (
         RestrictedNetworkProfileError,
@@ -616,6 +612,22 @@ def test_antigravity_profile_rejects_adc_auth():
             OddishAntigravityCli,
             config,
             {"AGY_ADC_AUTH": "true", "GOOGLE_APPLICATION_CREDENTIALS": "/c.json"},
+        )
+    # The same opt-in on an express (API-key) Vertex profile has no
+    # service-account credential to mint a token from either.
+    with pytest.raises(RestrictedNetworkProfileError, match="ADC"):
+        _antigravity_profile(
+            OddishAntigravityCli,
+            AgentConfig(
+                import_path="oddish.workers.agents.antigravity_cli:OddishAntigravityCli",
+                model_name="vertex_ai/gemini-3.8-flash",
+            ),
+            {
+                "AGY_ADC_AUTH": "true",
+                "GOOGLE_GENAI_USE_VERTEXAI": "true",
+                "ODDISH_VERTEX_AI_MODE": "api_key",
+                "GOOGLE_API_KEY": "express-key",
+            },
         )
 
 

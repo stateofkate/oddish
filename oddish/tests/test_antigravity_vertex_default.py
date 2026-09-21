@@ -189,25 +189,40 @@ def test_ordinary_trials_run_through_the_wrapper(vertex_profile):
     )
 
 
-def test_restricted_networks_reject_the_implicit_adc_path(vertex_profile):
-    """agy's ADC mode dials unbounded enterprise hosts, which the restricted
-    profile already refuses for an explicit opt-in; the wrapper's implicit
-    opt-in must fail closed the same way instead of at runtime."""
+def test_restricted_networks_grant_the_adc_host_set(vertex_profile):
+    """On the service-account profile the wrapper puts agy into ADC mode, whose
+    egress was captured live: the startup hosts, the token host, and the
+    location's endpoint. The restricted profile grants exactly that union."""
     from harbor.models.trial.config import AgentConfig
 
-    from oddish.workers.harbor.restricted_network import (
-        RestrictedNetworkProfileError,
-        _antigravity_profile,
-    )
+    from oddish.workers.harbor.model_hosts import ANTIGRAVITY_STARTUP_HOSTS
+    from oddish.workers.harbor.restricted_network import _antigravity_profile
 
     config = AgentConfig(
         import_path="oddish.workers.agents.antigravity_cli:OddishAntigravityCli",
         model_name="vertex_ai/gemini-3.8-flash",
     )
-    with pytest.raises(RestrictedNetworkProfileError, match="ADC"):
-        _antigravity_profile(OddishAntigravityCli, config, vertex_profile)
-    # An explicit opt-out keeps the bounded Vertex allowlist.
-    profile = _antigravity_profile(
-        OddishAntigravityCli, config, {**vertex_profile, "AGY_ADC_AUTH": "false"}
+    profile = _antigravity_profile(OddishAntigravityCli, config, vertex_profile)
+    assert profile.outbound_hosts == (
+        "aiplatform.googleapis.com",
+        "oauth2.googleapis.com",
+        *ANTIGRAVITY_STARTUP_HOSTS,
     )
-    assert profile.outbound_hosts[0] == "aiplatform.googleapis.com"
+    assert profile.server_web_disabled is True
+    # An explicit opt-in on the same profile is the same path; the opt-out
+    # keeps the bounded Vertex allowlist too.
+    for setting in ("true", "false"):
+        same = _antigravity_profile(
+            OddishAntigravityCli, config, {**vertex_profile, "AGY_ADC_AUTH": setting}
+        )
+        assert same.outbound_hosts == profile.outbound_hosts, setting
+    # A regional location moves the endpoint and keeps the token host.
+    regional = _antigravity_profile(
+        OddishAntigravityCli,
+        config,
+        {**vertex_profile, "GOOGLE_CLOUD_LOCATION": "us-east5"},
+    )
+    assert regional.outbound_hosts[:2] == (
+        "us-east5-aiplatform.googleapis.com",
+        "oauth2.googleapis.com",
+    )

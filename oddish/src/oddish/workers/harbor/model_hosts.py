@@ -220,6 +220,12 @@ ANTIGRAVITY_INSTALL_HOSTS: tuple[str, ...] = (
 # carries its telemetry; both are probed at startup with the same stall risk.
 # None of them follow from the model endpoint, so they must survive a custom
 # Gemini base URL: that setting replaces the MODEL host and nothing else.
+# agy 1.2.7 in enterprise ADC mode dials the same probes, then
+# oauth2.googleapis.com for its token and the Vertex endpoint for the model
+# (both come from the Vertex profile). Its background auto-updater also
+# re-reads the manifest host above at runtime; that host is deliberately NOT
+# granted here: a blocked update check is harmless and never stalls the run,
+# as the closed-network trials show.
 ANTIGRAVITY_STARTUP_HOSTS: tuple[str, ...] = (
     "antigravity-unleash.goog",
     "play.googleapis.com",

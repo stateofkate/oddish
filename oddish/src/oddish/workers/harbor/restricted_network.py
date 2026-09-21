@@ -770,32 +770,33 @@ def _antigravity_profile(
     if uses_vertex and vertex_hosts is None and not has_custom_base_url:
         raise RestrictedNetworkProfileError(
             "Restricted Antigravity CLI phases require an explicit "
-            "GOOGLE_GEMINI_BASE_URL when Vertex routing is requested; note the "
-            "agy agent itself ignores Vertex variables and runs API-key auth."
+            "GOOGLE_GEMINI_BASE_URL when Vertex routing is requested without "
+            "Oddish's marked Vertex AI profile; only that profile fixes the "
+            "endpoint agy dials."
         )
     if vertex_hosts is not None and has_custom_base_url:
         raise RestrictedNetworkProfileError(
             "Restricted Antigravity CLI phases cannot combine Oddish's Vertex AI "
             "profile with a custom Gemini base URL."
         )
-    # agy's ADC mode dials enterprise service hosts this profile cannot bound.
-    # An explicit opt-in is refused, and so is the implicit one: on a
-    # service-account Vertex profile the Oddish wrapper turns ADC mode on
-    # unless the run opts out, so fail closed here rather than at startup.
+    # agy's ADC mode is bounded only on Oddish's service-account profile,
+    # where its egress was captured live: the startup probes unioned below,
+    # the token mint at oauth2.googleapis.com, then the model stream at the
+    # configured location's endpoint (both already in ``vertex_hosts``). A
+    # bare opt-in has neither a known credential nor a known endpoint, so it
+    # keeps failing closed.
     adc_setting = env.get("AGY_ADC_AUTH", "").strip().lower()
-    implicit_adc = (
+    service_account_profile = (
         vertex_hosts is not None
         and env.get(_VERTEX_MODE_ENV, "").strip() == VERTEX_AI_MODE_SERVICE_ACCOUNT
-        and adc_setting not in {"0", "false", "no", "off"}
     )
-    if implicit_adc or adc_setting in {"1", "true", "yes", "on"}:
+    if adc_setting in {"1", "true", "yes", "on"} and not service_account_profile:
         raise RestrictedNetworkProfileError(
-            "Restricted Antigravity CLI phases do not support ADC auth "
-            "(AGY_ADC_AUTH, or the Vertex service-account profile the Oddish "
-            "wrapper turns into ADC mode): the enterprise platform's service "
-            "hosts are not bounded by this profile. Use GEMINI_API_KEY auth, or "
-            "opt out with --ae 'AGY_ADC_AUTH=${AGY_ADC_AUTH:-false}' to keep the "
-            "key path (a literal false is redacted at persistence)."
+            "Restricted Antigravity CLI phases support ADC auth (AGY_ADC_AUTH) "
+            "only on Oddish's Vertex AI service-account profile, which fixes the "
+            "token host and the model endpoint; without it the enterprise "
+            "platform's hosts cannot be bounded. Use GEMINI_API_KEY auth, or a "
+            "vertex_ai/ model with the service-account credential configured."
         )
     hosts = _selected_transport_hosts(
         agent_config,

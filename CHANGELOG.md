@@ -27,6 +27,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `--ae 'AGY_ADC_AUTH=${AGY_ADC_AUTH:-false}'` opts out) and defaults
   `reasoning_effort` to `high` for Gemini 3 models, so
   `--model vertex/<model>` needs no extra flags.
+- Restricted-network antigravity-cli trials run on Vertex AI: the profile
+  grants agy's ADC-mode egress on the service-account profile (token host,
+  the location's endpoint, agy's startup probes) instead of failing closed.
 
 ## [2026-08-28]
 
