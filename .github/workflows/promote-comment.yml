@@ -96,6 +96,9 @@ jobs:
           TARGET_SHA=$(printf '%s' "$COMMENT" | head -n1 | tr -d '\r' | awk '{print $2}')
           PR_BODY=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json body -q .body)
           export TARGET_SHA PR_BODY
+          # Checkout removes its credentials; let the verification fetch use
+          # this step's GH_TOKEN. The push below supplies PROMOTE_TOKEN directly.
+          gh auth setup-git --hostname github.com
           .github/scripts/promote/verify_promotion_target.sh
 
       - name: Fast-forward main
