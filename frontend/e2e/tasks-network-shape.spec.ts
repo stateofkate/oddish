@@ -195,9 +195,7 @@ test.describe("tasks page network shape", () => {
     // Phase 1 — a hard navigation is a fresh JS heap, so this is the
     // session's cold load. Exactly one browse fetch serves the grid.
     await page.goto("/tasks");
-    // CardTitle renders a styled <div>, not an <h*>, so this is text — not a
-    // heading role.
-    await expect(page.getByText("Recent Tasks", { exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Tasks", exact: true })).toBeVisible();
     await expect(settled.first()).toBeVisible({ timeout: 30_000 });
     await expect
       .poll(() => countSince(log, 0, BROWSE_RE), { timeout: 10_000 })
@@ -213,6 +211,14 @@ test.describe("tasks page network shape", () => {
       .poll(() => countSince(log, 0, COUNT_RE), { timeout: 10_000 })
       .toBe(1);
     expect(countSince(log, 0, COUNT_RE)).toBe(1);
+
+    // Tags are lazy now: revealing their filter loads them once, then the dashboard
+    // and subsequent filter mounts must reuse that same vocabulary.
+    expect(countSince(log, 0, TAGS_RE)).toBe(0);
+    await page.getByRole("button", { name: /^Filters/ }).click();
+    await page.getByRole("textbox", { name: "Find a filter" }).fill("Tags");
+    await expect.poll(() => countSince(log, 0, TAGS_RE)).toBe(1);
+    await page.keyboard.press("Escape");
 
     // Phase 2 — leave through the nav (client-side, cache intact) and come
     // back. The grid must paint from the cache: the browse revalidation is
@@ -235,7 +241,7 @@ test.describe("tasks page network shape", () => {
     await page.getByRole("link", { name: "Tasks" }).first().click();
     await expect(page).toHaveURL(/\/tasks/);
     await expect(settled.first()).toBeVisible({ timeout: 10_000 });
-    // Coming back re-mounted the sidebar too — it must not have re-asked
+    // Coming back re-mounted the toolbar too — it must not have re-asked
     // for its vocabularies (the dashboard leg is included in this window).
     expect(countSince(log, returnMark, FACETS_RE)).toBe(0);
     expect(countSince(log, returnMark, TAGS_RE)).toBe(0);
@@ -251,7 +257,7 @@ test.describe("tasks page network shape", () => {
     // not.
     const filterMark = Date.now();
     await page
-      .getByPlaceholder("Search anything...")
+      .getByRole("textbox", { name: "Search tasks", exact: true })
       .fill("zzz-network-shape-probe");
     await expect
       .poll(() => countSince(log, filterMark, BROWSE_RE), { timeout: 10_000 })
@@ -273,125 +279,128 @@ test.describe("tasks page network shape", () => {
     expect(countSince(log, 0, LEADERBOARD_RE)).toBeLessThanOrEqual(1);
   });
 
-  test("task-card paint seeds open, cold navigation stays non-blocking, and files intent loads panel metadata", async ({
-    page,
-  }) => {
-    test.setTimeout(120_000);
-    await setupClerkTestingToken({ page });
-    await page.goto("/");
-    await clerk.signIn({ page, emailAddress: CLERK_EMAIL! });
+  for (const view of ["table", "cards"] as const) {
+    test(`${view} navigation seeds open, cold navigation stays non-blocking, and files intent loads panel metadata`, async ({
+      page,
+    }) => {
+      test.setTimeout(120_000);
+      await setupClerkTestingToken({ page });
+      await page.goto("/");
+      await clerk.signIn({ page, emailAddress: CLERK_EMAIL! });
 
-    await page.route(/\/api\/tasks\/browse\/facets/, (route) =>
-      route.fulfill({
-        json: {
-          agents: [],
-          models: [],
-          agent_models: [],
-          providers: [],
-          environments: [],
-          harbor_stages: [],
-          analysis_classifications: [],
-        },
-      })
-    );
-    await page.route(/\/api\/tasks\/browse\/experiment-options/, (route) =>
-      route.fulfill({ json: { items: [] } })
-    );
-    await page.route(/\/api\/tasks\/browse\?/, (route) =>
-      route.fulfill({
-        json: {
-          items: [readerBrowseItem],
-          limit: 50,
-          offset: 0,
-          has_more: false,
-        },
-      })
-    );
+      await page.route(/\/api\/tasks\/browse\/facets/, (route) =>
+        route.fulfill({
+          json: {
+            agents: [],
+            models: [],
+            agent_models: [],
+            providers: [],
+            environments: [],
+            harbor_stages: [],
+            analysis_classifications: [],
+          },
+        })
+      );
+      await page.route(/\/api\/tasks\/browse\/experiment-options/, (route) =>
+        route.fulfill({ json: { items: [] } })
+      );
+      await page.route(/\/api\/tasks\/browse\?/, (route) =>
+        route.fulfill({
+          json: {
+            items: [readerBrowseItem],
+            limit: 50,
+            offset: 0,
+            has_more: false,
+          },
+        })
+      );
 
-    let openCount = 0;
-    let detailCount = 0;
-    let panelCount = 0;
-    const releaseOpen: { current: (() => void) | null } = { current: null };
-    let holdOpen = true;
-    await page.route(
-      new RegExp(`/api/tasks/${READER_TASK_ID}/open(?:\\?|$)`),
-      async (route) => {
-        openCount += 1;
-        if (holdOpen) {
-          await new Promise<void>((resolve) => {
-            releaseOpen.current = resolve;
+      let openCount = 0;
+      let detailCount = 0;
+      let panelCount = 0;
+      const releaseOpen: { current: (() => void) | null } = { current: null };
+      let holdOpen = true;
+      await page.route(
+        new RegExp(`/api/tasks/${READER_TASK_ID}/open(?:\\?|$)`),
+        async (route) => {
+          openCount += 1;
+          if (holdOpen) {
+            await new Promise<void>((resolve) => {
+              releaseOpen.current = resolve;
+            });
+          }
+          await route.fulfill({ json: readerOpenResponse() });
+        }
+      );
+      await page.route(
+        new RegExp(`/api/tasks/${READER_TASK_ID}/detail(?:\\?|$)`),
+        async (route) => {
+          detailCount += 1;
+          await route.fulfill({
+            status: 500,
+            json: { error: "Unexpected detail request" },
           });
         }
-        await route.fulfill({ json: readerOpenResponse() });
-      }
-    );
-    await page.route(
-      new RegExp(`/api/tasks/${READER_TASK_ID}/detail(?:\\?|$)`),
-      async (route) => {
-        detailCount += 1;
-        await route.fulfill({
-          status: 500,
-          json: { error: "Unexpected detail request" },
-        });
-      }
-    );
-    await page.route(
-      new RegExp(`/api/tasks/${READER_TASK_ID}/panel(?:\\?|$)`),
-      async (route) => {
-        panelCount += 1;
-        await route.fulfill({
-          json: {
-            task: {
-              ...readerOpenResponse().task,
-              experiment_id: "",
-              experiment_name: "",
-              experiment_is_public: false,
-              total: 25,
-              completed: 25,
-              failed: 0,
+      );
+      await page.route(
+        new RegExp(`/api/tasks/${READER_TASK_ID}/panel(?:\\?|$)`),
+        async (route) => {
+          panelCount += 1;
+          await route.fulfill({
+            json: {
+              task: {
+                ...readerOpenResponse().task,
+                experiment_id: "",
+                experiment_name: "",
+                experiment_is_public: false,
+                total: 25,
+                completed: 25,
+                failed: 0,
+              },
+              version: readerOpenResponse().selected_version,
+              can_retry: true,
+              cancel: null,
+              active_trials: 0,
+              qa_active: false,
+              can_run_qa: true,
+              has_analysis: false,
             },
-            version: readerOpenResponse().selected_version,
-            can_retry: true,
-            cancel: null,
-            active_trials: 0,
-            qa_active: false,
-            can_run_qa: true,
-            has_analysis: false,
-          },
-        });
-      }
-    );
+          });
+        }
+      );
 
-    await page.goto("/tasks");
-    await page.getByRole("link", { name: readerBrowseItem.name }).click();
-    await expect(
-      page.getByRole("heading", { name: readerBrowseItem.name })
-    ).toBeVisible();
-    expect(openCount).toBe(1);
-    expect(detailCount).toBe(0);
-    expect(panelCount).toBe(0);
-    (releaseOpen.current as (() => void) | null)?.();
-    holdOpen = false;
-    await expect(page.getByRole("heading", { name: "Agents" })).toBeVisible();
-    expect(detailCount).toBe(0);
-    expect(panelCount).toBe(0);
+      await page.goto(view === "cards" ? "/tasks" : "/tasks?view=table");
+      await expect(page.getByRole("combobox", { name: "Task view" })).toHaveValue(view);
+      await page.getByRole("link", { name: readerBrowseItem.name }).click();
+      await expect(
+        page.getByRole("heading", { name: readerBrowseItem.name })
+      ).toBeVisible();
+      expect(openCount).toBe(1);
+      expect(detailCount).toBe(0);
+      expect(panelCount).toBe(0);
+      (releaseOpen.current as (() => void) | null)?.();
+      holdOpen = false;
+      await expect(page.getByRole("heading", { name: "Agents" })).toBeVisible();
+      expect(detailCount).toBe(0);
+      expect(panelCount).toBe(0);
 
-    holdOpen = true;
-    releaseOpen.current = null;
-    await page.goto(`/tasks/${READER_TASK_ID}`);
-    await expect(page.locator(".animate-pulse").first()).toBeVisible();
-    expect(detailCount).toBe(0);
-    expect(panelCount).toBe(0);
-    (releaseOpen.current as (() => void) | null)?.();
-    holdOpen = false;
-    await expect(
-      page.getByRole("button", { name: "View task files" })
-    ).toBeVisible();
-    await page.getByRole("button", { name: "View task files" }).click();
-    await expect.poll(() => panelCount).toBe(1);
-    await expect(
-      page.getByRole("button", { name: "Overview", exact: true })
-    ).toBeVisible();
-    expect(detailCount).toBe(0);
-  });
+      holdOpen = true;
+      releaseOpen.current = null;
+      await page.goto(`/tasks/${READER_TASK_ID}`);
+      await expect(page.locator(".animate-pulse").first()).toBeVisible();
+      expect(detailCount).toBe(0);
+      expect(panelCount).toBe(0);
+      (releaseOpen.current as (() => void) | null)?.();
+      holdOpen = false;
+      await expect(
+        page.getByRole("button", { name: "View task files" })
+      ).toBeVisible();
+      await page.getByRole("button", { name: "View task files" }).click();
+      await expect.poll(() => panelCount).toBe(1);
+      await expect(
+        page.getByRole("button", { name: "Overview", exact: true })
+      ).toBeVisible();
+      expect(detailCount).toBe(0);
+    });
+  }
 });

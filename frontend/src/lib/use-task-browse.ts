@@ -21,6 +21,7 @@ const BROWSE_KEY_PREFIX = "/api/tasks/browse?";
 // distinguishable in the network shape (see e2e/tasks-network-shape.spec.ts,
 // which asserts one grid fetch per filter state).
 const BROWSE_COUNT_KEY_PREFIX = "/api/tasks/browse/count?";
+const BROWSE_IDS_KEY_PREFIX = "/api/tasks/browse/ids?";
 
 /**
  * Builds the SWR cache key — and fetch URL — for one browse state from the
@@ -31,41 +32,34 @@ const BROWSE_COUNT_KEY_PREFIX = "/api/tasks/browse/count?";
  * useTaskBrowseRevalidate), so a write can never miss the entry the hook
  * reads.
  */
-export function browseKey(searchParams: URLSearchParams): string {
+export function browseKey(
+  searchParams: URLSearchParams,
+  mode: "page" | "count" | "ids" = "page"
+): string {
   const params = new URLSearchParams();
+  // Only select-all excludes existing members. Page/count retain them.
+  const delivery = searchParams.get("delivery");
+  if (delivery && mode === "ids") params.set("delivery", delivery);
   const q = searchParams.get("q") ?? searchParams.get("query");
   if (q) params.set("q", q);
   for (const key of BROWSE_FORWARD_KEYS) {
+    if (
+      mode === "count" &&
+      (key === "sort" || (key === "mine" && searchParams.get(key) !== "only"))
+    )
+      continue;
     const value = searchParams.get(key);
     if (value) params.set(key, value);
   }
   const offset = Math.max(Number(searchParams.get("offset") ?? "0") || 0, 0);
-  if (offset > 0) params.set("offset", String(offset));
-  return `${BROWSE_KEY_PREFIX}${params.toString()}`;
-}
-
-/**
- * The SWR key for the matching-task count of one filter state.
- *
- * Deliberately the same params as ``browseKey`` MINUS ``offset``: the count
- * describes the whole filter set, so every page of one set resolves to a
- * single cache entry and paging re-uses it instead of re-running the count.
- */
-export function browseCountKey(searchParams: URLSearchParams): string {
-  const params = new URLSearchParams();
-  const q = searchParams.get("q") ?? searchParams.get("query");
-  if (q) params.set("q", q);
-  for (const key of BROWSE_FORWARD_KEYS) {
-    // `sort` reorders the page; it cannot change how many tasks match. An
-    // aggregate sort does add its metric join, but as a LEFT JOIN whose
-    // range predicates come from the aggregate FILTERS -- which are keyed
-    // above -- so the matching set is identical. Keying on it would miss the
-    // cached total and re-run the count for a pure reordering.
-    if (key === "sort") continue;
-    const value = searchParams.get(key);
-    if (value) params.set(key, value);
-  }
-  return `${BROWSE_COUNT_KEY_PREFIX}${params.toString()}`;
+  if (mode === "page" && offset > 0) params.set("offset", String(offset));
+  const prefix =
+    mode === "page"
+      ? BROWSE_KEY_PREFIX
+      : mode === "count"
+        ? BROWSE_COUNT_KEY_PREFIX
+        : BROWSE_IDS_KEY_PREFIX;
+  return `${prefix}${params.toString()}`;
 }
 
 // Staging has shown multi-second browse responses; a hung fetch should fail
@@ -181,7 +175,7 @@ export function useTaskBrowseRevalidate(): () => Promise<unknown> {
     // worse than no total at all.
     return Promise.all([
       mutate(browseKey(sp)),
-      mutate(browseCountKey(sp)),
+      mutate(browseKey(sp, "count")),
     ]).catch(() => undefined);
   }, [mutate, searchParams]);
 }
@@ -204,7 +198,7 @@ export function useTaskBrowseCount(searchParams: URLSearchParams): {
   isStale: boolean;
 } {
   const { data, error, isLoading } = useSWR<TaskBrowseCountResponse, Error>(
-    browseCountKey(searchParams),
+    browseKey(searchParams, "count"),
     countFetcher,
     {
       revalidateOnFocus: false,

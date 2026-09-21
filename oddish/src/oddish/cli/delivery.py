@@ -152,6 +152,70 @@ def _print_board(board: dict) -> None:
         )
 
 
+def _task_selection(tasks: list[str] | None, tasks_file: Path | None) -> list[str]:
+    """Read a complete selection before any mutation; never accept truncated exports."""
+    selected = list(tasks or [])
+    if tasks_file is not None:
+        try:
+            content = tasks_file.read_text(encoding="utf-8")
+            payload = json.loads(content)
+        except (OSError, ValueError) as exc:
+            raise typer.BadParameter(str(exc), param_hint="--tasks-file") from exc
+        if not isinstance(payload, dict) or payload.get("truncated") is not False:
+            raise typer.BadParameter(
+                "expected an oddish ls --ids --json export with truncated=false",
+                param_hint="--tasks-file",
+            )
+        ids = payload.get("ids")
+        if not isinstance(ids, list) or any(
+            not isinstance(value, str) or not value.strip() for value in ids
+        ):
+            raise typer.BadParameter(
+                "ids must be a list of nonempty task IDs", param_hint="--tasks-file"
+            )
+        selected.extend(ids)
+    selected = list(dict.fromkeys(selected))
+    if len(selected) > 5000:
+        raise typer.BadParameter("a delivery selection is limited to 5,000 tasks")
+    return selected
+
+
+@delivery_app.command("customers")
+def list_customers(
+    api_url: Annotated[str, _API_OPTION] = "",
+    json_output: Annotated[bool, _JSON_OPTION] = False,
+) -> None:
+    """List customers available for a new delivery (IDs and names)."""
+    api_url = api_url or get_api_url()
+    with httpx.Client(timeout=30.0, headers=get_auth_headers(api_url)) as client:
+        customers = _request(client, "GET", f"{api_url}/customers")
+    if json_output:
+        print_json(customers)
+        return
+    table = Table("ID", "Customer")
+    for customer in customers:
+        table.add_row(customer["id"], customer["name"])
+    console.print(table)
+
+
+@delivery_app.command("create-customer")
+def create_customer(
+    name: Annotated[str, typer.Argument(help="Customer name.")],
+    api_url: Annotated[str, _API_OPTION] = "",
+    json_output: Annotated[bool, _JSON_OPTION] = False,
+) -> None:
+    """Create a customer without creating a delivery."""
+    api_url = api_url or get_api_url()
+    with httpx.Client(timeout=30.0, headers=get_auth_headers(api_url)) as client:
+        customer = _request(client, "POST", f"{api_url}/customers", json={"name": name})
+    if json_output:
+        print_json(customer)
+        return
+    console.print(
+        f"Created customer {customer['id']} ({customer['name']})", markup=False
+    )
+
+
 @delivery_app.command("list")
 def list_deliveries(
     api_url: Annotated[str, _API_OPTION] = "",
@@ -202,12 +266,20 @@ def create_delivery(
         Optional[list[str]],
         typer.Option("--task", "-t", help="Task id or name to include (repeatable)."),
     ] = None,
+    tasks_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--tasks-file",
+            help="JSON selection from oddish ls --ids --json (up to 5,000).",
+        ),
+    ] = None,
     api_url: Annotated[str, _API_OPTION] = "",
     json_output: Annotated[bool, _JSON_OPTION] = False,
 ) -> None:
     """Create a delivery, optionally seeding it with tasks."""
+    selected = _task_selection(tasks, tasks_file)
     api_url = api_url or get_api_url()
-    with httpx.Client(timeout=30.0, headers=get_auth_headers()) as client:
+    with httpx.Client(timeout=30.0, headers=get_auth_headers(api_url)) as client:
         delivery = _request(
             client,
             "POST",
@@ -216,7 +288,7 @@ def create_delivery(
                 "name": name,
                 "customer": customer,
                 "description": description,
-                "task_ids": tasks or [],
+                "task_ids": selected,
             },
         )
     if json_output:
@@ -278,19 +350,35 @@ def ready(
 @delivery_app.command("add")
 def add_tasks(
     delivery: Annotated[str, typer.Argument(help="Delivery id or name.")],
-    tasks: Annotated[list[str], typer.Argument(help="Task ids or names to add.")],
+    tasks: Annotated[
+        list[str] | None, typer.Argument(help="Task ids or names to add.")
+    ] = None,
+    tasks_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--tasks-file",
+            help="JSON selection from oddish ls --ids --json (up to 5,000).",
+        ),
+    ] = None,
     api_url: Annotated[str, _API_OPTION] = "",
+    json_output: Annotated[bool, _JSON_OPTION] = False,
 ) -> None:
     """Add tasks to a delivery."""
+    selected = _task_selection(tasks, tasks_file)
+    if not selected:
+        raise typer.BadParameter("provide task IDs or a nonempty --tasks-file")
     api_url = api_url or get_api_url()
-    with httpx.Client(timeout=30.0, headers=get_auth_headers()) as client:
+    with httpx.Client(timeout=30.0, headers=get_auth_headers(api_url)) as client:
         delivery_id = _resolve_delivery_id(client, api_url, delivery)
         result = _request(
             client,
             "POST",
             f"{api_url}/deliveries/{delivery_id}/tasks",
-            json={"task_ids": tasks},
+            json={"task_ids": selected},
         )
+    if json_output:
+        print_json(result)
+        return
     console.print(f"[green]Added {result['added']} task(s)[/green]")
 
 

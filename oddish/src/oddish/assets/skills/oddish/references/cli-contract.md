@@ -45,6 +45,30 @@ The JSON response names `assigned_task_ids`, `unchanged_task_ids`, and
 `skipped_task_ids`. Assignment targets current task versions and appears on
 active delivery boards; it neither launches QA jobs nor changes sign-off.
 
+`oddish ls` supports Tasks-page lab filters (`--delivered-to`,
+`--not-delivered-to`, repeatable), `--never-delivered` / `--has-delivery`,
+`--category`, `--qa-outcome`, `--steps-p50-min` / `--steps-p50-max`,
+`--agent-count-min`, `--author`, and `--pin-author`. Author `me` resolves to the
+API key creator on hosted servers. `--trial-finished-after` / `--trial-finished-before`
+and `--trial-finished-within 24h|7d|30d|90d` filter trial completion dates.
+`--filter-options` lists labs (including unmapped imported labels), categories,
+and trial values. `--delivery-history` shows lab, batch, date, and source;
+`--json` includes each task's `deliveries`. No record is not proof of no shipment.
+
+`oddish ls --count` counts matching tasks; `--ids --json` selects the whole
+matching set as `{ids: [...], truncated: bool}`, ignoring pagination. These modes
+and `--filter-options` are mutually exclusive. Save that JSON to a file and use
+`oddish delivery create NAME --customer LAB --tasks-file selection.json --json`
+or `oddish delivery add NAME --tasks-file selection.json --json`. Both send one
+atomic request, deduplicate IDs, and reject truncated exports or more than 5,000
+unique IDs. Narrow filters before retrying a truncated selection. Plain `--ids`
+prints IDs one per line and refuses truncated output. `--exclude-delivery-id`
+excludes existing delivery members by full delivery ID.
+
+`oddish delivery customers [--json]` lists destinations;
+`oddish delivery create-customer NAME [--json]` creates one independently.
+`oddish delivery history TASK` remains the QA trail, not shipment history.
+
 Use `oddish <command> --help` for the exhaustive option list. Important
 submission controls include:
 
@@ -108,3 +132,9 @@ structured result/verifier artifacts first, then the trial log and trajectory.
 
 `oddish link task` and `oddish link trial` only construct dashboard URLs. They
 do not read the API or mutate the task.
+
+Task selection sharing: `oddish ls --share-selection NAME [filters] [--json]`
+creates an organization-shared saved selection on the hosted API, rejecting empty
+or truncated ID results before writing. `--selection-id ID` browses that exact set
+and composes with filters/count/IDs. IDs are fixed; current versions can change.
+`--qa-outcome rejected` is “Needs work”; `failed` is a QA execution error, not rejection.

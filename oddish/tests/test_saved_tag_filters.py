@@ -73,3 +73,16 @@ def test_list_saved_filters_returns_owner_and_org_visible():
     s = _FakeSession(rows=rows)
     items = _run(list_saved_tag_filters_core(s, org_id="org-1", actor_user_id="u-1"))
     assert len(items) == 2
+
+
+def test_saved_selection_rejects_invalid_ids_before_write():
+    import pytest
+    from fastapi import HTTPException
+    from oddish.core.tags.saved_filters import create_saved_tag_filter_core
+
+    for ids in ([], "task", [None], [""], ["task"] * 5001):
+        session = _FakeSession()
+        with pytest.raises(HTTPException) as exc:
+            _run(create_saved_tag_filter_core(session, org_id="org", owner_user_id="user", name="Selection", filter_ast={"task_ids": ids}))
+        assert exc.value.status_code == 422
+        assert not session.executed

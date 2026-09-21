@@ -609,6 +609,7 @@ test.describe("critical task and trial subtree", () => {
     );
 
     await page.goto("/tasks");
+    await expect(page.getByRole("combobox", { name: "Task view" })).toHaveValue("cards");
     const taskLink = page.getByRole("link", { name: "P1 snapshot task" });
     await expect(taskLink).toBeVisible();
 

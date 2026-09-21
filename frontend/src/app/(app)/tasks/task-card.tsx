@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { ExternalLink, GitPullRequest } from "lucide-react";
-import { useSWRConfig } from "swr";
 import { Badge, badgeVariants } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -29,12 +29,7 @@ import {
 } from "@/lib/status-config";
 import type { TaskBrowseItem } from "@/lib/types";
 
-import {
-  isBrowseTaskOpen,
-  taskOpenFromBrowse,
-  taskOpenKey,
-  type TaskOpenResource,
-} from "@/lib/task-open-resource";
+import { TaskBrowseLink } from "./task-browse-link";
 import {
   cn,
   formatRelativeTime,
@@ -42,6 +37,7 @@ import {
   prBadge,
   taskPrUrl,
 } from "@/lib/utils";
+import { QA_OUTCOME_OPTIONS } from "@/lib/tasks-filters";
 import { useSelection } from "./selection-context";
 
 function ExperimentsCell({ task }: { task: TaskBrowseItem }) {
@@ -83,45 +79,28 @@ function TrajectorySummary({ task }: { task: TaskBrowseItem }) {
   );
 }
 
-// One chip per customer the task is recorded as sent to, from the metadata
-// import (history) and finalized deliveries. Hover lists each batch. Nothing
-// renders when there is no record: the import's coverage is partial, so an
-// absent record is not a claim the task was never sent.
-function DeliveredToChips({ task }: { task: TaskBrowseItem }) {
-  const records = task.deliveries ?? [];
-  if (records.length === 0) return null;
-  const byCustomer = new Map<string, typeof records>();
-  for (const record of records) {
-    const list = byCustomer.get(record.customer) ?? [];
-    list.push(record);
-    byCustomer.set(record.customer, list);
-  }
+// Show complete imported/finalized history and active membership even when
+// the browse filter targets one lab. Missing records do not prove a task was
+// never sent: imported history can be incomplete.
+export function TaskDeliveryHistory({ task }: { task: TaskBrowseItem }) {
+  const params = useSearchParams();
+  const records = [...(task.active_deliveries ?? []), ...(task.deliveries ?? [])];
+  if (!records.length) return <span className="text-muted-foreground text-xs">No delivery recorded</span>;
   return (
-    <div className="flex flex-wrap items-center gap-1">
-      <span className="text-muted-foreground text-[11px] tracking-wide uppercase">
-        Delivered to
-      </span>
-      {[...byCustomer.entries()].map(([customer, list]) => (
-        <Badge
-          key={customer}
-          variant="outline"
-          className="font-mono text-[10px]"
-          title={list
-            .map(
-              (r) =>
-                `${r.batch ?? "(batch unknown)"}${r.date ? ` · ${r.date}` : ""}${
-                  r.source === "delivery" ? " · Oddish delivery" : ""
-                }`
-            )
-            .join("\n")}
-        >
-          {customer}
-          {list.length > 1 ? (
-            <span className="text-muted-foreground"> ×{list.length}</span>
-          ) : null}
-        </Badge>
-      ))}
-    </div>
+    <details className="text-xs">
+      <summary className="cursor-pointer">
+        {[...new Set(records.map(record => record.status === "active"
+          ? record.delivery_id === params.get("delivery") ? "In this delivery" : `In active batch · ${record.customer}`
+          : `${record.customer} · ${record.source === "history" ? "Recorded" : "Finalized"}`))].join(", ")}
+      </summary>
+      <ul className="mt-2 space-y-1">
+        {records.map((record, index) => <li key={record.delivery_id ?? `${record.customer}-${index}`}>
+          {record.customer} · {record.delivery_id
+            ? <Link className="underline" href={`/deliveries/${encodeURIComponent(record.delivery_id)}`}>{record.batch}</Link>
+            : record.batch ?? "Batch unknown"} · {record.status === "active" ? "Active" : record.date ?? "Date unknown"}
+        </li>)}
+      </ul>
+    </details>
   );
 }
 
@@ -377,19 +356,9 @@ function TrialGraphics({ task }: { task: TaskBrowseItem }) {
 }
 
 export function TaskCard({ task }: { task: TaskBrowseItem }) {
-  const { isSelected, toggle } = useSelection();
-  const { mutate } = useSWRConfig();
+  const { isSelected, toggle, deliveryId } = useSelection();
+  const alreadyAdded = task.active_deliveries?.some(record => record.delivery_id === deliveryId) ?? false;
   const selected = isSelected(task.id);
-
-  function preserveBrowseSnapshot() {
-    const openSnapshot = taskOpenFromBrowse(task);
-    void mutate(
-      taskOpenKey(task.id),
-      (current: TaskOpenResource | undefined) =>
-        current && !isBrowseTaskOpen(current) ? current : openSnapshot,
-      { revalidate: false }
-    );
-  }
 
   return (
     <Card
@@ -401,23 +370,30 @@ export function TaskCard({ task }: { task: TaskBrowseItem }) {
       <CardHeader className="space-y-2 px-5 pt-5 pb-2">
         <div className="flex items-start justify-between gap-3">
           <Checkbox
-            checked={selected}
+            checked={selected || alreadyAdded}
+            disabled={alreadyAdded}
             onCheckedChange={() => toggle(task)}
-            aria-label={`Select ${task.name} for cost total`}
+            aria-label={`Select ${task.name}`}
             className="mt-0.5 shrink-0"
           />
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <Link
-                href={`/tasks/${encodeURIComponent(task.id)}`}
-                onClick={preserveBrowseSnapshot}
+              <TaskBrowseLink
+                task={task}
                 className="text-foreground font-mono text-sm font-semibold transition-colors hover:text-[#5d77a5] dark:hover:text-[#a8b8d2]"
-              >
-                {task.name}
-              </Link>
+              />
               <Badge variant="outline" className="w-fit font-mono text-[11px]">
                 v{task.current_version ?? "—"}
               </Badge>
+              {task.qa_outcome ? <Badge variant="outline">{QA_OUTCOME_OPTIONS.find(option => option.value === task.qa_outcome)?.label}</Badge> : null}
+              {task.author_pinned ? (
+                <Badge
+                  className="w-fit border-transparent bg-[#6f88b4]/20 text-[11px] text-[#3f5a8a] dark:text-[#a8b8d2]"
+                  title="One of your tasks"
+                >
+                  yours
+                </Badge>
+              ) : null}
               {(() => {
                 const meta = task.github_meta;
                 const prUrl = taskPrUrl(task.link, meta);
@@ -526,7 +502,7 @@ export function TaskCard({ task }: { task: TaskBrowseItem }) {
             ))}
           </div>
         ) : null}
-        <DeliveredToChips task={task} />
+        <TaskDeliveryHistory task={task} />
         <div className="space-y-1.5">
           <div className="flex items-baseline justify-between gap-3">
             <div className="text-muted-foreground text-[11px] tracking-wide uppercase">

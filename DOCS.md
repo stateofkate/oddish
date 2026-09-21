@@ -372,7 +372,8 @@ Options
 ## List Tasks
 
 Use `oddish ls` to browse uploaded tasks with their current version, trial
-counts, reward summary, tags, last run time, and linked experiments. "Current
+counts, reward summary, tags, last run time, linked experiments, and recorded
+delivery labs. "Current
 version" is the task's user-selected default — not necessarily the
 highest-numbered one — and the trial counts cover that version's normal
 evaluation trials (not superseded rows, probes, or the platform's QA/audit
@@ -402,6 +403,54 @@ These are only the most common filters — `oddish ls` mirrors the dashboard's
 full task-browser filter set (status, date, model, trial-metric, tool-usage,
 and more, some 70 options in all). Run `oddish ls --help` for the complete
 list rather than relying on this page.
+
+### Find tasks for delivery
+
+The same lab, QA, author, and numeric filters used by the Tasks page are
+available in `oddish ls`. Lab names can be mapped customers or imported labels.
+Repeated `--delivered-to` values match any listed lab; `--not-delivered-to`
+excludes tasks with a record for any listed lab. `--never-delivered` means no
+record exists; `--has-delivery` requires a record. Missing history does not
+prove that a task was never shipped.
+
+```bash
+oddish ls --filter-options
+oddish ls --delivered-to xai --not-delivered-to GDM --delivery-history
+oddish ls --category swe --qa-outcome accepted --steps-p50-min 100 --agent-count-min 3
+oddish ls --author me --sort total_trials_desc
+oddish ls --pin-author me --trial-finished-within 7d
+oddish ls --not-delivered-to GDM --count
+```
+
+`--delivery-history` shows lab, batch, date, and source for each task on the
+page. `--json` preserves the complete browse response, including `deliveries`.
+`--filter-options` lists available labs, categories, and trial filter values;
+it cannot be combined with task filters. `--count` prints the total matching
+count without fetching task details. `--author me` limits results to the API
+key creator's tasks; `--pin-author me` puts those tasks first. Author resolution
+requires the hosted API. `--trial-finished-after` / `--trial-finished-before`
+accept exact timestamps; `--trial-finished-within` and `--created-within` accept
+24h, 7d, 30d, or 90d. `--steps-p50-max` bounds median steps from above.
+
+To select every match rather than one page, save `--ids --json` and pass it to
+one delivery mutation. `--exclude-delivery-id` accepts the full ID from
+`oddish delivery list`, and prevents selecting existing members.
+
+```bash
+oddish ls --not-delivered-to GDM --qa-outcome accepted --ids --json > selection.json
+oddish delivery create september-batch --customer GDM --tasks-file selection.json --json
+# Or add the saved selection to an existing delivery:
+oddish delivery add september-batch --tasks-file selection.json --json
+```
+
+`--ids` ignores pagination and returns up to 5,000 IDs. JSON includes
+`truncated`; create/add reject a truncated export before sending any request.
+Narrow the filters when it is true. Without `--json`, `--ids` prints one ID per
+line and exits with an error without printing IDs if the set exceeds 5,000.
+The file format is the unmodified `--ids --json` response, not a text ID list.
+Create/add deduplicate repeated IDs and send the whole selection in one
+transaction, so a rejected task cannot leave a partially populated delivery.
+`--ids`, `--count`, and `--filter-options` are mutually exclusive.
 
 ## Export QA Feedback
 
@@ -1008,8 +1057,9 @@ always apply to the current default version of the task. A new version
 makes the checks red again.
 
 Customers are records of their own. The dashboard's create dialog offers
-a dropdown of existing customers and a form for a new one. `POST
-/customers` creates a customer directly; a duplicate name is a conflict.
+a dropdown of existing customers and a form for a new one. `oddish delivery customers` lists their IDs and names;
+`oddish delivery create-customer "New Lab"` creates one directly. Both accept
+`--json`. A duplicate name is a conflict.
 
 The dashboard board can filter its task list: all tasks, blocked tasks
 (a failing check or an open defect), tasks awaiting sign-off (every
@@ -1077,10 +1127,11 @@ oddish delivery import-receipts
 
 Commands
 
+- `customers` / `create-customer NAME` - List or create customers (`--json` supported)
 - `list` - List deliveries
 - `create NAME` - Create a delivery. `--customer` is required: an existing
   customer's name or id, or a new name (the server creates the customer).
-  Also `--description`, `-t/--task`
+  Also `--description`, `-t/--task`, and `--tasks-file` for a saved selection.
 - `show DELIVERY` - Render the readiness board (`--json` for the full matrix)
 - `ready DELIVERY` - Exit 0 if every check passes, 1 with the blockers listed
 - `add DELIVERY TASKS...` / `remove DELIVERY TASK` - Manage membership
@@ -1198,3 +1249,22 @@ it from PyPI. `oddish version --check` prints the Homebrew check command.
 The Homebrew package includes CLI and shared client helpers, not the Oddish
 server, database, or worker implementations. Releases are maintained in
 https://github.com/abundant-ai/homebrew-tap.
+
+### Share a task selection
+
+Save the exact IDs of the current matching tasks for your organization, or open
+an existing selection from the Tasks page. This uses the hosted saved-view API:
+
+```bash
+oddish ls --qa-outcome rejected --steps-p50-min 100 --share-selection "Long horizon needs work" --json
+oddish ls --selection-id SAVED_ID --json
+oddish ls --selection-id SAVED_ID --ids --json > selection.json
+oddish delivery add BATCH --tasks-file selection.json
+```
+
+Sharing requires 1–5,000 tasks and refuses truncated results before creating a
+selection. The selected IDs stay fixed; their current task versions and metadata
+can change. A saved filter view instead reevaluates its criteria whenever opened.
+`rejected` is the UI's “Needs work”; `failed` means the QA run failed, and `outdated`
+means the current task version needs a new review. Median steps include unsuccessful
+agent trials with recorded steps; selecting a model does not recalculate that median.

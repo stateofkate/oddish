@@ -400,9 +400,12 @@ export interface TaskBrowseDelivery {
   batch?: string | null;
   date?: string | null;
   source: "history" | "delivery";
+  delivery_id?: string | null;
+  status?: "active" | "finalized" | null;
 }
 
 export interface TaskBrowseItem {
+  qa_outcome?: "accepted" | "rejected" | "outdated" | "unreviewed" | "running" | "failed";
   id: string;
   name: string;
   current_version?: number | null;
@@ -428,9 +431,12 @@ export interface TaskBrowseItem {
   steps_p50?: number | null;
   steps_p75?: number | null;
   agent_count?: number;
+  // Matches the browse request's pin_author (the browser's "mine first").
+  author_pinned?: boolean;
   // Every customer the task is recorded as sent to; empty is "no record",
   // not "never sent" (history coverage is partial).
   deliveries?: TaskBrowseDelivery[];
+  active_deliveries?: TaskBrowseDelivery[];
   last_run_at?: string | null;
   link?: string | null;
   github_meta?: Record<string, string> | null;
@@ -460,6 +466,13 @@ export interface TaskBrowseResponse {
 // GET /api/tasks/browse?count_only=true — how many tasks match the active
 // filters across every page. Fetched separately from the grid and cached per
 // filter set, so paging never re-runs the count.
+// GET /api/tasks/browse/ids: every matching task id in page order, capped
+// server-side (truncated=true when the set was cut).
+export interface TaskBrowseIdsResponse {
+  ids: string[];
+  truncated: boolean;
+}
+
 export interface TaskBrowseCountResponse {
   total: number;
 }

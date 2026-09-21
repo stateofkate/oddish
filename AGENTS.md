@@ -73,6 +73,32 @@ references is evidence to investigate, not proof that a file is useless.
   application code. If use remains unclear, retain the file and state the open
   question rather than silently classifying it as dead.
 
+## CLI delivery selection
+
+`oddish ls` forwards lab, category, QA, summary-threshold, date, and author
+filters to `/tasks/browse`; it does not implement eligibility or query the DB.
+`--count` and `--ids` use the existing count/ID-only modes; the latter preserves
+`truncated` in JSON. `delivery create/add --tasks-file` validates that complete
+JSON selection locally and submits at most 5,000 deduplicated IDs atomically.
+The standalone browse route also exposes lab/category/summary filters, ID-only
+responses, and `/tasks/browse/facets` using the shared core. Author resolution
+remains hosted-only. CLI shipment history is rendered from browse `deliveries`,
+with no extra request per task; `delivery history` retains its QA-trail meaning.
+
+Task browse `selection_id` references a saved filter whose `filter_ast.task_ids`
+contains an exact set (1–5,000 IDs). The SQL subquery expands authorized IDs once, enforcing the
+organization and private-owner/ORG visibility rules in page, count and IDs modes;
+no new table or per-row lookup is needed. The hosted save endpoint and CLI
+`ls --share-selection` use the existing saved-filter writer. The standalone
+browser can read ORG selections in its local organization scope.
+
+Browse `deliveries` remains imported/finalized history for older clients;
+`active_deliveries` is additive and carries active batch membership. Both load in
+the existing union query. Records now include `delivery_id` and `status`. Task
+rows stay visible in delivery picking; only select-all IDs excludes existing
+members. Table columns, lab context and card/table presentation live in the URL
+without changing browse request keys unless an actual filter changes.
+
 ## Repository Layout
 
 ```text
@@ -1056,9 +1082,11 @@ soft-deleted trials, and `combine:` copies. Any mutation that changes that
 population or its metrics must call
 `refresh_task_browse_summaries` inside the same transaction. This includes
 trial create/import, start/reset, completion, cancellation, retry/supersede,
-scoped deletion, and default-version selection. Advanced aggregate filters,
-comparisons, and non-default aggregate sorts intentionally retain their
-on-demand trial aggregation path.
+scoped deletion, and default-version selection. Trial-count thresholds,
+including OR-groups, use the same current-version
+summary as the cards and do not join the on-demand trial aggregate. Advanced
+aggregate filters, comparisons, and non-default aggregate sorts intentionally
+retain their on-demand trial aggregation path.
 
 The pre-trial audit enqueue claims `pre_trial_status IS NULL` with one conditional
 UPDATE, in the same transaction as audit creation. It must not upgrade the version
@@ -2413,6 +2441,26 @@ existing previews only when their next preparation or operator sync runs.
 
 ### Preview Branch Preserved Rows
 
+`preview_seed.py` samples `task_delivery_history` for sampled tasks together with
+its source records, import receipts, and mapped customers. It reconciles imported
+task membership but retains source evidence and customers, which preview-owned
+work may reference. `find_last_deploys.migrations_matches` includes seed-loader
+changes so reused branches receive changed sample coverage without a schema reset.
+
+After migrations, sample updates, and preserved-row restoration,
+`prepare_preview_database.sh` runs `refresh_browse_summaries.py` on both new and
+reused previews. Raw seed inserts bypass the trial-write hooks, so
+`backend.preview_seed.refresh_browse_summaries` recalculates stored browse and
+per-model statistics from the preview's own trials using the core refresh
+function, in transactions of 200 task versions. Both metric refreshers acquire
+their sorted per-version advisory locks in one SQL statement per batch, retaining
+the same transaction lifetime and lock keys without per-version round trips.
+Production aggregate totals
+must not be copied: production contains trials outside the preview sample.
+This also repairs existing previews; browse requests retain their stored-summary
+read path. Summary repair overlaps approval sync and secret publication, and
+all three must succeed before deployment.
+
 Each preview branch database holds a schema named `preview_preserved` with one
 table, `rows`. It keeps the API keys that a person creates from that preview
 dashboard, and the `organizations` and `users` rows those keys need.
@@ -2517,6 +2565,24 @@ attach response bodies, request payloads, credentials, or SQL parameter values.
 ---
 
 ## `frontend/` — Next.js Dashboard
+
+Delivery create/add requests accept up to 5,000 task IDs or names, matching the
+browser selection limit. Each request validates the entire set and inserts its
+memberships in one transaction; a missing task rolls back the whole request.
+Clients can still send smaller batches. The task picker sends its selection in
+one request. Membership lookup returns existing requested IDs and maximum sort
+order in one aggregate query; inserts remain SQLAlchemy batches. Browse count
+requests skip pin-author resolution, and identical author/pin-author values
+share one attribution lookup.
+
+Task browse exposes `qa_outcome` and accepts `qa_outcomes` (CSV in the hosted
+route; a sequence in core). Accepted/rejected require a completed verdict for
+`current_version_id`, reusing `VERDICT_VERSION_SQL`; an older verdict is outdated.
+This projection does not claim delivery evidence/sign-off readiness. It adds no
+SQL round trip. `exclude_delivery_id` excludes live memberships within the
+request's organization for page, count, and ID selection. The task proxy maps
+its `delivery` context to that predicate; saved filters never persist the
+context, and applying them preserves the current destination.
 
 Task and experiment drawers share the `experiment.trial-drawer` layout saved
 through `GET/PUT /users/me/ui-layouts/{layout_key}` (same `/api/` proxy path).

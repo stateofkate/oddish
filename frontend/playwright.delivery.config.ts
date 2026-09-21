@@ -2,7 +2,7 @@ import { defineConfig, devices } from "@playwright/test";
 const port = process.env.DELIVERY_TEST_PORT ?? "3109";
 export default defineConfig({
   testDir: "e2e",
-  testMatch: "delivery-refresh.spec.ts",
+  testMatch: ["delivery-refresh.spec.ts", "tasks-picker.spec.ts"],
   workers: 1,
   reporter: "list",
   use: {
@@ -11,9 +11,10 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
   webServer: {
-    command: `node node_modules/next/dist/bin/next dev e2e/delivery-app --webpack -p ${port}`,
+    command: `node node_modules/next/dist/bin/next build e2e/delivery-app --webpack && node node_modules/next/dist/bin/next start e2e/delivery-app -p ${port}`,
     url: `http://localhost:${port}`,
     reuseExistingServer: false,
-    timeout: 120000,
+    // CI's cold production build needs the same budget as the file fixtures.
+    timeout: 300000,
   },
 });

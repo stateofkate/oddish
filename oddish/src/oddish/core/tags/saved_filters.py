@@ -10,7 +10,20 @@ from __future__ import annotations
 import json
 import uuid
 
+from fastapi import HTTPException
 from sqlalchemy import text
+
+
+def _normalize_selection(filter_ast: dict) -> dict:
+    """Validate exact selections at both saved-filter write boundaries."""
+    if "task_ids" in filter_ast:
+        ids = filter_ast["task_ids"]
+        if not isinstance(ids, list) or not 1 <= len(ids) <= 5000 or any(
+            not isinstance(task_id, str) or not task_id.strip() for task_id in ids
+        ):
+            raise HTTPException(status_code=422, detail="A selection requires 1–5000 task IDs.")
+        filter_ast = {"v": 2, "task_ids": list(dict.fromkeys(ids))}
+    return filter_ast
 
 
 async def list_saved_tag_filters_core(
@@ -62,6 +75,7 @@ async def create_saved_tag_filter_core(
     filter_ast: dict,
     visibility: str = "PRIVATE",
 ) -> str:
+    filter_ast = _normalize_selection(filter_ast)
     new_id = str(uuid.uuid4())[:16]
     await session.execute(
         text(
@@ -105,7 +119,7 @@ async def update_saved_tag_filter_core(
         if k not in columns:
             raise ValueError(f"unknown saved_tag_filter column: {k}")
         if k == "filter_ast":
-            params[k] = json.dumps(v)
+            params[k] = json.dumps(_normalize_selection(v))
             set_pairs.append(f"{k} = CAST(:{k} AS JSONB)")
         else:
             params[k] = v

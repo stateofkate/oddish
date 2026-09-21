@@ -7,31 +7,14 @@ import { useAuth } from "@clerk/nextjs";
 import useSWR from "swr";
 import { Package, Plus } from "lucide-react";
 
-import { apiFetch, fetcher } from "@/lib/api";
+import { fetcher } from "@/lib/api";
 import { isOrgAdminRole } from "@/lib/org-roles";
-import type { Customer, DeliveryListItem } from "@/lib/types";
-import { CustomerCreateDialog } from "@/components/customer-create-dialog";
+import type { DeliveryListItem } from "@/lib/types";
+import { DeliveryCreateDialog } from "@/components/delivery-create-dialog";
 import { DeliveryStatusBadge } from "@/components/delivery-status";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Label } from "@/components/ui/label";
 import {
   Table,
   TableBody,
@@ -56,49 +39,6 @@ export function DeliveriesClient({
   );
 
   const [createOpen, setCreateOpen] = useState(false);
-  const [customerOpen, setCustomerOpen] = useState(false);
-  const [name, setName] = useState("");
-  const [customerId, setCustomerId] = useState("");
-  const [creating, setCreating] = useState(false);
-  const [createError, setCreateError] = useState<string | null>(null);
-  const { data: customers, mutate: mutateCustomers } = useSWR<Customer[]>(
-    createOpen || customerOpen ? "/api/customers" : null,
-    fetcher
-  );
-
-  const createDelivery = async () => {
-    setCreating(true);
-    setCreateError(null);
-    try {
-      const res = await apiFetch("/api/deliveries", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: name.trim(),
-          customer: customerId,
-        }),
-      });
-      const payload = (await res.json().catch(() => null)) as {
-        id?: string;
-        detail?: string;
-        error?: string;
-      } | null;
-      if (!res.ok || !payload?.id) {
-        throw new Error(
-          payload?.detail || payload?.error || `Create failed (${res.status})`
-        );
-      }
-      setCreateOpen(false);
-      setName("");
-      setCustomerId("");
-      void mutate();
-      router.push(`/deliveries/${payload.id}`);
-    } catch (err) {
-      setCreateError(err instanceof Error ? err.message : "Create failed");
-    } finally {
-      setCreating(false);
-    }
-  };
 
   return (
     <Card>
@@ -108,84 +48,14 @@ export function DeliveriesClient({
           Deliveries
         </CardTitle>
         {isAdmin && (
-          <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setCustomerOpen(true)}
-            >
-              <Plus className="mr-1 h-4 w-4" />
-              New customer
-            </Button>
-            <CustomerCreateDialog
-              open={customerOpen}
-              onOpenChange={setCustomerOpen}
-              onCreated={(customer) => {
-                void mutateCustomers();
-                setCustomerId(customer.id);
-              }}
-            />
-            <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-              <DialogTrigger asChild>
-                <Button size="sm">
-                  <Plus className="mr-1 h-4 w-4" />
-                  New delivery
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>New delivery</DialogTitle>
-                </DialogHeader>
-                <div className="space-y-3">
-                  <div className="space-y-1">
-                    <Label htmlFor="delivery-name">Name</Label>
-                    <Input
-                      id="delivery-name"
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      placeholder="e.g. August batch"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label htmlFor="delivery-customer">Customer</Label>
-                    <Select
-                      value={customerId}
-                      onValueChange={(value) => {
-                        if (value === "__new__") {
-                          setCustomerOpen(true);
-                        } else {
-                          setCustomerId(value);
-                        }
-                      }}
-                    >
-                      <SelectTrigger id="delivery-customer">
-                        <SelectValue placeholder="Select a customer" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {(customers ?? []).map((entry) => (
-                          <SelectItem key={entry.id} value={entry.id}>
-                            {entry.name}
-                          </SelectItem>
-                        ))}
-                        <SelectItem value="__new__">New customer…</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  {createError && (
-                    <p className="text-destructive text-sm">{createError}</p>
-                  )}
-                </div>
-                <DialogFooter>
-                  <Button
-                    onClick={() => void createDelivery()}
-                    disabled={creating || !name.trim() || !customerId}
-                  >
-                    {creating ? "Creating…" : "Create"}
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
-          </div>
+          <>
+            <Button size="sm" onClick={() => setCreateOpen(true)}><Plus className="mr-1 h-4 w-4" />New delivery</Button>
+            {createOpen ? <DeliveryCreateDialog onClose={() => setCreateOpen(false)} onCreated={delivery => {
+              setCreateOpen(false);
+              void mutate();
+              router.push(`/deliveries/${delivery.id}`);
+            }} /> : null}
+          </>
         )}
       </CardHeader>
       <CardContent>

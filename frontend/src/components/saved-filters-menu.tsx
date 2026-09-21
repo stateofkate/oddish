@@ -34,6 +34,7 @@ interface SavedFilterListResponse {
 // have no `v` and only carry `{ all, any, none }` tag ids.
 type SavedBlobV2 = {
   v: 2;
+  task_ids?: string[];
   q?: string;
   params?: Record<string, string>;
   tags?: { all?: string[]; any?: string[]; none?: string[] };
@@ -43,7 +44,7 @@ type LegacyBlob = { all?: string[]; any?: string[]; none?: string[] };
 const TAG_PARAM_KEYS = ["tags", "tags_any", "tags_none"] as const;
 // Snapshot every browse param (filters + extra backend keys) except tags,
 // which are persisted separately as stable ids.
-const STRUCTURED_KEYS = BROWSE_FORWARD_KEYS.filter(
+const STRUCTURED_KEYS = [...BROWSE_FORWARD_KEYS, "lab", "view", "columns"].filter(
   (k) => !TAG_PARAM_KEYS.includes(k as (typeof TAG_PARAM_KEYS)[number]),
 );
 
@@ -61,16 +62,19 @@ function csv(value: string | null): string[] {
  * config (search text + structured filters + tags). Tags persist as stable ids
  * (so they survive renames/merges); ids are resolved both ways via the tag list.
  */
-export function SavedFiltersMenu() {
+export function SavedFiltersMenu({ selectedIds }: { selectedIds?: string[] } = {}) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
-  const [visibility, setVisibility] = useState<"PRIVATE" | "ORG">("PRIVATE");
+  const [visibility, setVisibility] = useState<"PRIVATE" | "ORG">(
+    selectedIds ? "ORG" : "PRIVATE"
+  );
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [selectionLink, setSelectionLink] = useState("");
 
   const {
     data: filters,
@@ -78,12 +82,12 @@ export function SavedFiltersMenu() {
     isLoading,
     error: loadError,
   } = useSWR<SavedFilterListResponse>(
-    open ? "/api/tag-filters" : null,
+    open && !selectedIds ? "/api/tag-filters" : null,
     fetcher,
     { revalidateOnFocus: false },
   );
   const { data: tagData } = useSWR<TagListResponse>(
-    open ? "/api/tags" : null,
+    open && !selectedIds ? "/api/tags" : null,
     fetcher,
     { revalidateOnFocus: false },
   );
@@ -107,6 +111,7 @@ export function SavedFiltersMenu() {
     none: csv(searchParams.get("tags_none")),
   };
   const hasActive =
+    Boolean(selectedIds?.length) ||
     currentQ.length > 0 ||
     Object.keys(currentParams).length > 0 ||
     currentTags.all.length > 0 ||
@@ -116,6 +121,8 @@ export function SavedFiltersMenu() {
   function applyFilter(filter: SavedFilterItem) {
     const ast = filter.filter_ast as SavedBlobV2 & LegacyBlob;
     const params = new URLSearchParams();
+    const delivery = searchParams.get("delivery");
+    if (delivery) params.set("delivery", delivery);
     const setTags = (
       tagIds: { all?: string[]; any?: string[]; none?: string[] } | undefined,
     ) => {
@@ -127,7 +134,9 @@ export function SavedFiltersMenu() {
       if (none.length) params.set("tags_none", none.join(","));
     };
 
-    if (ast.v === 2) {
+    if (ast.task_ids) {
+      params.set("selection_id", filter.id);
+    } else if (ast.v === 2) {
       if (ast.q) params.set("q", ast.q);
       for (const [key, value] of Object.entries(ast.params ?? {})) {
         params.set(key, String(value));
@@ -146,36 +155,51 @@ export function SavedFiltersMenu() {
     if (!name.trim() || !hasActive) return;
     setSaving(true);
     setError(null);
-    const filterAst: SavedBlobV2 = {
-      v: 2,
-      ...(currentQ ? { q: currentQ } : {}),
-      ...(Object.keys(currentParams).length ? { params: currentParams } : {}),
-      tags: {
-        all: toIds(currentTags.all),
-        any: toIds(currentTags.any),
-        none: toIds(currentTags.none),
-      },
-    };
-    const res = await apiFetch("/api/tag-filters", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: name.trim(),
-        visibility,
-        filter_ast: filterAst,
-      }),
-    });
-    setSaving(false);
-    if (!res.ok) {
-      const body = (await res.json().catch(() => null)) as {
-        detail?: string;
-        error?: string;
-      } | null;
-      setError(body?.detail ?? body?.error ?? "Could not save filter.");
-      return;
+    const filterAst: SavedBlobV2 = selectedIds
+      ? { v: 2, task_ids: selectedIds }
+      : {
+          v: 2,
+          ...(currentQ ? { q: currentQ } : {}),
+          ...(Object.keys(currentParams).length
+            ? { params: currentParams }
+            : {}),
+          tags: {
+            all: toIds(currentTags.all),
+            any: toIds(currentTags.any),
+            none: toIds(currentTags.none),
+          },
+        };
+    try {
+      const res = await apiFetch("/api/tag-filters", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: name.trim(),
+          visibility,
+          filter_ast: filterAst,
+        }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as {
+          detail?: string;
+          error?: string;
+        } | null;
+        setError(body?.detail ?? body?.error ?? "Could not save filter.");
+        return;
+      }
+      if (selectedIds) {
+        const saved = (await res.json()) as SavedFilterItem;
+        const url = new URL(window.location.href);
+        url.search = new URLSearchParams({ selection_id: saved.id }).toString();
+        setSelectionLink(url.toString());
+      }
+      setName("");
+      if (!selectedIds) await mutate();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not save view.");
+    } finally {
+      setSaving(false);
     }
-    setName("");
-    await mutate();
   }
 
   const items = filters?.items ?? [];
@@ -235,7 +259,7 @@ export function SavedFiltersMenu() {
                 fill={tagColor(f.name)}
                 fillOpacity={0.25}
               />
-              <span className="truncate">{f.name}</span>
+              <span className="truncate">{f.name}</span>{Array.isArray(f.filter_ast.task_ids) ? <span className="text-muted-foreground text-xs">Selection</span> : null}
             </button>
             {deletable ? (
               <button
@@ -258,17 +282,15 @@ export function SavedFiltersMenu() {
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
-          variant="ghost"
-          size="icon"
-          className="text-muted-foreground hover:text-foreground h-8 w-8"
-          aria-label="Saved filters"
-          title="Saved filters"
+          variant="outline"
+          aria-label={selectedIds ? "Share selection" : "Saved views"}
         >
-          <Bookmark className="h-4 w-4" />
+          <Bookmark className="mr-2 h-4 w-4" />
+          {selectedIds ? "Share selection" : "Saved views"}
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="z-30 w-72 p-0">
-        {isLoading ? (
+      <PopoverContent align="end" className="w-80 p-0">
+        {selectedIds ? null : isLoading ? (
           <p className="text-muted-foreground px-3 py-2 text-xs">
             Loading filters…
           </p>
@@ -282,15 +304,18 @@ export function SavedFiltersMenu() {
           </p>
         ) : (
           <div className="max-h-64 overflow-y-auto pb-1">
-            {renderSection("Org filters", orgFilters, false)}
-            {renderSection("My filters", myFilters, true)}
+            {renderSection("Organization views", orgFilters, false)}
+            {renderSection("My views", myFilters, true)}
           </div>
         )}
         <div className="space-y-2 border-t p-3">
-          {hasActive ? (
+          {selectionLink ? <div className="space-y-2"><a className="text-sm underline" href={selectionLink}>Open shared selection</a><Input aria-label="Shared selection link" readOnly value={selectionLink} onFocus={e => e.target.select()} /><Button size="sm" onClick={async () => { try { await navigator.clipboard.writeText(selectionLink); } catch { setError("Select and copy the link above."); } }}>Copy selection link</Button></div> : null}
+          {hasActive && !selectionLink ? (
             <>
               <p className="text-muted-foreground text-[11px]">
-                Save the current filters as a named view.
+                {selectedIds
+                  ? `Share these ${selectedIds.length.toLocaleString()} tasks with your organization.`
+                  : "Save the current filters as a named view."}
               </p>
               <Input
                 value={name}
@@ -298,13 +323,13 @@ export function SavedFiltersMenu() {
                   setName(event.target.value);
                   setError(null);
                 }}
-                placeholder="Filter name"
+                placeholder={selectedIds ? "Selection name" : "View name"}
                 className="h-7 text-xs"
-                aria-label="Filter name"
+                aria-label={selectedIds ? "Selection name" : "View name"}
               />
               <div className="flex items-center justify-between gap-2">
                 <div className="flex gap-1">
-                  {(["PRIVATE", "ORG"] as const).map((v) => (
+                  {(selectedIds ? ["ORG"] as const : ["PRIVATE", "ORG"] as const).map((v) => (
                     <button
                       key={v}
                       type="button"
@@ -329,15 +354,13 @@ export function SavedFiltersMenu() {
                   {saving ? "Saving…" : "Save"}
                 </Button>
               </div>
-              {error ? (
-                <p className="text-destructive text-xs">{error}</p>
-              ) : null}
             </>
-          ) : (
+          ) : selectionLink ? null : (
             <p className="text-muted-foreground text-xs">
               Apply some filters to save them as a view.
             </p>
           )}
+          {error ? <p role="alert" className="text-destructive text-xs">{error}</p> : null}
         </div>
       </PopoverContent>
     </Popover>

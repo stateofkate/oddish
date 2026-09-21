@@ -276,6 +276,7 @@ def _run_prepare(
     rebuild=False,
     want_summary=False,
     approval_exit=0,
+    summary_exit=0,
     expect_exit=0,
     require_overlap=False,
 ):
@@ -327,7 +328,8 @@ def _run_prepare(
     fake_uv.write_text(
         f'#!/usr/bin/env bash\n'
         f'case "$*" in *sync_org_approvals.py*) {overlap_body}echo approvals >> "{order}"; exit {approval_exit};; '
-        f'*) echo seed >> "{order}";; esac\n'
+        f'*refresh_browse_summaries.py*) echo summaries >> "{order}"; exit {summary_exit};; '
+        f'*seed_preview_db.py*) echo seed >> "{order}";; *) exit 9;; esac\n'
     )
     fake_uv.chmod(0o755)
 
@@ -376,7 +378,7 @@ def test_stop_fold_skipped_on_migrations_only():
     assert "seed" in order
     # The supabase step rotates the branch DB password on every run, so the
     # rotated value must reach the Modal secret even without a backend deploy.
-    assert set(order[-2:]) == {"approvals", "publish"}
+    assert set(order[-3:]) == {"approvals", "summaries", "publish"}
 
 
 @needs_bash
@@ -385,8 +387,8 @@ def test_created_branch_seeds_and_publishes_without_flags():
         {"DEPLOY_BACKEND": "false", "RUN_MIGRATIONS": "false"},
         branch_was_created="true",
     )
-    assert order[:-2] == ["supabase", "migrate", "seed"]
-    assert set(order[-2:]) == {"approvals", "publish"}
+    assert order[:-3] == ["supabase", "migrate", "seed"]
+    assert set(order[-3:]) == {"approvals", "summaries", "publish"}
 
 
 @needs_bash
@@ -395,15 +397,15 @@ def test_no_work_when_all_flags_false():
     # step, so the secret publish must still follow -- skipping it left the
     # running backend with a dead connection string on frontend-only pushes.
     order = _run_prepare({"DEPLOY_BACKEND": "false", "RUN_MIGRATIONS": "false"})
-    assert order[:-2] == ["supabase"]
-    assert set(order[-2:]) == {"approvals", "publish"}
+    assert order[:-3] == ["supabase"]
+    assert set(order[-3:]) == {"approvals", "summaries", "publish"}
 
 
 @needs_bash
 def test_full_fanout_order_when_deploy_and_migrations():
     order = _run_prepare({"DEPLOY_BACKEND": "true", "RUN_MIGRATIONS": "true"})
-    assert order[:-2] == ["stop", "supabase", "migrate", "seed"]
-    assert set(order[-2:]) == {"approvals", "publish"}
+    assert order[:-3] == ["stop", "supabase", "migrate", "seed"]
+    assert set(order[-3:]) == {"approvals", "summaries", "publish"}
 
 
 @needs_bash
@@ -477,8 +479,8 @@ def test_rebuild_skips_shell_seed():
         rebuild=True,
         want_summary=True,
     )
-    assert order[:-2] == ["stop", "supabase", "migrate"]
-    assert set(order[-2:]) == {"approvals", "publish"}
+    assert order[:-3] == ["stop", "supabase", "migrate"]
+    assert set(order[-3:]) == {"approvals", "summaries", "publish"}
     assert "seed" not in order
     assert "Schema rebuilt from prod snapshot: `true`" in summary
 
@@ -490,8 +492,8 @@ def test_created_branch_rebuild_skips_shell_seed():
         branch_was_created="true",
         rebuild=True,
     )
-    assert order[:-2] == ["supabase", "migrate"]
-    assert set(order[-2:]) == {"approvals", "publish"}
+    assert order[:-3] == ["supabase", "migrate"]
+    assert set(order[-3:]) == {"approvals", "summaries", "publish"}
 
 
 def _run_compute_plan(extra_env):
@@ -872,7 +874,7 @@ def test_failed_approval_sync_fails_prepare_after_publishing_rotated_credentials
         expect_exit=7,
     )
     assert order[0] == "supabase"
-    assert set(order[-2:]) == {"approvals", "publish"}
+    assert set(order[-3:]) == {"approvals", "summaries", "publish"}
 
 
 @needs_bash
@@ -881,4 +883,15 @@ def test_approval_sync_and_credential_publication_overlap():
         {"DEPLOY_BACKEND": "false", "RUN_MIGRATIONS": "false"},
         require_overlap=True,
     )
-    assert set(order[-2:]) == {"approvals", "publish"}
+    assert set(order[-3:]) == {"approvals", "summaries", "publish"}
+
+
+@needs_bash
+def test_failed_summary_refresh_fails_prepare_after_publishing_credentials():
+    order = _run_prepare(
+        {"DEPLOY_BACKEND": "false", "RUN_MIGRATIONS": "false"},
+        summary_exit=6,
+        expect_exit=6,
+    )
+    assert order[0] == "supabase"
+    assert set(order[-3:]) == {"approvals", "summaries", "publish"}

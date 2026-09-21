@@ -14,13 +14,12 @@ from oddish.filters.trial_metrics import TrialMetricFilter
 
 console = Console()
 
-# Rolling "Created" presets, mirroring the frontend (tasks-filters.ts). The
-# backend has no ``created_within`` param, so the CLI resolves the token to a
-# ``created_after`` bound relative to now — the same way the UI loader does.
-_CREATED_WITHIN = {
+# Rolling date presets resolve to lower bounds, just as in the Tasks UI.
+_ROLLING_WINDOWS = {
     "24h": timedelta(hours=24),
     "7d": timedelta(days=7),
     "30d": timedelta(days=30),
+    "90d": timedelta(days=90),
 }
 
 
@@ -102,6 +101,108 @@ def ls(
             help="Emit the raw JSON response",
         ),
     ] = False,
+    ids_only: Annotated[
+        bool,
+        typer.Option(
+            "--ids", help="Select all matching IDs (up to 5,000); ignores pagination."
+        ),
+    ] = False,
+    count_only: Annotated[
+        bool,
+        typer.Option(
+            "--count", help="Count all matching tasks without fetching task details."
+        ),
+    ] = False,
+    filter_options: Annotated[
+        bool,
+        typer.Option(
+            "--filter-options",
+            help="List available filter values, including recorded labs and categories.",
+        ),
+    ] = False,
+    delivery_history: Annotated[
+        bool,
+        typer.Option(
+            "--delivery-history",
+            help="Show each task's recorded lab, batch, date, and source.",
+        ),
+    ] = False,
+    delivered_to: Annotated[
+        list[str] | None,
+        typer.Option("--delivered-to", help="Sent to any named lab (repeatable)."),
+    ] = None,
+    not_delivered_to: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--not-delivered-to",
+            help="No delivery record to any named lab (repeatable).",
+        ),
+    ] = None,
+    never_delivered: Annotated[
+        bool | None,
+        typer.Option(
+            "--never-delivered/--has-delivery",
+            help="No delivery records / at least one record; missing history is not proof of no shipment.",
+        ),
+    ] = None,
+    category: Annotated[
+        list[str] | None,
+        typer.Option("--category", help="Imported task category (repeatable)."),
+    ] = None,
+    qa_outcome: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--qa-outcome",
+            help="accepted, rejected, outdated, unreviewed, running, or failed (repeatable).",
+        ),
+    ] = None,
+    selection_id: Annotated[str | None, typer.Option("--selection-id", help="Browse an organization-shared exact task selection.")] = None,
+    share_selection: Annotated[str | None, typer.Option("--share-selection", help="Save all matching task IDs as a named organization-shared selection (hosted API; max 5000).")] = None,
+    exclude_delivery_id: Annotated[
+        str | None,
+        typer.Option(
+            "--exclude-delivery-id", help="Exclude tasks already in this delivery ID."
+        ),
+    ] = None,
+    author: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--author",
+            help="Author email, handle, user ID, or me (repeatable; hosted API).",
+        ),
+    ] = None,
+    pin_author: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--pin-author",
+            help="Put these authors first; use me for mine first (hosted API).",
+        ),
+    ] = None,
+    steps_p50_min: Annotated[
+        int | None,
+        typer.Option("--steps-p50-min", min=0, help="Minimum median trial steps."),
+    ] = None,
+    steps_p50_max: Annotated[
+        int | None,
+        typer.Option("--steps-p50-max", min=0, help="Maximum median trial steps."),
+    ] = None,
+    agent_count_min: Annotated[
+        int | None,
+        typer.Option("--agent-count-min", min=1, help="Minimum distinct agents."),
+    ] = None,
+    trial_finished_after: Annotated[
+        datetime | None, typer.Option("--trial-finished-after")
+    ] = None,
+    trial_finished_before: Annotated[
+        datetime | None, typer.Option("--trial-finished-before")
+    ] = None,
+    trial_finished_within: Annotated[
+        str | None,
+        typer.Option(
+            "--trial-finished-within",
+            help="Finished-trial window: 24h, 7d, 30d, or 90d.",
+        ),
+    ] = None,
     tag: Annotated[
         list[str] | None,
         typer.Option(
@@ -229,7 +330,7 @@ def ls(
         str | None,
         typer.Option(
             "--created-within",
-            help="Rolling window: 24h, 7d, or 30d (resolved to created-after).",
+            help="Rolling window: 24h, 7d, 30d, or 90d (resolved to created-after).",
         ),
     ] = None,
     # --- Per-trial numeric ranges ---
@@ -339,7 +440,9 @@ def ls(
             "--sort",
             help=(
                 "avg_score_(asc|desc), total_tokens_(asc|desc), "
-                "runtime_total_(asc|desc), runtime_avg_(asc|desc)."
+                "runtime_total_(asc|desc), runtime_avg_(asc|desc), cost_desc, "
+                "steps_p50_(asc|desc), total_trials_(asc|desc), agent_count_(asc|desc); "
+                "omit for recent activity."
             ),
         ),
     ] = None,
@@ -454,6 +557,20 @@ def ls(
 
     if query:
         params["query"] = query
+    _csv("delivered_to", delivered_to)
+    _csv("not_delivered_to", not_delivered_to)
+    _csv("categories", category)
+    _csv("qa_outcomes", qa_outcome)
+    _csv("author", author)
+    _csv("pin_author", pin_author)
+    _str("exclude_delivery_id", exclude_delivery_id)
+    _str("selection_id", selection_id)
+    _bool("never_delivered", never_delivered)
+    _num("steps_p50_min", steps_p50_min)
+    _num("steps_p50_max", steps_p50_max)
+    _num("agent_count_min", agent_count_min)
+    if trial_finished_before:
+        params["trial_finished_before"] = trial_finished_before.isoformat()
     _csv("tags", tag)
     _csv("tags_any", tag_any)
     _csv("tags_none", not_tag)
@@ -478,18 +595,20 @@ def ls(
     _bool("run_probe", run_probe)
     if created_before:
         params["created_before"] = created_before.isoformat()
-    # A rolling preset owns ``created_after`` (mirrors the UI loader): resolve the
-    # window to (now - delta); an explicit --created-after is used otherwise.
-    if created_within is not None:
-        if created_within not in _CREATED_WITHIN:
-            raise typer.BadParameter(
-                "must be one of: " + ", ".join(_CREATED_WITHIN),
-                param_hint="--created-within",
-            )
-        resolved = datetime.now(timezone.utc) - _CREATED_WITHIN[created_within]
-        params["created_after"] = resolved.isoformat()
-    elif created_after:
-        params["created_after"] = created_after.isoformat()
+    # Rolling presets take precedence over explicit lower bounds, as in the UI.
+    for prefix, window, after in (
+        ("created", created_within, created_after),
+        ("trial_finished", trial_finished_within, trial_finished_after),
+    ):
+        if window is not None:
+            if window not in _ROLLING_WINDOWS:
+                raise typer.BadParameter(
+                    "must be one of: " + ", ".join(_ROLLING_WINDOWS),
+                    param_hint=f"--{prefix.replace('_', '-')}-within",
+                )
+            after = datetime.now(timezone.utc) - _ROLLING_WINDOWS[window]
+        if after:
+            params[f"{prefix}_after"] = after.isoformat()
     _num("min_attempts", min_attempts)
     _num("min_tokens", min_tokens)
     _num("max_tokens", max_tokens)
@@ -534,9 +653,30 @@ def ls(
         params["top_metric"] = top_metric or "reward"
     _str("or_groups", or_groups)
 
+    if share_selection is not None and not share_selection.strip():
+        raise typer.BadParameter("selection name cannot be blank", param_hint="--share-selection")
+    if share_selection and (ids_only or count_only or filter_options or delivery_history):
+        raise typer.BadParameter("--share-selection cannot be combined with other output modes")
+    if sum((ids_only, count_only, filter_options)) > 1:
+        raise typer.BadParameter(
+            "--ids, --count, and --filter-options are mutually exclusive"
+        )
+    if delivery_history and (ids_only or count_only or filter_options):
+        raise typer.BadParameter("--delivery-history requires task rows")
+    if filter_options and params != {"limit": limit, "offset": offset}:
+        raise typer.BadParameter(
+            "--filter-options cannot be combined with task filters"
+        )
+    if ids_only or share_selection:
+        params["ids_only"] = "true"
+    if count_only:
+        params["count_only"] = "true"
+    endpoint = "tasks/browse/facets" if filter_options else "tasks/browse"
     try:
         with httpx.Client(timeout=30.0, headers=get_auth_headers(api_url)) as client:
-            response = client.get(f"{api_url}/tasks/browse", params=params)
+            response = client.get(
+                f"{api_url}/{endpoint}", params={} if filter_options else params
+            )
     except httpx.HTTPError as exc:
         console.print(f"[red]Failed to connect to API:[/red] {exc}")
         raise typer.Exit(1) from exc
@@ -546,8 +686,57 @@ def ls(
         raise typer.Exit(1)
 
     result = response.json()
+    if share_selection:
+        if result.get("truncated") is not False or not result.get("ids"):
+            console.print("[red]Selection must contain 1–5000 tasks. Narrow the filters if truncated.[/red]")
+            raise typer.Exit(1)
+        try:
+            with httpx.Client(timeout=30.0, headers=get_auth_headers(api_url)) as client:
+                saved = client.post(f"{api_url}/tag-filters", json={
+                    "name": share_selection.strip(), "visibility": "ORG",
+                    "filter_ast": {"v": 2, "task_ids": result["ids"]},
+                })
+        except httpx.HTTPError as exc:
+            console.print(f"[red]Could not share selection:[/red] {exc}")
+            raise typer.Exit(1) from exc
+        if saved.status_code not in (200, 201):
+            console.print(f"[red]Could not share selection:[/red] {saved.text}")
+            raise typer.Exit(1)
+        result = saved.json()
+        if json_output:
+            print(json.dumps(result, indent=2))
+        else:
+            console.print(f"Saved {len(result['filter_ast']['task_ids'])} tasks. Open with: oddish ls --selection-id {result['id']}", markup=False)
+        return
     if json_output:
         print(json.dumps(result, indent=2))
+        return
+    if ids_only:
+        if result["truncated"]:
+            console.print(
+                "[red]Selection exceeds 5,000 tasks; narrow the filters or use --json to inspect truncation.[/red]",
+                highlight=False,
+            )
+            raise typer.Exit(1)
+        print("\n".join(result["ids"]))
+        return
+    if count_only:
+        print(result["total"])
+        return
+    if filter_options:
+        table = Table("Filter", "Values")
+        for key, values in result.items():
+            if values:
+                table.add_row(
+                    key,
+                    ", ".join(
+                        f"{value['agent']}:{value['model'] or ''}"
+                        if isinstance(value, dict)
+                        else value
+                        for value in values
+                    ),
+                )
+        console.print(table)
         return
 
     tasks = result.get("items") or []
@@ -564,6 +753,7 @@ def ls(
     table.add_column("Last", no_wrap=True)
     table.add_column("Exp")
     table.add_column("Tags")
+    table.add_column("Sent to")
 
     for task in tasks:
         current_version = task.get("current_version")
@@ -586,9 +776,23 @@ def ls(
             _format_datetime(task.get("last_run_at")),
             _format_experiments(task),
             tag_label or "-",
+            ", ".join(dict.fromkeys(d["customer"] for d in task.get("deliveries", [])))
+            or "No record",
         )
 
     console.print(table)
+    if delivery_history:
+        history = Table("Task", "Lab", "Batch", "Date", "Source")
+        for task in tasks:
+            for record in task.get("deliveries", []):
+                history.add_row(
+                    task["id"],
+                    record["customer"],
+                    record.get("batch") or "-",
+                    record.get("date") or "-",
+                    record["source"],
+                )
+        console.print(history)
     if result.get("has_more"):
         next_offset = offset + limit
         console.print(f"[dim]More available: oddish ls --offset {next_offset}[/dim]")

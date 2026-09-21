@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+
+import pytest
 from unittest.mock import patch
 
 from typer.testing import CliRunner
@@ -89,6 +91,7 @@ def _run(args: list[str], responses: dict[tuple[str, str], object]):
                     "path": path,
                     "data": kwargs.get("data"),
                     "params": kwargs.get("params"),
+                    "json": kwargs.get("json"),
                     "files": {k: v[0] for k, v in files.items()},
                 }
             )
@@ -199,3 +202,70 @@ def test_import_receipts_table_and_json():
         {("GET", "/deliveries/history-imports"): receipts},
     )
     assert json.loads(result.output)[0]["id"] == "r1"
+
+
+@pytest.mark.parametrize("command", ["create", "add"])
+def test_complete_selection_is_one_atomic_request(tmp_path, command):
+    selection = tmp_path / "selection.json"
+    ids = [f"task-{n}" for n in range(5000)]
+    selection.write_text(json.dumps({"ids": ids, "truncated": False}))
+    responses = {
+        ("GET", "/deliveries"): [{"id": "d1", "name": "batch"}],
+        ("POST", "/deliveries/d1/tasks"): {"added": 5000},
+        ("POST", "/deliveries"): {"id": "d1", "name": "batch"},
+    }
+    args = [command, "batch", "--tasks-file", str(selection), "--json"]
+    args += (
+        ["--customer", "xai", "--task", "task-0"] if command == "create" else ["task-0"]
+    )
+    result, calls = _run(args, responses)
+    assert result.exit_code == 0, result.output
+    writes = [call for call in calls if call["method"] == "POST"]
+    assert len(writes) == 1
+    assert writes[0]["json"]["task_ids"] == ids
+    assert json.loads(result.output) == (
+        {"id": "d1", "name": "batch"} if command == "create" else {"added": 5000}
+    )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"ids": ["t1"], "truncated": True},
+        {"ids": ["t1"]},
+        {"ids": "t1", "truncated": False},
+        {"ids": [None], "truncated": False},
+        {"ids": [" "], "truncated": False},
+        {"ids": [str(n) for n in range(5001)], "truncated": False},
+        [],
+    ],
+)
+@pytest.mark.parametrize("command", ["create", "add"])
+def test_invalid_selection_never_creates_partial_delivery(tmp_path, payload, command):
+    selection = tmp_path / "selection.json"
+    selection.write_text(json.dumps(payload))
+    args = [command, "batch", "--tasks-file", str(selection)]
+    if command == "create":
+        args += ["--customer", "xai"]
+    result, calls = _run(args, {})
+    assert result.exit_code != 0
+    assert calls == []
+
+
+def test_add_requires_tasks():
+    result, calls = _run(["add", "batch"], {})
+    assert result.exit_code != 0
+    assert calls == []
+
+
+def test_customer_commands():
+    customer = {"id": "c1", "name": "New Lab"}
+    result, calls = _run(
+        ["create-customer", "New Lab", "--json"], {("POST", "/customers"): customer}
+    )
+    assert result.exit_code == 0, result.output
+    assert calls[0]["json"] == {"name": "New Lab"}
+    assert json.loads(result.output) == customer
+    result, calls = _run(["customers", "--json"], {("GET", "/customers"): [customer]})
+    assert result.exit_code == 0
+    assert json.loads(result.output) == [customer]

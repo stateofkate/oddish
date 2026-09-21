@@ -87,7 +87,7 @@ reference. The main commands are:
   separate deployment flag.
 - `oddish upload` — register task bundles or import off-oddish Harbor trial results; `--overwrite-current-version` corrects the selected version in place.
 - `oddish preflight` — check task name, internet/reward declarations, optional GPU types, and task integrity before `run` or `upload` (pass `--force` there to submit anyway).
-- `oddish ls` / `oddish status` — browse tasks (including model and trajectory-metric filters) and inspect progress. `oddish status <trial_id>` shows single-trial detail; `--detail`/`--versions` show a task's version history and cost rollups; `--queue` shows queue & worker scheduler diagnostics.
+- `oddish ls` / `oddish status` — browse tasks (including lab history, QA, author, model, and trajectory-metric filters; `--filter-options`, `--count`, and `--ids` for selection) and inspect progress. `oddish status <trial_id>` shows single-trial detail; `--detail`/`--versions` show a task's version history and cost rollups; `--queue` shows queue & worker scheduler diagnostics.
 - `oddish logs` — stream a running trial's live transcript and cost estimate (`--follow` to poll until it ends); finished trials are served by `oddish pull` instead.
 - `oddish costs` — billable-spend accounting (org-wide, or per-user with `--user`).
 - `oddish admin concurrency` — inspect, set, or clear operator queue-key concurrency overrides with verified readback.
@@ -100,6 +100,7 @@ reference. The main commands are:
 - `oddish delete` — delete trials against hosted Oddish (admin key); whole-task/experiment deletes are refused for Modal-hosted APIs, and a standalone core server has no delete endpoints at all.
 - `oddish publish` / `oddish unpublish` — toggle public read-only experiment sharing.
 - `oddish backfill-analysis` and `oddish probe` — specialized QA/probe tools.
+- `oddish delivery` — create and manage delivery checklists; `customers` / `create-customer` manage destinations, and `create` / `add --tasks-file` accept a complete `oddish ls --ids --json` selection. `oddish ls --delivery-history` shows recorded shipments. `oddish ls --share-selection NAME` saves matching task IDs for the organization; `--selection-id ID` reopens them.
 - `oddish assign` — assign QA review ownership by task IDs or `--tasks-file`; active delivery boards show the owner.
 - `oddish skill` — print the packaged SKILL.md or install the complete agent skill with its reference files.
 - `oddish version` — print the installed CLI version (`--check` compares with the latest PyPI release). No API key.

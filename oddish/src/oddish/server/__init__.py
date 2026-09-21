@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from datetime import datetime
 import argparse
 import asyncio
 import json
@@ -14,6 +15,7 @@ import uvicorn
 from rich.console import Console
 
 from oddish.core.endpoints.task_panel import get_task_panel_core
+from oddish.core.endpoints.tasks_query import BROWSE_IDS_LIMIT, browse_task_facets_core
 from oddish.core.endpoints import (
     backfill_task_analysis_core,
     browse_experiment_options_core,
@@ -99,6 +101,8 @@ from oddish.schemas import (
     ExperimentOptionsResponse,
     TaskBatchCancelRequest,
     TaskBrowseCountResponse,
+    TaskBrowseIdsResponse,
+    TaskBrowseFacets,
     TaskBrowseResponse,
     ExperimentCombineRequest,
     ExperimentCombineResponse,
@@ -486,7 +490,7 @@ async def list_tasks(
 
 @api.get(
     "/tasks/browse",
-    response_model=TaskBrowseResponse | TaskBrowseCountResponse,
+    response_model=TaskBrowseResponse | TaskBrowseCountResponse | TaskBrowseIdsResponse,
 )
 async def browse_tasks(
     limit: int = Query(25, ge=1, le=100),
@@ -499,7 +503,21 @@ async def browse_tasks(
             "dashboard gets the browser's matching-task count too."
         ),
     ),
+    ids_only: bool = Query(False),
+    delivered_to: str | None = Query(None),
+    not_delivered_to: str | None = Query(None),
+    never_delivered: bool | None = Query(None),
+    categories: str | None = Query(None),
+    exclude_delivery_id: str | None = Query(None),
+    selection_id: str | None = Query(None),
+    steps_p50_min: int | None = Query(None, ge=0),
+    steps_p50_max: int | None = Query(None, ge=0),
+    agent_count_min: int | None = Query(None, ge=1),
+    trial_finished_after: datetime | None = Query(None),
+    trial_finished_before: datetime | None = Query(None),
+    sort: str | None = Query(None),
     query: str | None = None,
+    qa_outcomes: str | None = Query(None),
     tags: str | None = Query(None),
     tags_any: str | None = Query(None),
     tags_none: str | None = Query(None),
@@ -513,7 +531,7 @@ async def browse_tasks(
     tool_names: str | None = Query(None),
     tool_count_mins: str | None = Query(None),
     trial_metric_match: str = Query("any", pattern="^(any|all)$"),
-) -> TaskBrowseResponse | TaskBrowseCountResponse:
+) -> TaskBrowseResponse | TaskBrowseCountResponse | TaskBrowseIdsResponse:
     """Browse selected default task versions with aggregated trial stats."""
     async with get_read_session() as session:
         from oddish.filters.trial_metrics import TrialMetricFilter
@@ -538,7 +556,21 @@ async def browse_tasks(
             limit=limit,
             offset=offset,
             count_only=count_only,
+            ids_only=ids_only and not count_only,
+            delivered_to=_split_tag_csv(delivered_to),
+            not_delivered_to=_split_tag_csv(not_delivered_to),
+            never_delivered=never_delivered,
+            categories=_split_tag_csv(categories),
+            exclude_delivery_id=exclude_delivery_id,
+            selection_id=selection_id,
+            steps_p50_min=steps_p50_min,
+            steps_p50_max=steps_p50_max,
+            agent_count_min=agent_count_min,
+            trial_finished_after=trial_finished_after,
+            trial_finished_before=trial_finished_before,
+            sort=sort,
             query=query,
+            qa_outcomes=_split_tag_csv(qa_outcomes),
             tags_all=_split_tag_csv(tags),
             tags_any=_split_tag_csv(tags_any),
             tags_none=_split_tag_csv(tags_none),
@@ -556,7 +588,19 @@ async def browse_tasks(
         if count_only:
             assert isinstance(result, int)
             return TaskBrowseCountResponse(total=result)
+        if ids_only:
+            assert isinstance(result, list)
+            return TaskBrowseIdsResponse(
+                ids=result[:BROWSE_IDS_LIMIT], truncated=len(result) > BROWSE_IDS_LIMIT
+            )
         return result
+
+
+@api.get("/tasks/browse/facets", response_model=TaskBrowseFacets)
+async def browse_task_facets() -> TaskBrowseFacets:
+    """Available task filter values, including recorded labs and categories."""
+    async with get_read_session() as session:
+        return await browse_task_facets_core(session)
 
 
 @api.get("/tasks/browse/experiment-options", response_model=ExperimentOptionsResponse)
