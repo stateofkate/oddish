@@ -884,7 +884,6 @@ _THUNDER_PUBLIC_ENV_NAMES = {
 }
 
 ENV_VARS = {
-    "UV_LINK_MODE": "copy",
     "ODDISH_MODAL_WORKER_CPU": str(WORKER_CPU),
     "ODDISH_MODAL_WORKER_MEMORY_MB": str(WORKER_MEMORY_MB),
     "ODDISH_MODAL_WORKER_NONPREEMPTIBLE": str(WORKER_NONPREEMPTIBLE).lower(),
@@ -1113,18 +1112,9 @@ if worker_task_bucket_mount is not None:
 
 
 def _build_worker_image(harbor_override: "HarborVariant | None" = None) -> modal.Image:
-    """Build the worker image, optionally pinned to a blessed Harbor variant.
-
-    When *harbor_override* is set, the harbor git source/rev in the copied
-    pyproject(s) is repointed at the variant's commit BEFORE ``uv_sync`` so the
-    WHOLE dependency set resolves against that Harbor (an image-variant bakes its
-    own hermetic Harbor); the variant's Harbor extras (e.g. gke -> k8s +
-    google-cloud) are added to the harbor requirement in the same pre-sync step,
-    since the lean default image does not carry them. With no override this is
-    the default worker image.
-    """
+    """Install shared dependencies before source and deployment-specific settings."""
     img = (
-        modal.Image.debian_slim(python_version="3.14")
+        modal.Image.debian_slim(python_version="3.13")
         .apt_install(
             "git",
             "curl",
@@ -1136,29 +1126,40 @@ def _build_worker_image(harbor_override: "HarborVariant | None" = None) -> modal
             "ln -sf /root/.local/bin/claude /usr/local/bin/claude",
         )
         .pip_install("psycopg2-binary")
-        .env(ENV_VARS)
-        # Copy oddish source BEFORE uv_sync (required for local path dependency)
-        # The pyproject.toml references "../oddish" -> /oddish from /root
-        .add_local_dir(
+        # Build-time setting: every uv install must copy files into its layer.
+        # Keep this separate from the later deployment-specific environment.
+        .env({"UV_LINK_MODE": "copy"})
+        # uv_sync stages backend's manifest and lock at /.uv. The local oddish
+        # dependency resolves to /oddish; only its metadata belongs before the
+        # third-party install so source-only edits can reuse that layer.
+        .add_local_file("../oddish/pyproject.toml", "/oddish/pyproject.toml", copy=True)
+        .uv_sync(extra_options="--no-install-package oddish")
+    )
+    if harbor_override is not None:
+        # Keep the variant's locked Harbor + extras in a source-independent layer.
+        requirement = harbor_git_requirement(
+            harbor_override.source,
+            harbor_override.sha,
+            extras=harbor_override.extras,
+        )
+        img = img.run_commands(
+            f"/.uv/uv pip install --python /.uv/.venv/bin/python '{requirement}'"
+        )
+    img = (
+        img.add_local_dir(
             local_path="../oddish",
             remote_path="/oddish",
             copy=True,
-            ignore=[".venv/", ".git"],
+            ignore=[".venv/", ".git", "__pycache__/", "*.pyc", ".pytest_cache/"],
         )
-        # Use backend's pyproject.toml which includes oddish as a dependency
-        .add_local_file(
-            local_path="./pyproject.toml",
-            remote_path="/root/pyproject.toml",
-            copy=True,
-        )
+        # Install only our editable package; a second sync would undo the
+        # variant's Harbor override and repeat third-party dependency work.
+        .run_commands(
+            "/.uv/uv pip install --python /.uv/.venv/bin/python --no-deps -e /oddish"
+        ).env(ENV_VARS)
     )
-    # Install all dependencies (oddish from /oddish, harbor + others resolved).
-    img = img.uv_sync()
-    # Bake the deploy-time GKE secret plan into the image as a file, so the
-    # in-container recompute of runtime_secrets reads it from immutable image
-    # content rather than os.environ (which a runtime secret could pollute). The
-    # values are internal secret names -- safe to inline. See
-    # _resolve_gke_secret_plan.
+    # Runtime secrets can override env vars, so keep the provider plan and
+    # coordinates in immutable files after all shared dependency layers.
     ec2_plan_json = json.dumps(
         {
             "control_name": EC2_SECRET_PLAN.control_name,
@@ -1173,24 +1174,6 @@ def _build_worker_image(harbor_override: "HarborVariant | None" = None) -> modal
         f"printf %s {shlex.quote(json.dumps(GKE_COORDS_SNAPSHOT, separators=(',', ':')))} "
         f"> {shlex.quote(_GKE_COORDS_FILE)}",
     )
-    if harbor_override is not None:
-        # Swap the variant's Harbor into the synced venv AFTER uv_sync. The sync
-        # stages the LOCAL pyproject.toml + uv.lock at /.uv and runs --frozen, so
-        # editing pyprojects inside the image can never change what it installs
-        # (that approach shipped the lean default Harbor and every GKE trial died
-        # with MissingExtraError: kubernetes). A post-sync sha-pinned install with
-        # the variant's extras replaces harbor and pulls the extras' dependency
-        # stack (e.g. gke -> kubernetes + google-auth) into the same venv, the
-        # exact requirement string the ephemeral out-of-process path already uses.
-        # /.uv/uv and /.uv/.venv are where uv_sync leaves the binary and the venv.
-        requirement = harbor_git_requirement(
-            harbor_override.source,
-            harbor_override.sha,
-            extras=harbor_override.extras,
-        )
-        img = img.run_commands(
-            f"/.uv/uv pip install --python /.uv/.venv/bin/python '{requirement}'"
-        )
     return (
         # Add backend-specific Python modules
         img.add_local_python_source(

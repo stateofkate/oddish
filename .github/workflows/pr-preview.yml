@@ -81,7 +81,7 @@ jobs:
     # Backend-scoped PRs keep their Supabase preview branch smoke-tested on
     # later frontend-only pushes, so the required preview stays end-to-end.
     if: |
-      always() &&
+      !cancelled() &&
       needs.detect-changes.result == 'success' &&
       (
         needs.detect-changes.outputs.preview_backend_live == 'true' ||
@@ -142,7 +142,7 @@ jobs:
       - detect-changes
       - prepare-preview-database
     if: |
-      always() &&
+      !cancelled() &&
       needs.prepare-preview-database.result == 'success' &&
       (
         needs.detect-changes.outputs.deploy_backend == 'true' ||
@@ -151,14 +151,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: read
     outputs:
       modal_api_url: ${{ steps.deploy.outputs.modal_api_url }}
-    container:
-      image: ghcr.io/abundant-ai/oddish-ci-base-private:latest
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
     env:
       MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
       MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
@@ -166,7 +160,6 @@ jobs:
       MODAL_APP_NAME: oddish-pr-${{ github.event.pull_request.number }}
       MODAL_SECRET_ENVIRONMENT: main
       EXPECTED_MODAL_API_URL: ${{ needs.detect-changes.outputs.preview_api_url }}
-      UV_PROJECT_ENVIRONMENT: /opt/venvs/backend
       # Previews run with a real GKE backend so a branch's trial path can be
       # validated end to end before it merges. Trials only spend money when a
       # submission actually runs, and the cost is bounded by the teardown
@@ -211,6 +204,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
+      # This job only needs Python dependencies, not the database/Node toolchain.
+      - name: Set up Python and uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: |
+            backend/uv.lock
+            oddish/uv.lock
+
       - name: Sync backend dependencies
         run: uv sync --frozen
 
@@ -223,29 +226,20 @@ jobs:
     needs:
       - detect-changes
       - prepare-preview-database
-      - deploy-preview-backend
     # Run for every open same-repository PR, not only frontend changes: the
     # branch ruleset requires a working Preview deployment before merge.
+    # The URL is known before backend deploy; only the database banner needs
+    # preparation's output. The final gate still waits for both deployments.
     if: |
-      always() &&
+      !cancelled() &&
       needs.detect-changes.result == 'success' &&
       (
         needs.prepare-preview-database.result == 'success' ||
         needs.prepare-preview-database.result == 'skipped'
-      ) &&
-      (
-        needs.deploy-preview-backend.result == 'success' ||
-        needs.deploy-preview-backend.result == 'skipped'
       )
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: read
-    container:
-      image: ghcr.io/abundant-ai/oddish-ci-base-private:latest
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
     env:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
@@ -275,6 +269,25 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Cache Vercel CLI
+        id: vercel-cli
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/oddish-vercel
+          key: vercel-cli-${{ runner.os }}-${{ runner.arch }}-node20-59.20.0
+
+      - name: Install Vercel CLI
+        if: steps.vercel-cli.outputs.cache-hit != 'true'
+        run: npm install --prefix "$HOME/.local/share/oddish-vercel" --no-audit --no-fund vercel@59.20.0
+
+      - name: Add Vercel CLI to PATH
+        run: echo "$HOME/.local/share/oddish-vercel/node_modules/.bin" >> "$GITHUB_PATH"
 
       - name: Update Vercel preview
         id: vercel
@@ -485,7 +498,7 @@ jobs:
       - deploy-preview-backend
       - update-vercel-preview
     if: |
-      always() &&
+      !cancelled() &&
       needs.detect-changes.result == 'success' &&
       needs.detect-changes.outputs.any_change == 'true'
     runs-on: ubuntu-latest

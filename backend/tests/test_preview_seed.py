@@ -12,7 +12,6 @@ The deploy-path gate is the real seed step in the prepare-preview-database
 job, which samples actual prod and seeds the actual branch."""
 
 import os
-from datetime import timedelta
 
 import pytest
 from sqlalchemy import text
@@ -964,6 +963,59 @@ async def test_seed_cleans_legacy_fixtures_and_yields_to_jit_conflicts():
             == 1
         )
         assert await _count(engine, "select count(*) from users where id='u-a2'") == 1
+    finally:
+        await engine.dispose()
+        await src.dispose()
+
+
+async def test_seed_restores_references_in_bounded_batches(monkeypatch):
+    from collections import Counter
+    from math import ceil
+    from sqlalchemy import event
+
+    src = await _make_source_db()
+    engine = create_async_engine(URL)
+    try:
+        sampled = await preview_seed.sample_prod_subset(src, sample_key=SAMPLE_KEY)
+        task_template = next(
+            row for row in sampled["rows"]["tasks"] if row["id"] == "task-solo"
+        )
+        version_template = next(
+            row
+            for row in sampled["rows"]["task_versions"]
+            if row["task_id"] == "task-solo"
+        )
+        for i in range(5):
+            task_id, version_id = f"batch-task-{i}", f"batch-version-{i}"
+            sampled["rows"]["tasks"].append(
+                {**task_template, "id": task_id, "name": task_id}
+            )
+            sampled["rows"]["task_versions"].append(
+                {**version_template, "id": version_id, "task_id": task_id}
+            )
+            sampled["linkage"].append(
+                ("tasks", task_id, "current_version_id", version_id)
+            )
+        await _reset_target(engine)
+        # Two references per SQL statement exercises the batch boundary without
+        # constructing a large fixture. Every reference must still land.
+        monkeypatch.setattr(preview_seed, "_MAX_BIND_PARAMS", 4)
+        statements = []
+
+        def capture(conn, cursor, statement, parameters, context, executemany):
+            if statement.startswith("UPDATE") and "seed_links" in statement:
+                statements.append(statement)
+
+        event.listen(engine.sync_engine, "before_cursor_execute", capture)
+        await preview_seed.seed(engine, sampled=sampled)
+        counts = Counter((table, col) for table, _, col, _ in sampled["linkage"])
+        assert sum(counts.values()) > 2
+        assert len(statements) == sum(ceil(n / 2) for n in counts.values())
+        async with engine.connect() as conn:
+            for table_name, row_id, col, expected in sampled["linkage"]:
+                table = Base.metadata.tables[table_name]
+                result = await conn.execute(table.select().where(table.c.id == row_id))
+                assert result.mappings().one()[col] == expected
     finally:
         await engine.dispose()
         await src.dispose()

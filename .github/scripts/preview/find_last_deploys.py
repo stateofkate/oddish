@@ -108,6 +108,36 @@ def find_last_deployed_shas(owner_repo, head_ref):
                 key = STEPS_BY_COMPONENT.get(step.get("name"))
                 if key and key not in found:
                     found[key] = run["head_sha"]
+        # Preparation can stop the old app before rotating credentials. If a
+        # superseded/failed run got that far without finishing its replacement,
+        # an older successful deploy no longer proves that a backend is live.
+        prepare_steps = [
+            step
+            for job in jobs
+            for step in (job.get("steps") or [])
+            if step.get("name") == "Prepare preview database"
+            and step.get("status") in {"in_progress", "completed"}
+            and step.get("conclusion") != "skipped"
+        ]
+        backend_skipped = any(
+            job.get("name") == "Deploy preview backend"
+            and job.get("conclusion") == "skipped"
+            for job in jobs
+        )
+        # A successful frontend-only run intentionally skips backend deployment.
+        # Cancellation can also skip it, after preparation has stopped the app;
+        # only a successful run makes that skipped job safe to reuse past.
+        if (
+            "backend_base" not in found
+            and prepare_steps
+            and (
+                not backend_skipped
+                or run.get("conclusion") != "success"
+                or any(step.get("conclusion") != "success" for step in prepare_steps)
+            )
+        ):
+            found["backend_recovery"] = "true"
+            break
     return found
 
 
@@ -210,8 +240,10 @@ def main():
             found = {}
         backend_base = found.get("backend_base", "")
         migrations_base = found.get("migrations_base", "")
-        backend_changed = compute_changed(
-            owner_repo, backend_base, head_sha, backend_matches
+        backend_changed = (
+            "true"
+            if found.get("backend_recovery") == "true"
+            else compute_changed(owner_repo, backend_base, head_sha, backend_matches)
         )
         migrations_changed = compute_changed(
             owner_repo, migrations_base, head_sha, migrations_matches

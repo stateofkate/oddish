@@ -2326,6 +2326,31 @@ with `.github/scripts/preview/extract_modal_api_url.py`. The QA-model gateway's
 `-api-qa-model.modal.run` URL is a separate endpoint and must never become the
 frontend's backend URL. Missing or ambiguous API URLs fail deployment validation.
 
+Preview deployment jobs in `.github/workflows/pr-preview.yml` stop when a newer
+push cancels the run. If cancellation interrupts database preparation or the
+replacement backend deploy, change detection forces backend recovery on the next
+push; an older successful deployment is not proof that the app still runs.
+Successful preparation followed by a skipped backend job permits reuse of an
+older backend only when the whole workflow succeeded. A cancelled, failed, or
+unfinished workflow instead forces recovery, since the skip may follow an app stop.
+Database preparation retains the private CI tools image. Backend deployment uses
+Python 3.13 and uv's dependency cache on the runner; Vercel uses a cached, pinned
+CLI without downloading the Python/database image. Frontend and backend deploys
+run concurrently after database preparation, and the required preview gate waits
+for both. A Vercel deployment is reused only for the requested commit when its
+resolved build and runtime environment snapshots match all preview settings.
+
+The Modal image installs locked third-party dependencies before copying Oddish
+source or applying deployment-specific environment variables. Its base uses
+Python 3.13, matching the project requirement. `UV_LINK_MODE=copy` is set before
+all uv installs, separately from the later deployment-specific environment.
+Harbor variant dependencies are installed before source; the later editable
+Oddish install uses `--no-deps` so it cannot replace that variant.
+Preview seeding restores cyclic task/trial references
+in bounded SQL batches and logs table-load/reference timings. Sampling coverage,
+schema trust fingerprints, preview-owned credentials, and zero warm preview
+containers retain their existing behavior.
+
 PR preview deploys and manual preview resets set
 `ODDISH_MODAL_WORKER_MAX_CONTAINERS=400`, allowing each worker function up to
 400 concurrent Modal containers for Archil testing.

@@ -61,15 +61,38 @@ def test_prepare_only_needs_detect():
     assert "stop-previous" not in job.get("if", "")
 
 
-def test_vercel_waits_for_backend_deploy():
-    job = _wf()["jobs"]["update-vercel-preview"]
-    needs = _needs(job)
-    assert "deploy-preview-backend" in needs
-    assert "prepare-preview-database" in needs
-    assert "detect-changes" in needs
-    condition = job.get("if", "")
-    assert "needs.deploy-preview-backend.result == 'success'" in condition
-    assert "needs.deploy-preview-backend.result == 'skipped'" in condition
+def test_vercel_can_build_while_backend_deploys():
+    jobs = _wf()["jobs"]
+    job = jobs["update-vercel-preview"]
+    assert set(_needs(job)) == {"detect-changes", "prepare-preview-database"}
+    assert "deploy-preview-backend" not in job["if"]
+    # Failure of either parallel deployment must still block the required gate.
+    assert {"deploy-preview-backend", "update-vercel-preview"} <= set(
+        _needs(jobs["require-working-preview"])
+    )
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "prepare-preview-database",
+        "deploy-preview-backend",
+        "update-vercel-preview",
+        "post-preview-links",
+    ],
+)
+def test_superseded_preview_jobs_can_be_cancelled(name):
+    condition = _wf()["jobs"][name]["if"]
+    assert "!cancelled()" in condition
+    assert "always()" not in condition
+
+
+def test_deployment_jobs_do_not_pull_database_toolchain():
+    jobs = _wf()["jobs"]
+    for name in ("deploy-preview-backend", "update-vercel-preview"):
+        assert "container" not in jobs[name]
+        assert "UV_PROJECT_ENVIRONMENT" not in jobs[name]["env"]
+    assert jobs["prepare-preview-database"]["container"]
 
 
 def test_backend_and_vercel_are_siblings():

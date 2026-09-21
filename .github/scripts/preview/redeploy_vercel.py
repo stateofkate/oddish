@@ -1,24 +1,16 @@
-"""Force-redeploy the auto-created Vercel preview so it picks up the
-per-branch NEXT_PUBLIC_API_URL override we just set.
+"""Reuse this commit's Vercel preview when its resolved configuration matches.
 
-Vercel's GitHub integration creates a preview deployment on every push
-using whatever env vars existed at push time. On first deploy for a
-PR the per-branch NEXT_PUBLIC_API_URL hasn't been set yet, so we set
-it and then force a new deployment from the same source so the
-preview actually points at the Modal preview backend.
-
-Writes preview_url to GITHUB_OUTPUT.
-
-Inputs (env vars):
-  VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID,
-  VERCEL_GIT_BRANCH, VERCEL_GIT_COMMIT_SHA,
-  GITHUB_OUTPUT
+The Git integration builds immediately on push. First-time branch configuration
+still needs a redeploy; subsequent pushes can use that build unchanged. Compare
+both build-time and runtime values from the deployment itself, never the mutable
+project environment (which may have changed after the build started).
 """
 
 import json
 import os
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -55,7 +47,7 @@ def find_existing_deployment(token, project_id, team_id, branch, commit_sha):
 
     for _ in range(MAX_LOOKUP_ATTEMPTS):
         request = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(request) as response:
+        with urllib.request.urlopen(request, timeout=30) as response:
             payload = json.load(response)
         for deployment in payload.get("deployments", []):
             if deployment_commit_sha(deployment) == commit_sha:
@@ -72,9 +64,7 @@ def redeploy(token, team_id, project_name, deployment_id):
         "https://api.vercel.com/v13/deployments"
         f"?teamId={urllib.parse.quote(team_id, safe='')}&forceNew=1"
     )
-    body = json.dumps(
-        {"name": project_name, "deploymentId": deployment_id}
-    ).encode()
+    body = json.dumps({"name": project_name, "deploymentId": deployment_id}).encode()
     request = urllib.request.Request(
         url,
         data=body,
@@ -84,8 +74,49 @@ def redeploy(token, team_id, project_name, deployment_id):
             "Content-Type": "application/json",
         },
     )
-    with urllib.request.urlopen(request) as response:
+    with urllib.request.urlopen(request, timeout=30) as response:
         return json.load(response)
+
+
+def deployment_matches_config(token, team_id, deployment, expected):
+    if deployment.get("state") not in {"QUEUED", "INITIALIZING", "BUILDING", "READY"}:
+        return False
+    # This is the deployment-specific endpoint used by Vercel CLI's env pull.
+    # It returns the resolved snapshot, including values embedded by Next.js.
+    params = urllib.parse.urlencode(
+        {"teamId": team_id, "source": "vercel-cli:env:pull"}
+    )
+    request = urllib.request.Request(
+        f"https://api.vercel.com/v3/env/pull/{deployment['uid']}?{params}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            snapshot = json.load(response)
+    except urllib.error.HTTPError as exc:
+        if exc.code not in {400, 403, 404}:
+            raise
+        # Older deployments or tokens may not support reading the snapshot.
+        # Retain the existing redeploy path when reuse cannot be established.
+        print(
+            f"Deployment environment unavailable (HTTP {exc.code}); requesting a fresh preview",
+            file=sys.stderr,
+        )
+        return False
+    # Vercel CLI uses buildEnv as the complete resolved snapshot. With large
+    # env encryption, env contains decryption keys instead of the runtime vars.
+    build_env = snapshot.get("buildEnv")
+    runtime_env = snapshot.get("env")
+    return (
+        isinstance(build_env, dict)
+        and isinstance(runtime_env, dict)
+        and all(build_env.get(key, "") == value for key, value in expected.items())
+        and all(
+            runtime_env[key] == value
+            for key, value in expected.items()
+            if key in runtime_env
+        )
+    )
 
 
 def main():
@@ -98,8 +129,27 @@ def main():
     deployment = find_existing_deployment(
         token, project_id, team_id, branch, commit_sha
     )
-    redeployed = redeploy(token, team_id, deployment["name"], deployment["uid"])
-    preview_url = "https://" + redeployed["url"]
+    expected = {
+        "NEXT_PUBLIC_API_URL": os.environ["BACKEND_API_URL"],
+        "NEXT_PUBLIC_ODDISH_PREVIEW": "true",
+        "NEXT_PUBLIC_ODDISH_PREVIEW_BACKEND_LABEL": os.environ["PREVIEW_BACKEND_LABEL"],
+        "NEXT_PUBLIC_ODDISH_PREVIEW_BACKEND_URL": os.environ["BACKEND_API_URL"],
+        "NEXT_PUBLIC_ODDISH_PREVIEW_DATABASE_LABEL": os.environ[
+            "PREVIEW_DATABASE_LABEL"
+        ],
+        "NEXT_PUBLIC_ODDISH_PREVIEW_DATABASE_URL": os.environ["PREVIEW_DATABASE_URL"],
+        "NEXT_PUBLIC_ODDISH_PREVIEW_PR_URL": os.environ.get("PR_URL", ""),
+        "NEXT_PUBLIC_ODDISH_PREVIEW_PR_TITLE": os.environ.get("PR_TITLE", ""),
+    }
+    if deployment_matches_config(token, team_id, deployment, expected):
+        print(
+            f"Reusing Vercel deployment {deployment['uid']} for {commit_sha}",
+            file=sys.stderr,
+        )
+    else:
+        deployment = redeploy(token, team_id, deployment["name"], deployment["uid"])
+        print(f"Created Vercel deployment for {commit_sha}", file=sys.stderr)
+    preview_url = "https://" + deployment["url"]
 
     with open(os.environ["GITHUB_OUTPUT"], "a") as f:
         f.write(f"preview_url={preview_url}\n")

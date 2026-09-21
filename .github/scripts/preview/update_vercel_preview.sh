@@ -131,7 +131,12 @@ fi
 )
 
 vercel_output="$(mktemp)"
-GITHUB_OUTPUT="$vercel_output" python "$script_dir/redeploy_vercel.py"
+GITHUB_OUTPUT="$vercel_output" \
+  BACKEND_API_URL="$backend_api_url" \
+  PREVIEW_BACKEND_LABEL="$backend_label" \
+  PREVIEW_DATABASE_LABEL="$database_label" \
+  PREVIEW_DATABASE_URL="$database_url" \
+  python "$script_dir/redeploy_vercel.py"
 [ -z "$github_output" ] || cat "$vercel_output" >> "$github_output"
 preview_url="$(read_output_value "$vercel_output" preview_url)"
 if [ -n "${PREVIEW_ALIAS_HOSTNAME:-}" ] && [ -n "$preview_url" ]; then

@@ -4,9 +4,11 @@ import asyncio
 import datetime as _dt
 import json
 import sys
+import time
+from collections import defaultdict
 from typing import Any
 
-from sqlalchemy import JSON, MetaData, delete, text, tuple_
+from sqlalchemy import JSON, MetaData, column, delete, text, tuple_, values
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import DBAPIError, IntegrityError
@@ -466,17 +468,39 @@ async def seed(engine: AsyncEngine, *, sampled: dict | None = None) -> None:
         rows = sample_rows.get(table.name, [])
         if not rows:
             continue
+        started = time.monotonic()
         await _load_table(engine, table, rows)
+        _warn(
+            f"loaded {table.name}: {len(rows)} rows in {time.monotonic() - started:.1f}s"
+        )
 
     async with engine.begin() as conn:
-        for table_name, row_id, column, value in (sampled or {}).get("linkage", []):
+        # These references were cleared while loading cyclic foreign keys.
+        # Restore them per table/column in bounded batches, rather than making
+        # a database round trip for every sampled task and trial.
+        links = defaultdict(list)
+        for table_name, row_id, column_name, value in (sampled or {}).get(
+            "linkage", []
+        ):
+            links[table_name, column_name].append((row_id, value))
+        started = time.monotonic()
+        for (table_name, column_name), rows in links.items():
             table = md.tables[table_name]
-            await conn.execute(
-                table.update()
-                .where(table.c.id == row_id)
-                .where(table.c[column].is_distinct_from(value))
-                .values(**{column: value})
-            )
+            for start in range(0, len(rows), _MAX_BIND_PARAMS // 2):
+                refs = values(
+                    column("row_id", table.c.id.type),
+                    column("ref", table.c[column_name].type),
+                    name="seed_links",
+                ).data(rows[start : start + _MAX_BIND_PARAMS // 2])
+                await conn.execute(
+                    table.update()
+                    .where(table.c.id == refs.c.row_id)
+                    .where(table.c[column_name].is_distinct_from(refs.c.ref))
+                    .values({column_name: refs.c.ref})
+                )
+        _warn(
+            f"restored {sum(map(len, links.values()))} references in {time.monotonic() - started:.1f}s"
+        )
 
         await conn.execute(text(f"DELETE FROM {_STATE_TABLE}"))
         for name in _RECONCILED_TABLES:
