@@ -1156,11 +1156,17 @@ async def test_delivery_picker_excludes_members_from_page_count_and_ids():
         await _setup(engine)
         async with maker() as session:
             delivery = await create_delivery_core(session, data=DeliveryCreate(
-                name="picker", customer="Lab", task_ids=["t-a"]), org_id=ORG, user_id=None)
+                name="picker", customer="Lab", task_ids=["t-a", "t-b"]), org_id=ORG, user_id=None)
             filters = {"exclude_delivery_id": delivery.id}
-            assert await _names(session, **filters) == {"beta", "gamma"}
+            assert await _names(session, **filters) == {"gamma"}
+            assert await browse_tasks_count_core(session, org_id=ORG, **filters) == 1
+            assert set(await browse_tasks_core(session, org_id=ORG, ids_only=True, **filters)) == {"t-c"}
+            await session.execute(text(
+                "update delivery_tasks set deleted_at=now() where task_id='t-a'"
+            ))
+            assert await _names(session, **filters) == {"alpha", "gamma"}
             assert await browse_tasks_count_core(session, org_id=ORG, **filters) == 2
-            assert set(await browse_tasks_core(session, org_id=ORG, ids_only=True, **filters)) == {"t-b", "t-c"}
+            assert set(await browse_tasks_core(session, org_id=ORG, ids_only=True, **filters)) == {"t-a", "t-c"}
     finally:
         await engine.dispose()
 

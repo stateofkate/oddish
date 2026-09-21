@@ -1406,6 +1406,7 @@ async def browse_tasks_core(
                 DeliveryTaskModel.task_id == TaskModel.id,
                 DeliveryModel.id == exclude_delivery_id,
                 DeliveryModel.org_id == org_id,
+                DeliveryTaskModel.deleted_at.is_(None),
             )
         ))
     if qa_outcomes:
