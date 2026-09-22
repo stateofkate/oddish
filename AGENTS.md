@@ -2180,6 +2180,16 @@ appear in several attempt records; do not put it in the cost ledger's unique
 
 ### Worker Runtime Invariants & Pitfalls
 
+Stale-worker cleanup isolates a job's status update, trial mirror, and old
+sandbox-handle clearing in one savepoint. A constraint violation or explicit
+PostgreSQL trigger rejection rolls back that job, logs its ID, increments
+`worker_job_reap_errors`, and continues with other jobs and baseline-gate
+recovery. The rejected job and its sandbox remain untouched for operator
+recovery; cleanup must not bypass admission policy or silently force a retry.
+Connection loss and schema errors still fail the sweep. Hosted reconciler
+Diagnostics reports partial failures even when the rest of the sweep commits.
+
+
 Load-bearing properties, several learned from incidents. Changing them naively
 silently breaks throughput or correctness — read before touching
 `worker/functions.py`, `slots.py`, `cleanup.py`, or the dispatcher.

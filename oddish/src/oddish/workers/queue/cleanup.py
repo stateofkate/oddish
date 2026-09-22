@@ -26,7 +26,7 @@ from typing import Any, cast
 
 from sqlalchemy import func, select, text
 from sqlalchemy.engine import CursorResult
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import DBAPIError, SQLAlchemyError
 
 from oddish.config import (
     NOP_ORACLE_QUEUE_KEY,
@@ -571,6 +571,7 @@ async def cleanup_orphaned_queue_state(
             worker_jobs_failed,
             reaped_trial_ids,
             worker_targets,
+            worker_job_reap_errors,
         ) = await _reap_stale_worker_jobs(
             session, stale_after_minutes=stale_after_minutes
         )
@@ -732,6 +733,7 @@ async def cleanup_orphaned_queue_state(
     return {
         "worker_jobs_retried": worker_jobs_retried,
         "worker_jobs_failed": worker_jobs_failed,
+        "worker_job_reap_errors": worker_job_reap_errors,
         "worker_sandboxes_terminated": worker_sandboxes_terminated,
         "thunder_handoffs_completed": len(completed_thunder_handoffs),
         "ec2_orphan_instances_seen": (
@@ -1150,7 +1152,7 @@ async def _maybe_reconcile_tag_projections(session) -> int:
 
 async def _reap_stale_worker_jobs(
     session, *, stale_after_minutes: int
-) -> tuple[int, int, list[str], set[tuple[str, str]]]:
+) -> tuple[int, int, list[str], set[tuple[str, str]], int]:
     """Step 1 -- stale-heartbeat sweep on ``worker_jobs``.
 
     Transitions RUNNING rows whose heartbeat stalled to RETRYING (attempts
@@ -1183,6 +1185,7 @@ async def _reap_stale_worker_jobs(
 
     worker_jobs_retried = 0
     worker_jobs_failed = 0
+    worker_job_reap_errors = 0
     reaped_trial_ids: list[str] = []
     worker_targets: set[tuple[str, str]] = set()
 
@@ -1255,6 +1258,23 @@ async def _reap_stale_worker_jobs(
                     continue  # another actor already progressed this job
 
                 committed_trial_id = await _mirror_stale_job_to_domain_row(session, row)
+                if row["new_status"] == "RETRYING" and row.get("external_id"):
+                    # The retry must start UNLINKED: a carried-over handle points at
+                    # the previous attempt's sandbox, which both misdirects
+                    # handle-based teardown and defeats the orphan sweeper's
+                    # live-unlinked guard for the new attempt's pod. The returned
+                    # row retains the old handle for post-commit teardown.
+                    await session.execute(
+                        text(
+                            """
+                            UPDATE worker_jobs
+                            SET    external_id = NULL,
+                                   provider = NULL
+                            WHERE  id = :job_id
+                            """
+                        ),
+                        {"job_id": row["id"]},
+                    )
                 # Flush this job's mirror WITHIN its own savepoint so the unit
                 # is explicitly atomic and independent of ``begin_nested``'s
                 # autoflush-on-enter timing (which, if it ever changed, could
@@ -1268,6 +1288,25 @@ async def _reap_stale_worker_jobs(
                 "reason=domain_row_locked (retrying next sweep)"
             )
             continue
+        except DBAPIError as exc:
+            sqlstate = getattr(exc.orig, "sqlstate", None)
+            # Constraint violations and explicit trigger rejections concern
+            # this row. The savepoint has rolled back all of its writes; keep
+            # processing unrelated jobs without bypassing the rejecting rule.
+            # Connection loss, schema errors, and other systemic failures must
+            # still fail the sweep rather than look like successful cleanup.
+            if exc.connection_invalidated or not (
+                sqlstate == "P0001" or (sqlstate or "").startswith("23")
+            ):
+                raise
+            worker_job_reap_errors += 1
+            logger.error(
+                "Stale worker job %s rejected by database (SQLSTATE %s): %s",
+                stale_job_id,
+                sqlstate,
+                exc.orig,
+            )
+            continue
 
         if row["new_status"] == "RETRYING":
             worker_jobs_retried += 1
@@ -1277,28 +1316,17 @@ async def _reap_stale_worker_jobs(
         external_id = row.get("external_id")
         if provider and external_id:
             worker_targets.add((str(provider), str(external_id)))
-        if row["new_status"] == "RETRYING" and external_id:
-            # The retry must start UNLINKED: a carried-over handle points at
-            # the previous attempt's sandbox, which both misdirects
-            # handle-based teardown and defeats the orphan sweeper's
-            # live-unlinked guard for the new attempt's pod. The old sandbox's
-            # teardown target was already captured above.
-            await session.execute(
-                text(
-                    """
-                    UPDATE worker_jobs
-                    SET    external_id = NULL,
-                           provider = NULL
-                    WHERE  id = :job_id
-                    """
-                ),
-                {"job_id": row["id"]},
-            )
         if committed_trial_id is not None:
             reaped_trial_ids.append(committed_trial_id)
 
     await session.flush()
-    return worker_jobs_retried, worker_jobs_failed, reaped_trial_ids, worker_targets
+    return (
+        worker_jobs_retried,
+        worker_jobs_failed,
+        reaped_trial_ids,
+        worker_targets,
+        worker_job_reap_errors,
+    )
 
 
 async def _find_orphaned_thunder_sandbox_runs(

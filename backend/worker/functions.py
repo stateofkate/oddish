@@ -769,6 +769,12 @@ async def reconcile_queue_state():
         try:
             cleanup_counts = await cleanup_orphaned_queue_state()
             summary.update({k: int(v) for k, v in cleanup_counts.items()})
+            reap_errors = cleanup_counts.get("worker_job_reap_errors", 0)
+            if reap_errors:
+                phase_errors.append(
+                    f"orphaned_state: database rejected {reap_errors} stale job(s); "
+                    "other jobs reconciled; see worker logs for job IDs"
+                )
             if any(cleanup_counts.values()):
                 console.print(
                     "metric=orphaned_queue_cleanup "

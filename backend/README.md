@@ -877,3 +877,11 @@ Task browse requests reuse attribution resolution when `author` and `pin_author`
 match. Count-only requests skip pin-author resolution because pinning affects
 ordering only. Delivery create/add accept up to 5,000 tasks in one transaction,
 so a failed validation cannot leave a partially filled new delivery.
+
+### Rejected stale-worker cleanup
+
+The reconciler records `worker_job_reap_errors` when a database constraint or
+trigger rejects an individual stale job. Its Diagnostics heartbeat stays in
+error and directs operators to the worker logs for job IDs, while unrelated
+stale jobs and baseline-gate recovery continue. The rejected job is left intact;
+inspect its trial result and applicable admission policy before recovering it.

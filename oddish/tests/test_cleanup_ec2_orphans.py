@@ -211,6 +211,7 @@ def _patch_unrelated_cleanup_phases(
     session: object,
     termination_result: int = 0,
     stale_targets: set[tuple[str, str]] | None = None,
+    reap_errors: int = 0,
 ) -> list[set[tuple[str, str]]]:
     @asynccontextmanager
     async def fake_get_session():
@@ -223,7 +224,7 @@ def _patch_unrelated_cleanup_phases(
 
     async def reap(*_args, **_kwargs):
         events.append("stale_reap")
-        return 0, 0, [], set(stale_targets or ())
+        return 0, 0, [], set(stale_targets or ()), reap_errors
 
     async def unwedge(*_args, **_kwargs):
         return 0, 0, 0
@@ -248,9 +249,12 @@ def _patch_unrelated_cleanup_phases(
     async def no_reimports(*_args, **_kwargs):
         return []
 
+    monkeypatch.setattr(cleanup, "_complete_pending_thunder_handoffs", no_reimports)
     monkeypatch.setattr(cleanup, "_find_orphaned_thunder_sandbox_runs", no_reimports)
+    monkeypatch.setattr(cleanup, "_heal_cancelled_audits", zero)
     monkeypatch.setattr(cleanup, "_heal_stale_verdict_pending", heal_nothing)
     monkeypatch.setattr(cleanup, "_heal_stale_audit_imports", no_reimports)
+    monkeypatch.setattr(cleanup, "_heal_stale_summarize_imports", no_reimports)
     monkeypatch.setattr(cleanup, "_unwedge_stuck_analyzing", unwedge)
     monkeypatch.setattr(cleanup, "_release_orphaned_slots", zero)
     monkeypatch.setattr(cleanup, "_reconcile_experiment_last_activity", zero)
@@ -261,6 +265,7 @@ def _patch_unrelated_cleanup_phases(
     monkeypatch.setattr(cleanup, "clear_terminal_trial_runtime_refs", zero)
     monkeypatch.setattr(cleanup, "purge_stale_trial_events", zero)
     monkeypatch.setattr(cleanup, "reconcile_compute_cost_spans", zero)
+    monkeypatch.setattr(cleanup, "backfill_verifier_costs_from_s3", zero)
     return terminated_targets
 
 
@@ -574,12 +579,41 @@ async def test_stale_reap_discovers_one_ec2_teardown_target(monkeypatch) -> None
     monkeypatch.setattr(cleanup, "_mirror_stale_job_to_domain_row", mirror)
     monkeypatch.setattr(cleanup, "cancel_job_by_worker", terminate)
 
-    retried, failed, trial_ids, targets = await cleanup._reap_stale_worker_jobs(
+    retried, failed, trial_ids, targets, errors = await cleanup._reap_stale_worker_jobs(
         Session(), stale_after_minutes=15
     )
     terminated = await cleanup._terminate_orphaned_sandboxes(targets)
 
-    assert (retried, failed, trial_ids) == (0, 1, ["trial-stale"])
+    assert (retried, failed, trial_ids, errors) == (0, 1, ["trial-stale"], 0)
     assert targets == {("ec2", handle)}
     assert terminated == 1
     assert teardown_calls == [("ec2", handle)]
+
+
+@pytest.mark.asyncio
+async def test_rejected_stale_jobs_still_commit_gate_and_slot_recovery(monkeypatch):
+    events: list[str] = []
+    _patch_unrelated_cleanup_phases(
+        monkeypatch, events=events, session=_LivenessSession([]), reap_errors=1
+    )
+    monkeypatch.setattr(cleanup.settings, "ec2_enabled", False)
+    monkeypatch.setattr(cleanup.settings, "thunder_enabled", False)
+
+    async def recover_gates(*_args):
+        events.append("gate_recovery")
+        return 2
+
+    async def release_slots(*_args):
+        events.append("slot_recovery")
+        return 3
+
+    monkeypatch.setattr(cleanup, "_advance_running_tasks_to_analysis", recover_gates)
+    monkeypatch.setattr(cleanup, "_release_orphaned_slots", release_slots)
+    result = await cleanup.cleanup_orphaned_queue_state()
+
+    assert result["worker_job_reap_errors"] == 1
+    assert result["tasks_progressed_to_analysis"] == 2
+    assert result["orphaned_active_slots_cleared"] == 3
+    assert events.index("stale_reap") < events.index("gate_recovery")
+    assert events.index("gate_recovery") < events.index("slot_recovery")
+    assert events.index("slot_recovery") < events.index("db_commit")
