@@ -2143,6 +2143,33 @@ class WorkerJobModel(TimestampedMixin, Base):
         DateTime(timezone=True), nullable=True
     )
 
+    # In-sandbox monitor (oddish-mon) attempt state. The monitor token is its
+    # own credential: job_token_hash above is handed to the agent, so it cannot
+    # also authenticate the monitor. All nullable; unset on jobs the monitor
+    # does not drive.
+    monitor_token_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    monitor_token_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    monitor_token_revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Set when the monitor first checks in with its own credential; the
+    # launcher waits for it before handing the job off.
+    monitor_acked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    monitor_status_check_count: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )
+    monitor_status_checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    monitor_result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    monitor_result_accepted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
 
 class SandboxRunModel(TimestampedMixin, Base):
     """Attempt-scoped ownership ledger for an ephemeral provider sandbox."""

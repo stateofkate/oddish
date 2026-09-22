@@ -1809,6 +1809,45 @@ class Settings(BaseSettings):
             ),
         }
 
+    # In-sandbox trial monitor (oddish-mon): the worker only launches a sandbox
+    # whose entrypoint is the monitor, hands the job off and exits. The flag is
+    # the rollout's rollback lever; it goes when the old worker path is deleted.
+    monitor_execution_enabled: bool = True
+    # How the sandbox reaches the control plane. Unset: the resolution probe
+    # sandboxes already use (ODDISH_PUBLIC_API_BASE_URL, else the Modal app name).
+    monitor_api_url: str | None = None
+    # Unset: a trial runs on the provider it asked for (its Harbor environment),
+    # and stays on the worker when no starter exists for it. Set: force one.
+    monitor_sandbox_starter: str | None = None
+    monitor_daytona_cpu: int = 2
+    monitor_daytona_memory_gb: int = 4
+    # Daytona refuses a sandbox above this ("Memory request 17GB exceeds
+    # maximum allowed per sandbox (16GB)"); the headroom stops here.
+    monitor_daytona_max_memory_gb: int = 16
+    monitor_daytona_disk_gb: int = 20
+    # The first create builds the monitor image on Daytona; later ones reuse it.
+    monitor_daytona_create_timeout_seconds: int = 1200
+    # The worker image carries the oddish folder at /oddish; Modal builds the
+    # monitor image from this Dockerfile and caches it.
+    monitor_image: str = "/oddish/mon.Dockerfile"
+    monitor_ack_timeout_seconds: int = 900
+    # Memory added to the OUTER monitor sandbox only, on top of the task's own
+    # size, for the monitor and Docker daemons that share it. The task
+    # container is unchanged. Priced in the sandbox cost span. On the worker
+    # path the task had its sandbox alone; here the monitor and dockerd idle
+    # at 486-703 MiB beside it (QA40, cgroup readings), and a task that fills
+    # its own size (task 11, 4096 MB Erlang compile) has the monitor OOM-killed
+    # at 0 headroom and passes 4 of 4 at 1 GiB.
+    monitor_memory_headroom_mb: int = 1024
+    # The bound the long-lived worker's 12 h timeout used to give every attempt.
+    # Enforced by the provider (sandbox timeout) and by the reconciler; it fits
+    # inside the queue slot lease (12 h + 30 s).
+    monitor_attempt_deadline_seconds: int = 43200
+    monitor_modal_app: str = "oddish-monitor"
+    # Settle an accepted result inside the API process. Fine for self-hosted
+    # and local runs; the hosted backend spawns a short worker function instead.
+    monitor_settle_inline: bool = True
+
     # S3-compatible storage (required)
     s3_endpoint_url: str | None = None
     s3_access_key: str = ""
