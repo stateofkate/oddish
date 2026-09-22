@@ -208,9 +208,15 @@ export function TasksFilters({
     [searchParams]
   );
 
-  const [open, setOpen] = useState(false);
-  const [filterSearch, setFilterSearch] = useState("");
-  const [openGroups, setOpenGroups] = useState<string[]>([]);
+  const open = searchParams.get("filters") === "1";
+  const urlFilterSearch = searchParams.get("filter_search") ?? "";
+  const [filterSearch, setFilterSearch] = useState(urlFilterSearch);
+  useEffect(() => {
+    // Sync external navigation from the live URL: a delayed router snapshot
+    // must not overwrite a newer edit already written by onChange.
+    setFilterSearch(new URLSearchParams(window.location.search).get("filter_search") ?? "");
+  }, [urlFilterSearch]);
+  const openGroups = (searchParams.get("filter_groups") ?? "").split(",");
   const [copyNotice, setCopyNotice] = useState("");
   const historyLabs = [...values.deliveredTo, ...values.notDeliveredTo];
   const lab = historyLabs.length === 1 ? historyLabs[0] : searchParams.get("lab") ?? "";
@@ -350,7 +356,10 @@ export function TasksFilters({
             </PopoverContent>
           </Popover>
         ))}
-        <Popover open={open} onOpenChange={setOpen}>
+        <Popover open={open} onOpenChange={next => updateTaskSearchParams(params => {
+          if (next) params.set("filters", "1");
+          else params.delete("filters");
+        }, { resetPage: false })}>
           <PopoverTrigger asChild>
             <Button variant="outline">
               <Filter className="mr-2 h-4 w-4" />
@@ -366,7 +375,14 @@ export function TasksFilters({
               aria-label="Find a filter"
               placeholder="Find a filter…"
               value={filterSearch}
-              onChange={(e) => setFilterSearch(e.target.value)}
+              onChange={event => {
+                const next = event.target.value;
+                setFilterSearch(next);
+                updateTaskSearchParams(params => {
+                  if (next) params.set("filter_search", next);
+                  else params.delete("filter_search");
+                }, { resetPage: false });
+              }}
               className="mb-4"
             />
             <div className="max-h-[60vh] space-y-4 overflow-y-auto pr-1">
@@ -375,7 +391,11 @@ export function TasksFilters({
                 const expanded = Boolean(filterSearch) || openGroups.includes(group);
                 return defs.length ? (
                   <section key={group} className="space-y-3">
-                    <button type="button" aria-expanded={expanded} className="w-full text-left text-sm font-medium" onClick={() => setOpenGroups(current => current.includes(group) ? current.filter(value => value !== group) : [...current, group])}>
+                    <button type="button" aria-expanded={expanded} className="w-full text-left text-sm font-medium" onClick={() => updateTaskSearchParams(params => {
+                      const groups = new Set((params.get("filter_groups") ?? "").split(",").filter(Boolean));
+                      if (groups.has(group)) groups.delete(group); else groups.add(group);
+                      if (groups.size) params.set("filter_groups", [...groups].join(",")); else params.delete("filter_groups");
+                    }, { resetPage: false })}>
                       {group === "Delivery"
                         ? "Delivery history"
                         : group === "Trial"
@@ -434,7 +454,7 @@ export function TasksFilters({
         <Button variant="outline" onClick={async () => {
           const url = new URL(window.location.href);
           url.searchParams.delete("delivery");
-          url.searchParams.delete("offset");
+          if (!url.searchParams.has("expanded")) url.searchParams.delete("offset");
           if (searchQuery.trim()) url.searchParams.set("q", searchQuery.trim());
           else url.searchParams.delete("q");
           url.searchParams.delete("query");

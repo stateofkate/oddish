@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ArrowUpRight } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -61,14 +62,14 @@ export function ExperimentsList({
         </PopoverTrigger>
         <PopoverContent
           align="start"
-          className="max-h-72 w-64 overflow-y-auto p-1"
+          className="max-h-72 w-80 max-w-[calc(100vw-2rem)] overflow-y-auto p-1"
         >
           <div className="flex flex-col">
             {hidden.map((exp) => (
               <Link
                 key={exp.id}
                 href={`/experiments/${encodeExperimentRouteParam(exp.id)}${taskQuery}`}
-                className="hover:bg-muted truncate rounded px-2 py-1 text-xs"
+                className="hover:bg-muted rounded px-2 py-1 text-xs break-words"
                 title={exp.name}
               >
                 {exp.name}
@@ -87,12 +88,13 @@ export function ExperimentsList({
             key={exp.id}
             href={`/experiments/${encodeExperimentRouteParam(exp.id)}${taskQuery}`}
             className={cn(
-              "truncate underline-offset-2 hover:underline",
+              "flex items-start gap-2 py-0.5 underline-offset-2 hover:underline",
               linkClassName,
             )}
             title={exp.name}
           >
-            {exp.name}
+            <span className="min-w-0 flex-1 break-words">{exp.name}</span>
+            <ArrowUpRight className="mt-0.5 h-3 w-3 shrink-0 opacity-60" aria-hidden />
           </Link>
         ))}
         {moreButton}

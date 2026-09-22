@@ -1,7 +1,7 @@
 import { Skeleton } from "@/components/ui/skeleton";
 
 // Placeholder grid shown while the server fetches the (filtered) task page.
-// Mirrors the TaskCard layout: header row, trial squares, two stat boxes.
+// Mirrors the TaskCard layout: identity, activity, results, trial previews, experiment links.
 export function TasksGridSkeleton({ count = 9 }: { count?: number }) {
   return (
     <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -22,7 +22,16 @@ export function TasksGridSkeleton({ count = 9 }: { count?: number }) {
               <Skeleton className="h-4 w-14" />
             </div>
           </div>
-          <div className="mt-4 space-y-1.5">
+          <div className="mt-4 flex justify-between">
+            <Skeleton className="h-10 w-20" />
+            <Skeleton className="h-10 w-16" />
+          </div>
+          <div className="mt-4 space-y-2 border-t border-border/60 pt-3">
+            <Skeleton className="h-6 w-32" />
+            <Skeleton className="h-3 w-40" />
+            <Skeleton className="h-3 w-36" />
+          </div>
+          <div className="mt-4 space-y-1.5 border-t border-border/60 pt-3">
             <Skeleton className="h-3 w-20" />
             <div className="flex flex-wrap gap-1">
               {Array.from({ length: 7 }).map((__, i) => (
@@ -30,9 +39,10 @@ export function TasksGridSkeleton({ count = 9 }: { count?: number }) {
               ))}
             </div>
           </div>
-          <div className="mt-4 grid gap-2.5 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.45fr)]">
-            <Skeleton className="h-16 w-full rounded-md" />
-            <Skeleton className="h-16 w-full rounded-md" />
+          <div className="mt-4 space-y-2 border-t border-border/60 pt-3">
+            <Skeleton className="h-3 w-24" />
+            <Skeleton className="h-3 w-full" />
+            <Skeleton className="h-3 w-3/4" />
           </div>
         </div>
       ))}

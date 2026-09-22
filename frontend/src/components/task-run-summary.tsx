@@ -6,37 +6,33 @@ export function TaskRunSummary({ summary, compact = false }: {
   summary?: RunSummary | null;
   compact?: boolean;
 }) {
-  if (!summary) return <p className="text-muted-foreground text-xs">Run summary unavailable</p>;
-  const model = summary.model;
-  const score = model.scored ? model.reward_sum / model.scored : null;
+  const model = summary?.model;
+  const score = model?.scored ? model.reward_sum / model.scored : null;
   const tone = score === null ? "text-muted-foreground"
     : score >= .8 ? "text-emerald-600 dark:text-emerald-400"
     : score >= .35 ? "text-amber-600 dark:text-amber-400"
     : "text-rose-600 dark:text-rose-400";
   const outcomes = [
-    ["pass", model.pass_count], ["partial", model.partial_count], ["fail", model.fail_count],
-    ["harness-error", model.harness_count], ["skipped", model.skipped_count],
-    ["scoreless", model.scoreless_count], ["pending", model.other_count],
+    ["pass", model?.pass_count ?? 0], ["partial", model?.partial_count ?? 0], ["fail", model?.fail_count ?? 0],
+    ["harness-error", model?.harness_count ?? 0], ["skipped", model?.skipped_count ?? 0],
+    ["scoreless", model?.scoreless_count ?? 0], ["pending", model?.other_count ?? 0],
   ] as const;
   return (
     <div className="space-y-2 text-xs" aria-label="Selected version run summary">
-      <div className={compact ? "space-y-1" : "border-border/60 bg-muted/30 space-y-2 rounded-md border p-3"}>
-        <div title="Mean reward across scored model trials on this version; excludes oracle/NOP checks.">
-          <span className="text-muted-foreground">{model.total ? "Model score:" : "No model trials"}</span>{" "}
-          {model.total > 0 ? (
-            <strong className={`${compact ? "text-base" : "text-2xl"} font-mono tabular-nums ${tone}`}>
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+          <div title="Mean reward across scored model trials on this version; excludes oracle/NOP checks.">
+            <span className="text-muted-foreground">Model score:</span>{" "}
+            <strong className={`${compact ? "text-base" : "text-xl"} font-mono tabular-nums ${tone}`}>
               {score === null ? "—" : `${Math.round(score * 100)}%`}
             </strong>
-          ) : null}
-        </div>
-        {model.total > 0 ? (
-          <div className="text-muted-foreground">
-            {model.scored} scored / {model.total} model trials
-            {model.scored > 0 ? ` · ${model.reward_sum.toFixed(2)} / ${model.scored} reward` : ""}
           </div>
-        ) : null}
-        {!compact && model.total > 0 ? (
-          <div className="flex flex-wrap gap-x-3 gap-y-1">
+          <span className="text-muted-foreground" title={model ? `${model.reward_sum.toFixed(2)} reward across ${model.scored} scored trials` : undefined}>
+            {!model ? "Run summary unavailable" : model.total ? `${model.scored} scored / ${model.total} model trials` : "No model trials"}
+          </span>
+        </div>
+        {!compact ? (
+          <div className="flex min-h-4 flex-wrap gap-x-3 gap-y-1">
             {outcomes.filter(([, count]) => count > 0).map(([status, count]) => (
               <span key={status} className="inline-flex items-center gap-1">
                 <span className={`h-2 w-2 rounded-full ${STATUS_CONFIG[status].bracketClass}`} aria-hidden />
@@ -46,9 +42,10 @@ export function TaskRunSummary({ summary, compact = false }: {
           </div>
         ) : null}
       </div>
-      <div className="flex flex-wrap gap-2" aria-label="Validation checks">
+      <div className="grid gap-1" aria-label="Validation checks">
         {(["oracle", "nop"] as const).map(role => {
-          const group = summary[role];
+          const group = summary?.[role];
+          if (!group) return <span key={role} className="text-muted-foreground">{role === "oracle" ? "Oracle" : "NOP"}: Unavailable</span>;
           const expected = role === "oracle" ? group.pass_count + group.partial_count : group.fail_count;
           const color = expected < group.scored ? "text-rose-600 dark:text-rose-400"
             : group.harness_count > 0 ? "text-amber-600 dark:text-amber-400"
@@ -57,7 +54,7 @@ export function TaskRunSummary({ summary, compact = false }: {
             : group.scored ? `${expected}/${group.scored} as expected`
             : group.other_count ? "Awaiting results" : "No scored results";
           return (
-            <span key={role} className={`rounded-md border px-2 py-1 ${color}`}
+            <span key={role} className={color}
               title={role === "oracle" ? "The known solution should earn positive reward." : "Doing nothing should earn zero reward."}>
               {role === "oracle" ? "Oracle" : "NOP"}: {result}
               {group.total > 0 ? ` · ${group.total} ${group.total === 1 ? "trial" : "trials"}` : ""}

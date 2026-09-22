@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useState } from "react";
+import { Fragment } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ChevronLeft, ChevronRight } from "lucide-react";
@@ -54,7 +54,7 @@ const TASK_COLUMNS = [
   { label: "Agents", render: (task: TaskBrowseItem) => task.agent_count ?? 0 },
   {
     label: "Delivery history",
-    render: (task: TaskBrowseItem) => <TaskDeliveryHistory task={task} />,
+    render: (task: TaskBrowseItem) => <TaskDeliveryHistory task={task} showEmpty />,
   },
   {
     label: "Cost",
@@ -87,8 +87,8 @@ export function RecentTasksResults({
 }) {
   const searchParams = useSearchParams();
   const { selection, toggle, deliveryId } = useSelection();
-  const [expanded, setExpanded] = useState<string | null>(null);
-  const view = searchParams.get("view") === "table" ? "table" : "cards";
+  const expanded = searchParams.get("expanded");
+  const view = searchParams.get("view") === "table" || (expanded && !searchParams.has("view")) ? "table" : "cards";
   const columns = TASK_COLUMNS.map((column) => column.label);
   const visibleColumns = searchParams.has("columns")
     ? searchParams.get("columns")!.split(",")
@@ -154,10 +154,15 @@ export function RecentTasksResults({
     </Alert>
   ) : null;
 
+  const expansionNotice = !isLoading && !error && expanded && view === "table" && !items.some(task => task.id === expanded)
+    ? <p className="text-muted-foreground text-sm">The linked task is outside this page or filter. <Link className="underline" href={`/tasks/${encodeURIComponent(expanded)}`}>Open task</Link></p>
+    : null;
+
   if (items.length === 0) {
     return (
       <div className="space-y-4">
         {errorBanner}
+        {expansionNotice}
         <div
           className={cn(
             "bg-card/60 text-muted-foreground rounded-lg border border-dashed border-[#6f88b4]/30 px-6 py-10 text-center text-sm transition-opacity",
@@ -178,6 +183,7 @@ export function RecentTasksResults({
       className={cn("space-y-4 transition-opacity", isLoading && "opacity-60")}
     >
       {errorBanner}
+      {expansionNotice}
       <div className="flex flex-wrap justify-end gap-2">
         {view === "table" ? <details className="relative rounded-md border px-3 py-2 text-sm">
           <summary className="cursor-pointer">Columns</summary>
@@ -259,7 +265,11 @@ export function RecentTasksResults({
                         size="sm"
                         aria-expanded={expanded === task.id}
                         onClick={() =>
-                          setExpanded(expanded === task.id ? null : task.id)
+                          updateTaskSearchParams(params => {
+                            params.set("view", "table");
+                            if (params.get("expanded") === task.id) params.delete("expanded");
+                            else params.set("expanded", task.id);
+                          }, { resetPage: false })
                         }
                       >
                         Trial details

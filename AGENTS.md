@@ -3118,3 +3118,11 @@ Only mine uses `mine=only` without a duplicate `author=me`. Clearing that
 restriction, globally or through its chip, removes the mode and restores the
 default mine-first order. Explicit Everyone (`mine=off`) stays unpinned when
 other filters are cleared.
+
+Task-browser navigation is URL-owned too: `expanded=TASK_ID` opens a table
+row (`view=table` is implied if view is absent), `filters=1` opens advanced
+criteria, `filter_groups=Task,Trial,Delivery` expands groups, and `filter_search`
+searches their labels. These presentation parameters never enter browse/count/ID
+queries and do not reset pagination. Copy view preserves offset when an expanded
+row is linked. An off-page task links to its detail page rather than silently
+substituting another row. See `docs/task-browser-navigation.md` for CLI mappings.

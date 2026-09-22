@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ExternalLink, GitPullRequest } from "lucide-react";
 import { Badge, badgeVariants } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Card, CardHeader } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Tooltip,
@@ -70,10 +70,10 @@ function TrajectorySummary({ task }: { task: TaskBrowseItem }) {
 // Show complete imported/finalized history and active membership even when
 // the browse filter targets one lab. Missing records do not prove a task was
 // never sent: imported history can be incomplete.
-export function TaskDeliveryHistory({ task }: { task: TaskBrowseItem }) {
+export function TaskDeliveryHistory({ task, showEmpty = false }: { task: TaskBrowseItem; showEmpty?: boolean }) {
   const params = useSearchParams();
   const records = [...(task.active_deliveries ?? []), ...(task.deliveries ?? [])];
-  if (!records.length) return <span className="text-muted-foreground text-xs">No delivery recorded</span>;
+  if (!records.length) return showEmpty ? <span className="text-muted-foreground text-xs">No delivery recorded</span> : null;
   return (
     <details className="text-xs">
       <summary className="cursor-pointer">
@@ -145,55 +145,46 @@ export function TaskEvidence({ task, showSummary = false }: { task: TaskBrowseIt
     Number(isBaselineAgentName(a[0].agent)) - Number(isBaselineAgentName(b[0].agent))
   );
   return (
-    <div className="space-y-3">
-      <div className="flex items-baseline justify-between gap-3 text-xs">
-        <span className="text-muted-foreground">
-          Recent trials · current version
-        </span>
-        <TrajectorySummary task={task} />
-      </div>
-      {rows.map(([key, trials]) => {
-        const display = getExperimentAgentDisplay(trials[0]);
-        return <div key={key} className="space-y-1">
-          <div className="flex flex-wrap items-center gap-2 text-[11px]">
-            <span className="font-mono">{display.agent}</span>
-            <Badge variant="outline" className="font-mono text-[10px]">{experimentModelLabel(display.model, trials[0].reasoning_effort)}</Badge>
-            <span className="text-muted-foreground ml-auto">{trials.length} shown</span>
-          </div>
-          <div className="flex flex-wrap gap-1">{trials.map(trial => <TrialIcon key={trial.id} trial={trial} taskId={task.id} />)}</div>
-        </div>;
-      })}
-      <p className="text-muted-foreground text-xs">
-        Showing {task.latest_trials.length} of {task.total_trials} trials.{" "}
-        <Link
-          className="underline"
-          href={`/tasks/${encodeURIComponent(task.id)}`}
-        >
-          View all results
-        </Link>
-      </p>
-      <div className={showSummary ? "grid gap-3 sm:grid-cols-2" : ""}>
-        {showSummary ? <TaskRunSummary summary={task.run_summary} /> : null}
-        <div className="border-border/60 rounded-md border px-3 py-2">
-          <div className="text-muted-foreground mb-1 text-xs">
-            Experiment history · all versions
-          </div>
-          {task.experiments.length ? (
-            <ExperimentsList
-              experiments={task.experiments}
-              taskId={task.id}
-              maxVisible={3}
-              layout="stacked"
-              className="text-muted-foreground text-xs"
-              linkClassName="text-[#5d77a5] hover:underline dark:text-[#a8b8d2]"
-            />
-          ) : (
-            <span className="text-muted-foreground text-xs">
-              No experiments recorded
-            </span>
-          )}
+    <div className={showSummary ? "contents" : "space-y-3"}>
+      {showSummary ? (
+        <section aria-label="Results" className="mx-5 border-t border-border/60 py-3">
+          <TaskRunSummary summary={task.run_summary} />
+        </section>
+      ) : null}
+      <section aria-label="Recent trials" className={cn("space-y-3", showSummary && "mx-5 border-t border-border/60 py-3")}>
+        <div className="flex flex-wrap items-baseline justify-between gap-2 text-xs">
+          <span className="text-muted-foreground">Recent trials · current version</span>
+          <TrajectorySummary task={task} />
         </div>
-      </div>
+        {rows.length ? rows.map(([key, trials]) => {
+          const display = getExperimentAgentDisplay(trials[0]);
+          return <div key={key} className="space-y-1">
+            <div className="flex flex-wrap items-center gap-2 text-[11px]">
+              <span className="font-mono">{display.agent}</span>
+              <Badge variant="outline" className="max-w-full whitespace-normal break-all font-mono text-[10px]">{experimentModelLabel(display.model, trials[0].reasoning_effort)}</Badge>
+              <span className="text-muted-foreground ml-auto">{trials.length} shown</span>
+            </div>
+            <div className="flex flex-wrap gap-1">{trials.map(trial => <TrialIcon key={trial.id} trial={trial} taskId={task.id} />)}</div>
+          </div>;
+        }) : <p className="text-muted-foreground text-xs">{task.total_trials ? "Trial preview unavailable" : "No trials on this version"}</p>}
+        <p className="text-muted-foreground text-xs">
+          {task.total_trials > 0 ? `Showing ${task.latest_trials.length} of ${task.total_trials} trials. ` : null}
+          <Link className="underline" href={`/tasks/${encodeURIComponent(task.id)}`}>
+            View all results
+          </Link>
+        </p>
+      </section>
+      <section aria-label="Experiments" className={cn("space-y-1 border-t border-border/60 pt-3", showSummary && "mx-5 pb-5")}>
+        <div className="text-muted-foreground text-xs">Experiments · all versions</div>
+        {task.experiments.length ? <ExperimentsList
+          experiments={task.experiments}
+          taskId={task.id}
+          maxVisible={3}
+          layout="stacked"
+          className="text-xs"
+          linkClassName="text-[#5d77a5] dark:text-[#a8b8d2]"
+        /> : <p className="text-muted-foreground text-xs">No linked experiments</p>}
+      </section>
     </div>
   );
 }
@@ -206,11 +197,11 @@ export function TaskCard({ task }: { task: TaskBrowseItem }) {
   return (
     <Card
       className={cn(
-        "bg-card/95 border-[#6f88b4]/20 shadow-xs transition-colors hover:border-[#6f88b4]/40",
+        "row-span-5 grid min-w-0 grid-rows-subgrid gap-y-0 bg-card/95 border-[#6f88b4]/20 shadow-xs transition-colors hover:border-[#6f88b4]/40",
         selected && "border-[#6f88b4]/70 ring-1 ring-[#6f88b4]/40"
       )}
     >
-      <CardHeader className="space-y-2 px-5 pt-5 pb-2">
+      <CardHeader className="space-y-3 px-5 pt-5 pb-3">
         <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3">
           <Checkbox
             checked={selected || alreadyAdded}
@@ -223,7 +214,7 @@ export function TaskCard({ task }: { task: TaskBrowseItem }) {
             <div className="flex flex-wrap items-center gap-2">
               <TaskBrowseLink
                 task={task}
-                className="text-foreground font-mono text-sm font-semibold transition-colors hover:text-[#5d77a5] dark:hover:text-[#a8b8d2]"
+                className="text-foreground break-words font-mono text-sm font-semibold transition-colors hover:text-[#5d77a5] dark:hover:text-[#a8b8d2]"
               />
               <Badge variant="outline" className="w-fit font-mono text-[11px]">
                 v{task.current_version ?? "—"}
@@ -278,66 +269,15 @@ export function TaskCard({ task }: { task: TaskBrowseItem }) {
               })()}
             </div>
           </div>
-          <div className="contents">
-            <Link
-              href={`/tasks/${task.id}/probe`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-muted-foreground hover:text-foreground text-[11px] font-medium underline-offset-2 hover:underline"
-            >
-              Probe run →
-            </Link>
-            <div className="col-start-2">
-              <div className="text-muted-foreground text-[11px] tracking-wide uppercase">
-                Last run
-              </div>
-              <div className="mt-1 text-xs">
-                {task.last_run_at ? formatRelativeTime(task.last_run_at) : "—"}
-              </div>
-              {task.last_run_at ? (
-                <div className="text-muted-foreground text-[11px]">
-                  {formatShortDateTime(task.last_run_at)}
-                </div>
-              ) : null}
-            </div>
-            <div className="col-start-3 text-right">
-              <div className="text-muted-foreground text-[11px] tracking-wide uppercase">
-                Cost
-              </div>
-              <div className="mt-1 flex items-baseline gap-1.5 text-sm font-semibold tabular-nums">
-                <span>
-                  {task.cost_trial_count > 0 &&
-                  hasDisplayableCostUsd(task.cost_usd)
-                    ? `${task.cost_has_estimated && !task.cost_has_native ? "~" : ""}${formatCostUsd(task.cost_usd)}`
-                    : "—"}
-                </span>
-                <QaCostSuffix
-                  costUsd={task.qa_cost_usd}
-                  title="QA/analysis spend for this task's trials. Not included in the cost figure."
-                />
-                <VerifierCostSuffix
-                  costUsd={task.verifier_cost_usd}
-                  title="CUA/verifier LLM spend for this task's trials. Not included in the cost figure."
-                />
-              </div>
-              {task.cost_trial_count > 0 ? (
-                <div className="text-muted-foreground text-[11px]">
-                  {task.cost_trial_count} of {task.total_trials} priced
-                </div>
-              ) : null}
-              {task.cost_trial_count > 0 ? (
-                <div className="text-muted-foreground text-[11px]">
-                  spent{" "}
-                  {task.billed_trial_count === 0
-                    ? formatCostUsd(0)
-                    : `${task.billed_has_estimated && !task.billed_has_native ? "~" : ""}${formatCostUsd(task.billed_cost_usd)}`}
-                </div>
-              ) : null}
-            </div>
-          </div>
+          <Link
+            href={`/tasks/${task.id}/probe`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-muted-foreground hover:text-foreground text-[11px] font-medium underline-offset-2 hover:underline"
+          >
+            Probe run →
+          </Link>
         </div>
-      </CardHeader>
-      <CardContent className="space-y-3 px-5 pb-5">
         {(task.user_tags ?? []).length > 0 ? (
           <div className="flex flex-wrap gap-1">
             {(task.user_tags ?? []).map((t) => (
@@ -346,8 +286,57 @@ export function TaskCard({ task }: { task: TaskBrowseItem }) {
           </div>
         ) : null}
         <TaskDeliveryHistory task={task} />
-        <TaskEvidence task={task} showSummary />
-      </CardContent>
+      </CardHeader>
+      <section aria-label="Activity and cost" className="mx-5 grid grid-cols-2 gap-3 pb-3">
+        <div className="min-w-0">
+          <div className="text-muted-foreground text-[11px] tracking-wide uppercase">
+            Last run
+          </div>
+          <div className="mt-1 text-xs">
+            {task.last_run_at ? formatRelativeTime(task.last_run_at) : "—"}
+          </div>
+          {task.last_run_at ? (
+            <div className="text-muted-foreground text-[11px]">
+              {formatShortDateTime(task.last_run_at)}
+            </div>
+          ) : null}
+        </div>
+        <div className="min-w-0 text-right">
+          <div className="text-muted-foreground text-[11px] tracking-wide uppercase">
+            Cost
+          </div>
+          <div className="mt-1 flex flex-wrap justify-end items-baseline gap-1.5 text-sm font-semibold tabular-nums">
+            <span>
+              {task.cost_trial_count > 0 &&
+              hasDisplayableCostUsd(task.cost_usd)
+                ? `${task.cost_has_estimated && !task.cost_has_native ? "~" : ""}${formatCostUsd(task.cost_usd)}`
+                : "—"}
+            </span>
+            <QaCostSuffix
+              costUsd={task.qa_cost_usd}
+              title="QA/analysis spend for this task's trials. Not included in the cost figure."
+            />
+            <VerifierCostSuffix
+              costUsd={task.verifier_cost_usd}
+              title="CUA/verifier LLM spend for this task's trials. Not included in the cost figure."
+            />
+          </div>
+          {task.cost_trial_count > 0 ? (
+            <div className="text-muted-foreground text-[11px]">
+              {task.cost_trial_count} of {task.total_trials} priced
+            </div>
+          ) : null}
+          {task.cost_trial_count > 0 ? (
+            <div className="text-muted-foreground text-[11px]">
+              spent{" "}
+              {task.billed_trial_count === 0
+                ? formatCostUsd(0)
+                : `${task.billed_has_estimated && !task.billed_has_native ? "~" : ""}${formatCostUsd(task.billed_cost_usd)}`}
+            </div>
+          ) : null}
+        </div>
+      </section>
+      <TaskEvidence task={task} showSummary />
     </Card>
   );
 }

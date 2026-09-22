@@ -165,3 +165,10 @@ creates an organization-shared saved selection on the hosted API, rejecting empt
 or truncated ID results before writing. `--selection-id ID` browses that exact set
 and composes with filters/count/IDs. IDs are fixed; current versions can change.
 `--qa-outcome rejected` is “Needs work”; `failed` is a QA execution error, not rejection.
+
+Tasks-page agents can navigate directly with `q`, `mine`, `run_coverage`,
+`qa_outcomes`, `sort`, `offset`, `view`, `columns`, and `selection_id`.
+`expanded=TASK_ID` opens table evidence; `filters=1`, `filter_groups=Task,Trial`,
+and `filter_search=Model` restore the advanced-criteria panel. UI navigation
+parameters do not change API filtering or execute writes. `ls --json` contains
+the exact current-version summaries, trial preview, and experiment affiliations.

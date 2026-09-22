@@ -769,3 +769,79 @@ for (const columnsQuery of ["", "&columns="]) {
     }
   });
 }
+
+test("URL restores expanded evidence and criteria without changing the task query", async ({ page }) => {
+  await page.route("**/api/tasks/browse/count?*", route => route.fulfill({json: {total: 25}}));
+  let requests = 0;
+  await page.route("**/api/tasks/browse?*", route => {
+    requests++;
+    const params = new URL(route.request().url()).searchParams;
+    for (const key of ["expanded", "filters", "filter_groups", "filter_search"]) expect(params.has(key)).toBe(false);
+    return route.fulfill({ json: { items: [task], offset: 24, has_more: false } });
+  });
+  await page.goto("/picker?view=table&offset=24&expanded=visible-task");
+  await expect(page.getByRole("button", {name: "Trial details"})).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByRole("link", {name: "View all results"})).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole("button", {name: "Trial details"})).toHaveAttribute("aria-expanded", "true");
+  const before = requests;
+  await page.getByRole("button", {name: /^More criteria/}).click();
+  await page.getByRole("textbox", {name: "Find a filter"}).fill("Median steps");
+  await expect.poll(() => new URL(page.url()).searchParams.get("filter_search")).toBe("Median steps");
+  expect(new URL(page.url()).searchParams.get("filters")).toBe("1");
+  expect(new URL(page.url()).searchParams.get("offset")).toBe("24");
+  expect(requests).toBe(before);
+  await page.reload();
+  await expect(page.getByRole("textbox", {name: "Find a filter"})).toHaveValue("Median steps");
+  await expect(page.getByRole("combobox", {name: "Median steps", exact: true})).toBeVisible();
+  await page.screenshot({path: "task-url-navigation.png", fullPage: true, animations: "disabled"});
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", {value: {writeText: async (text: string) => Object.assign(window, {copiedView: text})}});
+  });
+  await page.getByRole("button", {name: "Copy view link", exact: true}).click();
+  const copied = new URL(await page.evaluate(() => (window as unknown as {copiedView: string}).copiedView));
+  expect(copied.searchParams.get("expanded")).toBe("visible-task");
+  expect(copied.searchParams.get("offset")).toBe("24");
+  await page.goto("/picker?expanded=off-page-task");
+  await expect(page.getByText("The linked task is outside this page or filter.", {exact: false})).toBeVisible();
+  await expect(page.getByRole("link", {name: "Open task", exact: true})).toHaveAttribute("href", "/tasks/off-page-task");
+  await page.goto("/picker?expanded=visible-task");
+  await expect(page.getByRole("combobox", {name: "Task view"})).toHaveValue("table");
+  await page.getByRole("button", {name: "Trial details"}).click();
+  await expect(page.getByRole("combobox", {name: "Task view"})).toHaveValue("table");
+  expect(new URL(page.url()).searchParams.has("expanded")).toBe(false);
+  await page.goto("/picker?filters=1&filter_groups=Trial");
+  await expect(page.getByRole("button", {name: "Trial filters", exact: true})).toHaveAttribute("aria-expanded", "true");
+});
+
+test("criteria search preserves caret edits and follows URL navigation", async ({ page }) => {
+  await page.goto("/picker?filters=1&offset=24");
+  const input = page.getByRole("textbox", { name: "Find a filter" });
+  await input.pressSequentially("steps");
+  await expect(input).toHaveValue("steps");
+  await input.press("Home");
+  await input.pressSequentially("Median ", { delay: 20 });
+  await expect(input).toHaveValue("Median steps");
+  await expect.poll(() => new URL(page.url()).searchParams.get("filter_search")).toBe("Median steps");
+  expect(new URL(page.url()).searchParams.get("offset")).toBe("24");
+  await expect(page.getByRole("combobox", { name: "Median steps", exact: true })).toBeVisible();
+  await input.press("Backspace");
+  await expect(input).toHaveValue("Mediansteps");
+  await input.press(" ");
+  await expect(input).toHaveValue("Median steps");
+  await page.evaluate(() => {
+    const url = new URL(window.location.href);
+    url.searchParams.set("filter_search", "Tags");
+    window.history.pushState(null, "", url);
+  });
+  await expect(input).toHaveValue("Tags");
+  await page.goBack();
+  await expect(input).toHaveValue("Median steps");
+  await page.goForward();
+  await expect(input).toHaveValue("Tags");
+  await input.fill("");
+  await expect.poll(() => new URL(page.url()).searchParams.has("filter_search")).toBe(false);
+  await page.reload();
+  await expect(input).toHaveValue("");
+});

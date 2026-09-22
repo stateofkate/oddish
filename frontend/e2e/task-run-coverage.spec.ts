@@ -16,7 +16,7 @@ const zero: TaskRunGroup = {
 };
 const base: TaskBrowseItem = {
   id: "model-task",
-  name: "Model evaluation",
+  name: "archil40-26-openbao-cross-namespace-lease-model-evaluation",
   current_version: 1,
   current_version_id: "v1",
   version_count: 1,
@@ -57,7 +57,10 @@ const base: TaskBrowseItem = {
     },
   ],
   latest_trials_truncated: true,
-  experiments: [{ id: "exp-one", name: "Baseline validation experiment" }],
+  experiments: [
+    { id: "exp-one", name: "Baseline validation experiment — codex-gpt-5.6-terra-high-20260922" },
+    { id: "exp-rerun", name: "Task rerun — verifier-checks-and-model-results-20260922" },
+  ],
   user_tags: [],
   run_summary: {
     model: {
@@ -109,6 +112,7 @@ const empty: TaskBrowseItem = {
 test("coverage and author scope reach selection while result links preserve context", async ({
   page,
 }) => {
+  let summaryUnavailable = false;
   await page.route("**/api/**", async (route) => {
     const url = new URL(route.request().url());
     const coverage = url.searchParams.get("run_coverage");
@@ -120,7 +124,7 @@ test("coverage and author scope reach selection while result links preserve cont
           : [base, validation, empty];
     let body: unknown = [];
     if (url.pathname === "/api/tasks/browse") {
-      body = { items, limit: 24, offset: 0, has_more: false };
+      body = { items: items.map(item => summaryUnavailable ? { ...item, run_summary: null } : item), limit: 24, offset: 0, has_more: false };
     } else if (url.pathname.endsWith("/count")) body = { total: items.length };
     else if (url.pathname.endsWith("/ids"))
       body = { ids: items.map((item) => item.id), truncated: false };
@@ -148,7 +152,22 @@ test("coverage and author scope reach selection while result links preserve cont
   await expect(
     page.getByRole("link", { name: "Recent oracle run Pass" }).first()
   ).toHaveAttribute("href", "/tasks/model-task?trial=oracle-run");
-  await page.screenshot({ path: "task-run-coverage.png", fullPage: true });
+  // Compare actual section positions: varying titles, costs and trial groups
+  // must not move results or experiment links between neighboring cards.
+  for (const width of [1280, 900, 390]) {
+    await page.setViewportSize({ width, height: 1100 });
+    for (const name of ["Activity and cost", "Results", "Recent trials", "Experiments"]) {
+      const boxes = await page.getByRole("region", { name, exact: true }).evaluateAll(nodes =>
+        nodes.map(node => ({ top: node.getBoundingClientRect().top, bottom: node.getBoundingClientRect().bottom }))
+      );
+      const columns = width >= 1280 ? 3 : width >= 768 ? 2 : 1;
+      expect(new Set(boxes.slice(0, columns).map(box => box.top)).size).toBe(1);
+      expect(new Set(boxes.slice(0, columns).map(box => box.bottom)).size).toBe(1);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    if (width === 1280) await page.screenshot({ path: "task-run-coverage.png", fullPage: true });
+  }
+  await page.setViewportSize({ width: 1280, height: 1100 });
   await page
     .getByRole("combobox", { name: "Author", exact: true })
     .selectOption("first");
@@ -177,4 +196,10 @@ test("coverage and author scope reach selection while result links preserve cont
   await expect(
     page.getByRole("combobox", { name: "Runs on current version" })
   ).toHaveValue("any");
+  summaryUnavailable = true;
+  await page.reload();
+  await expect(page.getByText("Run summary unavailable", { exact: true })).toHaveCount(3);
+  await expect(page.getByText("Model score: —", { exact: true })).toHaveCount(3);
+  await expect(page.getByRole("region", { name: "Experiments", exact: true })).toHaveCount(3);
+  await expect(page.getByText("No model trials", { exact: true })).toHaveCount(0);
 });

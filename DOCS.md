@@ -400,6 +400,9 @@ Common options
 - `--api TEXT` - Override the API URL
 
 
+The [agent navigation reference](docs/task-browser-navigation.md) maps browser URL
+parameters to CLI flags and documents deep links for expanded task evidence.
+
 Task run coverage is available in both the Tasks page and `oddish ls`:
 
 ```bash
