@@ -399,6 +399,30 @@ Common options
 - `--json` - Emit the raw task browser JSON response
 - `--api TEXT` - Override the API URL
 
+
+Task run coverage is available in both the Tasks page and `oddish ls`:
+
+```bash
+# Find model evidence; oracle/NOP checks do not count as model runs.
+oddish ls --run-coverage scored_model_trials --sort model_score_desc
+# Find versions with only baseline validation, and prioritize your tasks.
+oddish ls --run-coverage validation_only --pin-author me
+# Review recorded model results and inspect complete summaries/experiment IDs.
+oddish ls --run-coverage model_trials --qa-outcome unreviewed --json
+# Select for a customer; delivery readiness is checked by the delivery itself.
+oddish ls --run-coverage scored_model_trials --not-delivered-to GDM --ids --json > selection.json
+```
+
+`--run-coverage` accepts `any`, `no_trials`, `validation_only`, `model_trials`,
+and `scored_model_trials`; all refer to the current default version. `--count`
+and `--ids` use the same filters. The text table separates model scores from
+oracle/NOP checks; `--json` retains complete `run_summary`, experiment, and
+trial-preview fields. Missing summaries display Unavailable. Model sorts are
+`model_score_asc`, `model_score_desc`, and `last_model_activity_desc`.
+`--author me` restricts results; `--pin-author me` prioritizes them. `--sort`
+orders within that scope. Inspect underlying runs with `oddish status TRIAL_ID`
+and `oddish status TASK_ID --versions --json`.
+
 These are only the most common filters — `oddish ls` mirrors the dashboard's
 full task-browser filter set (status, date, model, trial-metric, tool-usage,
 and more, some 70 options in all). Run `oddish ls --help` for the complete

@@ -1,4 +1,4 @@
-"""Recompute per-task-version model statistics from recorded trials.
+"""Recompute task-browser and per-model statistics from recorded trials.
 
 Each batch commits separately. Resume with --after-id using the last logged
 version ID; without it, a rerun recomputes every version from the beginning.
@@ -15,9 +15,7 @@ import logging
 
 from sqlalchemy import func, select
 
-from oddish.core.task_version_model_metrics import (
-    refresh_task_version_model_metrics,
-)
+from oddish.core.task_browse_summary import refresh_task_browse_summaries
 from oddish.db import TaskVersionModel, TaskVersionModelMetricsModel, get_session
 
 logger = logging.getLogger(__name__)
@@ -55,7 +53,7 @@ async def backfill(
             version_ids = await _next_version_ids(session, cursor, size)
             if not version_ids:
                 break
-            await refresh_task_version_model_metrics(session, version_ids)
+            await refresh_task_browse_summaries(session, version_ids)
             written = (
                 await session.execute(
                     select(func.count())

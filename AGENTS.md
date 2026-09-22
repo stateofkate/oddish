@@ -3051,3 +3051,46 @@ selection uses Daytona/Modal (Numinous when explicitly enabled); hosted APIs
 validate the requested environment. Homebrew installs carry a HOMEBREW marker
 in their distribution metadata so version/update commands never replace the
 Homebrew-managed environment through PyPI.
+
+
+### Task run coverage
+
+`GET /tasks/browse` accepts `run_coverage=any|no_trials|validation_only|model_trials|scored_model_trials`.
+Coverage and the additive `run_summary` describe `tasks.current_version_id`;
+`/tasks/{id}/open` carries that same summary on its selected version. Counts and
+bulk IDs apply coverage before pagination. Missing summaries are unknown and
+never qualify as no-trial versions. Uploads initialize empty summaries.
+`model_score_asc`, `model_score_desc`, and `last_model_activity_desc` read the
+stored model group with unscored/missing values last. Existing author pinning
+still precedes these sorts.
+
+`refresh_task_browse_summaries` maintains model/oracle/NOP counts, reward sums,
+outcome counts, and activity in nullable JSONB on the existing summary row.
+`run_summary_columns` uses the canonical browse population and outcome buckets;
+scored agent timeouts count, execution errors do not. Legacy reward fields and
+experiment mean-of-task-means are unchanged. The existing statistics backfill
+now rebuilds both browse and per-model summaries. Apply `task_run_coverage_001`
+and follow the cutover reconciliation in `SELF_HOSTING.md`.
+
+The shared `TaskRunSummary` renders exact model results and separate baseline
+checks in cards, table rows, and task detail. Recent-trial strips stay visible in cards and group by the shared agent/model/effort key.
+They are previews, never aggregate percentages; links open individual trials on the task page.
+`TaskEvidence` shares those dots and all-version experiment affiliations between
+cards and expanded table rows without repeating selection or headers.
+Experiment links preserve the task via `?task=`; affiliation does not imply
+contribution to the selected version's score. Coverage lives in the existing
+URL filter registry, so page/count/ID requests, saved views and clear behavior
+share it without additional fetches or React state.
+
+Tasks separates Find tasks, Evidence on this version, and Delivery history.
+Author restriction and mine-first priority share the Authors control; sort never
+changes either. Advanced filters use searchable group disclosures rather than
+an added-filter state list. Choosing a lab applies recorded-history filtering
+when no history condition is selected. Cards are the default view; the table
+remains available. CLI `ls --run-coverage` forwards the same coverage for rows, counts,
+and IDs, with separate model/check text columns and full summaries in JSON.
+
+Only mine uses `mine=only` without a duplicate `author=me`. Clearing that
+restriction, globally or through its chip, removes the mode and restores the
+default mine-first order. Explicit Everyone (`mine=off`) stays unpinned when
+other filters are cleared.

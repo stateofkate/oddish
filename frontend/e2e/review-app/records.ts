@@ -1,3 +1,4 @@
+import { runSummary } from "../run-summary-fixture";
 import records from "../fixtures/review-records.json";
 import type {
   Task,
@@ -92,6 +93,7 @@ export function versionFor(
     version,
     is_current: version === task.current_version,
     created_at: now,
+    run_summary: runSummary({total: task.total, scored: task.total, fail_count: task.total}),
     trial_count: task.total,
     completed_count: task.completed,
     failed_count: 0,

@@ -43,7 +43,7 @@ From `oddish/`, with the intended database configured:
 uv run python -m oddish.core.backfill_task_version_model_metrics --batch 200 --limit 500
 ```
 
-This writes aggregate statistics for existing task versions using the current
+This rebuilds both task-browser summaries and per-model statistics for existing task versions using the current
 aggregation code. It does not launch evaluations. Every batch commits separately;
 resume with `--after-id <last-logged-version-id>`. Without that argument a rerun
 starts at the beginning. Versions with no eligible trials do not stall paging.

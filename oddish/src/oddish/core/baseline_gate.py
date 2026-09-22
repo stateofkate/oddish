@@ -91,7 +91,7 @@ def evaluate_baseline_gate(
     return GateOutcome.VALID, "baselines validated (all oracle passed, all nop failed)"
 
 
-def baseline_agent_clause(agent_column):
+def baseline_agent_clause(agent_column, kind: str | None = None):
     """SQL counterpart to :func:`oddish.config.is_nop_oracle_agent`.
 
     Callers that must filter baselines in the database share this one clause so
@@ -101,12 +101,15 @@ def baseline_agent_clause(agent_column):
     """
     agent_lower = func.lower(func.coalesce(agent_column, ""))
     return or_(
-        agent_lower == AgentName.NOP.value,
-        agent_lower == AgentName.ORACLE.value,
-        agent_lower.like("nop-%"),
-        agent_lower.like("oracle-%"),
-        agent_lower.like("agent-nop%"),
-        agent_lower.like("agent-oracle%"),
+        *(
+            clause
+            for name in ((kind,) if kind else (AgentName.NOP.value, AgentName.ORACLE.value))
+            for clause in (
+                agent_lower == name,
+                agent_lower.like(f"{name}-%"),
+                agent_lower.like(f"agent-{name}%"),
+            )
+        ),
     )
 
 

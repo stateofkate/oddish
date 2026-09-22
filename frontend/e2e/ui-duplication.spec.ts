@@ -30,7 +30,7 @@ test("single group statistics only collapse when their trial scope matches", asy
       page.getByRole("heading", { name: "Agents", exact: true })
     ).toBeVisible();
     await expect(page.getByText(/^avg score$/i)).toHaveCount(
-      scenario === "two-models" ? 3 : scenario === "different-scope" ? 2 : 1
+      scenario === "two-models" ? 2 : scenario === "different-scope" ? 1 : 0
     );
     await expect(
       page.getByText("Total cost (all versions)", { exact: true })

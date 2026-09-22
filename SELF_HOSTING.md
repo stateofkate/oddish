@@ -161,6 +161,20 @@ uv run alembic upgrade head
 
 Re-run these whenever you pull changes that touch either `alembic/` directory.
 
+Apply core migration `task_run_coverage_001` before deploying run-coverage
+filters. It adds and backfills model/oracle/NOP summaries in 200-version
+batches using the same sorted advisory locks as writers. Interrupted upgrades
+resume from missing summaries. After upgrading all API and worker processes,
+run `python -m oddish.core.backfill_task_version_model_metrics --batch 200`
+from `oddish/` without `--limit` to reconcile any old-worker writes during
+cutover. Verify no active version has a missing summary:
+
+```sql
+SELECT count(*) FROM task_versions v
+LEFT JOIN task_version_browse_summaries s ON s.task_version_id = v.id
+WHERE v.deleted_at IS NULL AND s.run_summary IS NULL;
+```
+
 Apply core migration `shareqa_001` before running the version with the
 **Show QA** share setting. It adds `experiments.show_qa` and sets it to false
 for existing experiments. QA stays hidden on existing share links until an

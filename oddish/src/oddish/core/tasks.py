@@ -13,12 +13,13 @@ from oddish.db import (
     AGENT_TRIAL_KIND,
     Priority,
     TaskModel,
+    TaskBrowseSummaryModel,
     TaskVersionModel,
     TrialModel,
     get_session,
 )
 from oddish.db.storage import StorageClient, get_storage_client
-from oddish.schemas import TaskUploadInitResponse, UploadResponse
+from oddish.schemas import TaskRunSummary, TaskUploadInitResponse, UploadResponse
 
 
 async def _next_version_number(session: AsyncSession, task_id: str) -> int:
@@ -354,6 +355,13 @@ async def complete_task_upload(
             )
             session.add(new_version_row)
             await session.flush()
+            session.add(
+                TaskBrowseSummaryModel(
+                    task_id=task_id,
+                    task_version_id=version_id,
+                    run_summary=TaskRunSummary().model_dump(mode="json"),
+                )
+            )
 
             new_task.current_version_id = version_id
 
@@ -488,6 +496,13 @@ async def complete_task_upload(
             # tripping ``fk_tasks_current_version_id``. Mirrors the
             # explicit-flush pattern the new-task branch above already uses.
             await session.flush()
+            session.add(
+                TaskBrowseSummaryModel(
+                    task_id=task_id,
+                    task_version_id=version_id,
+                    run_summary=TaskRunSummary().model_dump(mode="json"),
+                )
+            )
 
         # A successful overwrite reaching here is necessarily a content
         # change (same-hash replays returned above). A new version changes the

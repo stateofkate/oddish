@@ -115,6 +115,7 @@ export function taskOpenFromBrowse(browse: TaskBrowseItem): TaskOpenResource {
       selected_version: version
         ? {
             ...version,
+            run_summary: browse.run_summary,
             trial_count: browse.total_trials,
             completed_count: browse.completed_trials,
             failed_count: browse.failed_trials,

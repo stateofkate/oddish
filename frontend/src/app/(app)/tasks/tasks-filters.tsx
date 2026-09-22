@@ -4,8 +4,6 @@ import {
   useEffect,
   useMemo,
   useState,
-  type Dispatch,
-  type SetStateAction,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { useSearchParams } from "next/navigation";
@@ -24,7 +22,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { SavedFiltersMenu } from "@/components/saved-filters-menu";
@@ -55,9 +52,11 @@ import {
   setTaskFilters,
   updateTaskSearchParams,
   QA_OUTCOME_OPTIONS,
+  RUN_COVERAGE_OPTIONS,
+  SORT_OPTIONS,
+  type RunCoverage,
   isFilterActive,
   searchParamsToFilters,
-  SORT_OPTIONS,
   type CompareCond,
   type CreatedPreset,
   type FilterDef,
@@ -176,15 +175,11 @@ const FACETS_DEDUPE_MS = 5 * 60_000;
 export function TasksFilters({
   searchQuery,
   onSearchChange,
-  addedKeys,
-  setAddedKeys,
   onClearFilters,
   onSearchFilter,
 }: {
   searchQuery: string;
   onSearchChange: (value: string) => void;
-  addedKeys: string[];
-  setAddedKeys: Dispatch<SetStateAction<string[]>>;
   onClearFilters: () => void;
   onSearchFilter: (outcome: string) => void;
 }) {
@@ -215,6 +210,7 @@ export function TasksFilters({
 
   const [open, setOpen] = useState(false);
   const [filterSearch, setFilterSearch] = useState("");
+  const [openGroups, setOpenGroups] = useState<string[]>([]);
   const [copyNotice, setCopyNotice] = useState("");
   const historyLabs = [...values.deliveredTo, ...values.notDeliveredTo];
   const lab = historyLabs.length === 1 ? historyLabs[0] : searchParams.get("lab") ?? "";
@@ -242,34 +238,11 @@ export function TasksFilters({
     ? QA_OUTCOME_OPTIONS.filter(option => option.label.toLowerCase().includes(searchQuery.trim().toLowerCase()))
     : [];
 
-  // Optional filters are shown when explicitly added OR already active (e.g.
-  // restored from the URL on load).
-  const visibleDefs = useMemo(() => {
-    return FILTER_DEFS.filter(
-      (def) =>
-        !["sort", "qaOutcomes", "stepsP50"].includes(def.key) &&
-        (!def.hidden || isFilterActive(def.key, values)) &&
-        (def.group !== "Delivery" || deliveryStatus === "custom" || addedKeys.includes(def.key)) &&
-        ((def.pinned &&
-          (def.group !== "Delivery" || deliveryStatus === "custom")) ||
-          addedKeys.includes(def.key) ||
-          isFilterActive(def.key, values))
-    );
-  }, [addedKeys, values, deliveryStatus]);
-
-  const inactiveDefs = FILTER_DEFS.filter(
-    (def) =>
-      !def.hidden &&
-      !["sort", "qaOutcomes", "stepsP50"].includes(def.key) &&
-      !visibleDefs.some((v) => v.key === def.key)
-  );
-
   const clearKey = (key: string) => {
     const fields = FILTER_FIELDS[key];
     setTaskFilters(
       Object.fromEntries(fields.map((field) => [field, EMPTY_FILTERS[field]]))
     );
-    setAddedKeys((prev) => prev.filter((k) => k !== key));
   };
   const activeDefs = FILTER_DEFS.filter(
     (def) => def.key !== "sort" && isFilterActive(def.key, values)
@@ -300,7 +273,9 @@ export function TasksFilters({
   };
   return (
     <div className="space-y-3" data-testid="tasks-filters">
-      <div className="flex flex-wrap items-center gap-2">
+      <fieldset className="rounded-lg border p-3">
+        <legend className="px-1 text-xs font-medium">Find tasks</legend>
+        <div className="flex flex-wrap items-center gap-2">
         <div className="relative min-w-56 flex-1">
           <Input
             value={searchQuery}
@@ -333,56 +308,53 @@ export function TasksFilters({
             />
           </SearchSyntaxHelp>
         </div>
-        {FILTER_DEFS.filter(def => ["qaOutcomes", "stepsP50"].includes(def.key)).map(def => (
-          <Popover key={def.key}>
-            <PopoverTrigger asChild>
-              <Button variant="outline">{def.key === "qaOutcomes" ? "QA" : "Median steps"}: {isFilterActive(def.key, values) ? summary(def) : "Any"}<ChevronDown className="ml-2 h-4 w-4" /></Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-80" align="start">
-              <FilterGroup def={def} values={values} set={setTaskFilters} facets={facets} facetsLoading={facetsLoading} facetsError={Boolean(facetsError)} onRetryFacets={() => mutateFacets()} onRemove={() => clearKey(def.key)} />
-              {def.key === "stepsP50" ? <p className="text-muted-foreground mt-2 text-xs">Current version, all eligible agent trials with recorded steps. Includes unsuccessful runs; model filters do not recalculate this median.</p> : null}
-            </PopoverContent>
-          </Popover>
-        ))}
-        <select aria-label="Lab" disabled={facetsLoading && !facets} className="border-input bg-background h-9 rounded-md border px-3 text-sm" value={lab} onChange={event => changeDeliveryFilter(event.target.value, deliveryStatus === "custom" ? "all" : deliveryStatus)}>
-          <option value="">Lab: All labs</option>
-          {[...new Set([...(facets?.delivery_customers ?? []), ...(lab ? [lab] : [])])].map(name => <option key={name} value={name}>Lab: {name}</option>)}
-        </select>
-        {facetsError ? <Button variant="ghost" onClick={() => mutateFacets()}>Retry labs</Button> : null}
-        <select aria-label="Delivery status" className="border-input bg-background h-9 rounded-md border px-3 text-sm" value={deliveryStatus} onChange={event => changeDeliveryFilter(lab, event.target.value)}>
-          <option value="all">Delivery: All tasks</option>
-          <option value="delivered">Delivery: Recorded</option>
-          <option value="none">Delivery: No record</option>
-          {deliveryStatus === "custom" ? <option value="custom">Delivery: Advanced filters</option> : null}
-        </select>
         <select
           aria-label="Author"
           className="border-input bg-background h-9 rounded-md border px-3 text-sm"
           value={
             values.mine === "only" || (values.author.length === 1 && values.author[0] === "me")
               ? "me"
-              : values.author.length
-                ? "custom"
-                : "all"
+              : values.author.length ? "custom"
+                : values.mine === null || values.mine === "first" ? "first" : "all"
           }
           onChange={(e) =>
-            setTaskFilters(current => ({
-              author: e.target.value === "me" ? ["me"] : [],
-              mine: current.mine === "only" ? "off" : current.mine,
-            }))
+            setTaskFilters({
+              author: [],
+              mine: e.target.value === "me" ? "only" : e.target.value === "first" ? "first" : "off",
+            })
           }
         >
-          <option value="all">Author: Everyone</option>
-          <option value="me">Author: Me</option>
+          <option value="all">Authors: Everyone</option>
+          <option value="first">Authors: Everyone, mine first</option>
+          <option value="me">Authors: Only mine</option>
           {values.author.length > 0 && !(values.author.length === 1 && values.author[0] === "me") ? (
-            <option value="custom">Author: {values.author.join(", ")}</option>
+            <option value="custom">Authors: {values.author.join(", ")}</option>
           ) : null}
         </select>
+        </div>
+      </fieldset>
+      <div className="grid gap-3 md:grid-cols-2">
+      <fieldset className="rounded-lg border p-3">
+        <legend className="px-1 text-xs font-medium">Evidence on this version</legend>
+        <div className="flex flex-wrap items-center gap-2">
+        <select aria-label="Runs on current version" title="Coverage for the current default version" className="border-input bg-background h-9 rounded-md border px-3 text-sm" value={values.runCoverage} onChange={event => setTaskFilters({ runCoverage: event.target.value as RunCoverage })}>
+          {RUN_COVERAGE_OPTIONS.map(option => <option key={option.value} value={option.value}>Runs: {option.label}</option>)}
+        </select>
+        {FILTER_DEFS.filter(def => def.key === "qaOutcomes").map(def => (
+          <Popover key={def.key}>
+            <PopoverTrigger asChild>
+              <Button variant="outline">Review: {isFilterActive(def.key, values) ? summary(def) : "Any"}<ChevronDown className="ml-2 h-4 w-4" /></Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-80" align="start">
+              <FilterGroup def={def} values={values} set={setTaskFilters} facets={facets} facetsLoading={facetsLoading} facetsError={Boolean(facetsError)} onRetryFacets={() => mutateFacets()} onRemove={() => clearKey(def.key)} />
+            </PopoverContent>
+          </Popover>
+        ))}
         <Popover open={open} onOpenChange={setOpen}>
           <PopoverTrigger asChild>
             <Button variant="outline">
               <Filter className="mr-2 h-4 w-4" />
-              Filters{activeDefs.length ? ` (${activeDefs.length})` : ""}
+              More criteria{activeDefs.length ? ` (${activeDefs.length})` : ""}
             </Button>
           </PopoverTrigger>
           <PopoverContent
@@ -399,30 +371,18 @@ export function TasksFilters({
             />
             <div className="max-h-[60vh] space-y-4 overflow-y-auto pr-1">
               {(["Delivery", "Task", "Trial"] as const).map((group) => {
-                const defs = (
-                  filterSearch
-                    ? FILTER_DEFS.filter(
-                        (d) =>
-                          !d.hidden &&
-                          !["qaOutcomes", "stepsP50"].includes(d.key)
-                      )
-                    : visibleDefs
-                ).filter(
-                  (d) =>
-                    d.group === group &&
-                    d.key !== "sort" &&
-                    d.label.toLowerCase().includes(filterSearch.toLowerCase())
-                );
+                const defs = FILTER_DEFS.filter(d => !d.hidden && !["sort", "qaOutcomes"].includes(d.key) && d.group === group && d.label.toLowerCase().includes(filterSearch.toLowerCase()));
+                const expanded = Boolean(filterSearch) || openGroups.includes(group);
                 return defs.length ? (
                   <section key={group} className="space-y-3">
-                    <h3 className="text-muted-foreground text-xs font-medium">
+                    <button type="button" aria-expanded={expanded} className="w-full text-left text-sm font-medium" onClick={() => setOpenGroups(current => current.includes(group) ? current.filter(value => value !== group) : [...current, group])}>
                       {group === "Delivery"
                         ? "Delivery history"
                         : group === "Trial"
                           ? "Trial filters"
                           : "Task filters"}
-                    </h3>
-                    {defs.map((def) => (
+                    </button>
+                    {expanded && defs.map((def) => (
                       <FilterGroup
                         key={def.key}
                         def={def}
@@ -433,8 +393,7 @@ export function TasksFilters({
                         facetsError={Boolean(facetsError)}
                         onRetryFacets={() => mutateFacets()}
                         onRemove={
-                          isFilterActive(def.key, values) ||
-                          addedKeys.includes(def.key)
+                          isFilterActive(def.key, values)
                             ? () => clearKey(def.key)
                             : undefined
                         }
@@ -443,39 +402,34 @@ export function TasksFilters({
                   </section>
                 ) : null;
               })}
-              {!filterSearch && inactiveDefs.length ? (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="outline" className="w-full">
-                      <Plus className="mr-2 h-4 w-4" />
-                      Add filter
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent className="max-h-72 overflow-auto">
-                    {(["Task", "Delivery", "Trial"] as const).map((group) => (
-                      <div key={group}>
-                        <DropdownMenuLabel>{group}</DropdownMenuLabel>
-                        {inactiveDefs
-                          .filter((d) => d.group === group)
-                          .map((def) => (
-                            <DropdownMenuItem
-                              key={def.key}
-                              onSelect={() =>
-                                setAddedKeys((prev) => [...prev, def.key])
-                              }
-                            >
-                              {def.label}
-                            </DropdownMenuItem>
-                          ))}
-                      </div>
-                    ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              ) : null}
             </div>
           </PopoverContent>
         </Popover>
-        <SortControl values={values} />
+        </div>
+      </fieldset>
+      <fieldset className="rounded-lg border p-3">
+        <legend className="px-1 text-xs font-medium">Delivery history</legend>
+        <div className="flex flex-wrap items-center gap-2">
+        <select aria-label="Lab" disabled={facetsLoading && !facets} className="border-input bg-background h-9 rounded-md border px-3 text-sm" value={lab} onChange={event => changeDeliveryFilter(event.target.value, deliveryStatus === "custom" || (deliveryStatus === "all" && event.target.value) ? "delivered" : deliveryStatus)}>
+          <option value="">Lab: All labs</option>
+          {[...new Set([...(facets?.delivery_customers ?? []), ...(lab ? [lab] : [])])].map(name => <option key={name} value={name}>Lab: {name}</option>)}
+        </select>
+        {facetsError ? <Button variant="ghost" onClick={() => mutateFacets()}>Retry labs</Button> : null}
+        <select aria-label="Delivery status" className="border-input bg-background h-9 rounded-md border px-3 text-sm" value={deliveryStatus} onChange={event => changeDeliveryFilter(lab, event.target.value)}>
+          <option value="all">Delivery: All tasks</option>
+          <option value="delivered">Delivery: Recorded</option>
+          <option value="none">Delivery: No record</option>
+          {deliveryStatus === "custom" ? <option value="custom">Delivery: Advanced filters</option> : null}
+        </select>
+        </div>
+        <p className="text-muted-foreground mt-2 text-xs">Delivery readiness is checked in the selected delivery.</p>
+      </fieldset>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <select aria-label="Sort tasks" className="border-input bg-background h-9 rounded-md border px-3 text-sm" value={values.sort ?? "recent"} onChange={event => setTaskFilters({ sort: event.target.value === "recent" ? null : event.target.value })}>
+          <option value="recent">Sort: Recent activity</option>
+          {SORT_OPTIONS.map(option => <option key={option.value} value={option.value}>Sort: {option.label}</option>)}
+        </select>
         <SavedFiltersMenu />
         <Button variant="outline" onClick={async () => {
           const url = new URL(window.location.href);
@@ -512,14 +466,14 @@ export function TasksFilters({
             onClick={() =>
               setTaskFilters({
                 author: [],
-                mine: values.mine === "only" ? "off" : values.mine,
+                mine: values.mine === "only" ? null : values.mine,
               })
             }
           >
             Author: {values.mine === "only" ? "Me" : values.author.join(", ")} ×
           </button>
         ) : null}
-        {activeDefs.length ||
+        {values.runCoverage !== "any" || activeDefs.length ||
         searchQuery.trim() ||
         values.author.length ||
         values.mine === "only" ? (
@@ -1448,41 +1402,6 @@ function DateRange({
         </div>
       ) : null}
     </div>
-  );
-}
-
-// Aggregate sort: a plain <select> keeps this compact even with several
-// options. Empty value clears the sort and restores the default recency order.
-function SortControl({
-  values,
-}: {
-  values: FilterValues;
-}) {
-  const pinned = values.mine === null || values.mine === "first";
-  return (
-    <select
-      aria-label="Sort tasks"
-      className="border-input bg-background h-9 max-w-64 rounded-md border px-3 text-sm"
-      value={pinned ? "mine" : (values.sort ?? "recent")}
-      onChange={e => setTaskFilters(current => ({
-        ...(current.mine === "only" ? {author: Array.from(new Set([...current.author, "me"]))} : {}),
-        mine: e.target.value === "mine" ? "first" : "off",
-        sort: ["recent", "mine"].includes(e.target.value) ? null : e.target.value,
-      }))}
-    >
-      <option value="mine">
-        Sort: Author (me first)
-        {values.sort
-          ? ` · ${SORT_OPTIONS.find((o) => o.value === values.sort)?.label ?? values.sort}`
-          : ""}
-      </option>
-      <option value="recent">Sort: Recent activity</option>
-      {SORT_OPTIONS.map((o) => (
-        <option key={o.value} value={o.value}>
-          Sort: {o.label}
-        </option>
-      ))}
-    </select>
   );
 }
 

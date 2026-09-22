@@ -34,26 +34,27 @@ def _format_datetime(value: str | None) -> str:
 
 
 def _format_reward(row: dict[str, Any]) -> str:
-    reward_total = int(row.get("reward_total") or 0)
-    if reward_total == 0:
-        return "-"
+    summary = row.get("run_summary")
+    if summary is None:
+        return "Unavailable"
+    model = summary["model"]
+    if model["total"] == 0:
+        return "No model trials"
+    score = f"{model['reward_sum'] / model['scored']:.0%}" if model["scored"] else "No score"
+    return f"{score} ({model['scored']}/{model['total']} scored)"
 
-    reward_success = int(row.get("reward_success") or 0)
-    reward_sum = float(row.get("reward_sum") or 0)
-    average = reward_sum / reward_total
-    return f"{reward_success}/{reward_total} avg {average:.2f}"
 
-
-def _format_trials(row: dict[str, Any]) -> str:
-    total = int(row.get("total_trials") or 0)
-    completed = int(row.get("completed_trials") or 0)
-    failed = int(row.get("failed_trials") or 0)
-    if total == 0:
-        return "-"
-    if failed:
-        label = "fail" if failed == 1 else "fails"
-        return f"{completed}/{total} ({failed} {label})"
-    return f"{completed}/{total}"
+def _format_checks(row: dict[str, Any]) -> str:
+    summary = row.get("run_summary")
+    if summary is None:
+        return "Unavailable"
+    checks = []
+    for role in ("oracle", "nop"):
+        group = summary[role]
+        expected = group["fail_count"] if role == "nop" else group["pass_count"] + group["partial_count"]
+        result = f"{expected}/{group['scored']} expected" if group["scored"] else "no scored results"
+        checks.append(f"{role}: {result}, {group['total']} trials, {group['harness_count']} errors")
+    return "; ".join(checks)
 
 
 def _format_experiments(row: dict[str, Any]) -> str:
@@ -155,6 +156,10 @@ def ls(
             "--qa-outcome",
             help="accepted, rejected, outdated, unreviewed, running, or failed (repeatable).",
         ),
+    ] = None,
+    run_coverage: Annotated[
+        str | None,
+        typer.Option("--run-coverage", help="Current version: any, no_trials, validation_only, model_trials, or scored_model_trials."),
     ] = None,
     selection_id: Annotated[str | None, typer.Option("--selection-id", help="Browse an organization-shared exact task selection.")] = None,
     share_selection: Annotated[str | None, typer.Option("--share-selection", help="Save all matching task IDs as a named organization-shared selection (hosted API; max 5000).")] = None,
@@ -439,6 +444,7 @@ def ls(
         typer.Option(
             "--sort",
             help=(
+                "model_score_(asc|desc), last_model_activity_desc, "
                 "avg_score_(asc|desc), total_tokens_(asc|desc), "
                 "runtime_total_(asc|desc), runtime_avg_(asc|desc), cost_desc, "
                 "steps_p50_(asc|desc), total_trials_(asc|desc), agent_count_(asc|desc); "
@@ -561,6 +567,7 @@ def ls(
     _csv("not_delivered_to", not_delivered_to)
     _csv("categories", category)
     _csv("qa_outcomes", qa_outcome)
+    _str("run_coverage", run_coverage)
     _csv("author", author)
     _csv("pin_author", pin_author)
     _str("exclude_delivery_id", exclude_delivery_id)
@@ -748,8 +755,8 @@ def ls(
     table.add_column("Task", style="cyan", no_wrap=True)
     table.add_column("Name")
     table.add_column("Ver", justify="right", no_wrap=True)
-    table.add_column("Trials", justify="right", no_wrap=True)
-    table.add_column("Reward", justify="right", no_wrap=True)
+    table.add_column("Validation checks")
+    table.add_column("Model score", justify="right", no_wrap=True)
     table.add_column("Last", no_wrap=True)
     table.add_column("Exp")
     table.add_column("Tags")
@@ -771,7 +778,7 @@ def ls(
             task.get("id", "-"),
             task.get("name") or "-",
             version,
-            _format_trials(task),
+            _format_checks(task),
             _format_reward(task),
             _format_datetime(task.get("last_run_at")),
             _format_experiments(task),

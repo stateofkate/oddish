@@ -13,6 +13,7 @@ export default defineConfig({
     "member-picker.spec.ts",
     "delivery-refresh.spec.ts",
     "tasks-picker.spec.ts",
+    "task-run-coverage.spec.ts",
     "file-loading.spec.ts",
     "member-filter-pagination.spec.ts",
     "reasoning-effort.spec.ts",

@@ -60,13 +60,10 @@ export default function TasksPage() {
     return () => window.clearTimeout(handle);
   }, [searchQuery]);
 
-  const [addedKeys, setAddedKeys] = useState<string[]>([]);
-
   const clearFilters = () => {
     if (searchTimer.current !== null) window.clearTimeout(searchTimer.current);
     pendingSearchCommits.current = [];
     setSearchQuery("");
-    setAddedKeys([]);
     clearTaskFilters();
   };
 
@@ -78,8 +75,6 @@ export default function TasksPage() {
           <TasksFilters
             searchQuery={searchQuery}
             onSearchChange={setSearchQuery}
-            addedKeys={addedKeys}
-            setAddedKeys={setAddedKeys}
             onSearchFilter={outcome => {
               if (searchTimer.current !== null) window.clearTimeout(searchTimer.current);
               pendingSearchCommits.current = [];

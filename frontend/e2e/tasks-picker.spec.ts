@@ -1,3 +1,4 @@
+import { runSummary } from "./run-summary-fixture";
 import { expect, test } from "@playwright/test";
 
 const storageKey = "oddish.tasks.selection.org-1";
@@ -89,7 +90,8 @@ test("rapid author and sort changes preserve each other and pending search", asy
   await expect
     .poll(() => new URL(page.url()).searchParams.get("q"))
     .toBe("some task");
-  expect(new URL(page.url()).searchParams.get("author")).toBe("me");
+  expect(new URL(page.url()).searchParams.get("mine")).toBe("only");
+  expect(new URL(page.url()).searchParams.has("author")).toBe(false);
   expect(new URL(page.url()).searchParams.get("sort")).toBe(
     "total_trials_desc"
   );
@@ -179,7 +181,7 @@ test("filter presets and delivery context survive clearing filters", async ({
   await expect(
     page.getByRole("heading", { name: "Add tasks to Existing" })
   ).toBeVisible();
-  await page.getByRole("button", { name: /^Filters/ }).click();
+  await page.getByRole("button", { name: /^More criteria/ }).click();
   await page.getByRole("textbox", { name: "Find a filter" }).fill("trial");
   await page
     .getByRole("combobox", { name: "Trial count", exact: true })
@@ -218,6 +220,7 @@ test("reviewing selection exposes picks outside the current empty results", asyn
 const task = {
   id: "visible-task",
   name: "Queue recovery",
+  run_summary: runSummary({ total: 40, scored: 30, reward_sum: 29, pass_count: 29, fail_count: 1, other_count: 10 }),
   current_version: 3,
   current_version_id: "version-3",
   version_count: 3,
@@ -263,12 +266,11 @@ test("delivery picker preserves trial counts and only adds to its named destinat
   await expect(
     page.getByRole("heading", { name: "Add tasks to Existing" })
   ).toBeVisible();
-  await expect(page.getByText("29/40 completed")).toBeVisible();
-  await expect(page.getByText("10 pending · 1 failed")).toBeVisible();
+  await expect(page.getByText(/30 scored \/ 40 model trials/)).toBeVisible();
   await page
     .getByRole("button", { name: "Trial details", exact: true })
     .click();
-  await expect(page.getByText("Avg score", { exact: true })).toBeVisible();
+  await expect(page.getByText("Model score: 97%", { exact: true })).toBeVisible();
   await page
     .getByRole("checkbox", { name: "Select Queue recovery", exact: true })
     .first()
@@ -283,9 +285,8 @@ test("delivery picker preserves trial counts and only adds to its named destinat
 test("numeric custom ranges apply once and reject inverted bounds", async ({
   page,
 }) => {
-  await page
-    .getByRole("button", { name: "Median steps: Any", exact: true })
-    .click();
+  await page.getByRole("button", { name: /^More criteria/ }).click();
+  await page.getByRole("textbox", { name: "Find a filter" }).fill("Median steps");
   await page
     .getByRole("combobox", { name: "Median steps", exact: true })
     .selectOption("custom");
@@ -309,11 +310,11 @@ test("numeric custom ranges apply once and reject inverted bounds", async ({
 
 
 
-test("sorting legacy only-mine links keeps the author filter", async ({page}) => {
+test("sorting only-mine links keeps the author filter", async ({page}) => {
   await page.goto("/picker?mine=only");
   await expect(page.getByText("1,201 selected", { exact: true })).toBeVisible();
-  await page.getByRole("combobox", {name: "Sort tasks"}).selectOption("mine");
-  await expect.poll(() => new URL(page.url()).searchParams.get("author")).toBe("me");
+  await page.getByRole("combobox", {name: "Sort tasks"}).selectOption("model_score_desc");
+  await expect.poll(() => new URL(page.url()).searchParams.get("mine")).toBe("only");
   await page.evaluate(() => {
     const sort = document.querySelector<HTMLSelectElement>('select[aria-label="Sort tasks"]')!;
     const author = document.querySelector<HTMLSelectElement>('select[aria-label="Author"]')!;
@@ -324,15 +325,41 @@ test("sorting legacy only-mine links keeps the author filter", async ({page}) =>
   expect(new URL(page.url()).searchParams.has("author")).toBe(false);
 });
 
+for (const clear of ["Clear filters", "Author: Me ×"]) {
+  test(`${clear} restores mine-first after selecting Only mine`, async ({ page }) => {
+    await page.goto("/picker?delivery=existing&mine=off&sort=model_score_desc&run_coverage=model_trials");
+    const authors = page.getByRole("combobox", { name: "Author", exact: true });
+    await authors.selectOption("me");
+    await expect.poll(() => new URL(page.url()).searchParams.get("mine")).toBe("only");
+    expect(new URL(page.url()).searchParams.has("author")).toBe(false);
+    await page.getByRole("button", { name: clear, exact: true }).first().click();
+    await expect(authors).toHaveValue("first");
+    const params = new URL(page.url()).searchParams;
+    expect(params.has("mine")).toBe(false);
+    expect(params.has("author")).toBe(false);
+    expect(params.get("sort")).toBe("model_score_desc");
+    expect(params.get("delivery")).toBe("existing");
+    expect(params.get("run_coverage")).toBe(clear === "Clear filters" ? null : "model_trials");
+  });
+}
+
+test("clearing other filters preserves explicitly unpinned Everyone", async ({ page }) => {
+  await page.goto("/picker?mine=off&sort=model_score_desc&run_coverage=model_trials");
+  await page.getByRole("button", { name: "Clear filters", exact: true }).first().click();
+  await expect(page.getByRole("combobox", { name: "Author", exact: true })).toHaveValue("all");
+  expect(new URL(page.url()).searchParams.get("mine")).toBe("off");
+  expect(new URL(page.url()).searchParams.get("sort")).toBe("model_score_desc");
+});
+
 for (const [filter, option, key, value] of [
   ["QA outcome", "Accepted", "qa_outcomes", "accepted"],
   ["Category", "coding", "categories", "coding"],
   ["Agent · Model", "test-model", "agent_models", "test-agent:test-model"],
 ]) {
   test(`nested ${filter} accepts pointer clicks above its parent`, async ({ page }) => {
-    if (filter === "QA outcome") await page.getByRole("button", { name: "QA: Any", exact: true }).click();
+    if (filter === "QA outcome") await page.getByRole("button", { name: "Review: Any", exact: true }).click();
     else {
-      await page.getByRole("button", { name: /^Filters/ }).click();
+      await page.getByRole("button", { name: /^More criteria/ }).click();
       await page.getByRole("textbox", { name: "Find a filter" }).fill(filter);
     }
     await page
@@ -345,7 +372,7 @@ for (const [filter, option, key, value] of [
 }
 
 test("advanced conditions accept pointer clicks above the filters panel", async ({ page }) => {
-  await page.getByRole("button", { name: /^Filters/ }).click();
+  await page.getByRole("button", { name: /^More criteria/ }).click();
   await page.getByRole("textbox", { name: "Find a filter" }).fill("Match any");
   await page.getByRole("button", { name: "Add condition", exact: true }).click();
   await page.getByRole("menuitem", { name: "Trial count", exact: true }).click();
@@ -416,14 +443,14 @@ test("tags load only when their filter is revealed and reuse the result on reope
     tagRequests++;
     await route.fulfill({ json: { items: [] } });
   });
-  await page.getByRole("button", { name: /^Filters/ }).click();
+  await page.getByRole("button", { name: /^More criteria/ }).click();
   await expect(page.getByRole("textbox", { name: "Find a filter" })).toBeVisible();
   expect(tagRequests).toBe(0);
   await page.getByRole("textbox", { name: "Find a filter" }).fill("Tags");
   await expect.poll(() => tagRequests).toBe(1);
   await expect(page.getByRole("button", { name: "Has all", exact: true })).toBeVisible();
   await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: /^Filters/ }).click();
+  await page.getByRole("button", { name: /^More criteria/ }).click();
   await expect(page.getByRole("button", { name: "Has all", exact: true })).toBeVisible();
   expect(tagRequests).toBe(1);
 });
@@ -490,7 +517,7 @@ for (const destination of ["", "?delivery=existing"]) {
     await page
       .getByRole("combobox", { name: "Lab", exact: true })
       .selectOption("Mapped Lab");
-    expect(new URL(page.url()).searchParams.has("delivered_to")).toBe(false);
+    expect(new URL(page.url()).searchParams.get("delivered_to")).toBe("Mapped Lab");
     expect(new URL(page.url()).searchParams.has("not_delivered_to")).toBe(
       false
     );
@@ -572,9 +599,9 @@ test("exact selection sharing stores IDs independently of current filters", asyn
 test("table exposes steps and existing batch members without extra selection", async ({ page }) => {
   await page.route("**/api/tasks/browse/count?*", route => route.fulfill({ json: { total: 1 } }));
   await page.route("**/api/tasks/browse?*", route => route.fulfill({ json: { items: [{ ...task, steps_p50: 184, steps_present: 12, active_deliveries: [{ delivery_id: "existing", customer: "Lab", batch: "Existing", status: "active", source: "delivery" }] }], offset: 0, has_more: false } }));
-  await page.goto("/picker?delivery=existing&lab=Lab&view=table");
+  await page.goto("/picker?delivery=existing&lab=Lab&view=table&columns=QA+outcome,Median+steps,Trials,Delivery+history");
   await expect(
-    page.getByRole("columnheader", { name: "Median steps" })
+    page.getByRole("columnheader", { name: "Trials", exact: true })
   ).toBeVisible();
   await expect(page.getByText("184", { exact: true })).toBeVisible();
   await expect(page.getByText("12 measured trials", { exact: true })).toBeVisible();
@@ -629,21 +656,20 @@ for (const view of ["table", "cards"]) {
   });
 }
 
-test("presentation and lab context preserve the page without refetching", async ({ page }) => {
+test("presentation changes preserve the page without refetching", async ({ page }) => {
   let requests = 0;
   await page.route("**/api/tasks/browse?*", route => {
     requests++;
     return route.fulfill({ json: { items: [task], offset: 24, has_more: false } });
   });
   await page.goto("/picker?offset=24&view=table");
-  await expect(page.getByRole("columnheader", { name: "Median steps" })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "Trials", exact: true })).toBeVisible();
   const before = requests;
-  await page.getByRole("combobox", { name: "Lab", exact: true }).selectOption("Mapped Lab");
   await page.locator("summary").filter({ hasText: /^Columns$/ }).click();
   await page.getByRole("checkbox", { name: "Cost", exact: true }).check();
   await expect(page.getByRole("columnheader", { name: "Cost", exact: true })).toBeVisible();
   await page.getByRole("combobox", { name: "Task view" }).selectOption("cards");
-  await expect(page.getByText("Avg score", { exact: true })).toBeVisible();
+  await expect(page.getByText("Model score: 97%", { exact: true })).toBeVisible();
   expect(new URL(page.url()).searchParams.get("offset")).toBe("24");
   expect(requests).toBe(before);
 });
@@ -706,29 +732,7 @@ for (const width of [1280, 375]) {
   });
 }
 
-test("default cards expose per-agent trial counts and pass/fail details without expansion", async ({ page }) => {
-  await page.route("**/api/tasks/browse?*", route => route.fulfill({ json: {
-    items: [{ ...task, latest_trials: [
-      { id: "trial-pass", name: "Solver pass", agent: "claude-code", model: "claude-opus", status: "success", reward: 1, error_message: null },
-      { id: "trial-fail", name: "Solver fail", agent: "claude-code", model: "claude-opus", status: "success", reward: 0, error_message: null },
-      { id: "trial-oracle", name: "Oracle pass", agent: "oracle", model: "no_oracle", status: "success", reward: 1, error_message: null },
-    ] }], offset: 0, has_more: false,
-  } }));
-  await page.goto("/picker");
-  await expect(page.getByRole("combobox", { name: "Task view" })).toHaveValue("cards");
-  await expect(page.getByText("claude-code", { exact: true })).toBeVisible();
-  await expect(page.getByText("oracle", { exact: true })).toBeVisible();
-  await expect(page.getByText("2 trials", { exact: true })).toBeVisible();
-  await expect(page.getByText("1 trial", { exact: true })).toBeVisible();
-  await expect(page.getByLabel("Solver pass Pass", { exact: true })).toBeVisible();
-  await expect(page.getByLabel("Solver fail Fail", { exact: true })).toBeVisible();
-  await expect(page.getByText("Showing the 3 most recent of 40 trials.")).toBeVisible();
-  for (const outcome of [/^Pass\s*29$/, /^Fail\s*1$/, /^Pending\s*10$/]) {
-    await expect(page.getByText(outcome)).toBeVisible();
-  }
-  await expect(page.locator("summary").filter({ hasText: /^Columns$/ })).toHaveCount(0);
-  await page.screenshot({ path: "/tmp/oddish-trial-cards-restored.png", fullPage: true });
-});
+
 
 for (const columnsQuery of ["", "&columns="]) {
   test(`rapid column toggles preserve each other from ${columnsQuery ? "empty" : "default"} columns`, async ({ page }) => {
@@ -741,7 +745,7 @@ for (const columnsQuery of ["", "&columns="]) {
     await expect(page.getByRole("link", { name: task.name, exact: true })).toBeVisible();
     await page.locator("summary").filter({ hasText: /^Columns$/ }).click();
     const before = requests;
-    const initialColumns = columnsQuery ? [] : ["QA outcome", "Median steps", "Trials", "Agents", "Delivery history"];
+    const initialColumns = columnsQuery ? [] : ["QA outcome", "Trials", "Delivery history"];
     // Both DOM clicks run in the same browser task, before React can commit
     // the URL-driven render between them.
     for (const checked of [true, false]) {

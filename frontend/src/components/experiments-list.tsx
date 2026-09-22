@@ -25,12 +25,14 @@ type ExperimentRef = { id: string; name: string };
  */
 export function ExperimentsList({
   experiments,
+  taskId,
   maxVisible = 5,
   layout = "inline",
   className,
   linkClassName,
 }: {
   experiments: ExperimentRef[];
+  taskId?: string;
   maxVisible?: number;
   layout?: "inline" | "stacked";
   className?: string;
@@ -40,6 +42,7 @@ export function ExperimentsList({
 }) {
   if (experiments.length === 0) return null;
 
+  const taskQuery = taskId ? `?task=${encodeURIComponent(taskId)}` : "";
   const visible = experiments.slice(0, maxVisible);
   const hidden = experiments.slice(maxVisible);
   const overflowCount = hidden.length;
@@ -64,7 +67,7 @@ export function ExperimentsList({
             {hidden.map((exp) => (
               <Link
                 key={exp.id}
-                href={`/experiments/${encodeExperimentRouteParam(exp.id)}`}
+                href={`/experiments/${encodeExperimentRouteParam(exp.id)}${taskQuery}`}
                 className="hover:bg-muted truncate rounded px-2 py-1 text-xs"
                 title={exp.name}
               >
@@ -82,7 +85,7 @@ export function ExperimentsList({
         {visible.map((exp) => (
           <Link
             key={exp.id}
-            href={`/experiments/${encodeExperimentRouteParam(exp.id)}`}
+            href={`/experiments/${encodeExperimentRouteParam(exp.id)}${taskQuery}`}
             className={cn(
               "truncate underline-offset-2 hover:underline",
               linkClassName,
@@ -108,7 +111,7 @@ export function ExperimentsList({
         <span key={exp.id} className="inline-flex items-center gap-x-2">
           {i > 0 ? <span aria-hidden>·</span> : null}
           <Link
-            href={`/experiments/${encodeExperimentRouteParam(exp.id)}`}
+            href={`/experiments/${encodeExperimentRouteParam(exp.id)}${taskQuery}`}
             className={cn("underline-offset-2 hover:underline", linkClassName)}
           >
             {exp.name}

@@ -867,6 +867,8 @@ class TaskBrowseSummaryModel(Base):
 
     __tablename__ = "task_version_browse_summaries"
 
+    run_summary: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
+
     task_version_id: Mapped[str] = mapped_column(
         String(160),
         ForeignKey("task_versions.id", ondelete="CASCADE"),

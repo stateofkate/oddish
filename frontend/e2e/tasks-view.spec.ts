@@ -1,3 +1,4 @@
+import { runSummary } from "./run-summary-fixture";
 import { expect, test, type Page } from "@playwright/test";
 import { clerk, setupClerkTestingToken } from "@clerk/testing/playwright";
 
@@ -39,6 +40,7 @@ function versionSummary(
         ? "2026-08-11T12:00:00Z"
         : "2026-08-10T12:00:00Z",
     is_current: versionId === defaultVersionId,
+    run_summary: runSummary({ total: trialCount, scored: trialCount, reward_sum: historical ? 3 : third ? 6 : 20, pass_count: historical ? 3 : third ? 6 : 20, fail_count: historical ? 1 : third ? 0 : 5 }),
     trial_count: trialCount,
     completed_count: trialCount,
     failed_count: 0,
@@ -649,9 +651,9 @@ test.describe("authenticated task view", () => {
     await expect(
       page.getByText("Showing 20 most recent of 25 trials")
     ).toBeVisible();
-    await expect(page.getByText("80.0%", { exact: true })).toHaveCount(1);
-    await expect(page.getByText("80.0%", { exact: true })).toBeVisible();
-    await expect(page.getByText(/^avg score$/i)).toHaveCount(1);
+    await expect(page.getByText("Model score: 80%", { exact: true })).toHaveCount(1);
+    await expect(page.getByText("Model score: 80%", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("Selected version run summary")).toHaveCount(1);
     await expect(page.getByText("80% (20/25)", { exact: true })).toHaveCount(0);
     await expect(page.getByText("20/25 pass", { exact: true })).toHaveCount(0);
     await expect(page.getByText("1m 40s")).toBeVisible();

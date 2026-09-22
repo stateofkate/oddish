@@ -1755,6 +1755,7 @@ class TaskBrowseTrial(BaseModel):
     error_message: str | None = None
     agent: str = ""
     model: str | None = None
+    reasoning_effort: str | None = None
 
 
 class TaskBrowseDelivery(BaseModel):
@@ -1777,7 +1778,31 @@ class TaskBrowseDelivery(BaseModel):
     status: Literal["active", "finalized"] | None = None
 
 
+RunCoverage = Literal["any", "no_trials", "validation_only", "model_trials", "scored_model_trials"]
+
+
+class TaskRunGroup(BaseModel):
+    total: int = 0
+    scored: int = 0
+    reward_sum: float = 0.0
+    pass_count: int = 0
+    partial_count: int = 0
+    fail_count: int = 0
+    harness_count: int = 0
+    skipped_count: int = 0
+    scoreless_count: int = 0
+    other_count: int = 0
+    last_activity: datetime | None = None
+
+
+class TaskRunSummary(BaseModel):
+    model: TaskRunGroup = Field(default_factory=TaskRunGroup)
+    oracle: TaskRunGroup = Field(default_factory=TaskRunGroup)
+    nop: TaskRunGroup = Field(default_factory=TaskRunGroup)
+
+
 class TaskBrowseItem(BaseModel):
+    run_summary: TaskRunSummary | None = None
     qa_outcome: Literal["accepted", "rejected", "outdated", "unreviewed", "running", "failed"] = "unreviewed"
     id: str
     name: str
@@ -2067,6 +2092,7 @@ class TaskOpenAgentModelSummary(BaseModel):
 
 
 class TaskOpenVersionSummary(TaskVersionRollup):
+    run_summary: TaskRunSummary | None = None
     """Selected-version fields owned by the bounded task-open resource."""
 
     must_fix_count: int = 0

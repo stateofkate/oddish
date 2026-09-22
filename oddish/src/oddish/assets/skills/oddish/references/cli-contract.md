@@ -58,6 +58,30 @@ and `--trial-finished-within 24h|7d|30d|90d` filter trial completion dates.
 and trial values. `--delivery-history` shows lab, batch, date, and source;
 `--json` includes each task's `deliveries`. No record is not proof of no shipment.
 
+
+Task run coverage is available in both the Tasks page and `oddish ls`:
+
+```bash
+# Find model evidence; oracle/NOP checks do not count as model runs.
+oddish ls --run-coverage scored_model_trials --sort model_score_desc
+# Find versions with only baseline validation, and prioritize your tasks.
+oddish ls --run-coverage validation_only --pin-author me
+# Review recorded model results and inspect complete summaries/experiment IDs.
+oddish ls --run-coverage model_trials --qa-outcome unreviewed --json
+# Select for a customer; delivery readiness is checked by the delivery itself.
+oddish ls --run-coverage scored_model_trials --not-delivered-to GDM --ids --json > selection.json
+```
+
+`--run-coverage` accepts `any`, `no_trials`, `validation_only`, `model_trials`,
+and `scored_model_trials`; all refer to the current default version. `--count`
+and `--ids` use the same filters. The text table separates model scores from
+oracle/NOP checks; `--json` retains complete `run_summary`, experiment, and
+trial-preview fields. Missing summaries display Unavailable. Model sorts are
+`model_score_asc`, `model_score_desc`, and `last_model_activity_desc`.
+`--author me` restricts results; `--pin-author me` prioritizes them. `--sort`
+orders within that scope. Inspect underlying runs with `oddish status TRIAL_ID`
+and `oddish status TASK_ID --versions --json`.
+
 `oddish ls --count` counts matching tasks; `--ids --json` selects the whole
 matching set as `{ids: [...], truncated: bool}`, ignoring pagination. These modes
 and `--filter-options` are mutually exclusive. Save that JSON to a file and use

@@ -17,7 +17,11 @@ import {
   VerifierCostSuffix,
 } from "@/components/qa-cost-suffix";
 import { TagChip } from "@/components/tag-chip";
-import { isBaselineAgentName } from "@/lib/experiment-agent-grouping";
+import {
+  getExperimentAgentKey, getExperimentAgentDisplay,
+  experimentModelLabel, isBaselineAgentName,
+} from "@/lib/experiment-agent-grouping";
+import { TaskRunSummary } from "@/components/task-run-summary";
 import { formatCostUsd, hasDisplayableCostUsd } from "@/lib/format";
 import {
   formatPartialRewardBadgeValue,
@@ -40,22 +44,6 @@ import {
 import { QA_OUTCOME_OPTIONS } from "@/lib/tasks-filters";
 import { useSelection } from "./selection-context";
 
-function ExperimentsCell({ task }: { task: TaskBrowseItem }) {
-  if (task.experiments.length === 0) {
-    return <span className="text-muted-foreground">—</span>;
-  }
-
-  return (
-    <ExperimentsList
-      experiments={task.experiments}
-      maxVisible={3}
-      layout="stacked"
-      className="text-muted-foreground text-xs"
-      linkClassName="text-[#5d77a5] transition-colors hover:text-[#526a95] dark:text-[#a8b8d2] dark:hover:text-[#c0cde1]"
-    />
-  );
-}
-
 // "median 412 steps (p25 300 · p75 600) · 3 agents": the stored summary's
 // trajectory-length percentiles and distinct-agent count, so a card shows
 // what the "Median steps" / "Agents ≥" filters and sorts are reading.
@@ -69,7 +57,7 @@ function TrajectorySummary({ task }: { task: TaskBrowseItem }) {
     parts.push(`median ${task.steps_p50} steps${spread}`);
   }
   if (task.agent_count) {
-    parts.push(`${task.agent_count} agent${task.agent_count === 1 ? "" : "s"}`);
+    parts.push(`${task.agent_count} runner${task.agent_count === 1 ? "" : "s"} incl. checks`);
   }
   if (parts.length === 0) return null;
   return (
@@ -104,97 +92,9 @@ export function TaskDeliveryHistory({ task }: { task: TaskBrowseItem }) {
   );
 }
 
-function getLatestTrialStatusCounts(task: TaskBrowseItem) {
-  return {
-    pass: task.pass_count,
-    partial: task.partial_count,
-    fail: task.fail_count,
-    "harness-error": task.harness_count,
-    skipped: task.skipped_count,
-    pending: task.pending_count,
-  };
-}
-
-function PassRateCell({ task }: { task: TaskBrowseItem }) {
-  const rewardSum = task.reward_sum ?? task.reward_success;
-  const hasScore = task.reward_total > 0;
-  const avgScore = hasScore
-    ? Math.round((rewardSum / task.reward_total) * 100)
-    : null;
-  const toneClass =
-    avgScore == null
-      ? "text-muted-foreground"
-      : avgScore >= 80
-        ? "text-[#5c8e43] dark:text-[#85b85c]"
-        : avgScore >= 35
-          ? "text-yellow-400"
-          : "text-rose-400";
-  const statusCounts = getLatestTrialStatusCounts(task);
-  const summaryItems = [
-    { key: "pass", label: "Pass", count: statusCounts.pass },
-    { key: "partial", label: "Partial", count: statusCounts.partial },
-    { key: "fail", label: "Fail", count: statusCounts.fail },
-    {
-      key: "harness-error",
-      label: "Harness",
-      count: statusCounts["harness-error"],
-    },
-    // Skipped is its own bucket (like Harness): a non-pass in the rate, shown
-    // separately. Rendered only when present so it doesn't clutter every card.
-    { key: "skipped", label: "Skipped", count: statusCounts.skipped },
-    {
-      key: "pending",
-      label: "Pending",
-      count: statusCounts.pending,
-    },
-  ] as const;
-
-  return (
-    <div className="space-y-1.5">
-      <div className="flex items-baseline justify-between gap-3">
-        <div className={`text-base leading-none font-medium ${toneClass}`}>
-          {avgScore == null ? "—" : `${avgScore}%`}
-        </div>
-        <div className="text-muted-foreground text-[11px] leading-none">
-          {hasScore
-            ? `${rewardSum.toFixed(2)}/${task.reward_total}`
-            : "No completed trials"}
-        </div>
-      </div>
-      {task.latest_trials.length > 0 ? (
-        <div className="text-muted-foreground flex flex-wrap gap-x-2.5 gap-y-0.5 text-[10px] leading-none">
-          {summaryItems
-            .filter((item) => item.key !== "skipped" || item.count > 0)
-            .map((item) => {
-              const config = STATUS_CONFIG[item.key];
-              return (
-                <div
-                  key={item.key}
-                  className="flex items-center gap-1 whitespace-nowrap"
-                >
-                  <span
-                    className={`inline-flex h-2 w-2 rounded-full ${config.bracketClass}`}
-                  />
-                  <span>{item.label}</span>
-                  <span className="text-foreground font-mono">
-                    {item.count}
-                  </span>
-                </div>
-              );
-            })}
-        </div>
-      ) : (
-        <div className="text-muted-foreground text-[10px] leading-none">
-          No latest-version trials
-        </div>
-      )}
-    </div>
-  );
-}
-
 type LatestTrial = TaskBrowseItem["latest_trials"][number];
 
-function TrialIcon({ trial }: { trial: LatestTrial }) {
+function TrialIcon({ trial, taskId }: { trial: LatestTrial; taskId: string }) {
   const status = getMatrixStatus(
     trial.status,
     trial.reward,
@@ -207,17 +107,19 @@ function TrialIcon({ trial }: { trial: LatestTrial }) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <div
+        <Link
+          href={`/tasks/${encodeURIComponent(taskId)}?trial=${encodeURIComponent(trial.id)}`}
           className={`flex h-[18px] w-[18px] items-center justify-center rounded-[4px] border font-mono leading-none font-semibold ${config.matrixClass} ${status === "partial" ? "text-[7px] tracking-[-0.03em]" : ""}`}
           style={getRewardStyle(trial.reward)}
           aria-label={`${trial.name} ${config.shortLabel}`}
         >
           {badgeLabel}
-        </div>
+        </Link>
       </TooltipTrigger>
       <TooltipContent>
         <div className="space-y-0.5">
           <div className="font-medium">{trial.name}</div>
+          <div>{trial.agent} · {trial.model ?? "default"}</div>
           <div className="text-muted-foreground">{config.shortLabel}</div>
           {trial.reward !== null && (
             <div className="text-muted-foreground">
@@ -231,126 +133,67 @@ function TrialIcon({ trial }: { trial: LatestTrial }) {
   );
 }
 
-function trialModelKey(model: string | null): string {
-  return model?.trim() || "default";
-}
-
-type TrialGroup = {
-  key: string;
-  agent: string;
-  // Badge text: the distinguishing model for a model-scoped agent ("default"
-  // for a null/blank model), the single real model otherwise, else null.
-  modelLabel: string | null;
-  trials: LatestTrial[];
-};
-
-// Mirrors the interior task view's agent grouping (experiment-agent-grouping):
-// one section per agent, split by model only when an agent ran more than one.
-function groupLatestTrials(trials: LatestTrial[]): TrialGroup[] {
-  const modelsByAgent = new Map<string, Set<string>>();
-  for (const trial of trials) {
-    const models = modelsByAgent.get(trial.agent) ?? new Set<string>();
-    models.add(trialModelKey(trial.model));
-    modelsByAgent.set(trial.agent, models);
-  }
-  const modelScoped = new Set(
-    Array.from(modelsByAgent.entries())
-      .filter(([, models]) => models.size > 1)
-      .map(([agent]) => agent)
-  );
-
-  const groups = new Map<string, TrialGroup>();
-  for (const trial of trials) {
-    const scoped = modelScoped.has(trial.agent);
-    const key = scoped
-      ? `${trial.agent}/${trialModelKey(trial.model)}`
-      : trial.agent;
+export function TaskEvidence({ task, showSummary = false }: { task: TaskBrowseItem; showSummary?: boolean }) {
+  const groups = new Map<string, LatestTrial[]>();
+  for (const trial of task.latest_trials) {
+    const key = getExperimentAgentKey({ ...trial, kind: "agent", is_probe: false });
     const group = groups.get(key);
-    if (group) {
-      group.trials.push(trial);
-    } else {
-      groups.set(key, {
-        key,
-        agent: trial.agent,
-        modelLabel: scoped
-          ? trialModelKey(trial.model)
-          : trial.model?.trim() || null,
-        trials: [trial],
-      });
-    }
+    if (group) group.push(trial);
+    else groups.set(key, [trial]);
   }
-
-  // Real agents before baselines (nop/oracle), then most-run first.
-  return Array.from(groups.values()).sort((a, b) => {
-    const baselineDelta =
-      Number(isBaselineAgentName(a.agent)) -
-      Number(isBaselineAgentName(b.agent));
-    if (baselineDelta !== 0) return baselineDelta;
-    return b.trials.length - a.trials.length;
-  });
-}
-
-function groupScorePct(trials: LatestTrial[]): number | null {
-  const rewards = trials.flatMap((t) => (t.reward === null ? [] : [t.reward]));
-  if (rewards.length === 0) return null;
-  return (rewards.reduce((sum, r) => sum + r, 0) / rewards.length) * 100;
-}
-
-function TrialGraphics({ task }: { task: TaskBrowseItem }) {
-  if (task.latest_trials.length === 0) {
-    return (
-      <div className="border-border/70 text-muted-foreground rounded-md border border-dashed px-3 py-3 text-center text-xs">
-        No latest-version trials yet.
-      </div>
-    );
-  }
-
-  const groups = groupLatestTrials(task.latest_trials);
-
+  const rows = [...groups].sort(([, a], [, b]) =>
+    Number(isBaselineAgentName(a[0].agent)) - Number(isBaselineAgentName(b[0].agent))
+  );
   return (
-    <div className="space-y-2">
-      {groups.map((group) => {
-        const scorePct = groupScorePct(group.trials);
-        return (
-          <div key={group.key} className="space-y-1">
-            <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5">
-              <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                <span className="text-foreground font-mono text-[11px] font-medium">
-                  {group.agent}
-                </span>
-                {group.modelLabel ? (
-                  <Badge
-                    variant="outline"
-                    className="w-fit font-mono text-[10px]"
-                  >
-                    {group.modelLabel}
-                  </Badge>
-                ) : null}
-              </div>
-              <div className="text-muted-foreground flex items-center gap-2 font-mono text-[10px] leading-none">
-                <span>
-                  {group.trials.length} trial
-                  {group.trials.length === 1 ? "" : "s"}
-                </span>
-                <span className="text-foreground">
-                  {scorePct == null ? "—" : `${scorePct.toFixed(0)}%`}
-                </span>
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-1">
-              {group.trials.map((trial) => (
-                <TrialIcon key={trial.id} trial={trial} />
-              ))}
-            </div>
+    <div className="space-y-3">
+      <div className="flex items-baseline justify-between gap-3 text-xs">
+        <span className="text-muted-foreground">
+          Recent trials · current version
+        </span>
+        <TrajectorySummary task={task} />
+      </div>
+      {rows.map(([key, trials]) => {
+        const display = getExperimentAgentDisplay(trials[0]);
+        return <div key={key} className="space-y-1">
+          <div className="flex flex-wrap items-center gap-2 text-[11px]">
+            <span className="font-mono">{display.agent}</span>
+            <Badge variant="outline" className="font-mono text-[10px]">{experimentModelLabel(display.model, trials[0].reasoning_effort)}</Badge>
+            <span className="text-muted-foreground ml-auto">{trials.length} shown</span>
           </div>
-        );
+          <div className="flex flex-wrap gap-1">{trials.map(trial => <TrialIcon key={trial.id} trial={trial} taskId={task.id} />)}</div>
+        </div>;
       })}
-      {task.latest_trials_truncated ? (
-        <div className="text-muted-foreground text-[10px]">
-          Showing the {task.latest_trials.length} most recent of{" "}
-          {task.total_trials} trials.
+      <p className="text-muted-foreground text-xs">
+        Showing {task.latest_trials.length} of {task.total_trials} trials.{" "}
+        <Link
+          className="underline"
+          href={`/tasks/${encodeURIComponent(task.id)}`}
+        >
+          View all results
+        </Link>
+      </p>
+      <div className={showSummary ? "grid gap-3 sm:grid-cols-2" : ""}>
+        {showSummary ? <TaskRunSummary summary={task.run_summary} /> : null}
+        <div className="border-border/60 rounded-md border px-3 py-2">
+          <div className="text-muted-foreground mb-1 text-xs">
+            Experiment history · all versions
+          </div>
+          {task.experiments.length ? (
+            <ExperimentsList
+              experiments={task.experiments}
+              taskId={task.id}
+              maxVisible={3}
+              layout="stacked"
+              className="text-muted-foreground text-xs"
+              linkClassName="text-[#5d77a5] hover:underline dark:text-[#a8b8d2]"
+            />
+          ) : (
+            <span className="text-muted-foreground text-xs">
+              No experiments recorded
+            </span>
+          )}
         </div>
-      ) : null}
+      </div>
     </div>
   );
 }
@@ -368,7 +211,7 @@ export function TaskCard({ task }: { task: TaskBrowseItem }) {
       )}
     >
       <CardHeader className="space-y-2 px-5 pt-5 pb-2">
-        <div className="flex items-start justify-between gap-3">
+        <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3">
           <Checkbox
             checked={selected || alreadyAdded}
             disabled={alreadyAdded}
@@ -435,7 +278,7 @@ export function TaskCard({ task }: { task: TaskBrowseItem }) {
               })()}
             </div>
           </div>
-          <div className="flex shrink-0 flex-col items-end gap-2">
+          <div className="contents">
             <Link
               href={`/tasks/${task.id}/probe`}
               target="_blank"
@@ -444,7 +287,7 @@ export function TaskCard({ task }: { task: TaskBrowseItem }) {
             >
               Probe run →
             </Link>
-            <div className="text-right">
+            <div className="col-start-2">
               <div className="text-muted-foreground text-[11px] tracking-wide uppercase">
                 Last run
               </div>
@@ -457,7 +300,7 @@ export function TaskCard({ task }: { task: TaskBrowseItem }) {
                 </div>
               ) : null}
             </div>
-            <div className="text-right">
+            <div className="col-start-3 text-right">
               <div className="text-muted-foreground text-[11px] tracking-wide uppercase">
                 Cost
               </div>
@@ -503,33 +346,7 @@ export function TaskCard({ task }: { task: TaskBrowseItem }) {
           </div>
         ) : null}
         <TaskDeliveryHistory task={task} />
-        <div className="space-y-1.5">
-          <div className="flex items-baseline justify-between gap-3">
-            <div className="text-muted-foreground text-[11px] tracking-wide uppercase">
-              Latest trials
-            </div>
-            <TrajectorySummary task={task} />
-          </div>
-          <TrialGraphics task={task} />
-        </div>
-        <div className="grid gap-2.5 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.45fr)]">
-          <div className="border-border/60 bg-muted/30 rounded-md border px-3 py-2">
-            <div className="text-muted-foreground text-[11px] tracking-wide uppercase">
-              Avg score
-            </div>
-            <div className="mt-1 text-sm font-semibold">
-              <PassRateCell task={task} />
-            </div>
-          </div>
-          <div className="border-border/60 bg-muted/30 rounded-md border px-3 py-2">
-            <div className="text-muted-foreground text-[11px] tracking-wide uppercase">
-              Experiments
-            </div>
-            <div className="mt-0.5">
-              <ExperimentsCell task={task} />
-            </div>
-          </div>
-        </div>
+        <TaskEvidence task={task} showSummary />
       </CardContent>
     </Card>
   );

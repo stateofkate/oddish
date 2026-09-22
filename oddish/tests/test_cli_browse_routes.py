@@ -35,6 +35,7 @@ async def test_browse_selection_forwards_filters(mode):
                     "never_delivered": "false",
                     "categories": "swe",
                     "qa_outcomes": "accepted",
+                    "run_coverage": "scored_model_trials",
                     "exclude_delivery_id": "d1",
                     "steps_p50_min": 0,
                     "steps_p50_max": 200,
@@ -51,6 +52,7 @@ async def test_browse_selection_forwards_filters(mode):
     assert kwargs["never_delivered"] is False
     assert kwargs["categories"] == ["swe"]
     assert kwargs["qa_outcomes"] == ["accepted"]
+    assert kwargs["run_coverage"] == "scored_model_trials"
     assert kwargs["exclude_delivery_id"] == "d1"
     assert kwargs["steps_p50_min"] == 0
     assert kwargs["steps_p50_max"] == 200

@@ -136,6 +136,7 @@ from oddish.core.endpoints.collections import (
     rename_collection_core,
 )
 from oddish.schemas import (
+    RunCoverage,
     BackfillQARequest,
     CollectionAddRequest,
     CollectionMutationResponse,
@@ -731,6 +732,7 @@ async def browse_tasks(
         ),
     ),
     query: str | None = None,
+    run_coverage: RunCoverage = "any",
     tags: str | None = Query(None),
     tags_any: str | None = Query(None),
     tags_none: str | None = Query(None),
@@ -976,6 +978,7 @@ async def browse_tasks(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         result = await browse_tasks_core(
             session,
+            run_coverage=run_coverage,
             org_id=auth.org_id,
             limit=limit,
             offset=offset,

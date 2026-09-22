@@ -5,6 +5,7 @@ export default defineConfig({
   testDir: "e2e",
   testMatch: [
     "member-picker.spec.ts",
+    "task-run-coverage.spec.ts",
     "reasoning-effort.spec.ts",
     "experiment-agent-grouping.spec.ts",
     "ec2-rerun-command.spec.ts",

@@ -48,7 +48,17 @@ export function backendAuthorParams(
   };
 }
 
+export const RUN_COVERAGE_OPTIONS = [
+  { value: "any", label: "Any" },
+  { value: "no_trials", label: "No trials on this version" },
+  { value: "validation_only", label: "Oracle / NOP only" },
+  { value: "model_trials", label: "Has model trials" },
+  { value: "scored_model_trials", label: "Has scored model results" },
+] as const;
+export type RunCoverage = typeof RUN_COVERAGE_OPTIONS[number]["value"];
+
 export interface FilterValues {
+  runCoverage: RunCoverage;
   // Author tokens (github handle, email, member name, or ``me``); ANDed with
   // the search box's github:/author: tokens by the browse proxy.
   author: string[];
@@ -266,9 +276,12 @@ export const COMPARE_MARGIN_UNIT_OPTIONS: Option[] = [
 
 // Aggregate sort tokens (kept in sync with backend ``_AGGREGATE_SORTS``).
 export const SORT_OPTIONS: Option[] = [
+  { value: "model_score_desc", label: "Model score (high → low)" },
+  { value: "model_score_asc", label: "Model score (low → high)" },
+  { value: "last_model_activity_desc", label: "Model activity (newest first)" },
   { value: "cost_desc", label: "Cost (high → low)" },
-  { value: "avg_score_desc", label: "Avg score (high → low)" },
-  { value: "avg_score_asc", label: "Avg score (low → high)" },
+  { value: "avg_score_desc", label: "All-trial avg score (high → low)" },
+  { value: "avg_score_asc", label: "All-trial avg score (low → high)" },
   { value: "total_tokens_desc", label: "Total tokens (high → low)" },
   { value: "total_tokens_asc", label: "Total tokens (low → high)" },
   { value: "runtime_total_desc", label: "Run time (long → short)" },
@@ -291,23 +304,19 @@ export interface FilterDef {
   control: ControlKind;
   options?: Option[];
   facet?: keyof TaskBrowseFacets;
-  pinned?: boolean;
   // Hidden from the sidebar this is UI-only.
   hidden?: boolean;
 }
 
-// Ordered registry. `pinned` filters always render in the sidebar; the rest are
-// available via "Add filter". Adding a filter the backend already supports is a
-// single entry here — the control renders from `control`.
+// Advanced criteria share their control definitions and URL values here.
 export const FILTER_DEFS: FilterDef[] = [
-  { key: "qaOutcomes", label: "QA outcome", group: "Task", control: "multiselect", options: QA_OUTCOME_OPTIONS, pinned: true },
+  { key: "qaOutcomes", label: "QA outcome", group: "Task", control: "multiselect", options: QA_OUTCOME_OPTIONS },
   {
     key: "statuses",
     label: "Task state",
     group: "Task",
     control: "multiselect",
     options: STATUS_OPTIONS,
-    pinned: true,
   },
   {
     key: "agentModels",
@@ -500,7 +509,6 @@ export const FILTER_DEFS: FilterDef[] = [
     label: "Trial count",
     group: "Task",
     control: "num",
-    pinned: true,
   },
   {
     key: "completedTrials",
@@ -569,14 +577,12 @@ export const FILTER_DEFS: FilterDef[] = [
     label: "Median steps",
     group: "Task",
     control: "numrange",
-    pinned: true,
   },
   {
     key: "agentCount",
     label: "Distinct agents",
     group: "Task",
     control: "num",
-    pinned: true,
   },
   // Delivery selection: pick tasks for a customer batch. Delivery records
   // come from the metadata import (history) and finalized deliveries; the
@@ -587,7 +593,6 @@ export const FILTER_DEFS: FilterDef[] = [
     group: "Delivery",
     control: "multiselect",
     facet: "delivery_customers",
-    pinned: true,
   },
   {
     key: "notDeliveredTo",
@@ -595,14 +600,12 @@ export const FILTER_DEFS: FilterDef[] = [
     group: "Delivery",
     control: "multiselect",
     facet: "delivery_customers",
-    pinned: true,
   },
   {
     key: "neverDelivered",
     label: "Delivery records",
     group: "Delivery",
     control: "boolean",
-    pinned: true,
   },
   {
     key: "categories",
@@ -610,7 +613,6 @@ export const FILTER_DEFS: FilterDef[] = [
     group: "Task",
     control: "multiselect",
     facet: "categories",
-    pinned: true,
   },
 ];
 
@@ -918,6 +920,7 @@ export function filterParams(f: FilterValues): [string, string][] {
   csv("priorities", f.priorities);
   csv("verdict_statuses", f.verdictStatuses);
   csv("qa_outcomes", f.qaOutcomes);
+  if (f.runCoverage !== "any") out.push(["run_coverage", f.runCoverage]);
   csv("agents", f.agents);
   csv("models", f.models);
   csv("agent_models", f.agentModels);
@@ -1020,6 +1023,7 @@ export const FILTER_PARAM_KEYS = [
   "priorities",
   "verdict_statuses",
   "qa_outcomes",
+  "run_coverage",
   "agents",
   "models",
   "agent_models",
@@ -1139,6 +1143,7 @@ export function searchParamsToFilters(sp: URLSearchParams): FilterValues {
     priorities: csv("priorities"),
     verdictStatuses: csv("verdict_statuses"),
     qaOutcomes: csv("qa_outcomes"),
+    runCoverage: RUN_COVERAGE_OPTIONS.find(option => option.value === sp.get("run_coverage"))?.value ?? "any",
     agents: csv("agents"),
     models: csv("models"),
     agentModels: csv("agent_models"),
@@ -1257,7 +1262,7 @@ export function clearTaskFilters() {
     for (const key of BROWSE_FORWARD_KEYS) {
       if (key !== "sort" && key !== "mine") params.delete(key);
     }
-    if (params.get("mine") === "only") params.set("mine", "off");
+    if (params.get("mine") === "only") params.delete("mine");
     params.delete("q");
     params.delete("query");
     params.delete("lab");

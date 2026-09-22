@@ -389,6 +389,7 @@ interface TaskBrowseTrial {
   error_message?: string | null;
   agent: string;
   model: string | null;
+  reasoning_effort?: string | null;
 }
 
 // One record of a task having been sent to a customer. `history` rows come
@@ -404,7 +405,24 @@ export interface TaskBrowseDelivery {
   status?: "active" | "finalized" | null;
 }
 
+export interface TaskRunGroup {
+  total: number;
+  scored: number;
+  reward_sum: number;
+  pass_count: number;
+  partial_count: number;
+  fail_count: number;
+  harness_count: number;
+  skipped_count: number;
+  scoreless_count: number;
+  other_count: number;
+  last_activity: string | null;
+}
+
+export type TaskRunSummary = Record<"model" | "oracle" | "nop", TaskRunGroup>;
+
 export interface TaskBrowseItem {
+  run_summary?: TaskRunSummary | null;
   qa_outcome?: "accepted" | "rejected" | "outdated" | "unreviewed" | "running" | "failed";
   id: string;
   name: string;
@@ -603,6 +621,7 @@ export interface TaskOpenVersionSummary extends Omit<
   must_fix_count?: number;
   pre_trial_must_fix_count?: number;
   agent_models: TaskOpenAgentModelSummary[];
+  run_summary?: TaskRunSummary | null;
 }
 
 export interface TaskOpenTask {

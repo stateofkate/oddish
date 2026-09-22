@@ -16,7 +16,8 @@ import { useTaskBrowse } from "@/lib/use-task-browse";
 import { cn } from "@/lib/utils";
 import type { TaskBrowseItem } from "@/lib/types";
 import { formatCostUsd } from "@/lib/format";
-import { TaskCard, TaskDeliveryHistory } from "./task-card";
+import { TaskCard, TaskDeliveryHistory, TaskEvidence } from "./task-card";
+import { TaskRunSummary } from "@/components/task-run-summary";
 import { TaskBrowseLink } from "./task-browse-link";
 import { TasksGridSkeleton } from "./tasks-grid-skeleton";
 
@@ -48,16 +49,7 @@ const TASK_COLUMNS = [
   },
   {
     label: "Trials",
-    render: (task: TaskBrowseItem) => (
-      <>
-        <div>
-          {task.completed_trials}/{task.total_trials} completed
-        </div>
-        <div className="text-muted-foreground text-xs">
-          {task.pending_count} pending · {task.failed_trials} failed
-        </div>
-      </>
-    ),
+    render: (task: TaskBrowseItem) => <TaskRunSummary summary={task.run_summary} compact />,
   },
   { label: "Agents", render: (task: TaskBrowseItem) => task.agent_count ?? 0 },
   {
@@ -77,6 +69,8 @@ const TASK_COLUMNS = [
         .join(", ") || "—",
   },
 ];
+
+const DEFAULT_COLUMNS = ["QA outcome", "Trials", "Delivery history"];
 
 const pagerClass =
   "inline-flex h-8 items-center gap-1 rounded-md border border-[#6f88b4]/30 px-3 text-[11px] transition-colors";
@@ -98,7 +92,7 @@ export function RecentTasksResults({
   const columns = TASK_COLUMNS.map((column) => column.label);
   const visibleColumns = searchParams.has("columns")
     ? searchParams.get("columns")!.split(",")
-    : columns.slice(0, 5);
+    : DEFAULT_COLUMNS;
   const shownColumns = TASK_COLUMNS.filter((column) =>
     visibleColumns.includes(column.label)
   );
@@ -184,7 +178,7 @@ export function RecentTasksResults({
       className={cn("space-y-4 transition-opacity", isLoading && "opacity-60")}
     >
       {errorBanner}
-      <div className="flex justify-end gap-2">
+      <div className="flex flex-wrap justify-end gap-2">
         {view === "table" ? <details className="relative rounded-md border px-3 py-2 text-sm">
           <summary className="cursor-pointer">Columns</summary>
           <div className="bg-popover absolute right-0 z-20 mt-3 w-48 space-y-2 rounded-md border p-3 shadow-md">
@@ -198,7 +192,7 @@ export function RecentTasksResults({
                       const current = new Set(
                         params.has("columns")
                           ? params.get("columns")!.split(",").filter(Boolean)
-                          : columns.slice(0, 5)
+                          : DEFAULT_COLUMNS
                       );
                       if (event.target.checked) current.add(column);
                       else current.delete(column);
@@ -275,7 +269,7 @@ export function RecentTasksResults({
                   {expanded === task.id ? (
                     <tr>
                       <td colSpan={3 + shownColumns.length} className="p-3">
-                        <TaskCard task={task} />
+                        <TaskEvidence task={task} />
                       </td>
                     </tr>
                   ) : null}

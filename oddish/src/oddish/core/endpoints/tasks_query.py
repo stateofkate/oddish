@@ -7,6 +7,7 @@ from typing import Any
 
 from fastapi import HTTPException
 from sqlalchemy import (
+    DateTime,
     and_,
     case,
     exists,
@@ -21,6 +22,7 @@ from sqlalchemy import (
     tuple_,
     union_all,
 )
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, load_only, selectinload
 
@@ -66,6 +68,7 @@ from oddish.db import (
     task_experiments,
 )
 from oddish.schemas import (
+    RunCoverage,
     AgentModelFacet,
     ExperimentOption,
     ExperimentOptionsResponse,
@@ -94,7 +97,14 @@ from oddish.filters.trial_predicates import (
     build_trial_metric_predicate,
 )
 from oddish.model_pricing import estimate_cost_usd, get_model_pricing
+from oddish.reasoning_effort import reasoning_effort_expression
 from oddish.timing import TimingRecorder, elapsed_ms, now
+
+_BROWSE_EFFORT_SQL = str(
+    reasoning_effort_expression(literal_column("trial.harbor_config", postgresql.JSONB)).compile(
+        dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+    )
+)
 
 logger = logging.getLogger(__name__)
 
@@ -900,12 +910,7 @@ def _task_metrics_subquery(
         func.sum(runtime_seconds).label("runtime_total"),
         func.avg(runtime_seconds).label("runtime_avg"),
     ).where(
-        TrialModel.superseded_by_trial_id.is_(None),
-        TrialModel.is_probe.isnot(True),
-        # Combine copies re-materialize an existing execution under another
-        # experiment; excluding them keeps the cost sort / aggregate filters on
-        # the same execution population the card counters and detail view show.
-        not_combine_copy_filter(),
+        *browse_trial_scope(),
         # NOTE: skipped trials are intentionally INCLUDED in metric denominators
         # (a non-pass, like a harness error), so pass_rate reflects "N launched".
     )
@@ -1129,6 +1134,7 @@ async def browse_tasks_core(
     limit: int = 25,
     offset: int = 0,
     query: str | None = None,
+    run_coverage: RunCoverage = "any",
     tags_all: list[str] | None = None,
     tags_any: list[str] | None = None,
     tags_none: list[str] | None = None,
@@ -1466,7 +1472,9 @@ async def browse_tasks_core(
     if any(
         value is not None
         for value in (steps_p50_min, steps_p50_max, agent_count_min, total_trials_min)
-    ) or any(spec.get("total_trials_min") is not None for spec in group_specs):
+    ) or run_coverage != "any" or any(
+        spec.get("total_trials_min") is not None for spec in group_specs
+    ):
         ranked_tasks = ranked_tasks.outerjoin(
             TaskBrowseSummaryModel,
             TaskBrowseSummaryModel.task_version_id == TaskModel.current_version_id,
@@ -1487,6 +1495,21 @@ async def browse_tasks_core(
             ranked_tasks = ranked_tasks.where(
                 TaskBrowseSummaryModel.agent_count >= agent_count_min
             )
+
+    if run_coverage != "any":
+        summary = TaskBrowseSummaryModel.run_summary
+        model_total = summary["model"]["total"].as_integer()
+        validation_total = (
+            summary["oracle"]["total"].as_integer() + summary["nop"]["total"].as_integer()
+        )
+        ranked_tasks = ranked_tasks.where(
+            {
+                "no_trials": model_total + validation_total == 0,
+                "validation_only": (model_total == 0) & (validation_total > 0),
+                "model_trials": model_total > 0,
+                "scored_model_trials": summary["model"]["scored"].as_integer() > 0,
+            }[run_coverage]
+        )
 
     # Trial-level predicates: "task has >=1 current-version trial matching".
     def _trial_exists(*predicates: Any, include_probes: bool = False) -> Any:
@@ -2078,6 +2101,7 @@ async def browse_tasks_core(
             ranked_tasks_subquery.c.tags,
             ranked_tasks_subquery.c.author_rank,
             TaskBrowseSummaryModel.last_run_at,
+            TaskBrowseSummaryModel.run_summary,
             TaskBrowseSummaryModel.total_trials,
             TaskBrowseSummaryModel.completed_trials,
             TaskBrowseSummaryModel.failed_trials,
@@ -2125,6 +2149,18 @@ async def browse_tasks_core(
         summary_column = getattr(TaskBrowseSummaryModel, column_name)
         aggregate_order.append(
             nulls_last(summary_column.desc() if descending else summary_column.asc())
+        )
+
+    if sort in ("model_score_asc", "model_score_desc", "last_model_activity_desc"):
+        model = TaskBrowseSummaryModel.run_summary["model"]
+        metric = (
+            model["last_activity"].as_string().cast(DateTime(timezone=True))
+            if sort == "last_model_activity_desc"
+            else model["reward_sum"].as_float()
+            / func.nullif(model["scored"].as_integer(), 0)
+        )
+        aggregate_order.append(
+            nulls_last(metric.asc() if sort == "model_score_asc" else metric.desc())
         )
 
     # The pinned author's tasks come before the sort itself: "mine first, then
@@ -2277,6 +2313,7 @@ async def browse_tasks_core(
                     TrialModel.error_message.label("error_message"),
                     TrialModel.agent.label("agent"),
                     TrialModel.model.label("model"),
+                    TrialModel.reasoning_effort.label("reasoning_effort"),
                     TrialModel.cost_usd.label("cost_usd"),
                     TrialModel.input_tokens.label("input_tokens"),
                     TrialModel.output_tokens.label("output_tokens"),
@@ -2319,6 +2356,7 @@ async def browse_tasks_core(
                        trial.error_message,
                        trial.agent,
                        trial.model,
+                       {_BROWSE_EFFORT_SQL} AS reasoning_effort,
                        trial.cost_usd,
                        trial.input_tokens,
                        trial.output_tokens,
@@ -2377,6 +2415,7 @@ async def browse_tasks_core(
                     error_message=trial_row["error_message"],
                     agent=str(trial_row["agent"]),
                     model=trial_row["model"],
+                    reasoning_effort=trial_row["reasoning_effort"],
                 )
             )
             if not cost_scope_active:
@@ -2470,6 +2509,7 @@ async def browse_tasks_core(
     response = TaskBrowseResponse(
         items=[
             TaskBrowseItem(
+                run_summary=row["run_summary"],
                 id=str(row["task_id"]),
                 name=str(row["name"]),
                 qa_outcome=row["qa_outcome"],

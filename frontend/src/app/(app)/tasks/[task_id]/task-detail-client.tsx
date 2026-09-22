@@ -1,5 +1,7 @@
 "use client";
 
+import { TaskRunSummary } from "@/components/task-run-summary";
+
 import { experimentModelLabel } from "@/lib/experiment-agent-grouping";
 
 import Link from "next/link";
@@ -260,7 +262,7 @@ function TaskDetailHeader({
                 {affiliated.length > 1 ? "experiments" : "experiment"}
               </span>
               <ExperimentsList
-                experiments={affiliated}
+                experiments={affiliated} taskId={task.id}
                 maxVisible={2}
                 linkClassName="text-[color:var(--paper-ink-2)]"
               />
@@ -1079,11 +1081,6 @@ export function TaskDetailClient({
     }
   }, [task, isCancellingJudge, revalidateReaderResources]);
 
-  const versionScopedScorePct =
-    versionSummary.rewardTotal > 0
-      ? (versionSummary.rewardSum / versionSummary.rewardTotal) * 100
-      : null;
-
   if (explicitVersionMissing) {
     return (
       <Alert>
@@ -1261,20 +1258,7 @@ export function TaskDetailClient({
               {versionSummary.trialCount}
             </span>
           </KpiTile>
-          <KpiTile
-            label="Avg score"
-            hint={
-              versionSummary.rewardTotal > 0
-                ? `${versionSummary.passCount} pass · ${versionSummary.partialCount} partial · ${versionSummary.failCount} fail`
-                : "no scored trials"
-            }
-          >
-            <span className="font-display flex items-baseline gap-2 text-[26px] leading-none font-medium tracking-[-0.02em] text-[color:var(--paper-ink)]">
-              {versionScopedScorePct != null
-                ? `${versionScopedScorePct.toFixed(1)}%`
-                : "—"}
-            </span>
-          </KpiTile>
+          <TaskRunSummary summary={selectedVersion?.run_summary} />
           <KpiTile
             label="Last run"
             hint={

@@ -96,6 +96,7 @@ from oddish.db import (
     utcnow,
 )
 from oddish.schemas import (
+    RunCoverage,
     BackfillQARequest,
     QARunRequest,
     ExperimentOptionsResponse,
@@ -517,6 +518,7 @@ async def browse_tasks(
     trial_finished_before: datetime | None = Query(None),
     sort: str | None = Query(None),
     query: str | None = None,
+    run_coverage: RunCoverage = "any",
     qa_outcomes: str | None = Query(None),
     tags: str | None = Query(None),
     tags_any: str | None = Query(None),
@@ -553,6 +555,7 @@ async def browse_tasks(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         result = await browse_tasks_core(
             session,
+            run_coverage=run_coverage,
             limit=limit,
             offset=offset,
             count_only=count_only,

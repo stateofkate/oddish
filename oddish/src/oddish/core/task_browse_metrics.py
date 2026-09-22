@@ -6,6 +6,7 @@ from typing import Any
 from sqlalchemy import and_, case, func, or_
 
 from oddish.config import settings
+from oddish.core.baseline_gate import baseline_agent_clause
 from oddish.core.cost_basis import not_combine_copy_filter
 from oddish.db import AGENT_TRIAL_KIND, TrialModel, TrialStatus
 from oddish.model_pricing import estimate_cost_usd
@@ -52,6 +53,48 @@ def trial_bucket_label() -> Any:
         ),
         else_="other",
     )
+
+
+def run_summary_columns() -> list[Any]:
+    """Exact role totals over browse_trial_scope, independent of the preview."""
+    bucket = trial_bucket_label()
+    scored = bucket.in_(("pass", "partial", "fail"))
+    activity = func.greatest(
+        TrialModel.created_at, TrialModel.started_at, TrialModel.finished_at
+    )
+    columns = []
+    for role in ("model", "oracle", "nop"):
+        scope = (
+            ~baseline_agent_clause(TrialModel.agent)
+            if role == "model"
+            else baseline_agent_clause(TrialModel.agent, role)
+        )
+        values = {
+            "total": func.count().filter(scope),
+            "scored": func.count().filter(scope & scored),
+            "reward_sum": func.coalesce(
+                func.sum(TrialModel.reward).filter(scope & scored), 0.0
+            ),
+            "last_activity": func.max(activity).filter(scope),
+            **{
+                f"{name}_count": func.count().filter(scope & (bucket == name))
+                for name in (
+                    "pass",
+                    "partial",
+                    "fail",
+                    "harness",
+                    "skipped",
+                    "scoreless",
+                    "other",
+                )
+            },
+        }
+        columns.append(
+            func.jsonb_build_object(
+                *[part for pair in values.items() for part in pair]
+            ).label(role)
+        )
+    return columns
 
 
 def browse_cost_group_columns() -> list[Any]:

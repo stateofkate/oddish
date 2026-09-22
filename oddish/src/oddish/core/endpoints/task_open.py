@@ -26,6 +26,7 @@ from oddish.core.endpoints.task_open_queries import (
 )
 from oddish.db import TaskStatus
 from oddish.schemas import (
+    TaskRunSummary,
     TaskOpenResponse,
     TaskOpenTask,
     TaskOpenVersionRef,
@@ -73,6 +74,10 @@ async def get_task_open_core(
         float(aggregate.get("verifier_cost_usd") or 0.0),
     )
     if selected is not None:
+        selected.run_summary = (
+            TaskRunSummary.model_validate(identity["run_summary"])
+            if identity["run_summary"] is not None else None
+        )
         selected.user_tags = tags(identity["selected_version_tags"])
         selected.experiments = experiments(aggregate["experiments"])
 

@@ -70,6 +70,7 @@ def _identity(
     }
     return {
         "task_id": "task-1",
+        "run_summary": None,
         "name": "bounded-task",
         "status": status,
         "priority": "low",

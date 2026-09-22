@@ -493,3 +493,30 @@ def test_share_selection_writes_complete_ids_once():
     assert result["post_url"] == "http://localhost/tag-filters"
     assert result["post_body"] == {"name": "Long horizon", "visibility": "ORG", "filter_ast": {"v": 2, "task_ids": ids}}
     assert json.loads(result["output"])["id"] == "saved-123"
+
+
+@pytest.mark.parametrize("mode,payload", [
+    ([], {"items": [], "has_more": False}),
+    (["--count"], {"total": 3}),
+    (["--ids"], {"ids": ["task-a"], "truncated": False}),
+])
+@pytest.mark.parametrize("coverage", ["no_trials", "validation_only", "model_trials", "scored_model_trials"])
+def test_run_coverage_reaches_rows_counts_and_selection(mode, payload, coverage):
+    result = _invoke(["--run-coverage", coverage, "--sort", "model_score_desc", *mode], payload)
+    assert result["exit_code"] == 0, result["output"]
+    assert result["params"]["run_coverage"] == coverage
+    assert result["params"]["sort"] == "model_score_desc"
+
+
+def test_text_output_separates_model_scores_from_validation():
+    from rich.console import Console
+    zero = dict(total=0, scored=0, reward_sum=0, pass_count=0, partial_count=0, fail_count=0, harness_count=0)
+    summary = dict(model={**zero, "total": 4, "scored": 4, "reward_sum": 1}, oracle={**zero, "total": 1, "scored": 1, "pass_count": 1}, nop={**zero, "total": 1, "scored": 1, "fail_count": 1})
+    payload = {"items": [{"id": "models", "run_summary": summary, "reward_sum": 10, "reward_total": 10}, {"id": "checks", "run_summary": {**summary, "model": zero}}]}
+    with patch("oddish.cli.ls.console", Console(width=300)):
+        result = _invoke([], payload, json_output=False)
+    assert result["exit_code"] == 0, result["output"]
+    assert "25% (4/4 scored)" in result["output"]
+    assert "No model trials" in result["output"]
+    assert "nop: 1/1 expected" in result["output"]
+    assert "100%" not in result["output"]

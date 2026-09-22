@@ -11,11 +11,13 @@ from oddish.core.task_browse_metrics import (
     browse_cost_group_columns,
     browse_trial_scope,
     trial_bucket_label,
+    run_summary_columns,
 )
 from oddish.core.task_version_model_metrics import (
     lock_task_version_metrics,
     refresh_task_version_model_metrics,
 )
+from oddish.schemas import TaskRunSummary
 from oddish.db import (
     TaskBrowseSummaryModel,
     TaskVersionModel,
@@ -44,6 +46,7 @@ _SUMMARY_FIELDS = (
     "steps_p75",
     "agent_count",
     "cost_breakdown",
+    "run_summary",
 )
 
 
@@ -70,6 +73,7 @@ def _empty_summary(task_id: str, version_id: str) -> dict:
         "steps_p75": None,
         "agent_count": 0,
         "cost_breakdown": [],
+        "run_summary": TaskRunSummary().model_dump(mode="json"),
     }
 
 
@@ -124,6 +128,7 @@ async def refresh_task_browse_summaries(
     counts = await session.execute(
         select(
             TrialModel.task_version_id,
+            *run_summary_columns(),
             func.max(activity).label("last_run_at"),
             func.count(TrialModel.id).label("total_trials"),
             func.count(case((TrialModel.status == TrialStatus.SUCCESS, 1))).label(
@@ -152,8 +157,10 @@ async def refresh_task_browse_summaries(
     )
     for row in counts.mappings():
         summary = summaries[str(row["task_version_id"])]
-        for field in _SUMMARY_FIELDS[1:-1]:
-            summary[field] = row[field]
+        for field in _SUMMARY_FIELDS:
+            if field not in ("task_id", "cost_breakdown", "run_summary"):
+                summary[field] = row[field]
+        summary["run_summary"] = {role: row[role] for role in ("model", "oracle", "nop")}
 
     billed = TrialModel.billed_user_id.isnot(None)
     costs = await session.execute(

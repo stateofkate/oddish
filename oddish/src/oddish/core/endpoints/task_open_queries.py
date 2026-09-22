@@ -49,7 +49,7 @@ IDENTITY_SQL = text(f"""
         AND (CAST(:org_id AS text) IS NULL OR t.org_id = :org_id)
       LIMIT 1
     )
-    SELECT i.*, findings.must_fix_count, findings.pre_trial_must_fix_count,
+    SELECT i.*, browse.run_summary, findings.must_fix_count, findings.pre_trial_must_fix_count,
       COALESCE({VERDICT_VERSION_SQL.format(task_id="i.task_id", verdict="i.verdict")} = i.selected_version_id, false) AS review_version_matches,
       COALESCE((SELECT jsonb_agg(to_jsonb(x)) FROM (
         SELECT e.id, e.name FROM task_experiments te
@@ -92,6 +92,7 @@ IDENTITY_SQL = text(f"""
         ORDER BY canonical.key, canonical.id LIMIT 50
       ) x), '[]'::jsonb) AS selected_version_tags
     FROM identity i
+    LEFT JOIN task_version_browse_summaries browse ON browse.task_version_id = i.selected_version_id
     CROSS JOIN LATERAL (
       WITH stored_raw AS (
         SELECT report->'finding' AS item, 0 AS priority, ord, report->>'source' = 'pre_trial' AS from_audit
