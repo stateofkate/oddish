@@ -452,6 +452,12 @@ The control policy must include `sts:GetCallerIdentity` in addition to the EC2
 launch, describe, image lookup, tag, and terminate actions listed in
 `.env.example`.
 
+For Kubernetes tasks with declared agent egress hosts, the Modal worker image
+prepares Codex and Gemini CLI bundles and stages them inside the task pod before
+agent installation. Keep the worker image current; these tasks' runtime proxy
+blocks the public NVM installer, and a worker without the bundles cannot start
+those agents.
+
 Standalone hosts installed with `oddish[worker]` must also provide the OpenSSH
 client (`openssh-client` on Debian/Ubuntu), because Harbor invokes `ssh` to reach
 the VM. The shared `backend/Dockerfile` already installs this package for the
