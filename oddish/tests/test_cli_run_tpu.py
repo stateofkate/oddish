@@ -104,14 +104,11 @@ def test_tpu_task_routes_to_gke_without_local_gke_registration(tmp_path, monkeyp
     )
 
 
-def test_cpu_task_stays_daytona_even_with_gke_available(tmp_path, monkeypatch):
+def test_cpu_task_defers_to_hosted_policy_even_with_gke_available(tmp_path, monkeypatch):
     (tmp_path / "task.toml").write_text("x")
     _patch_env(monkeypatch, gpus=0, tpu=None)
     _stub_registry_with_gke(monkeypatch)
-    assert (
-        run._default_cloud_environment_for_task(tmp_path, override_gpus=None)
-        == EnvironmentType.DAYTONA
-    )
+    assert run._default_cloud_environment_for_task(tmp_path, override_gpus=None) is None
 
 
 def test_gpu_and_tpu_task_raises_clear_error(tmp_path, monkeypatch):

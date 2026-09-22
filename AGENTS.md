@@ -137,7 +137,7 @@ backend/                        # Hosted cloud layer (Modal deployment)
 │                               # verification (auth/verification.py), provisioning, types
 ├── worker/                     # Modal dispatcher and single-job worker orchestration
 ├── deploy.py                   # Modal app entrypoint
-├── modal_app.py                # Modal image, volumes, shared runtime, env knobs; default Harbor provider is Daytona
+├── modal_app.py                # Modal image, volumes, shared runtime, env knobs; CPU policy preserves enabled Numinous before the Daytona/Archil rollout
 ├── endpoints.py                # Modal ASGI app function with concurrency/volume wiring
 ├── serve.py                    # Railway/uvicorn entrypoint for non-Modal deployment
 ├── cloud_policy.py             # Hosted-only environment policy
@@ -1362,6 +1362,20 @@ Settings are loaded from `oddish/.env`; see `oddish/env.example`,
 Keep these routing rules in sync with `oddish/src/oddish/config.py` and
 `oddish/src/oddish/workers/harbor/runner.py`:
 
+- `ODDISH_ARCHIL_TRAFFIC_PERCENT` (integer 0 through 100, default 0) replaces
+  a Daytona result for that percentage of newly submitted hosted CPU sweeps.
+  Enabled Numinous remains the first CPU candidate and is not replaced.
+  `backend/api/routers/tasks.py` computes the request fingerprint before
+  identity or GitHub attribution mutates the submission; `backend/cloud_policy.py`
+  maps that SHA-256 value into a 0–99 bucket. The selected default reaches every
+  unset trial spec in the sweep. Explicit submission/config environments,
+  non-Daytona capability routes, appends that inherit an existing task's
+  environment keep their provider. The batch route applies the same rule
+  independently to each raw item. When a retry starts after two failed Archil
+  attempts, `_prepare_trial_run` persists Modal on the trial and uses it for
+  attempt 3 and later retries, including retries recovered after worker loss.
+  This also applies to explicitly selected Archil trials. The existing attempt
+  limit and non-retryable failure rules still apply; no extra attempt is added.
 - Thunder is an explicit, opt-in GPU backend. `ODDISH_THUNDER_ENABLED=true`
   registers it; `ODDISH_THUNDER_MAX_CAPACITY` (default 128) is a provider-wide
   limit enforced by durable leases across every organization, model, queue key,
@@ -1378,7 +1392,7 @@ Keep these routing rules in sync with `oddish/src/oddish/config.py` and
   sends `requires_gpu` and the task's GPU types (an exact `gpu_type`
   environment kwarg, else the task.toml `gpu_types` list) for a GPU request
   and lets `backend/cloud_policy.py` negotiate against the deployment's own
-  registry, where a `gpu_type` kwarg in the request itself wins the same way. Plain CPU work must keep defaulting to Daytona. Harbor's Thunder
+  registry, where a `gpu_type` kwarg in the request itself wins the same way. Plain CPU work uses the Daytona/Archil rollout described above. Harbor's Thunder
   environment requires exactly one `[environment].gpu_types` entry (or a
   `gpu_type` kwarg) and a GPU count of 1, 2, 4, or 8, which `ThunderBackend`
   declares as `GpuSupport.requires_named_accelerator`; negotiation therefore
@@ -1436,8 +1450,8 @@ Keep these routing rules in sync with `oddish/src/oddish/config.py` and
   the reason code. Both handoffs need the `thunder_fallback_001` core
   migration.
 - EC2 is an explicit, opt-in Harbor backend: `ODDISH_EC2_ENABLED=true` registers
-  it and permits hosted `environment=ec2`, but capability ordering keeps Daytona
-  as the CPU default. V1 launches one ephemeral CPU instance per trial and uses
+  it and permits hosted `environment=ec2`, but never selects it automatically.
+  V1 launches one ephemeral CPU instance per trial and uses
   public-IP, key-only SSH. It does not support accelerators, attach/retain mode,
   private networking, Spot, or AWS infrastructure provisioning.
 - An EC2 deployment must provide an existing Ubuntu-compatible AMI, subnet,

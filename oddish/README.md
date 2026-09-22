@@ -81,7 +81,8 @@ reference. The main commands are:
   task-level QA retries. Hosted environments are `modal`, `daytona`, `ec2`,
   `gke`, `archil`, `thunder`, and `numinous`; Archil, EC2, and Numinous are controlled by
   deployment settings. When Numinous is enabled it is the first CPU candidate;
-  otherwise Daytona is the hosted CPU default. GPU tasks are placed by the
+  otherwise Daytona is the hosted CPU baseline and the Archil rollout can select
+  the whole sweep. After two failed Archil attempts, an allowed retry uses Modal. GPU tasks are placed by the
   deployment: Thunder when it enables it, otherwise Modal, and Modal whenever
   the run needs a private-registry pull. Numinous GPU registration has a
   separate deployment flag.

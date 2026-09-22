@@ -195,9 +195,10 @@ def _default_cloud_environment_for_task(
     the hosted API negotiate it.
 
     The CLI resolves only what needs no knowledge of the deployment: TPU work
-    can run nowhere but GKE, and plain CPU work keeps the established Daytona
-    (or opt-in Numinous) default. Which GPU backend a deployment offers, and
-    whether a private-registry pull forces Modal, is the hosted policy's call:
+    can run nowhere but GKE, and opt-in Numinous keeps its existing precedence.
+    Plain CPU work leaves provider selection to the hosted Archil rollout.
+    Which GPU backend a deployment offers, and whether a private-registry pull
+    forces Modal, is the hosted policy's call:
     the payload carries ``requires_gpu`` and ``registry_auth`` so it can decide.
     """
     from oddish.config import settings
@@ -221,9 +222,7 @@ def _default_cloud_environment_for_task(
     # The hosted API validates the requested environment against its policy.
     if settings.numinous_enabled and (not requires_gpu or settings.numinous_gpu_enabled):
         return EnvironmentType.NUMINOUS
-    if requires_gpu:
-        return None
-    return EnvironmentType.DAYTONA
+    return None
 
 
 def _map_batch_sweep_results(

@@ -76,6 +76,10 @@ not authorize a later mutation.
    the output; the `experiment` field is the experiment name, not a guaranteed
    identifier.
 
+   Without `--env`, hosted CPU runs use the deployment's Daytona/Archil rollout
+   or enabled Numinous provider. Explicit environments choose initial placement;
+   after two failed Archil attempts, an allowed retry uses Modal.
+
    Use `--env thunder` only when the target deployment has explicitly enabled
    its Thunder GPU backend. For a deployment smoke test, keep the execution
    deterministic and bounded:

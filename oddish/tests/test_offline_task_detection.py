@@ -34,7 +34,6 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
-from harbor.models.environment_type import EnvironmentType
 
 from oddish.cli.run import _default_cloud_environment_for_task
 from oddish.worker.local_offline_policy import task_is_offline
@@ -120,7 +119,7 @@ def test_task_is_offline_false_for_public_task(tmp_path) -> None:
 # --- the cloud default does NOT branch on offline-ness ----------------------
 
 
-def test_offline_cpu_task_keeps_the_cheap_default(tmp_path) -> None:
+def test_offline_cpu_task_defers_to_hosted_policy(tmp_path) -> None:
     # Being offline is not on its own a reason to move a task off Daytona --
     # see the module docstring for the experiment that falsified that theory.
     task_dir = _write_task(
@@ -132,13 +131,10 @@ def test_offline_cpu_task_keeps_the_cheap_default(tmp_path) -> None:
         allow_internet = false
         """,
     )
-    assert (
-        _default_cloud_environment_for_task(task_dir, override_gpus=None)
-        == EnvironmentType.DAYTONA
-    )
+    assert _default_cloud_environment_for_task(task_dir, override_gpus=None) is None
 
 
-def test_online_cpu_task_keeps_the_cheap_default(tmp_path) -> None:
+def test_online_cpu_task_defers_to_hosted_policy(tmp_path) -> None:
     task_dir = _write_task(
         tmp_path,
         """
@@ -147,10 +143,7 @@ def test_online_cpu_task_keeps_the_cheap_default(tmp_path) -> None:
         docker_image = "python:3.11"
         """,
     )
-    assert (
-        _default_cloud_environment_for_task(task_dir, override_gpus=None)
-        == EnvironmentType.DAYTONA
-    )
+    assert _default_cloud_environment_for_task(task_dir, override_gpus=None) is None
 
 
 def test_gpu_task_is_still_left_to_the_deployment(tmp_path) -> None:

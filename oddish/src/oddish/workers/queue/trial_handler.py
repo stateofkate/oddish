@@ -65,6 +65,7 @@ from oddish.model_pricing import is_native_cost_trusted, settle_cost_usd
 from oddish.observability import (
     log_missing_trial_metering_if_needed,
     log_unpriced_trial_if_needed,
+    record_trial_execution_finished,
 )
 from oddish.runtime.sandbox_lifecycle import (
     SandboxLaunchContext,
@@ -716,6 +717,15 @@ async def _prepare_trial_run(
             console.print(f"[dim]Trial {trial_id} was superseded, skipping[/dim]")
             return None
 
+        # Apply at pickup so recovered worker failures follow the same fallback
+        # as settled failures. Persist the provider for every remaining retry.
+        if (
+            trial.status == TrialStatus.RETRYING
+            and 2 <= trial.attempts < trial.max_attempts
+            and (trial.environment or settings.harbor_environment) == "archil"
+        ):
+            trial.environment = "modal"
+
         trial.status = TrialStatus.RUNNING
         trial.started_at = utcnow()
         trial.finished_at = None
@@ -1013,6 +1023,31 @@ def _qa_artifact_validation_error(outcome: HarborOutcome | None) -> str | None:
     return f"QA artifact validation failed:\n{detail}"[:4000]
 
 
+def _phase_duration(outcome: HarborOutcome | None, phase: str) -> float | None:
+    timing = (outcome.phase_timing or {}).get(phase) if outcome else None
+    if not isinstance(timing, dict):
+        return None
+    duration = timing.get("duration_sec")
+    return float(duration) if isinstance(duration, int | float) else None
+
+
+def _trial_execution_finished_attributes(
+    trial: TrialModel, outcome: HarborOutcome | None
+) -> dict:
+    return {
+        "trial_id": trial.id,
+        "kind": trial.kind or "agent",
+        "environment": (
+            getattr(trial, "environment", None) or settings.harbor_environment
+        ),
+        "status": trial.status.value.lower(),
+        "harbor_stage": trial.harbor_stage,
+        "attempts": trial.attempts,
+        "environment_setup_seconds": _phase_duration(outcome, "environment_setup"),
+        "total_seconds": outcome.duration_sec if outcome else None,
+    }
+
+
 async def _store_trial_results(
     *,
     trial_id: str,
@@ -1026,14 +1061,14 @@ async def _store_trial_results(
     worker_job_id: str | None = None,
     trial_attempt: int,
     judge_costs: dict | None = None,
-) -> tuple[bool, bool]:
-    """Return whether the trial is terminal and whether this call completed it."""
+) -> tuple[bool, bool, dict | None]:
+    """Return terminal state, hook ownership, and a post-commit event payload."""
     async with _trial_session(trial_id, allow_missing=True, with_for_update=True) as (
         session,
         trial,
     ):
         if not trial:
-            return False, False
+            return False, False, None
         # Result ownership can end before paid verifier usage reaches us. The
         # pre-execution marker authorizes only this worker's original attempt;
         # settle that ledger even when all result updates below are forbidden.
@@ -1051,12 +1086,12 @@ async def _store_trial_results(
             console.print(
                 f"[dim]Trial {trial_id} was superseded, skipping result update[/dim]"
             )
-            return False, False
+            return False, False, None
         if trial.attempts != trial_attempt:
             console.print(
                 f"[dim]Trial {trial_id} result ignored; attempt no longer owns it[/dim]"
             )
-            return trial.finished_at is not None, False
+            return trial.finished_at is not None, False, None
 
         is_modal_image_build_error = bool(
             outcome and is_modal_image_build_failure(outcome.error)
@@ -1085,7 +1120,11 @@ async def _store_trial_results(
             await refresh_task_browse_summaries(
                 session, [getattr(trial, "task_version_id", None)]
             )
-            return trial.finished_at is not None, False
+            if trial.status in (TrialStatus.SUCCESS, TrialStatus.FAILED):
+                event = _trial_execution_finished_attributes(trial, outcome)
+            else:
+                event = None
+            return trial.finished_at is not None, False, event
 
         if not await _worker_still_owns_trial(
             session, trial, worker_id=worker_id, worker_job_id=worker_job_id
@@ -1093,7 +1132,7 @@ async def _store_trial_results(
             console.print(
                 f"[dim]Trial {trial_id} result ignored; worker no longer owns it[/dim]"
             )
-            return False, False
+            return False, False, None
 
         if judge_summary is not None:
             trial.result = {**(trial.result or {}), "_verifier_judges": judge_summary}
@@ -1283,7 +1322,8 @@ async def _store_trial_results(
             session, [getattr(trial, "task_version_id", None)]
         )
         terminal = trial.status in (TrialStatus.SUCCESS, TrialStatus.FAILED)
-        return terminal, terminal
+        event = _trial_execution_finished_attributes(trial, outcome) if terminal else None
+        return terminal, terminal, event
 
 
 async def _run_post_trial_hooks(trial_id: str) -> None:
@@ -2178,7 +2218,7 @@ async def _settle_trial_attempt(
         execution.outcome.job_dir if execution.outcome else None,
         execution.outcome.job_result_path if execution.outcome else None,
     )
-    trial_terminal, run_post_trial_hooks = await asyncio.shield(
+    trial_terminal, run_post_trial_hooks, finished_event = await asyncio.shield(
         _store_trial_results(
             trial_id=trial_id,
             outcome=execution.outcome,
@@ -2193,6 +2233,8 @@ async def _settle_trial_attempt(
             judge_costs=judge_costs,
         )
     )
+    if finished_event is not None:
+        record_trial_execution_finished(**finished_event)
     await _finish_trial_settlement(
         trial_id=trial_id,
         org_id=prepared_trial.org_id,

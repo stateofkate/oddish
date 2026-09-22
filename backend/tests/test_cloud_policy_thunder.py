@@ -42,25 +42,25 @@ def _cloud_policy_values(*, thunder_enabled: bool) -> tuple[set[str], str, str]:
         "gpu_submission=TaskSweepSubmission.model_validate({"
         "'task_id':'t','configs':[{'agent':'nop','n_trials':1}],"
         "'harbor':{'environment':{'override_gpus':1}}});"
-        "print(cloud_policy.get_default_cloud_environment(gpu_submission).value);"
+        "print(cloud_policy.get_default_cloud_environment(gpu_submission, request_hash='0'*64).value);"
         "task_gpu_submission=TaskSweepSubmission.model_validate({"
         "'task_id':'t','configs':[{'agent':'nop','n_trials':1}],"
         "'requires_gpu':True,'gpu_types':['H100']});"
-        "print(cloud_policy.get_default_cloud_environment(task_gpu_submission).value);"
+        "print(cloud_policy.get_default_cloud_environment(task_gpu_submission, request_hash='0'*64).value);"
         "registry_submission=TaskSweepSubmission.model_validate({"
         "'task_id':'t','configs':[{'agent':'nop','n_trials':1}],"
         "'requires_gpu':True,'gpu_types':['H100'],"
         "'registry_auth':[{'registry':'ghcr.io','username':'u','token':'t'}]});"
-        "print(cloud_policy.get_default_cloud_environment(registry_submission).value);"
+        "print(cloud_policy.get_default_cloud_environment(registry_submission, request_hash='0'*64).value);"
         "untyped_submission=TaskSweepSubmission.model_validate({"
         "'task_id':'t','configs':[{'agent':'nop','n_trials':1}],"
         "'requires_gpu':True});"
-        "print(cloud_policy.get_default_cloud_environment(untyped_submission).value);"
+        "print(cloud_policy.get_default_cloud_environment(untyped_submission, request_hash='0'*64).value);"
         "kwarg_submission=TaskSweepSubmission.model_validate({"
         "'task_id':'t','configs':[{'agent':'nop','n_trials':1}],"
         "'requires_gpu':True,'gpu_types':['L4'],"
         "'harbor':{'environment':{'kwargs':{'gpu_type':'H100'}}}});"
-        "print(cloud_policy.get_default_cloud_environment(kwarg_submission).value)"
+        "print(cloud_policy.get_default_cloud_environment(kwarg_submission, request_hash='0'*64).value)"
     )
     env = {
         key: value
@@ -70,6 +70,8 @@ def _cloud_policy_values(*, thunder_enabled: bool) -> tuple[set[str], str, str]:
     env["PYTHONPATH"] = os.pathsep.join(
         [str(_ODDISH_SRC), env.get("PYTHONPATH", "")]
     ).rstrip(os.pathsep)
+    # Even a full Archil CPU rollout must preserve GPU capability routing.
+    env["ODDISH_ARCHIL_TRAFFIC_PERCENT"] = "100"
     if thunder_enabled:
         env.update(
             {
