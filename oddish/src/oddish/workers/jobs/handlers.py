@@ -12,6 +12,7 @@ the queue execution code.
 
 from __future__ import annotations
 
+from typing import Any
 
 from oddish.core.harbor_artifacts import THUNDER_CAPACITY_UNAVAILABLE_CODE
 from oddish.db import (
@@ -89,7 +90,17 @@ class TrialJobHandler:
             )
         finally:
             current_registry_credentials.reset(cred_token)
+        return await self.outcome_for_settled_trial(job, harbor_outcome)
 
+    async def outcome_for_settled_trial(
+        self, job: WorkerJobLike, harbor_outcome: Any
+    ) -> JobOutcome:
+        """The worker-job outcome implied by the trial row after settlement.
+
+        Shared by the worker (after ``run_trial_job``) and by settlement of a
+        result reported by the in-sandbox monitor.
+        """
+        trial_id = job.subject_id
         async with get_session() as session:
             trial = await session.get(TrialModel, trial_id)
             if trial is None:

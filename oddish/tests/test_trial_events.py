@@ -321,7 +321,8 @@ async def test_flush_sanitizes_bad_event_without_dropping_safe_sibling(monkeypat
         {"seq": 2, "kind": "message", "payload": {"text": "safe"}},
     ]
 
-    assert await tailer._flush_events(session) == 2
+    await tailer._persist_tick()
+    assert tailer.pending_events == []
     [insert] = insert_stmts(session)
     rows = insert_rows(insert)
     assert rows[0]["payload"] == {"content": "bad␀", "sanitized": True}
@@ -342,7 +343,8 @@ async def test_flush_clips_payload_strings_after_sanitization(monkeypatch):
         }
     ]
 
-    assert await tailer._flush_events(session) == 1
+    await tailer._persist_tick()
+    assert tailer.pending_events == []
     [insert] = insert_stmts(session)
     [row] = insert_rows(insert)
     assert row["payload"] == {

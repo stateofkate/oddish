@@ -203,6 +203,34 @@ def test_inject_restricted_agent_model_hosts_for_restricted_direct_task(
     }
 
 
+def test_docker_restricted_agent_phase_matches_daytona(tmp_path):
+    """The monitor path runs Harbor's Docker environment. A no-network agent
+    phase must get the same model host and web-tool rules there as on Daytona."""
+    task_path = _write_network_policy_task(tmp_path)
+    task_config = harbor_runner.HarborTaskConfig.model_validate_toml(
+        (task_path / "task.toml").read_text(encoding="utf-8")
+    )
+    results = {}
+    for environment_type in (EnvironmentType.DAYTONA, EnvironmentType.DOCKER):
+        agent_config = HarborAgentConfig(
+            name="claude-code", model_name="anthropic/claude-opus-5"
+        )
+        harbor_runner._apply_restricted_agent_network_defaults(
+            task_path=task_path,
+            environment_config=HarborEnvironmentConfig(type=environment_type),
+            agent_config=agent_config,
+        )
+        policy = resolve_agent_phase_policy(
+            task_config, agent_config, task_config.environment.resolve_baseline()
+        )
+        results[environment_type] = (policy, agent_config.kwargs)
+
+    docker_policy, docker_kwargs = results[EnvironmentType.DOCKER]
+    assert "api.anthropic.com" in docker_policy.allowed_hosts
+    assert docker_kwargs["disallowed_tools"] == "WebSearch WebFetch"
+    assert results[EnvironmentType.DOCKER] == results[EnvironmentType.DAYTONA]
+
+
 @pytest.mark.parametrize(
     "environment_type", [EnvironmentType.THUNDER, EnvironmentType.ARCHIL]
 )
@@ -1519,7 +1547,7 @@ def test_restricted_cursor_does_not_allow_underlying_model_provider(tmp_path):
         (EnvironmentType.DAYTONA, "no-network", "no-network", False),
         (EnvironmentType.DAYTONA, "public", "no-network", True),
         (EnvironmentType.MODAL, "public", "no-network", True),
-        (EnvironmentType.DOCKER, "public", "no-network", False),
+        (EnvironmentType.DOCKER, "public", "no-network", True),
     ],
 )
 def test_inject_restricted_agent_model_hosts_skips_unsupported_shapes(
@@ -2748,6 +2776,86 @@ def test_run_harbor_trial_async_non_probe_still_validates(tmp_path):
                 jobs_dir=tmp_path / "jobs",
             )
         )
+
+
+@pytest.mark.parametrize("staged_by_monitor", [True, False])
+def test_run_harbor_trial_async_uses_skills_the_monitor_staged(
+    monkeypatch, tmp_path, staged_by_monitor
+):
+    """The monitor has no database, so it stages the selected skills itself and
+    names the root; the driver must not try the database for them. Without the
+    key (the worker) the database path runs as before."""
+    task_path = tmp_path / "task"
+    task_path.mkdir()
+    (task_path / "task.toml").write_text("", encoding="utf-8")
+    staged = tmp_path / "agent_skills"
+    (staged / "alpha").mkdir(parents=True)
+    (staged / "alpha" / "SKILL.md").write_text("---\nname: alpha\n---\n")
+    captured: dict[str, object] = {}
+    database_reads: list[tuple[Path, str | None, list[str] | None]] = []
+
+    async def _stage_org_skills(skills_root, *, org_id, skill_ids=None):
+        database_reads.append((skills_root, org_id, skill_ids))
+        return 1
+
+    class _FakeJob:
+        def __init__(self, config):
+            captured["config"] = config
+            self.job_dir = config["jobs_dir"] / "job-1"
+
+        @classmethod
+        async def create(cls, config):
+            return cls(config)
+
+        async def run(self):
+            self.job_dir.mkdir(parents=True, exist_ok=True)
+            (self.job_dir / "result.json").write_text("{}\n", encoding="utf-8")
+            return object()
+
+    monkeypatch.setattr(harbor_runner, "stage_org_skills", _stage_org_skills)
+    monkeypatch.setattr(
+        harbor_runner, "_check_local_storage_preflight", lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        harbor_runner, "validate_task_timeout_config", lambda path: None
+    )
+    monkeypatch.setattr(harbor_runner, "TaskConfig", lambda path: path)
+    monkeypatch.setattr(harbor_runner, "JobConfig", lambda **kwargs: kwargs)
+    monkeypatch.setattr(harbor_runner, "Job", _FakeJob)
+    monkeypatch.setattr(
+        harbor_runner,
+        "_extract_outcome_from_job_result",
+        lambda **kwargs: harbor_runner.HarborOutcome(
+            reward=1.0,
+            error=None,
+            exit_code=0,
+            duration_sec=kwargs["duration_sec"],
+            job_result_path=kwargs["job_result_path"],
+            job_dir=kwargs["job_dir"],
+        ),
+    )
+
+    harbor_config: dict[str, object] = {"skill_ids": ["skill-1"]}
+    outcome = asyncio.run(
+        harbor_runner.run_harbor_trial_async(
+            task_path=task_path,
+            agent="nop",
+            jobs_dir=tmp_path / "jobs",
+            harbor_config=harbor_config,
+            org_id="org-1",
+            staged_skills_root=staged if staged_by_monitor else None,
+        )
+    )
+
+    assert outcome.error is None
+    skills = [str(s) for s in captured["config"]["agents"][0].skills]
+    if staged_by_monitor:
+        assert skills == [str(staged)]
+        assert database_reads == []
+    else:
+        ((skills_root, org_id, skill_ids),) = database_reads
+        assert (org_id, skill_ids) == ("org-1", ["skill-1"])
+        assert skills == [str(skills_root)]
 
 
 def test_build_agent_config_injects_probe_timeout_default(monkeypatch):

@@ -4,6 +4,7 @@ import binascii
 import contextlib
 import hashlib
 import json
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol, cast
 
@@ -978,6 +979,79 @@ def price_totals(totals: UsageTotals) -> float | None:
         return None
 
 
+@dataclass(frozen=True)
+class PersistResult:
+    """What one persist tick did. Plain data so it can cross an HTTP boundary."""
+
+    flushed: int = 0
+    checkpoint_written: bool = False
+    trial_finished: bool = False
+    quota_checked: bool = True
+    pause_requested: bool | None = None
+
+
+# Seam for running the tailer where the database is not reachable. Events are
+# already redacted when this is called. Defaults to the database path below.
+PersistTick = Callable[..., Awaitable[PersistResult]]
+
+# Process-wide override, set once by a host that cannot reach the database
+# (the in-sandbox monitor). A tailer's own ``persist`` argument still wins.
+_default_persist: PersistTick | None = None
+
+
+def set_default_persist(persist: PersistTick | None) -> None:
+    global _default_persist
+    _default_persist = persist
+
+
+async def persist_tick_to_database(
+    *,
+    trial_id: str,
+    attempt: int,
+    events: list[dict[str, Any]],
+    checkpoint_values: dict[str, Any] | None,
+    org_id: str | None,
+    billed_user_id: str | None,
+) -> PersistResult:
+    """Insert live rows, write the usage checkpoint, then enforce quotas."""
+    flushed = 0
+    checkpoint_written = False
+    async with get_session() as session:
+        if events:
+            rows = [{"trial_id": trial_id, "attempt": attempt, **e} for e in events]
+            await session.execute(
+                pg_insert(TrialEventModel).values(rows).on_conflict_do_nothing()
+            )
+            flushed = len(rows)
+        if checkpoint_values is not None:
+            result = await session.execute(
+                update(TrialModel)
+                .where(TrialModel.id == trial_id, TrialModel.finished_at.is_(None))
+                .values(**checkpoint_values)
+            )
+            if getattr(result, "rowcount", None) == 0:
+                return PersistResult(flushed=flushed, trial_finished=True)
+            checkpoint_written = True
+    if not checkpoint_written or org_id is None:
+        return PersistResult(flushed=flushed, checkpoint_written=checkpoint_written)
+
+    from oddish.core.quota_enforcement import enforce_trial_quotas
+
+    pause_requests: list[bool] = []
+    cancelled = await enforce_trial_quotas(
+        org_id=org_id,
+        billed_user_id=billed_user_id,
+        caller_trial_id=trial_id,
+        quota_pause_callback=pause_requests.append,
+    )
+    return PersistResult(
+        flushed=flushed,
+        checkpoint_written=True,
+        quota_checked=cancelled is not None,
+        pause_requested=pause_requests[-1] if pause_requests else None,
+    )
+
+
 class LiveTailer:
     def __init__(
         self,
@@ -991,7 +1065,9 @@ class LiveTailer:
         runtime_redactions: dict[str, str] | None = None,
         org_id: str | None = None,
         billed_user_id: str | None = None,
+        persist: PersistTick | None = None,
     ):
+        self._persist = persist
         self.trial_id = trial_id
         self.environment = environment
         self.attempt = attempt
@@ -1161,43 +1237,35 @@ class LiveTailer:
         checkpoint = self._checkpoint_values()
         if (not self.pending_events or self.replaced) and checkpoint is None:
             return
-        flushed_count = 0
-        checkpoint_ack: tuple[tuple, float | None] | None = None
-        async with get_session() as session:
-            flushed_count = await self._flush_events(session)
-            checkpoint_ack = await self._checkpoint(session, checkpoint)
-        if flushed_count:
-            del self.pending_events[:flushed_count]
-        if checkpoint_ack is not None:
-            if self.org_id is not None:
-                from oddish.core.quota_enforcement import enforce_trial_quotas
-                from oddish.workers.harbor.quota_control import (
-                    set_quota_pause_requested,
-                )
+        events = (
+            []
+            if self.replaced
+            else [self._sanitize_event(event) for event in self.pending_events]
+        )
+        persist = self._persist or _default_persist or persist_tick_to_database
+        result = await persist(
+            trial_id=self.trial_id,
+            attempt=self.attempt,
+            events=events,
+            checkpoint_values=checkpoint[0] if checkpoint is not None else None,
+            org_id=self.org_id,
+            billed_user_id=self.billed_user_id,
+        )
+        if result.flushed:
+            del self.pending_events[: result.flushed]
+        if result.trial_finished:
+            self.request_stop()
+            return
+        if result.pause_requested is not None:
+            from oddish.workers.harbor.quota_control import set_quota_pause_requested
 
-                cancelled = await enforce_trial_quotas(
-                    org_id=self.org_id,
-                    billed_user_id=self.billed_user_id,
-                    caller_trial_id=self.trial_id,
-                    quota_pause_callback=lambda requested: set_quota_pause_requested(
-                        self.trial_id, requested
-                    ),
-                )
-                if cancelled is None:
-                    return
-            self._last_written, self._last_cost = checkpoint_ack
-
-    async def _flush_events(self, session) -> int:
-        if not self.pending_events or self.replaced:
-            return 0
-        events = [self._sanitize_event(event) for event in self.pending_events]
-        rows = [
-            {"trial_id": self.trial_id, "attempt": self.attempt, **event}
-            for event in events
-        ]
-        stmt = pg_insert(TrialEventModel).values(rows).on_conflict_do_nothing()
-        await session.execute(stmt)
-        return len(rows)
+            set_quota_pause_requested(self.trial_id, result.pause_requested)
+        if (
+            checkpoint is not None
+            and result.checkpoint_written
+            and result.quota_checked
+        ):
+            _, self._last_written, self._last_cost = checkpoint
 
     def _sanitize_event(self, event: dict[str, Any]) -> dict[str, Any]:
         original_payload = event.get("payload")
@@ -1240,27 +1308,6 @@ class LiveTailer:
         if state == self._last_written or self.replaced:
             return None
         return values, state, cost
-
-    async def _checkpoint(
-        self,
-        session,
-        checkpoint: tuple[dict[str, Any], tuple, float | None] | None,
-    ) -> tuple[tuple, float | None] | None:
-        if checkpoint is None:
-            return None
-        values, state, cost = checkpoint
-        result = await session.execute(
-            update(TrialModel)
-            .where(
-                TrialModel.id == self.trial_id,
-                TrialModel.finished_at.is_(None),
-            )
-            .values(**values)
-        )
-        if getattr(result, "rowcount", None) == 0:
-            self.request_stop()
-            return None
-        return state, cost
 
 
 _tailers: dict[str, tuple[LiveTailer, asyncio.Task]] = {}

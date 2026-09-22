@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from decimal import Decimal
 from types import SimpleNamespace
@@ -264,3 +265,47 @@ async def test_quota_control_failure_does_not_wait_forever_for_job(monkeypatch):
 
     release_cleanup.set()
     await quota_control.asyncio.wait_for(cleanup_finished.wait(), timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_quota_control_runs_on_injected_seams_without_database(monkeypatch):
+    def no_database():
+        raise AssertionError("database reached with injected seams")
+
+    monkeypatch.setattr(quota_control, "get_session", no_database)
+    monkeypatch.setattr(settings, "quota_pause_refresh_seconds", 0)
+    monkeypatch.setattr(settings, "quota_pause_poll_seconds", 0.01)
+
+    paused = asyncio.Event()
+    recorded: list[tuple[str, bool]] = []
+
+    class Job:
+        async def run(self):
+            await paused.wait()
+            return "done"
+
+        async def pause(self):
+            paused.set()
+
+        async def resume(self):
+            pass
+
+    async def refresh(org_id, billed_user_id):
+        assert (org_id, billed_user_id) == ("org-1", "user-1")
+        return True
+
+    async def record(trial_id, is_paused):
+        recorded.append((trial_id, is_paused))
+
+    result = await quota_control.run_job_with_quota_control(
+        Job(),
+        trial_id="trial-1",
+        org_id="org-1",
+        billed_user_id="user-1",
+        refresh_requested=refresh,
+        record_state=record,
+    )
+
+    assert result == "done"
+    assert recorded[0] == ("trial-1", True)
+    assert recorded[-1] == ("trial-1", False)

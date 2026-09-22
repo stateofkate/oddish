@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -28,6 +29,25 @@ class QuotaPauseControlError(RuntimeError):
     pass
 
 
+# Seams for running the control loop where the database is not reachable.
+# Both default to the database-backed functions below.
+RefreshPauseRequested = Callable[[str | None, str | None], Awaitable[bool]]
+RecordPauseState = Callable[[str, bool], Awaitable[None]]
+
+# Process-wide override, set once by a host that cannot reach the database
+# (the in-sandbox monitor). Explicit arguments still win.
+_default_refresh: RefreshPauseRequested | None = None
+_default_record: RecordPauseState | None = None
+
+
+def set_default_seams(
+    refresh_requested: RefreshPauseRequested | None,
+    record_state: RecordPauseState | None,
+) -> None:
+    global _default_refresh, _default_record
+    _default_refresh, _default_record = refresh_requested, record_state
+
+
 def set_quota_pause_requested(trial_id: str, requested: bool) -> None:
     controller = _controllers.get(trial_id)
     if controller is not None:
@@ -45,6 +65,17 @@ async def _record_pause_state(trial_id: str, paused: bool) -> None:
             trial.status = TrialStatus.RUNNING
 
 
+async def _refresh_pause_requested(
+    org_id: str | None, billed_user_id: str | None
+) -> bool:
+    async with get_session() as session:
+        return await quota_pause_requested(
+            session,
+            org_id=org_id,
+            billed_user_id=billed_user_id,
+        )
+
+
 async def control_job_quota_pause(
     job: Any,
     *,
@@ -53,19 +84,18 @@ async def control_job_quota_pause(
     billed_user_id: str | None,
     stop: asyncio.Event,
     controller: QuotaPauseController,
+    refresh_requested: RefreshPauseRequested | None = None,
+    record_state: RecordPauseState | None = None,
 ) -> None:
+    refresh = refresh_requested or _default_refresh or _refresh_pause_requested
+    record = record_state or _default_record or _record_pause_state
     last_refresh = 0.0
     while not stop.is_set():
         now = time.monotonic()
         if now - last_refresh >= settings.quota_pause_refresh_seconds:
             last_refresh = now
             try:
-                async with get_session() as session:
-                    controller.requested = await quota_pause_requested(
-                        session,
-                        org_id=org_id,
-                        billed_user_id=billed_user_id,
-                    )
+                controller.requested = await refresh(org_id, billed_user_id)
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -113,7 +143,7 @@ async def control_job_quota_pause(
 
         if not controller.status_synced:
             try:
-                await _record_pause_state(trial_id, controller.paused)
+                await record(trial_id, controller.paused)
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -139,7 +169,10 @@ async def run_job_with_quota_control(
     trial_id: str,
     org_id: str,
     billed_user_id: str | None,
+    refresh_requested: RefreshPauseRequested | None = None,
+    record_state: RecordPauseState | None = None,
 ) -> Any:
+    record = record_state or _default_record or _record_pause_state
     controller = QuotaPauseController()
     _controllers[trial_id] = controller
     stop = asyncio.Event()
@@ -152,6 +185,8 @@ async def run_job_with_quota_control(
             billed_user_id=billed_user_id,
             stop=stop,
             controller=controller,
+            refresh_requested=refresh_requested,
+            record_state=record_state,
         )
     )
     try:
@@ -215,7 +250,7 @@ async def run_job_with_quota_control(
 
                 if not controller.status_synced:
                     try:
-                        await _record_pause_state(trial_id, controller.paused)
+                        await record(trial_id, controller.paused)
                     except Exception:
                         logger.exception(
                             "Failed to record final quota pause state for "

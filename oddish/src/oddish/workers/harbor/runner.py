@@ -1037,6 +1037,7 @@ def _supports_auto_restricted_agent_network(
         EnvironmentType.MODAL,
         EnvironmentType.THUNDER,
         EnvironmentType.ARCHIL,
+        EnvironmentType.DOCKER,
     ):
         return False
 
@@ -1899,6 +1900,7 @@ async def run_harbor_trial_async(
     sandbox_launch: SandboxLaunchContext | None = None,
     trial_kind: str = "agent",
     fallback_from_environment: str | None = None,
+    staged_skills_root: Path | None = None,
 ) -> HarborOutcome:
     """
     Execute a Harbor trial using Harbor's Python API with lifecycle hooks.
@@ -1945,6 +1947,7 @@ async def run_harbor_trial_async(
             sandbox_launch=sandbox_launch,
             trial_kind=trial_kind,
             fallback_from_environment=fallback_from_environment,
+            staged_skills_root=staged_skills_root,
             raw=raw,
             hc=hc,
             backend=backend,
@@ -1991,6 +1994,7 @@ async def _run_harbor_trial_async_impl(
     sandbox_launch: SandboxLaunchContext | None,
     trial_kind: str,
     fallback_from_environment: str | None,
+    staged_skills_root: Path | None = None,
 ) -> HarborOutcome:
     from oddish.workers.analysis_trials import is_analysis_kind
 
@@ -2491,7 +2495,12 @@ async def _run_harbor_trial_async_impl(
         # Stage the org's shared skills (+ global seeds) into a root under the
         # job dir and hand it to Harbor via ``AgentConfig.skills``. Best-effort;
         # failure never blocks a trial run.
-        if org_id is not None:
+        if staged_skills_root is not None:
+            # Passed only by the monitor, which has no database: it staged the
+            # selected skills from the control plane (no directory: none found).
+            if Path(staged_skills_root).is_dir():
+                agent_config.skills = [*agent_config.skills, Path(staged_skills_root)]
+        elif org_id is not None:
             skills_root = unique_parent / "agent_skills"
             skill_ids = raw.get("skill_ids")
             n_skills = await stage_org_skills(

@@ -2069,6 +2069,73 @@ async def _release_prepared_trial_attempt(
         shutil.rmtree(prepared_task.temp_task_dir, ignore_errors=True)
 
 
+async def _begin_judge_costs_if_enabled(
+    *,
+    trial_id: str,
+    prepared_trial: PreparedTrialRun,
+    task_path: Path,
+    worker_id: str | None,
+    worker_job_id: str | None,
+) -> None:
+    """Shared by the worker path and the monitor launcher."""
+    if not judge_costs_enabled(task_path):
+        return
+    async with _trial_session(trial_id, with_for_update=True) as (session, trial):
+        if (
+            trial is None
+            or trial.attempts != prepared_trial.trial_attempt
+            or not await _worker_still_owns_trial(
+                session, trial, worker_id=worker_id, worker_job_id=worker_job_id
+            )
+        ):
+            raise RuntimeError("Verifier judge attempt is no longer owned")
+        await begin_judge_costs(
+            session,
+            trial,
+            prepared_trial.trial_attempt,
+            worker_id=worker_id,
+            worker_job_id=worker_job_id,
+        )
+
+
+async def _claim_funding_key(
+    *, trial_id: str, prepared_trial: PreparedTrialRun, worker_id: str | None
+) -> tuple[bool, dict[str, str] | None]:
+    """Resolve the user's own model key, if any, and record which key funds
+    this attempt. ``(False, None)`` means the attempt was superseded. Shared by
+    the worker path and the monitor launcher."""
+    byok_resolution = None
+    if byok.byok_resolver_registered() and not byok.harbor_config_is_ephemeral(
+        prepared_trial.trial_harbor_config
+    ):
+        byok_resolution = await byok.resolve_byok(
+            owner_user_id=prepared_trial.created_by_user_id,
+            org_id=prepared_trial.org_id,
+            experiment_name=prepared_trial.experiment_name,
+            model=prepared_trial.trial_model,
+            agent=prepared_trial.trial_agent,
+        )
+    byok_env = dict(byok_resolution.env) if byok_resolution else None
+    funding_key_hash = trial_llm_key_hash(
+        settings.get_provider_for_trial(
+            prepared_trial.trial_agent, prepared_trial.trial_model
+        ),
+        byok_env,
+    )
+    claim = update(TrialModel).where(
+        TrialModel.id == trial_id,
+        TrialModel.finished_at.is_(None),
+        TrialModel.attempts == prepared_trial.trial_attempt,
+    )
+    if worker_id is not None:
+        claim = claim.where(TrialModel.current_worker_id == worker_id)
+    async with get_session() as session:
+        claimed = await session.execute(
+            claim.values(llm_key_hash=funding_key_hash, updated_at=utcnow())
+        )
+    return bool(getattr(claimed, "rowcount", 0)), byok_env
+
+
 async def _prepare_claimed_trial_attempt(
     *,
     trial_id: str,
@@ -2087,60 +2154,22 @@ async def _prepare_claimed_trial_attempt(
     prepared_task: PreparedTrialTask | None = None
     sandbox_launch: SandboxLaunchContext | None = None
     try:
-        byok_resolution = None
-        if byok.byok_resolver_registered() and not byok.harbor_config_is_ephemeral(
-            prepared_trial.trial_harbor_config
-        ):
-            byok_resolution = await byok.resolve_byok(
-                owner_user_id=prepared_trial.created_by_user_id,
-                org_id=prepared_trial.org_id,
-                experiment_name=prepared_trial.experiment_name,
-                model=prepared_trial.trial_model,
-                agent=prepared_trial.trial_agent,
-            )
-        byok_env = dict(byok_resolution.env) if byok_resolution else None
-        funding_key_hash = trial_llm_key_hash(
-            settings.get_provider_for_trial(
-                prepared_trial.trial_agent, prepared_trial.trial_model
-            ),
-            byok_env,
+        owned, byok_env = await _claim_funding_key(
+            trial_id=trial_id, prepared_trial=prepared_trial, worker_id=worker_id
         )
-        claim = update(TrialModel).where(
-            TrialModel.id == trial_id,
-            TrialModel.finished_at.is_(None),
-            TrialModel.attempts == prepared_trial.trial_attempt,
-        )
-        if worker_id is not None:
-            claim = claim.where(TrialModel.current_worker_id == worker_id)
-        async with get_session() as session:
-            claimed = await session.execute(
-                claim.values(llm_key_hash=funding_key_hash, updated_at=utcnow())
-            )
-        if not getattr(claimed, "rowcount", 0):
+        if not owned:
             return None
 
         prepared_task = await _prepare_trial_task(
             trial_id=trial_id, prepared_trial=prepared_trial
         )
-        if judge_costs_enabled(prepared_task.task_path):
-            async with _trial_session(trial_id, with_for_update=True) as (
-                session, trial
-            ):
-                if (
-                    trial is None
-                    or trial.attempts != prepared_trial.trial_attempt
-                    or not await _worker_still_owns_trial(
-                        session, trial, worker_id=worker_id, worker_job_id=worker_job_id
-                    )
-                ):
-                    raise RuntimeError("Verifier judge attempt is no longer owned")
-                await begin_judge_costs(
-                    session,
-                    trial,
-                    prepared_trial.trial_attempt,
-                    worker_id=worker_id,
-                    worker_job_id=worker_job_id,
-                )
+        await _begin_judge_costs_if_enabled(
+            trial_id=trial_id,
+            prepared_trial=prepared_trial,
+            task_path=prepared_task.task_path,
+            worker_id=worker_id,
+            worker_job_id=worker_job_id,
+        )
         os.makedirs(settings.harbor_jobs_dir, exist_ok=True)
 
         span_provider = (
@@ -2200,6 +2229,37 @@ async def _prepare_claimed_trial_attempt(
                 sandbox_launch=sandbox_launch,
             )
         raise
+
+
+async def _mirror_to_sauron(prepared_trial: PreparedTrialRun, job_dir: Path) -> None:
+    """Mirror to sauron's AWS S3 (best-effort).
+
+    This targets sauron's own observability bucket (settings.sauron_s3_bucket)
+    with its own prefix scheme -- a distinct scope from the trial-results
+    prefix, so the job-scoped credential's authorized_prefix intentionally does
+    NOT apply here (it would refuse every legitimate sauron write).
+    """
+    try:
+        from oddish.integrations.sauron import get_sauron_uploader
+        from oddish.integrations.github.client import GitHubMeta
+
+        sauron = get_sauron_uploader()
+        if sauron.is_enabled():
+            sauron_prefix = await sauron.upload_trial(
+                harbor_job_dir=job_dir,
+                task_name=prepared_trial.task_name or prepared_trial.task_id,
+                agent=prepared_trial.trial_agent,
+                model=prepared_trial.trial_model,
+                experiment_id=prepared_trial.experiment_id,
+                experiment_name=prepared_trial.experiment_name,
+                attempt_number=prepared_trial.attempt_number,
+                github_meta=GitHubMeta.from_tags(prepared_trial.task_tags),
+                task_tags=prepared_trial.task_tags,
+            )
+            if sauron_prefix:
+                console.print(f"[dim]Mirrored to sauron S3: {sauron_prefix}[/dim]")
+    except Exception as e:
+        console.print(f"[yellow]Sauron mirror failed (non-fatal): {e}[/yellow]")
 
 
 async def _settle_trial_attempt(
@@ -2499,35 +2559,8 @@ async def run_trial_job(
                 "directory to upload"
             )
 
-        # Mirror to sauron's AWS S3 (best-effort). This targets sauron's own
-        # observability bucket (settings.sauron_s3_bucket) with its own prefix
-        # scheme -- a distinct scope from the trial-results prefix, so the
-        # job-scoped credential's authorized_prefix intentionally does NOT apply
-        # here (it would refuse every legitimate sauron write).
         if execution.outcome and execution.outcome.job_dir:
-            try:
-                from oddish.integrations.sauron import get_sauron_uploader
-                from oddish.integrations.github.client import GitHubMeta
-
-                sauron = get_sauron_uploader()
-                if sauron.is_enabled():
-                    sauron_prefix = await sauron.upload_trial(
-                        harbor_job_dir=execution.outcome.job_dir,
-                        task_name=prepared_trial.task_name or prepared_trial.task_id,
-                        agent=prepared_trial.trial_agent,
-                        model=prepared_trial.trial_model,
-                        experiment_id=prepared_trial.experiment_id,
-                        experiment_name=prepared_trial.experiment_name,
-                        attempt_number=prepared_trial.attempt_number,
-                        github_meta=GitHubMeta.from_tags(prepared_trial.task_tags),
-                        task_tags=prepared_trial.task_tags,
-                    )
-                    if sauron_prefix:
-                        console.print(
-                            f"[dim]Mirrored to sauron S3: {sauron_prefix}[/dim]"
-                        )
-            except Exception as e:
-                console.print(f"[yellow]Sauron mirror failed (non-fatal): {e}[/yellow]")
+            await _mirror_to_sauron(prepared_trial, execution.outcome.job_dir)
 
         # Probe trials get their summary generated inline, in this same job,
         # while the local Harbor artifacts still exist on disk -- mirroring

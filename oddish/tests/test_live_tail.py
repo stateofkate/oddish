@@ -1728,3 +1728,40 @@ def test_tbh_fold_drops_its_buffer_when_the_log_is_re_teed():
     fold.feed_line(tbh_line("run.output.delta", {"text": "partial"}))
     fold.on_truncate()
     assert fold.flush() == []
+
+
+@pytest.mark.asyncio
+async def test_persist_tick_uses_an_injected_persist_without_the_database(monkeypatch):
+    def no_database():
+        raise AssertionError("database reached with an injected persist")
+
+    monkeypatch.setattr(live_tail, "get_session", no_database)
+    calls = []
+
+    async def persist(**kwargs):
+        calls.append(kwargs)
+        return live_tail.PersistResult(flushed=len(kwargs["events"]))
+
+    tailer = live_tail.LiveTailer(
+        trial_id="trial-1",
+        environment=None,
+        attempt=2,
+        log_path="/logs/agent/x.jsonl",
+        fold=lambda *_: None,
+        org_id="org-1",
+        billed_user_id="user-1",
+        runtime_redactions={"sk-secret": "[REDACTED]"},
+        persist=persist,
+    )
+    tailer.pending_events = [
+        {"seq": 1, "kind": "text", "payload": {"text": "key sk-secret"}}
+    ]
+    monkeypatch.setattr(tailer, "_checkpoint_values", lambda: None)
+
+    await tailer._persist_tick()
+
+    (call,) = calls
+    assert (call["trial_id"], call["attempt"]) == ("trial-1", 2)
+    # Redaction happens before the rows leave the tailer.
+    assert "sk-secret" not in str(call["events"])
+    assert tailer.pending_events == []

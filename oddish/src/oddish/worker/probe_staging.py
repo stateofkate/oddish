@@ -242,6 +242,27 @@ def stage_cli_mount(
     shutil.copytree(contract, harness_dir / _ANALYSIS_CONTRACT_DIR)
 
 
+async def load_org_skills(
+    *, org_id: str | None, skill_ids: list[str]
+) -> list[SkillBundle]:
+    """The selected skills (the org's own or global seeds), read from Postgres.
+
+    Raises on a DB failure. Shared by ``stage_org_skills`` and the monitor's
+    skills route, which serves them to a sandbox that has no database.
+    """
+    async with get_session() as session:
+        skills = await list_skills_core(session, org_id=org_id)
+        wanted = set(skill_ids)
+        skills = [s for s in skills if s.id in wanted]
+        return [
+            SkillBundle(
+                name=s.name,
+                files=[(f.relative_path, f.content) for f in s.files],
+            )
+            for s in skills
+        ]
+
+
 async def stage_org_skills(
     skills_root: Path, *, org_id: str | None, skill_ids: list[str] | None = None
 ) -> int:
@@ -262,17 +283,7 @@ async def stage_org_skills(
     if not skill_ids:
         return 0
     try:
-        async with get_session() as session:
-            skills = await list_skills_core(session, org_id=org_id)
-            wanted = set(skill_ids)
-            skills = [s for s in skills if s.id in wanted]
-            bundles = [
-                SkillBundle(
-                    name=s.name,
-                    files=[(f.relative_path, f.content) for f in s.files],
-                )
-                for s in skills
-            ]
+        bundles = await load_org_skills(org_id=org_id, skill_ids=skill_ids)
     except Exception:
         logger.exception("probe: loading org skills failed")
         return 0
