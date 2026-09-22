@@ -19,11 +19,14 @@ export default function PublicExperimentPage() {
     ? `${PUBLIC_API_URL}/experiments/${encodeURIComponent(token)}`
     : null;
 
-  const { data: experimentInfo } = useSWR<PublicExperimentInfo>(
-    publicBase,
-    fetcher,
-    { refreshInterval: 30000 }
-  );
+  const {
+    data: experimentInfo,
+    error: experimentError,
+    isValidating: isLoadingExperimentInfo,
+    mutate: refreshExperimentInfo,
+  } = useSWR<PublicExperimentInfo>(publicBase, fetcher, {
+    refreshInterval: 30000,
+  });
 
   const {
     experiment,
@@ -48,6 +51,38 @@ export default function PublicExperimentPage() {
     experimentInfo?.name || experiment?.name || "Public Experiment";
   const hasFatalError = !experiment && Boolean(openError);
   const scopedApiBaseUrl = publicBase ?? PUBLIC_API_URL;
+  const retryExperiment = () => {
+    void Promise.allSettled([refreshExperimentInfo(), refreshResults()]);
+  };
+
+  // Mount the view once its QA setting is known so task links start in
+  // the correct pane. Results and costs still load in parallel above.
+  if (!experimentInfo) {
+    return (
+      <>
+        <ShareNav />
+        <main className="mx-auto w-full max-w-(--breakpoint-2xl) px-4 py-4">
+          {experimentError ? (
+            <ExperimentResultsStatus
+              tasksLoaded={tasksForExperiment.length}
+              trialsLoaded={trialsLoaded}
+              complete={pagesComplete}
+              isLoading={isLoadingExperimentInfo}
+              hasError
+              fatalError={{
+                title: "Failed to load experiment",
+                description:
+                  "The share link may be invalid or no longer public.",
+              }}
+              onRetry={retryExperiment}
+            />
+          ) : (
+            <p role="status">Loading experiment...</p>
+          )}
+        </main>
+      </>
+    );
+  }
 
   return (
     <>
@@ -84,7 +119,7 @@ export default function PublicExperimentPage() {
                       }
                     : undefined
                 }
-                onRetry={() => void refreshResults()}
+                onRetry={retryExperiment}
               />
             }
             headerLeft={

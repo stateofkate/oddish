@@ -1350,6 +1350,10 @@ query selects a version used by a live, non-probe trial in that share, or
 the displayed task version when the share has no trials yet.
 The route returns 404 when QA is off or the task/version is outside the link.
 Public QA has no edit or run controls; org/admin checks still guard publishing.
+Share pages with QA enabled start with the graph hidden so the task list and
+QA results come first. Pages wait for share settings before mounting the view,
+so task links open the QA overview unless the link selects a file. Viewers can
+still turn the graph on.
 
 ### Configuration and model routing
 

@@ -77,7 +77,11 @@ const task: Task = {
   updated_at: "2026-09-21T12:01:00Z",
 };
 
-async function mockShare(page: Page, showQa: boolean) {
+async function mockShare(
+  page: Page,
+  showQa: boolean,
+  metadataStatus: () => number | Promise<number> = () => 200
+) {
   const requests: { path: string; method: string }[] = [];
   const unexpectedRequests: string[] = [];
   const pageErrors: string[] = [];
@@ -93,6 +97,11 @@ async function mockShare(page: Page, showQa: boolean) {
     requests.push({ path: `${path}${url.search}`, method: request.method() });
     let body: unknown;
     if (path === publicBase) {
+      const status = await metadataStatus();
+      if (status !== 200) {
+        await route.fulfill({ status, json: { detail: "Share unavailable" } });
+        return;
+      }
       body = {
         id: "exp-qa",
         name: "Shared QA example",
@@ -248,6 +257,144 @@ test("a share link shows read-only task and trial QA when the flag is on", async
     path: `${publicBase}/tasks/task-qa/qa?version=2`,
     method: "GET",
   });
+  expect(state.requests.every(({ method }) => method === "GET")).toBe(true);
+  expect(state.unexpectedRequests).toEqual([]);
+  expect(state.pageErrors).toEqual([]);
+});
+
+test("an invalid share shows the error and Retry control", async ({ page }) => {
+  const state = await mockShare(page, true, () => 404);
+  await page.goto(`/share/${token}`);
+
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Failed to load experiment" })
+  ).toContainText("Failed to load experiment");
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Failed to load experiment" })
+  ).toContainText("The share link may be invalid or no longer public.");
+  await expect(
+    page.getByRole("button", { name: "Retry", exact: true })
+  ).toBeEnabled();
+  await expect(
+    page.getByRole("button", { name: task.name, exact: true })
+  ).toHaveCount(0);
+  await expect(
+    page.getByText("Loading experiment...", { exact: true })
+  ).toHaveCount(0);
+  expect(state.unexpectedRequests).toEqual([]);
+  expect(state.pageErrors).toEqual([]);
+});
+
+test("Retry recovers share settings while the initial results request is stalled", async ({
+  page,
+}) => {
+  let recover = false;
+  let releaseMetadata!: () => void;
+  const metadataReady = new Promise<void>((resolve) => {
+    releaseMetadata = resolve;
+  });
+  const state = await mockShare(page, true, async () => {
+    if (!recover) return 503;
+    await metadataReady;
+    return 200;
+  });
+  let resultsStarted = false;
+  let releaseResults!: () => void;
+  const resultsReady = new Promise<void>((resolve) => {
+    releaseResults = resolve;
+  });
+  await page.route(
+    `**${publicBase}/results`,
+    async (route) => {
+      resultsStarted = true;
+      await resultsReady;
+      await route.fallback();
+    },
+    { times: 1 }
+  );
+
+  try {
+    await page.goto(`/share/${token}?task=${task.id}`);
+    await expect.poll(() => resultsStarted).toBe(true);
+    const error = page
+      .getByRole("alert")
+      .filter({ hasText: "Failed to load experiment" });
+    await expect(error).toBeVisible();
+    const retry = page.getByRole("button", { name: "Retry", exact: true });
+    await expect(retry).toBeEnabled();
+
+    recover = true;
+    await retry.click();
+    await expect(
+      page.getByRole("button", { name: "Retrying…", exact: true })
+    ).toBeDisabled();
+    releaseMetadata();
+    await expect(
+      page.getByRole("heading", { name: "Shared QA example" })
+    ).toBeVisible();
+    releaseResults();
+    await expect(
+      page.getByRole("button", { name: "Overview", exact: true })
+    ).toHaveAttribute("aria-current", "page");
+    await expect(page.getByText(finding.title!, { exact: true })).toBeVisible();
+    await expect(error).toHaveCount(0);
+    expect(state.unexpectedRequests).toEqual([]);
+    expect(state.pageErrors).toEqual([]);
+  } finally {
+    releaseMetadata();
+    releaseResults();
+  }
+});
+
+test("Retry loads share settings and results before opening the QA overview", async ({
+  page,
+}) => {
+  let recover = false;
+  let releaseMetadata!: () => void;
+  const metadataReady = new Promise<void>((resolve) => {
+    releaseMetadata = resolve;
+  });
+  const state = await mockShare(page, true, async () => {
+    if (!recover) return 503;
+    await metadataReady;
+    return 200;
+  });
+  const requestCount = (path: string) =>
+    state.requests.filter((request) => request.path === path).length;
+  await page.goto(`/share/${token}?task=${task.id}`);
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Failed to load experiment" })
+  ).toContainText("Failed to load experiment");
+  await expect
+    .poll(() => requestCount(`${publicBase}/results`))
+    .toBeGreaterThan(0);
+  const settingsRequests = requestCount(publicBase);
+  const resultsRequests = requestCount(`${publicBase}/results`);
+
+  recover = true;
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Retrying…", exact: true })
+  ).toBeDisabled();
+  await expect
+    .poll(() => requestCount(publicBase))
+    .toBeGreaterThan(settingsRequests);
+  await expect
+    .poll(() => requestCount(`${publicBase}/results`))
+    .toBeGreaterThan(resultsRequests);
+  await expect(
+    page.getByRole("button", { name: "Overview", exact: true })
+  ).toHaveCount(0);
+
+  releaseMetadata();
+  await expect(
+    page.getByRole("button", { name: "Overview", exact: true })
+  ).toHaveAttribute("aria-current", "page");
+  await expect(page.getByText(finding.title!, { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Failed to load experiment" })
+  ).toHaveCount(0);
+  await expectNoWriteControls(page);
   expect(state.requests.every(({ method }) => method === "GET")).toBe(true);
   expect(state.unexpectedRequests).toEqual([]);
   expect(state.pageErrors).toEqual([]);

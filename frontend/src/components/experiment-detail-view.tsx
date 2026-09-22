@@ -1156,7 +1156,11 @@ export function ExperimentDetailView({
     taskId: string;
     trialId: string;
   } | null>(null);
-  const [showPassAtK, setShowPassAtK] = useState(readOnly);
+  // Use the share setting as the default until the viewer makes a choice.
+  const [showPassAtKOverride, setShowPassAtKOverride] = useState<boolean | null>(
+    null
+  );
+  const showPassAtK = showPassAtKOverride ?? (readOnly && !showAnalysis);
   const drawerLayout = useUserUiLayout(!readOnly);
   // Incoming links reveal their target without changing the account's layout.
   // Capture only the incoming URL: drawer navigation also writes these params.
@@ -1883,7 +1887,7 @@ export function ExperimentDetailView({
                 isInitialLoading={isInitialLoading}
                 headerStatus={headerStatus}
                 showPassAtK={showPassAtK}
-                onToggleShowPassAtK={() => setShowPassAtK((prev) => !prev)}
+                onToggleShowPassAtK={() => setShowPassAtKOverride(!showPassAtK)}
                 headerRight={
                   <>
                     {!readOnly && allowRetry && experimentId && (

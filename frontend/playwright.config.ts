@@ -14,6 +14,7 @@ export default defineConfig({
     "delivery-refresh.spec.ts",
     "tasks-picker.spec.ts",
     "file-loading.spec.ts",
+    "member-filter-pagination.spec.ts",
     "reasoning-effort.spec.ts",
     "user-ui-layout.spec.ts",
     "ui-duplication.spec.ts",

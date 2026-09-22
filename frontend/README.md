@@ -154,6 +154,9 @@ link. When QA is on, the share page shows read-only task checks and trial
 reviews. The public task checks proxy is
 `/api/public/experiments/[token]/tasks/[task_id]/qa`; it forwards the task
 version and returns 404 when QA is off or the task is outside the share link.
+QA shares start with the graph hidden and task links open the QA overview.
+The page waits for share settings before choosing that view. Links to a file
+still open that file, and viewers can turn the graph on.
 
 ## Project Structure
 
