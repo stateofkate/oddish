@@ -58,6 +58,7 @@ from .runner import (
     _format_exception_message,
     _patch_task_toml,
     _supports_auto_restricted_agent_network,
+    declare_pause_proxy_gateway_hosts,
 )
 from .model_hosts import agent_runtime_hosts, outbound_hosts_for_model
 from .vertex_ai import assigned_agent_env as _vertex_assigned_env
@@ -360,6 +361,18 @@ def _build_payload(
         }
         if vertex_ai is not None
         else None
+    )
+    environment_config = environment_config.model_copy(deep=True)
+    # The child inherits this process environment and layers runtime_env and
+    # child_extra_env over the agent env, so all four can carry a base URL.
+    declare_pause_proxy_gateway_hosts(
+        environment_config,
+        routed,
+        agent_config.get("env"),
+        (agent_config.get("kwargs") or {}).get("extra_env"),
+        runtime_env,
+        child_extra_env,
+        os.environ,
     )
     if _supports_auto_restricted_agent_network(
         task_path=task_path,

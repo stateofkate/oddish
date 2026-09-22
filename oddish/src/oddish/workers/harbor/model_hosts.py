@@ -330,6 +330,19 @@ def _hosts_from_env(
     return hosts
 
 
+def gateway_hosts_from_env(env: Mapping[str, str] | None) -> list[str]:
+    """Hosts of every model base URL the agent was handed, public or private."""
+    return _hosts_from_env(
+        env,
+        keys=(
+            *_BASE_URL_ENV_KEYS,
+            *AZURE_BASE_URL_KEYS,
+            *MUSE_CODE_BASE_URL_KEYS,
+            *TBH_BASE_URL_KEYS,
+        ),
+    )
+
+
 def gemini_cli_transport_hosts(
     agent_env: Mapping[str, str] | None = None, *, model_name: str | None = None
 ) -> list[str]:
