@@ -304,6 +304,61 @@ def test_build_payload_carries_extra_agent_env():
     assert payload["extra_agent_env"] == {"ODDISH_API_KEY": "secret-mint"}
 
 
+def test_build_payload_routes_public_xai_for_stock_child(monkeypatch):
+    monkeypatch.setenv("XAI_API_KEY", "private-xai-key")
+    payload = _build_payload(
+        task_path=Path("/tmp/task"),
+        jobs_dir=Path("/tmp/jobs"),
+        outcome_path=Path("/tmp/jobs/outcome.json"),
+        agent="grok-build",
+        model="xai-public/grok-4.7",
+        environment_config=EnvironmentConfig(type=EnvironmentType.DOCKER),
+        raw_harbor_config=dict(_EPHEMERAL_HC),
+        is_probe=False,
+        extra_agent_env={"XAI_PUBLIC_API_KEY": "public-xai-key"},
+    )
+
+    assert payload["model"] == "grok-4.7"
+    assert payload["extra_agent_env"]["XAI_API_KEY"] == "public-xai-key"
+    child_config = _build_job_config(payload)
+    assert child_config.agents[0].model_name == "grok-4.7"
+    assert child_config.agents[0].env["XAI_API_KEY"] == "public-xai-key"
+
+
+def test_build_payload_routes_ambient_public_xai_key(monkeypatch):
+    monkeypatch.setenv("XAI_PUBLIC_API_KEY", "ambient-public-xai-key")
+    payload = _build_payload(
+        task_path=Path("/tmp/task"),
+        jobs_dir=Path("/tmp/jobs"),
+        outcome_path=Path("/tmp/jobs/outcome.json"),
+        agent="grok-build",
+        model="xai-public/grok-4.7",
+        environment_config=EnvironmentConfig(type=EnvironmentType.DOCKER),
+        raw_harbor_config=dict(_EPHEMERAL_HC),
+        is_probe=False,
+    )
+
+    assert payload["model"] == "grok-4.7"
+    assert payload["extra_agent_env"]["XAI_API_KEY"] == "ambient-public-xai-key"
+
+
+def test_build_payload_public_xai_fails_closed_without_public_key(monkeypatch):
+    monkeypatch.delenv("XAI_PUBLIC_API_KEY", raising=False)
+    monkeypatch.setenv("XAI_API_KEY", "private-xai-key")
+
+    with pytest.raises(ValueError, match="requires XAI_PUBLIC_API_KEY"):
+        _build_payload(
+            task_path=Path("/tmp/task"),
+            jobs_dir=Path("/tmp/jobs"),
+            outcome_path=Path("/tmp/jobs/outcome.json"),
+            agent="grok-build",
+            model="xai-public/grok-4.7",
+            environment_config=EnvironmentConfig(type=EnvironmentType.DOCKER),
+            raw_harbor_config=dict(_EPHEMERAL_HC),
+            is_probe=False,
+        )
+
+
 def test_build_payload_carries_agent_config():
     agent_config = {
         "env": {"UV_HTTP_RETRIES": "8"},

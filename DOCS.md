@@ -113,10 +113,17 @@ oddish run ./my-task -a claude-code -m anthropic/claude-sonnet-4-5 --n-trials 5
 # Append trials to an existing task
 oddish run --task <task_id> -a gemini-cli -m gemini/gemini-3.1-pro-preview
 oddish run --task <task_id> -a antigravity-cli -m google/gemini-3.7-flash
+oddish run --task <task_id> -a grok-build -m xai-public/<model-id>
 
 # Complex sweep from config
 oddish run ./my-task -c sweep.yaml
 ```
+
+For Grok Build, `xai/<model-id>` uses the deployment's private xAI key or key
+pool; `xai-public/<model-id>` uses its separate public xAI key. The operator
+must configure `XAI_PUBLIC_API_KEY` on the worker for the public route. Both
+routes call xAI's `api.x.ai` endpoint. If a model is available only through
+Chat Completions, add `--agent-kwarg api_backend=chat_completions`.
 
 Re-submitting the same sweep is declarative for each task version and
 experiment: queued, running, and successful trials continue to satisfy the

@@ -925,6 +925,7 @@ def test_grok_build_ambient_credentials_enter_redaction_map(monkeypatch):
     # live-tail / lifecycle / artifacts.
     monkeypatch.setenv("XAI_API_KEY", "xai-secret")
     monkeypatch.setenv("XAI_API_KEYS", "xai-secret-2")
+    monkeypatch.setenv("XAI_PUBLIC_API_KEY", "xai-public-secret")
     agent_config = HarborAgentConfig(name="grok-build", model_name="xai/grok-4")
 
     runtime_env = harbor_runner._resolved_runtime_transport_env(
@@ -933,8 +934,10 @@ def test_grok_build_ambient_credentials_enter_redaction_map(monkeypatch):
     replacements = harbor_runner._runtime_transport_redactions(runtime_env)
     assert runtime_env.get("XAI_API_KEY") == "xai-secret"
     assert runtime_env.get("XAI_API_KEYS") == "xai-secret-2"
+    assert runtime_env.get("XAI_PUBLIC_API_KEY") == "xai-public-secret"
     assert replacements["xai-secret"] == "[REDACTED]"
     assert replacements["xai-secret-2"] == "[REDACTED]"
+    assert replacements["xai-public-secret"] == "[REDACTED]"
 
 
 def test_mini_swe_provider_credentials_enter_redaction_map(monkeypatch):
@@ -3314,6 +3317,33 @@ def test_build_agent_config_preserves_grok_build_xai_route(monkeypatch):
     assert "XAI_API_KEY" not in (agent_config.env or {})
     assert "ANTHROPIC_AUTH_TOKEN" not in (agent_config.env or {})
     assert "OPENAI_API_KEY" not in (agent_config.env or {})
+
+
+def test_build_agent_config_preserves_public_xai_route(monkeypatch):
+    agent_config = harbor_runner._build_agent_config(
+        agent="grok-build",
+        model="xai-public/grok-4.7",
+        raw_harbor_config={},
+    )
+
+    assert (
+        agent_config.import_path == "oddish.workers.agents.grok_build:OddishGrokBuild"
+    )
+    assert agent_config.model_name == "xai-public/grok-4.7"
+    assert "XAI_PUBLIC_API_KEY" not in (agent_config.env or {})
+
+
+def test_public_xai_route_rejects_agent_that_cannot_select_public_key():
+    with pytest.raises(ValueError, match="Oddish grok-build"):
+        harbor_runner._build_agent_config(
+            agent="grok-build",
+            model="xai-public/grok-4.7",
+            raw_harbor_config={
+                "agent_config": {
+                    "import_path": "harbor.agents.installed.grok_build:GrokBuild"
+                }
+            },
+        )
 
 
 def test_build_agent_config_uses_oddish_opencode_wrapper(monkeypatch):

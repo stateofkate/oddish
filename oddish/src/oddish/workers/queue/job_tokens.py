@@ -25,6 +25,7 @@ present, else the blanket secret).
 from __future__ import annotations
 
 import hashlib
+import os
 import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -219,6 +220,9 @@ def scoped_model_env(
             if key
             else {}
         )
+    if provider == "xai-public":
+        key = os.environ.get("XAI_PUBLIC_API_KEY")
+        return {"XAI_PUBLIC_API_KEY": key} if key else {}
     return {}
 
 

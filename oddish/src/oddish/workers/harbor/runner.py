@@ -229,6 +229,7 @@ _CLAUDE_RUNTIME_SECRET_KEYS = (
 _GROK_RUNTIME_SECRET_KEYS = (
     "XAI_API_KEY",
     "XAI_API_KEYS",
+    "XAI_PUBLIC_API_KEY",
 )
 # Ambient Cursor auth the stock cursor-cli agent forwards into the sandbox
 # (cursor_cli.py reads CURSOR_API_KEY from os.environ). Folded into the redaction
@@ -289,6 +290,7 @@ _PROVIDER_RUNTIME_SECRET_KEYS: dict[str, tuple[str, ...]] = {
     # folds the resolved values explicitly (they may live only in Settings).
     "vertex_ai": ("VERTEX_AI_CREDENTIALS_JSON", "VERTEX_AI_API_KEY", "GOOGLE_API_KEY"),
     "xai": ("XAI_API_KEY", "XAI_API_KEYS"),
+    "xai-public": ("XAI_PUBLIC_API_KEY",),
     "meta": ("META_API_KEY", "OPENAI_API_KEY"),
     "geometric": ("GEOMETRIC_API_KEY", "OPENAI_API_KEY"),
     "fireworks": ("FIREWORKS_API_KEY",),

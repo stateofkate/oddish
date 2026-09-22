@@ -366,6 +366,12 @@ only when that pool is empty. Rotating `XAI_API_KEY` while a stale
 `XAI_API_KEYS` pool is still set silently keeps the old keys in use. Clear or
 update both.
 
+Public xAI model trials use `xai-public/<model-id>` and read the separate
+`XAI_PUBLIC_API_KEY` variable from `oddish-prod`. The Oddish routing layer passes
+that key to the CLI as `XAI_API_KEY` only inside the trial sandbox; it does not
+fall back to the private `XAI_API_KEY` / `XAI_API_KEYS` credentials. Keep the
+public key out of the private key pool. Both routes call `api.x.ai`.
+
 ### Cycling workers after a secret change
 
 Modal injects secrets at container start, so running containers keep the old

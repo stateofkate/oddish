@@ -347,6 +347,16 @@ def test_grok_build_xai_model_routes_to_xai(monkeypatch):
     assert settings.normalize_queue_key(model) == model
 
 
+def test_grok_build_public_xai_route_keeps_its_credential_identity(monkeypatch):
+    settings = _settings(monkeypatch, clear_openai_env=False)
+    model = "xai-public/grok-4.7"
+
+    assert settings.normalize_trial_model("grok-build", model) == model
+    assert settings.get_provider_for_trial("grok-build", model) == "xai-public"
+    assert settings.get_queue_key_for_trial("grok-build", model) == model
+    assert settings.normalize_queue_key(model) == model
+
+
 def test_meta_model_routes_to_meta_for_mini_swe_agent(monkeypatch):
     settings = _settings(monkeypatch, clear_openai_env=False)
     model = "meta/llama-eval-model"

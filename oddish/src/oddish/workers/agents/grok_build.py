@@ -31,6 +31,7 @@ _LEARNABILITY_CLI_PIN = "1.0.0"
 _LEARNABILITY_MODELS = frozenset({"v9m-rl-learnability-tp8"})
 _XAI_BASE_URL = "https://api.x.ai/v1"
 _XAI_API_KEY_ENV = "XAI_API_KEY"
+_XAI_PUBLIC_API_KEY_ENV = "XAI_PUBLIC_API_KEY"
 # Optional comma-separated key pool; one key is drawn per trial to spread load
 # across accounts. This only buys headroom if the keys belong to *different* xAI
 # teams: the throttle is team-scoped ("You've hit your team's API rate limit"),
@@ -226,7 +227,7 @@ class OddishGrokBuild(BaseInstalledAgent):
         if not self.model_name:
             return _DEFAULT_MODEL
         provider, separator, model = self.model_name.partition("/")
-        if separator and provider.lower() == "xai":
+        if separator and provider.lower() in {"xai", "xai-public"}:
             return model
         return self.model_name
 
@@ -312,6 +313,13 @@ class OddishGrokBuild(BaseInstalledAgent):
         )
 
     def _pick_api_key(self) -> str:
+        if (self.model_name or "").strip().lower().startswith("xai-public/"):
+            key = (self._get_env(_XAI_PUBLIC_API_KEY_ENV) or "").strip()
+            if not key:
+                raise ValueError(
+                    "xai-public model requires XAI_PUBLIC_API_KEY on the worker"
+                )
+            return key
         pool = [
             key.strip()
             for key in (self._get_env(_XAI_API_KEYS_ENV) or "").split(",")

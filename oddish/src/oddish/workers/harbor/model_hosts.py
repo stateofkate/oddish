@@ -32,6 +32,7 @@ from oddish.config import (
     is_moonshot_model,
     is_vertex_ai_model,
     is_xai_model,
+    is_xai_public_model,
     is_zai_model,
     looks_like_bedrock_model_id,
     settings,
@@ -497,7 +498,7 @@ def outbound_hosts_for_model(
         )
         if host:
             hosts.append(host)
-    elif is_xai_model(model_name):
+    elif is_xai_model(model_name) or is_xai_public_model(model_name):
         hosts.extend(_XAI_HOSTS)
     elif is_meta_model(model_name):
         host = _default_host(settings.meta_base_url or META_DEFAULT_BASE_URL)

@@ -68,6 +68,8 @@ def _force_direct(
 
 def _provider_of(model: str) -> str:
     m = (model or "").lower()
+    if m.startswith("xai-public/"):
+        return "xai-public"
     if m.startswith("anthropic-hdo/"):
         return "anthropic-hdo"
     if "claude" in m or "anthropic" in m:
@@ -205,6 +207,19 @@ def test_scoped_model_env_geometric_only_carries_geometric_key() -> None:
         "MSWEA_API_KEY": "geo-key",
         "OPENAI_API_KEY": "geo-key",
     }
+
+
+def test_scoped_model_env_public_xai_excludes_private_keys(monkeypatch) -> None:
+    monkeypatch.setenv("XAI_API_KEY", "private-key")
+    monkeypatch.setenv("XAI_PUBLIC_API_KEY", "public-key")
+
+    env = job_tokens.scoped_model_env(
+        agent="grok-build",
+        model="xai-public/grok-4.7",
+        settings=_fake_settings(),
+    )
+
+    assert env == {"XAI_PUBLIC_API_KEY": "public-key"}
 
 
 def test_scoped_model_env_claude_code_bedrock_uses_routing_flag(monkeypatch) -> None:

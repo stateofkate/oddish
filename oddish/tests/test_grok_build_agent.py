@@ -19,6 +19,7 @@ from oddish.workers.agents.grok_build import (
     _PROMPT_PATH,
     _XAI_API_KEY_ENV,
     _XAI_API_KEYS_ENV,
+    _XAI_PUBLIC_API_KEY_ENV,
     OddishGrokBuild,
 )
 
@@ -57,6 +58,14 @@ def test_explicit_version_kwarg_overrides_learnability_pin(tmp_path):
 def test_other_xai_models_do_not_pin_cli_version(tmp_path):
     agent = OddishGrokBuild(logs_dir=tmp_path, model_name="xai/grok-4.6")
     assert agent._version is None
+
+
+def test_public_route_sends_bare_model_id_to_xai(tmp_path):
+    agent = OddishGrokBuild(logs_dir=tmp_path, model_name="xai-public/grok-4.7")
+    config = tomllib.loads(agent.build_config_toml())
+    assert config["models"]["default"] == "grok-4.7"
+    assert config["model"]["grok-4.7"]["model"] == "grok-4.7"
+    assert config["model"]["grok-4.7"]["base_url"] == "https://api.x.ai/v1"
 
 
 @pytest.mark.asyncio
@@ -477,6 +486,7 @@ def _agent_with_no_xai_env(tmp_path, monkeypatch) -> OddishGrokBuild:
     """
     monkeypatch.delenv(_XAI_API_KEY_ENV, raising=False)
     monkeypatch.delenv(_XAI_API_KEYS_ENV, raising=False)
+    monkeypatch.delenv(_XAI_PUBLIC_API_KEY_ENV, raising=False)
     return OddishGrokBuild(logs_dir=tmp_path, model_name="xai/v9-stickynote")
 
 
@@ -537,6 +547,35 @@ def test_xai_env_empty_without_any_key(tmp_path, monkeypatch):
     """No key configured must stay absent, not become an empty ``XAI_API_KEY``."""
     agent = _agent_with_no_xai_env(tmp_path, monkeypatch)
     assert agent._xai_env() == {}
+
+
+def test_public_route_uses_only_public_key(tmp_path, monkeypatch):
+    monkeypatch.setenv(_XAI_API_KEY_ENV, "private-single")
+    monkeypatch.setenv(_XAI_API_KEYS_ENV, "private-pool-a,private-pool-b")
+    monkeypatch.setenv(_XAI_PUBLIC_API_KEY_ENV, "public-key")
+    agent = OddishGrokBuild(logs_dir=tmp_path, model_name="xai-public/grok-4.7")
+
+    assert agent._xai_env() == {_XAI_API_KEY_ENV: "public-key"}
+    assert agent._xai_env() == {_XAI_API_KEY_ENV: "public-key"}
+
+
+def test_private_route_does_not_select_public_key(tmp_path, monkeypatch):
+    monkeypatch.setenv(_XAI_API_KEY_ENV, "private-key")
+    monkeypatch.delenv(_XAI_API_KEYS_ENV, raising=False)
+    monkeypatch.setenv(_XAI_PUBLIC_API_KEY_ENV, "public-key")
+    agent = OddishGrokBuild(logs_dir=tmp_path, model_name="xai/bird-of-paradise")
+
+    assert agent._xai_env() == {_XAI_API_KEY_ENV: "private-key"}
+
+
+def test_public_route_fails_without_public_key(tmp_path, monkeypatch):
+    monkeypatch.setenv(_XAI_API_KEY_ENV, "private-key")
+    monkeypatch.setenv(_XAI_API_KEYS_ENV, "private-pool")
+    monkeypatch.delenv(_XAI_PUBLIC_API_KEY_ENV, raising=False)
+    agent = OddishGrokBuild(logs_dir=tmp_path, model_name="xai-public/grok-4.7")
+
+    with pytest.raises(ValueError, match="XAI_PUBLIC_API_KEY"):
+        agent._xai_env()
 
 
 def test_pool_tolerates_whitespace_and_empty_entries(tmp_path, monkeypatch):

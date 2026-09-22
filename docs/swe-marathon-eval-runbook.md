@@ -21,7 +21,8 @@ Harbor `ExceptionGroup`) is **not** valid; delete and rerun those.
    `oddish/src/oddish/workers/harbor/agent_config.py`. A new vendor needs: a
    provider prefix + queue key (`is_*_model` / `to_*_model_id`), env injection
    (`get_*_agent_env`), and network-allowlist coverage. Examples already wired:
-   `xai/` → `grok-build`; `meta/` → `mini-swe-agent` (LiteLLM `openai/` route).
+   `xai/` (private key) and `xai-public/` (public key) → `grok-build`;
+   `meta/` → `mini-swe-agent` (LiteLLM `openai/` route).
 3. The vendor API key must be a **Modal secret with the exact env var name the
    route reads** (e.g. `XAI_API_KEY`, `META_API_KEY`) and must be present in the
    **worker** function's env (not just the API), then **deployed**. Symptom of a
@@ -131,7 +132,10 @@ oddish run -p <task-dir> --agent <agent> --model <provider/model> \
    agent.
 
 7. **Per-vendor routing / knobs.**
-   - `grok-build` (xAI): pass `--agent-kwarg api_backend=chat_completions` when
+   - `grok-build` (xAI): use `xai/<id>` for private-key access and
+     `xai-public/<id>` for `XAI_PUBLIC_API_KEY` access. Keep the public key
+     outside `XAI_API_KEYS`, which randomly selects a private key per trial.
+     Pass `--agent-kwarg api_backend=chat_completions` when
      the model only serves `/v1/chat/completions`; grok's rich trajectory comes
      from its on-disk session store (captured by the Oddish wrapper), not the
      headless stream.

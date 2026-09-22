@@ -26,6 +26,7 @@ from oddish.config import (
     is_moonshot_model,
     is_vertex_ai_model,
     is_xai_model,
+    is_xai_public_model,
     is_zai_model,
     looks_like_bedrock_model_id,
     require_geometric_served_model_id,
@@ -916,6 +917,13 @@ def _build_agent_config(
 
     _apply_codex_oddish_wrapper(agent_config)
     _apply_grok_build_oddish_wrapper(agent_config)
+    if (
+        is_xai_public_model(agent_config.model_name)
+        and agent_config.import_path != _ODDISH_GROK_BUILD_IMPORT_PATH
+    ):
+        raise ValueError(
+            "xai-public models require the Oddish grok-build agent wrapper"
+        )
     _apply_opencode_oddish_wrapper(agent_config)
     # Every shape, not only the restricted ones: the wrapper is what turns the
     # Vertex profile into agy's ADC mode and supplies its effort default.

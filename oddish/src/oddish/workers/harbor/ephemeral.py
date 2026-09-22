@@ -26,8 +26,10 @@ from oddish.config import (
     anthropic_hdo_bare_model_id,
     is_anthropic_hdo_model,
     is_vertex_ai_model,
+    is_xai_public_model,
     settings,
     to_anthropic_api_model_id,
+    xai_public_bare_model_id,
 )
 from oddish.core.harbor_artifacts import THUNDER_CAPACITY_UNAVAILABLE_CODE
 from oddish.core.harbor_source import harbor_git_requirement
@@ -274,6 +276,55 @@ def _child_extra_agent_env(
     return env
 
 
+def _apply_xai_public_child_route(
+    *,
+    routed: AgentConfig,
+    requested_model: str | None,
+    child_model: str | None,
+    agent_config: dict[str, Any],
+    runtime_env: Mapping[str, str],
+    child_extra_env: dict[str, str],
+) -> tuple[str | None, dict[str, str]]:
+    """Translate Oddish's public xAI route for a stock Harbor child.
+
+    The override child cannot import Oddish's Grok wrapper. Stock Grok Build
+    accepts a bare xAI model id and reads only ``XAI_API_KEY``, so select the
+    public credential in the parent and expose it under that stock name. The
+    stored ``xai-public/`` identity remains unchanged outside this payload.
+    """
+    if not is_xai_public_model(requested_model):
+        return child_model, child_extra_env
+
+    if (
+        routed.import_path is not None
+        or (routed.name or "").strip().lower() != "grok-build"
+    ):
+        raise ValueError("xai-public models require the grok-build agent")
+
+    # Match the child's eventual merge order. An explicitly blank value in a
+    # higher-precedence layer must fail closed instead of falling back to an
+    # ambient worker secret.
+    effective_env = {
+        **dict(agent_config.get("env") or {}),
+        **dict(runtime_env),
+        **child_extra_env,
+    }
+    if "XAI_PUBLIC_API_KEY" in effective_env:
+        public_key = effective_env["XAI_PUBLIC_API_KEY"].strip()
+    else:
+        public_key = os.environ.get("XAI_PUBLIC_API_KEY", "").strip()
+    if not public_key:
+        raise ValueError("xai-public model requires XAI_PUBLIC_API_KEY on the worker")
+
+    child_extra_env = {
+        **child_extra_env,
+        # This last payload layer overrides any inherited private xAI key.
+        "XAI_API_KEY": public_key,
+    }
+    assert requested_model is not None
+    return xai_public_bare_model_id(requested_model), child_extra_env
+
+
 def _build_payload(
     *,
     task_path: Path,
@@ -344,6 +395,14 @@ def _build_payload(
         model=requested_model,
         extra_agent_env=extra_agent_env,
         anthropic_env=anthropic_env,
+    )
+    child_model, child_extra_env = _apply_xai_public_child_route(
+        routed=routed,
+        requested_model=requested_model,
+        child_model=child_model,
+        agent_config=agent_config,
+        runtime_env=runtime_env,
+        child_extra_env=child_extra_env,
     )
     # Google Vertex AI: the child applies this process env to its own
     # os.environ before Job.create (host-side harnesses, template resolution,

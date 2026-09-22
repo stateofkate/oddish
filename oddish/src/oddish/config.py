@@ -642,6 +642,7 @@ def to_fireworks_model_id(model: str | None) -> str | None:
 # provider/queue bucket and hand the canonical ``xai/<id>`` model to Harbor.
 XAI_PROVIDER = "xai"
 _XAI_PROVIDER_PREFIXES: frozenset[str] = frozenset({"xai", "grok"})
+XAI_PUBLIC_PROVIDER = "xai-public"
 
 
 def is_xai_model(model: str | None) -> bool:
@@ -670,6 +671,23 @@ def to_xai_model_id(model: str | None) -> str | None:
         return model
     assert model is not None
     return f"{XAI_PROVIDER}/{xai_bare_model_id(model)}"
+
+
+def is_xai_public_model(model: str | None) -> bool:
+    """Return True for the separate public-key xAI route."""
+    if not model:
+        return False
+    provider_prefix, _ = split_provider_model_name(model.strip().lower())
+    return provider_prefix == XAI_PUBLIC_PROVIDER
+
+
+def xai_public_bare_model_id(model: str) -> str:
+    """Strip the ``xai-public/`` routing prefix from a public xAI model."""
+    raw = model.strip()
+    if not is_xai_public_model(raw):
+        return raw
+    _, bare = split_provider_model_name(raw)
+    return bare.strip()
 
 
 # Meta-hosted OpenAI-compatible model routing. These models run through Harbor's
@@ -1232,6 +1250,7 @@ _MODEL_PROVIDER_ALIASES: dict[str, str] = {
     # Build gets a stable first-party provider bucket.
     "xai": XAI_PROVIDER,
     "grok": XAI_PROVIDER,
+    "xai-public": XAI_PUBLIC_PROVIDER,
     # Meta OpenAI-compatible relay for mini-swe-agent evals.
     "meta": META_PROVIDER,
     # Geometric's own OpenAI-compatible endpoint (GLM-5.3) for mini-swe-agent.
@@ -2179,6 +2198,8 @@ class Settings(BaseSettings):
             return to_geometric_model_id(cleaned)
         if is_xai_model(cleaned):
             return to_xai_model_id(cleaned)
+        if is_xai_public_model(cleaned):
+            return cleaned
         if is_zai_model(cleaned):
             return to_zai_model_id(cleaned)
         if is_minimax_model(cleaned):

@@ -51,6 +51,12 @@ def test_has_pricing_handles_varied_model_strings() -> None:
     assert not has_pricing("totally-made-up-model")
 
 
+def test_public_xai_route_uses_xai_catalog_pricing() -> None:
+    candidates = _litellm_candidates("xai-public/grok-4.7")
+    assert candidates[0] == "xai-public/grok-4.7"
+    assert "xai/grok-4.7" in candidates
+
+
 def test_has_pricing_covers_latest_frontier_models() -> None:
     """2026-era models released after the initial pricing table shipped."""
     # Anthropic — Opus 4.6 / 4.7 and Sonnet 4.6 share the 4.5 rate card.

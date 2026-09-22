@@ -20,6 +20,7 @@ _ODDISH_PROVIDER_ENV_KEYS = {
     # Never let this fall through to Harbor's PROVIDER_KEYS, which names the
     # (non-secret) VERTEXAI_PROJECT for this provider.
     "vertex_ai": "VERTEX_AI_CREDENTIALS_JSON",
+    "xai-public": "XAI_PUBLIC_API_KEY",
 }
 
 

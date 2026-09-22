@@ -18,6 +18,14 @@ def test_platform_hash_uses_the_provider_environment(monkeypatch):
     assert platform_key_hash_for_provider("xai") == hash_llm_key("xai-platform")
 
 
+def test_public_xai_hash_uses_separate_platform_key(monkeypatch):
+    monkeypatch.setenv("XAI_API_KEY", "xai-private")
+    monkeypatch.setenv("XAI_PUBLIC_API_KEY", "xai-public")
+    assert platform_key_hash_for_provider("xai-public") == hash_llm_key(
+        "xai-public"
+    )
+
+
 def test_bedrock_hash_uses_bearer_token_not_storage_key(monkeypatch):
     monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "bedrock-token")
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "storage-key")

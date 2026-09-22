@@ -12,6 +12,7 @@ def test_outbound_hosts_follow_model_not_agent_env_shape():
     assert outbound_hosts_for_model("moonshot/kimi-k2.5") == ["api.moonshot.ai"]
     assert outbound_hosts_for_model("minimax/MiniMax-M3") == ["api.minimax.io"]
     assert outbound_hosts_for_model("xai/grok-4") == ["api.x.ai"]
+    assert outbound_hosts_for_model("xai-public/grok-4.7") == ["api.x.ai"]
     assert outbound_hosts_for_model("anthropic/claude-opus-4-8") == [
         "api.anthropic.com",
         "mcp-proxy.anthropic.com",

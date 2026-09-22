@@ -1643,7 +1643,7 @@ Keep these routing rules in sync with `oddish/src/oddish/config.py` and
   remains on its existing paths.
 - Provider secrets are referenced by env var name (`AWS_BEARER_TOKEN_BEDROCK`,
   `ANTHROPIC_HDO_API_KEY`, `ZAI_API_KEY`, `MINIMAX_API_KEY`, `MOONSHOT_API_KEY`,
-  `FIREWORKS_API_KEY`, `XAI_API_KEY`, `META_API_KEY`,
+  `FIREWORKS_API_KEY`, `XAI_API_KEY`, `XAI_PUBLIC_API_KEY`, `META_API_KEY`,
   `VERTEX_AI_CREDENTIALS_JSON`, `VERTEX_AI_API_KEY`) and must not be persisted
   on trial rows. The Vertex service-account JSON never enters an agent env at
   all: only the sandbox file path does, and Harbor's env serializer would
@@ -1651,6 +1651,16 @@ Keep these routing rules in sync with `oddish/src/oddish/config.py` and
   readable inside the trial sandbox, the same trust boundary as the plaintext
   provider keys every trial carries in its env, so the deployment guidance is
   a dedicated, minimally scoped service account (see `SELF_HOSTING.md`).
+- `grok-build` selects credentials by model prefix: `xai/<id>` keeps the
+  existing private `XAI_API_KEYS` pool (or `XAI_API_KEY` fallback), while
+  `xai-public/<id>` requires `XAI_PUBLIC_API_KEY`. Both send the bare `<id>`
+  to `api.x.ai/v1`, and public trials never fall back to a private key.
+  Override-Harbor workers translate that public key to the stock child agent's
+  `XAI_API_KEY` only after selecting the public route; they also strip the
+  routing prefix before serializing the child payload.
+  The prefixes are distinct provider and queue identities; public-key
+  fingerprinting and job-scoped credentials follow that identity. Do not mix
+  public and private keys in `XAI_API_KEYS`.
 - `grok-build` (xAI) writes a Grok CLI config whose `[model.*]` blocks pin an
   `api_backend`. Upstream Harbor hardcodes `responses` (`POST /v1/responses`),
   but not every xAI model is served there — some (e.g. newer/unreleased models)
