@@ -1619,6 +1619,11 @@ Keep these routing rules in sync with `oddish/src/oddish/config.py` and
   proxy materializes concrete DNS and TLS/SNI routes. Charts without the
   declaration are untouched; Compose and single-container egress behavior
   remains on its existing paths.
+  Codex and Gemini CLI setup on these opted-in charts uses the public CLI
+  bundle built in the Modal worker image and uploaded through Harbor's
+  environment API. Keep installer hosts out of the chart runtime allowlist;
+  the task proxy is already active when Harbor calls `agent.install`. A
+  missing worker bundle fails setup before falling back to NVM/npm fetches.
 - Provider secrets are referenced by env var name (`AWS_BEARER_TOKEN_BEDROCK`,
   `ANTHROPIC_HDO_API_KEY`, `ZAI_API_KEY`, `MINIMAX_API_KEY`, `MOONSHOT_API_KEY`,
   `FIREWORKS_API_KEY`, `XAI_API_KEY`, `META_API_KEY`,

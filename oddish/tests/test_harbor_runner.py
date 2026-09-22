@@ -454,6 +454,38 @@ def test_kube_chart_contract_adds_runtime_transport_and_disables_web_tools(
 
 
 @pytest.mark.parametrize(
+    "import_path",
+    [
+        "oddish.workers.agents.codex:OddishCodex",
+        "oddish.workers.agents.codex:AzureCompatibleCodex",
+        "oddish.workers.agents.gemini_cli:OddishGeminiCli",
+    ],
+)
+def test_kube_chart_installs_cli_from_worker_without_opening_installer_hosts(
+    tmp_path, import_path
+):
+    task_path = _write_kube_network_policy_task(tmp_path)
+    environment_config = HarborEnvironmentConfig(type=EnvironmentType.EC2)
+    agent_config = HarborAgentConfig(
+        import_path=import_path,
+        model_name="openai/gpt-5.2",
+    )
+
+    harbor_runner._apply_restricted_agent_network_defaults(
+        task_path=task_path,
+        environment_config=environment_config,
+        agent_config=agent_config,
+    )
+
+    assert agent_config.kwargs["trusted_cli_bundle"] is True
+    hosts = environment_config.kwargs["helm_values"]["agentEgressProxy"][
+        "runtimeAllowedHosts"
+    ].split(";")
+    assert "raw.githubusercontent.com" not in hosts
+    assert "registry.npmjs.org" not in hosts
+
+
+@pytest.mark.parametrize(
     ("model_name", "expected_hosts"),
     [
         (
