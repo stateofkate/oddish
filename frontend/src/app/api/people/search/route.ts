@@ -32,6 +32,7 @@ export async function GET(request: NextRequest) {
         q: searchParams.get("q") ?? "",
         limit: searchParams.get("limit") ?? "10",
         offset: searchParams.get("offset") ?? "0",
+        all_members: searchParams.get("all_members") ?? "false",
       }),
       {
         cache: "no-store",

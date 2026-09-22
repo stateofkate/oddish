@@ -667,3 +667,35 @@ async def test_people_search_pages(monkeypatch, offset, limit, next_offset, coun
     assert f"limit {limit + 1}" in sql
     assert "users.org_id = 'org_current'" in sql
     assert "users.is_active is true" in sql
+
+
+@pytest.mark.asyncio
+async def test_people_search_can_load_all_members_in_one_request(monkeypatch):
+    session = _PeopleSession()
+
+    @asynccontextmanager
+    async def fake_session():
+        yield session
+
+    monkeypatch.setattr(dashboard_router, "get_read_session", fake_session)
+    app = FastAPI()
+    app.include_router(dashboard_router.router)
+    app.dependency_overrides[require_auth] = lambda: AuthContext(
+        method=AuthMethod.CLERK_JWT,
+        org_id="org_current",
+        user_id="member",
+        user_role=UserRole.MEMBER,
+        scope=APIKeyScope.READ,
+    )
+    async with httpx.AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.get("/people/search?all_members=true&limit=1&offset=99")
+    assert response.status_code == 200
+    assert len(response.json()["items"]) == 3
+    assert response.json()["next_offset"] is None
+    sql = _compiled(session.statements[0])
+    assert "limit" not in sql
+    assert "offset" not in sql
+    assert "users.org_id = 'org_current'" in sql
+    assert "users.is_active is true" in sql

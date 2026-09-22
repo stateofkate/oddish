@@ -42,17 +42,21 @@ test("member picker shows emails and selects a stable account ID", async ({
   });
 
   await page.goto("/dashboard");
-  const picker = page.getByRole("combobox", {
+  const picker = page.getByRole("button", {
     name: "Filter experiments by member",
   });
   await picker.click();
-  await expect(page.getByRole("option")).toHaveText([
-    "alpha@example.com",
-    "kyle@example.com@kyle",
-  ]);
+  await expect(
+    page.getByLabel("Member results").getByRole("button")
+  ).toHaveText(["alpha@example.com", "kyle@example.com@kyle"]);
   await page.getByPlaceholder("Search members…").fill("alpha@example.com");
-  await expect(page.getByRole("option")).toHaveCount(1);
-  await page.getByRole("option", { name: "alpha@example.com" }).click();
+  await expect(
+    page.getByLabel("Member results").getByRole("button")
+  ).toHaveCount(1);
+  await page
+    .getByLabel("Member results")
+    .getByRole("button", { name: "alpha@example.com" })
+    .click();
   await expect(page).toHaveURL(/author=email_only/);
   await expect(picker).toContainText("alpha@example.com");
 
@@ -61,7 +65,13 @@ test("member picker shows emails and selects a stable account ID", async ({
   await expect(picker).toContainText("alpha@example.com");
   await picker.click();
   await page.getByPlaceholder("Search members…").fill("kyle@example.com");
-  await page.getByRole("option", { name: /kyle@example.com/ }).click();
+  await page
+    .getByLabel("Member results")
+    .getByRole("button", { name: /kyle@example.com/ })
+    .click();
   await expect(page).toHaveURL(/author=user_kyle/);
   await expect(picker).toContainText("kyle@example.com");
+  await page.getByRole("button", { name: "Clear member filter" }).click();
+  await expect(page).toHaveURL(/author=all/);
+  await expect(picker).toContainText("Members");
 });

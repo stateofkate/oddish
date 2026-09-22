@@ -54,10 +54,11 @@ async def search_people(
     q: str = Query("", max_length=200),
     limit: int = Query(10),
     offset: int = Query(0, ge=0),
+    all_members: Annotated[bool, Query()] = False,
 ) -> PeopleSearchResponse:
     """Search active organization accounts, labeled and ordered by email."""
     auth.require_scope(APIKeyScope.READ)
-    effective_limit = min(25, max(1, limit))
+    effective_limit = None if all_members else min(25, max(1, limit))
     normalized_query = q.strip()
     partial = f"%{escape_like(normalized_query)}%"
     github_query = normalized_query.lstrip("@") or normalized_query
@@ -91,8 +92,8 @@ async def search_people(
                 func.lower(UserModel.email).asc(),
                 UserModel.id.asc(),
             )
-            .offset(offset)
-            .limit(effective_limit + 1)
+            .offset(None if all_members else offset)
+            .limit(None if effective_limit is None else effective_limit + 1)
         )
 
     items: list[PeopleSearchItem] = []
@@ -110,7 +111,7 @@ async def search_people(
     return PeopleSearchResponse(
         items=items,
         next_offset=offset + effective_limit
-        if len(page_rows) > effective_limit
+        if effective_limit is not None and len(page_rows) > effective_limit
         else None,
     )
 

@@ -759,8 +759,9 @@ without a name or GitHub handle. Dashboard author enrichment selects identity
 columns directly to avoid loading organization and API-key relationships;
 its existing historical-account and ambiguous-alias behavior is preserved.
 `GET /people/search` accepts a nonnegative `offset` and returns `next_offset` (null on the last
-page). The dashboard appends pages on scroll and resets pagination when the
-search changes; older clients can continue reading only `items`.
+page) for older callers. The dashboard requests `all_members=true` once to
+load the complete active organization member list, then filters emails and
+GitHub handles locally. Clearing the member selection restores the Org view.
 
 The admin `GET /admin/costs` response includes analysis spend time series both
 by model (`series_qa_by_model`) and by analyzer job kind

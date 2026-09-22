@@ -448,6 +448,13 @@ for (const initialSearch of ["", "old search"]) {
       const clears = page.getByRole("button", { name: "Clear filters", exact: true });
       await clears.nth(source === "toolbar" ? 0 : 1).click();
       await expect(search).toHaveValue("");
+      // The input updates before Playwright necessarily observes the history
+      // change. Wait for the clear, then advance beyond the search debounce.
+      await expect(page).toHaveURL(url =>
+        !url.searchParams.has("q") &&
+        !url.searchParams.has("query") &&
+        !url.searchParams.has("qa_outcomes")
+      );
       await page.clock.runFor(1000);
       await expect(search).toHaveValue("");
       const cleared = new URL(page.url()).searchParams;

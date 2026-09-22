@@ -680,7 +680,7 @@ function RecentTasksCard({
           </div>
           <MemberFilterTypeahead
             selectedUserId={isMemberSelected ? authorFilter : null}
-            onSelect={onAuthorFilterChange}
+            onSelect={(userId) => onAuthorFilterChange(userId ?? "all")}
           />
           <div className="relative w-full sm:w-[220px]">
             <Input
