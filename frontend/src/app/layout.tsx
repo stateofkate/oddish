@@ -102,8 +102,24 @@ export default function RootLayout({
     return `${appUrl}${normalized}`;
   };
 
+  // Switcher-opened profile modals use the provider theme, not the switcher's appearance.
   return (
     <ClerkProvider
+      appearance={{
+        variables: {
+          colorBackground: "hsl(var(--card))",
+          colorForeground: "hsl(var(--foreground))",
+          colorMutedForeground: "hsl(var(--foreground) / 0.78)",
+          colorPrimary: "hsl(var(--primary))",
+          colorPrimaryForeground: "hsl(var(--primary-foreground))",
+          colorDanger: "var(--paper-fail)",
+          colorInput: "hsl(var(--background))",
+          colorInputForeground: "hsl(var(--foreground))",
+          colorNeutral: "hsl(var(--foreground))",
+          borderRadius: "0.5rem",
+          fontFamily: "var(--font-sans)",
+        },
+      }}
       signInUrl={toAbsoluteUrl(signInUrl)}
       signUpUrl={toAbsoluteUrl(signUpUrl)}
       signInFallbackRedirectUrl={toAbsoluteUrl(afterSignInUrl)}

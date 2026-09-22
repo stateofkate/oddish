@@ -40,17 +40,6 @@ import {
  * we style it to match the surrounding nav controls.
  */
 const navSwitcherAppearance = {
-  variables: {
-    colorBackground: "hsl(var(--card))",
-    colorText: "hsl(var(--foreground))",
-    colorTextSecondary: "hsl(var(--muted-foreground))",
-    colorPrimary: "hsl(var(--primary))",
-    colorInputBackground: "hsl(var(--background))",
-    colorInputText: "hsl(var(--foreground))",
-    colorNeutral: "hsl(var(--foreground))",
-    borderRadius: "0.5rem",
-    fontFamily: "var(--font-sans)",
-  },
   elements: {
     rootBox: "flex items-center",
     // Capped on phones so a long org name truncates instead of widening the

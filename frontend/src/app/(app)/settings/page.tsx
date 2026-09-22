@@ -61,24 +61,10 @@ import {
  * Strategy: let Clerk's internal layout do the work, but strip the chrome
  * (its own card/navbar/header) so the component feels like a native
  * section of the page rather than a modal-inside-a-page. Colors come from
- * the app's theme variables so light/dark mode both look correct.
+ * the app-wide ClerkProvider appearance in layout.tsx.
  */
 const clerkEmbeddedAppearance = {
   variables: {
-    colorBackground: "hsl(var(--card))",
-    colorText: "hsl(var(--foreground))",
-    // Use alpha-on-foreground rather than --muted-foreground so the
-    // active-device row metadata and other secondary text stay legible
-    // in dark mode. (Verified against
-    // @clerk/javascript packages/ui/src/customizables/elementDescriptors.ts.)
-    colorTextSecondary: "hsl(var(--foreground) / 0.78)",
-    colorPrimary: "hsl(var(--primary))",
-    colorDanger: "hsl(var(--destructive))",
-    colorInputBackground: "hsl(var(--background))",
-    colorInputText: "hsl(var(--foreground))",
-    colorNeutral: "hsl(var(--foreground))",
-    borderRadius: "0.5rem",
-    fontFamily: "var(--font-sans)",
     fontSize: "0.875rem",
   },
   elements: {
