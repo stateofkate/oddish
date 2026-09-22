@@ -511,7 +511,8 @@ async def test_people_search_is_member_visible_and_returns_email_labels(
                 "display_name": "email-only@example.com",
                 "github_username": None,
             },
-        ]
+        ],
+        "next_offset": None,
     }
 
     sql = _compiled(session.statements[0])
@@ -521,7 +522,7 @@ async def test_people_search_is_member_visible_and_returns_email_labels(
     assert "users.github_username ilike '%%kyl%%'" in sql
     assert "escape" in sql
     assert "users.id = '@kyl'" in sql
-    assert "limit 25" in sql
+    assert "limit 26" in sql
     assert "users.email ilike" in sql
 
 
@@ -622,3 +623,47 @@ async def test_resolve_search_authors_ignores_blank_tokens(monkeypatch) -> None:
 
     assert (user_ids, handles, emails) == ((), (), ())
     assert calls == []  # blank tokens never hit the DB
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "offset,limit,next_offset,count", [(0, 2, 2, 2), (2, 2, None, 1), (0, 3, None, 3)]
+)
+async def test_people_search_pages(monkeypatch, offset, limit, next_offset, count):
+    class PageSession(_PeopleSession):
+        async def execute(self, statement):
+            self.statements.append(statement)
+
+            class Rows:
+                def all(self):
+                    return _PeopleRows().all()[offset : offset + limit + 1]
+
+            return Rows()
+
+    session = PageSession()
+
+    @asynccontextmanager
+    async def fake_session():
+        yield session
+
+    monkeypatch.setattr(dashboard_router, "get_read_session", fake_session)
+    auth = AuthContext(
+        method=AuthMethod.CLERK_JWT,
+        org_id="org_current",
+        user_id="member",
+        user_role=UserRole.MEMBER,
+        scope=APIKeyScope.READ,
+    )
+    response = await dashboard_router.search_people(
+        auth, q="", limit=limit, offset=offset
+    )
+    assert len(response.items) == count
+    assert response.next_offset == next_offset
+    assert [item.id for item in response.items] == [
+        row[0] for row in _PeopleRows().all()[offset : offset + limit]
+    ]
+    sql = _compiled(session.statements[0])
+    assert f"offset {offset}" in sql
+    assert f"limit {limit + 1}" in sql
+    assert "users.org_id = 'org_current'" in sql
+    assert "users.is_active is true" in sql

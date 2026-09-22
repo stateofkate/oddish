@@ -4,6 +4,7 @@ const port = process.env.EFFORT_TEST_PORT ?? "3117";
 export default defineConfig({
   testDir: "e2e",
   testMatch: [
+    "member-filter-pagination.spec.ts",
     "reasoning-effort.spec.ts",
     "experiment-agent-grouping.spec.ts",
     "ec2-rerun-command.spec.ts",

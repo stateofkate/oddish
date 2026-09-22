@@ -45,6 +45,7 @@ class PeopleSearchItem(BaseModel):
 
 class PeopleSearchResponse(BaseModel):
     items: list[PeopleSearchItem]
+    next_offset: int | None = None
 
 
 @router.get("/people/search", response_model=PeopleSearchResponse)
@@ -52,6 +53,7 @@ async def search_people(
     auth: Annotated[AuthContext, Depends(require_auth)],
     q: str = Query("", max_length=200),
     limit: int = Query(10),
+    offset: int = Query(0, ge=0),
 ) -> PeopleSearchResponse:
     """Search active organization accounts, labeled and ordered by email."""
     auth.require_scope(APIKeyScope.READ)
@@ -89,11 +91,13 @@ async def search_people(
                 func.lower(UserModel.email).asc(),
                 UserModel.id.asc(),
             )
-            .limit(effective_limit)
+            .offset(offset)
+            .limit(effective_limit + 1)
         )
 
     items: list[PeopleSearchItem] = []
-    for user_id, email, github_username in rows.all():
+    page_rows = rows.all()
+    for user_id, email, github_username in page_rows[:effective_limit]:
         safe_handle = (github_username or "").strip().lstrip("@")
         items.append(
             PeopleSearchItem(
@@ -103,7 +107,12 @@ async def search_people(
                 github_username=safe_handle or None,
             )
         )
-    return PeopleSearchResponse(items=items)
+    return PeopleSearchResponse(
+        items=items,
+        next_offset=offset + effective_limit
+        if len(page_rows) > effective_limit
+        else None,
+    )
 
 
 def _leaderboard_name(
