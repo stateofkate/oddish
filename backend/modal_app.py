@@ -940,6 +940,13 @@ ENV_VARS = {
     # Gate LLM trials on nop/oracle baseline outcomes. Off unless the deploy
     # environment sets it (preview sets "1"); prod stays off until flipped here.
     "ODDISH_GATE_LLM_ON_BASELINES": os.environ.get("ODDISH_GATE_LLM_ON_BASELINES", "0"),
+    # oddish-mon rollout lever (oddish.config.Settings.monitor_execution_enabled).
+    # Unset keeps the code default (on); production sets "false" in modal-deploy.yml.
+    **(
+        {"ODDISH_MONITOR_EXECUTION_ENABLED": os.environ["ODDISH_MONITOR_EXECUTION_ENABLED"]}
+        if os.environ.get("ODDISH_MONITOR_EXECUTION_ENABLED")
+        else {}
+    ),
     # GKE coordinates resolved at deploy time (process env wins over
     # backend/.env, mirroring _effective_gke_cluster_name), baked into the
     # image like MODAL_APP_NAME above. The oddish-gcp secret gate and the
