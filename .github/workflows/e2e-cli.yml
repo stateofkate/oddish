@@ -98,6 +98,11 @@ jobs:
           ../oddish/tests/test_config_queue_keys.py
           ../oddish/tests/test_curated_model_submit.py -v
 
+      - name: Test and benchmark preview relationship updates
+        env:
+          ODDISH_DATABASE_URL: postgresql+asyncpg://oddish:oddish@127.0.0.1:5432/oddish
+        run: uv run pytest tests/test_preview_linkage.py tests/test_preview_bootstrap_fingerprint.py -v -s
+
       - name: Run e2e CLI suite
         env:
           ODDISH_E2E: "1"

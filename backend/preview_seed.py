@@ -5,11 +5,9 @@ import datetime as _dt
 import json
 import sys
 import time
-from collections import defaultdict
 from typing import Any
 
-from sqlalchemy import JSON, MetaData, column, delete, select, text, tuple_
-from sqlalchemy import values as sql_values
+from sqlalchemy import JSON, MetaData, column, delete, select, text, tuple_, values
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import DBAPIError, IntegrityError
@@ -547,31 +545,11 @@ async def seed(engine: AsyncEngine, *, sampled: dict | None = None) -> None:
         )
 
     async with engine.begin() as conn:
-        # These references were cleared while loading cyclic foreign keys.
-        # Restore them per table/column in bounded batches, rather than making
-        # a database round trip for every sampled task and trial.
-        links = defaultdict(list)
-        for table_name, row_id, column_name, value in (sampled or {}).get(
-            "linkage", []
-        ):
-            links[table_name, column_name].append((row_id, value))
+        linkage = (sampled or {}).get("linkage", [])
         started = time.monotonic()
-        for (table_name, column_name), rows in links.items():
-            table = md.tables[table_name]
-            for start in range(0, len(rows), _MAX_BIND_PARAMS // 2):
-                refs = sql_values(
-                    column("row_id", table.c.id.type),
-                    column("ref", table.c[column_name].type),
-                    name="seed_links",
-                ).data(rows[start : start + _MAX_BIND_PARAMS // 2])
-                await conn.execute(
-                    table.update()
-                    .where(table.c.id == refs.c.row_id)
-                    .where(table.c[column_name].is_distinct_from(refs.c.ref))
-                    .values({column_name: refs.c.ref})
-                )
+        await _apply_linkage(conn, md, linkage)
         _warn(
-            f"restored {sum(map(len, links.values()))} references in {time.monotonic() - started:.1f}s"
+            f"restored {len(linkage)} relationships in {time.monotonic() - started:.3f}s"
         )
 
         await conn.execute(text(f"DELETE FROM {_STATE_TABLE}"))
@@ -589,6 +567,30 @@ async def seed(engine: AsyncEngine, *, sampled: dict | None = None) -> None:
                     ),
                     {"t": name, "rids": rids[start : start + 10000]},
                 )
+
+
+async def _apply_linkage(conn, md: MetaData, linkage: list[tuple]) -> None:
+    """Restore deferred FKs in bounded UPDATE FROM batches, in the caller's transaction."""
+    grouped: dict[tuple[str, str], dict[str, str | None]] = {}
+    for table_name, row_id, column_name, value in linkage:
+        grouped.setdefault((table_name, column_name), {})[row_id] = value
+    for (table_name, column_name), by_id in grouped.items():
+        table = md.tables[table_name]
+        target = table.c[column_name]
+        rows = list(by_id.items())
+        batch_size = min(1000, _MAX_BIND_PARAMS // 2)
+        for start in range(0, len(rows), batch_size):
+            batch = values(
+                column("id", table.c.id.type),
+                column("value", target.type),
+                name="seed_links",
+            ).data(rows[start : start + batch_size])
+            await conn.execute(
+                table.update()
+                .where(table.c.id == batch.c.id)
+                .where(target.is_distinct_from(batch.c.value))
+                .values({target: batch.c.value})
+            )
 
 
 async def _load_table(engine: AsyncEngine, table, rows: list[dict]) -> None:
