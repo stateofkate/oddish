@@ -348,7 +348,7 @@ async def _mirror_stale_job_to_domain_row(session, row) -> str | None:
             )
             # Domain row goes back to RETRYING so the UI reflects "waiting for
             # another attempt". The new worker_jobs claim will bump
-            # trials.status back to RUNNING via ``_prepare_trial_run``.
+            # trials.status back to RUNNING via ``prepare_trial_run``.
             trial.status = TrialStatus.RETRYING
             trial.error_message = row["error_message"]
             trial.next_retry_at = retry_at

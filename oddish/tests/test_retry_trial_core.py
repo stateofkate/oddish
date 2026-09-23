@@ -15,6 +15,7 @@ import oddish.queue as queue_mod
 from oddish.core import endpoints
 import oddish.core.endpoints.trials as trials_endpoint_mod
 import oddish.workers.queue.trial_handler as trial_handler_mod
+from oddish.workers.queue import trial_steps
 from oddish.db import TaskStatus, TrialModel, TrialStatus
 from oddish.schemas import RegistryAuth
 from oddish.workers.harbor.outcome import HarborOutcome
@@ -542,7 +543,7 @@ async def test_harbor_event_ignores_superseded_trial(monkeypatch):
 
     monkeypatch.setattr(trial_handler_mod, "_trial_session", fake_trial_session)
 
-    await trial_handler_mod._handle_harbor_event(
+    await trial_handler_mod.handle_harbor_event(
         SimpleNamespace(
             event=TrialEvent.START,
             environment=None,
@@ -639,9 +640,9 @@ async def test_prepare_trial_run_ignores_superseded_trial(monkeypatch):
     ):
         yield SimpleNamespace(), trial
 
-    monkeypatch.setattr(trial_handler_mod, "_trial_session", fake_trial_session)
+    monkeypatch.setattr(trial_steps, "_trial_session", fake_trial_session)
 
-    prepared = await trial_handler_mod._prepare_trial_run(
+    prepared = await trial_handler_mod.prepare_trial_run(
         trial_id=trial.id,
         worker_id="worker-1",
         queue_slot=1,
@@ -668,9 +669,9 @@ async def test_heartbeat_ignores_superseded_trial(monkeypatch):
         assert with_for_update is True
         yield SimpleNamespace(), trial
 
-    monkeypatch.setattr(trial_handler_mod, "_trial_session", fake_trial_session)
+    monkeypatch.setattr(trial_steps, "_trial_session", fake_trial_session)
 
-    await trial_handler_mod._touch_trial_execution(
+    await trial_handler_mod.touch_trial_execution(
         trial_id=trial.id,
         worker_id="worker-1",
         queue_slot=1,

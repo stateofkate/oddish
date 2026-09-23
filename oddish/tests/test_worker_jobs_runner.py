@@ -493,7 +493,7 @@ async def test_record_outcome_atomically_reroutes_unprovisioned_thunder_attempt(
 
     monkeypatch.setattr(worker_job_single_job, "_open_connection", fake_open_connection)
 
-    status = await worker_job_single_job._record_outcome(
+    status = await worker_job_single_job.record_outcome(
         job_id="wj-1",
         worker_id="worker-1",
         outcome=_reroute_outcome(target=target_provider),
@@ -597,7 +597,7 @@ async def test_reroute_waits_for_confirmed_external_sandbox_teardown(monkeypatch
 
     monkeypatch.setattr(worker_job_single_job, "_open_connection", fake_open_connection)
 
-    status = await worker_job_single_job._record_outcome(
+    status = await worker_job_single_job.record_outcome(
         job_id="wj-1",
         worker_id="worker-1",
         outcome=_reroute_outcome(),
@@ -635,7 +635,7 @@ async def test_reroute_releases_confirmed_external_sandbox(monkeypatch):
 
     monkeypatch.setattr(worker_job_single_job, "_open_connection", fake_open_connection)
 
-    status = await worker_job_single_job._record_outcome(
+    status = await worker_job_single_job.record_outcome(
         job_id="wj-1",
         worker_id="worker-1",
         outcome=_reroute_outcome(),
@@ -697,7 +697,7 @@ async def test_record_outcome_rejects_reroute_when_owned_state_changed(
 
     monkeypatch.setattr(worker_job_single_job, "_open_connection", fake_open_connection)
 
-    status = await worker_job_single_job._record_outcome(
+    status = await worker_job_single_job.record_outcome(
         job_id="wj-1",
         worker_id="worker-1",
         outcome=_reroute_outcome(),
@@ -767,7 +767,7 @@ async def test_reroute_respects_current_job_and_trial_budgets(
         return connection
 
     monkeypatch.setattr(worker_job_single_job, "_open_connection", open_connection)
-    status = await worker_job_single_job._record_outcome(
+    status = await worker_job_single_job.record_outcome(
         job_id="wj-1",
         worker_id="worker-1",
         outcome=_reroute_outcome(),
@@ -813,7 +813,7 @@ async def test_rejected_reroute_rechecks_ownership_before_settlement(monkeypatch
 
     monkeypatch.setattr(worker_job_single_job, "_open_connection", open_connection)
     assert (
-        await worker_job_single_job._record_outcome(
+        await worker_job_single_job.record_outcome(
             job_id="wj-1",
             worker_id="worker-1",
             outcome=_reroute_outcome(),
@@ -839,7 +839,7 @@ async def test_reroute_gate_rejection_settles_owned_attempt(monkeypatch):
 
     monkeypatch.setattr(worker_job_single_job, "_open_connection", open_connection)
     assert (
-        await worker_job_single_job._record_outcome(
+        await worker_job_single_job.record_outcome(
             job_id="wj-1",
             worker_id="worker-1",
             outcome=_reroute_outcome(),
@@ -870,7 +870,7 @@ async def test_record_outcome_rolls_back_if_atomic_reroute_update_loses_ownershi
     monkeypatch.setattr(worker_job_single_job, "_open_connection", fake_open_connection)
 
     with pytest.raises(RuntimeError, match="worker-job ownership"):
-        await worker_job_single_job._record_outcome(
+        await worker_job_single_job.record_outcome(
             job_id="wj-1",
             worker_id="worker-1",
             outcome=_reroute_outcome(),
@@ -898,7 +898,7 @@ async def test_record_outcome_requeues_trial_with_backoff_and_mirrors_next_retry
     monkeypatch.setattr(worker_job_single_job.random, "uniform", lambda _a, _b: 0.0)
 
     before = datetime.now(timezone.utc)
-    status = await worker_job_single_job._record_outcome(
+    status = await worker_job_single_job.record_outcome(
         job_id="wj-1",
         worker_id="w-test",
         outcome=JobOutcome.fail("HTTP 503 from agent", retryable=True),
@@ -967,7 +967,7 @@ async def test_record_outcome_terminal_failure_settles_a_retrying_trial(
 
     monkeypatch.setattr(worker_job_single_job, "_open_connection", fake_open_connection)
 
-    status = await worker_job_single_job._record_outcome(
+    status = await worker_job_single_job.record_outcome(
         job_id="wj-1",
         worker_id="w-test",
         outcome=JobOutcome.fail("HTTP 503 from agent", retryable=True),
@@ -1007,7 +1007,7 @@ async def test_record_outcome_returns_success_only_when_guarded_update_changes_r
     monkeypatch.setattr(
         worker_job_single_job, "_open_connection", accepted_open_connection
     )
-    accepted = await worker_job_single_job._record_outcome(
+    accepted = await worker_job_single_job.record_outcome(
         job_id="wj-1",
         worker_id="w-test",
         outcome=JobOutcome.ok(),
@@ -1023,7 +1023,7 @@ async def test_record_outcome_returns_success_only_when_guarded_update_changes_r
     monkeypatch.setattr(
         worker_job_single_job, "_open_connection", rejected_open_connection
     )
-    rejected = await worker_job_single_job._record_outcome(
+    rejected = await worker_job_single_job.record_outcome(
         job_id="wj-1",
         worker_id="w-test",
         outcome=JobOutcome.ok(),
@@ -1090,7 +1090,7 @@ def _capture_record_outcome(monkeypatch):
             return WorkerJobStatus.RETRYING
         return WorkerJobStatus.FAILED
 
-    monkeypatch.setattr(worker_job_single_job, "_record_outcome", fake_record)
+    monkeypatch.setattr(worker_job_single_job, "record_outcome", fake_record)
     return captured
 
 
@@ -1220,7 +1220,7 @@ async def test_run_single_worker_job_emits_nothing_when_outcome_update_loses_rac
         return None
 
     metric_calls: list[dict[str, Any]] = []
-    monkeypatch.setattr(worker_job_single_job, "_record_outcome", rejected_outcome)
+    monkeypatch.setattr(worker_job_single_job, "record_outcome", rejected_outcome)
     monkeypatch.setattr(
         worker_job_single_job,
         "record_worker_job_transition",
@@ -1415,7 +1415,7 @@ async def test_record_outcome_moves_settled_thunder_retry_to_fallback(monkeypatc
     monkeypatch.setattr(worker_job_single_job, "_open_connection", fake_open_connection)
 
     before = datetime.now(timezone.utc)
-    status = await worker_job_single_job._record_outcome(
+    status = await worker_job_single_job.record_outcome(
         job_id="wj-1",
         worker_id="worker-1",
         outcome=_budget_reroute_outcome(),
@@ -1496,7 +1496,7 @@ async def test_settled_handoff_waits_for_source_sandbox_teardown(monkeypatch):
 
     monkeypatch.setattr(worker_job_single_job, "_open_connection", fake_open_connection)
 
-    status = await worker_job_single_job._record_outcome(
+    status = await worker_job_single_job.record_outcome(
         job_id="wj-1",
         worker_id="worker-1",
         outcome=_budget_reroute_outcome(),
@@ -1560,7 +1560,7 @@ async def test_declined_settled_handoff_records_the_ordinary_retry(
 
     monkeypatch.setattr(worker_job_single_job, "_open_connection", fake_open_connection)
 
-    status = await worker_job_single_job._record_outcome(
+    status = await worker_job_single_job.record_outcome(
         job_id="wj-1",
         worker_id="worker-1",
         outcome=_budget_reroute_outcome(),
@@ -1647,7 +1647,7 @@ async def test_handoff_moves_attempt_that_never_reached_the_sandbox_ledger(
 
     monkeypatch.setattr(worker_job_single_job, "_open_connection", fake_open_connection)
 
-    status = await worker_job_single_job._record_outcome(
+    status = await worker_job_single_job.record_outcome(
         job_id="wj-1",
         worker_id="worker-1",
         outcome=outcome,
@@ -1705,7 +1705,7 @@ async def test_handoff_declines_missing_ledger_when_job_still_holds_a_handle(
 
     monkeypatch.setattr(worker_job_single_job, "_open_connection", fake_open_connection)
 
-    status = await worker_job_single_job._record_outcome(
+    status = await worker_job_single_job.record_outcome(
         job_id="wj-1",
         worker_id="worker-1",
         outcome=_budget_reroute_outcome(),

@@ -1,6 +1,6 @@
 """Build the monitor's attempt spec from the rows the worker reads at claim.
 
-Read-only. The launcher has already claimed the trial (``_prepare_trial_run``),
+Read-only. The launcher has already claimed the trial (``prepare_trial_run``),
 so the model is normalized and ``attempts`` already counts this attempt.
 """
 
@@ -46,8 +46,8 @@ def select_task_objects(prefix: str, keys: list[str]) -> tuple[str | None, list[
     An archive at the prefix wins; else the newest archive at a versioned
     sub-path; else every loose object under the prefix.
     """
-    archive_name = StorageClient._TASK_ARCHIVE_OBJECT_NAME
-    top_level = StorageClient._task_archive_key_from_prefix(prefix)
+    archive_name = StorageClient.TASK_ARCHIVE_OBJECT_NAME
+    top_level = StorageClient.task_archive_key_from_prefix(prefix)
     if top_level in keys:
         return top_level, []
     nested = [key for key in keys if key.endswith(f"/{archive_name}")]

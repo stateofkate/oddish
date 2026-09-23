@@ -8,7 +8,7 @@ subject trial's own execution.
 
 import pytest
 
-from oddish.workers.queue.trial_handler import _artifact_subprefix
+from oddish.workers.queue.trial_steps import artifact_subprefix
 
 
 class _Storage:
@@ -38,15 +38,15 @@ class _Storage:
 
 
 def test_each_analysis_kind_gets_its_label():
-    assert _artifact_subprefix("qa", 2) == "analysis-qa/attempt-2"
-    assert _artifact_subprefix("qa_eval", 2) == "analysis-qa_eval/attempt-2"
-    assert _artifact_subprefix("audit", 2) == "analysis-audit/attempt-2"
-    assert _artifact_subprefix("summarize", 2) == "analysis-summarize/attempt-2"
+    assert artifact_subprefix("qa", 2) == "analysis-qa/attempt-2"
+    assert artifact_subprefix("qa_eval", 2) == "analysis-qa_eval/attempt-2"
+    assert artifact_subprefix("audit", 2) == "analysis-audit/attempt-2"
+    assert artifact_subprefix("summarize", 2) == "analysis-summarize/attempt-2"
 
 
 def test_agent_and_probe_trials_get_attempt_only_prefixes():
-    assert _artifact_subprefix("agent", 1) == "attempt-1"
-    assert _artifact_subprefix("agent", 3) == "attempt-3"
+    assert artifact_subprefix("agent", 1) == "attempt-1"
+    assert artifact_subprefix("agent", 3) == "attempt-3"
 
 
 def test_the_uploader_nests_the_segment_under_the_trial_prefix():
@@ -175,4 +175,4 @@ async def test_public_file_listing_and_content_use_the_selected_child(monkeypatc
 
 def test_attempt_number_must_be_positive():
     with pytest.raises(ValueError, match="must be positive"):
-        _artifact_subprefix("agent", 0)
+        artifact_subprefix("agent", 0)

@@ -191,13 +191,13 @@ async def test_run_trial_job_settles_task_preparation_error(monkeypatch):
         return False
 
     monkeypatch.setattr(trial_handler, "_trial_session", trial_session)
-    monkeypatch.setattr(trial_handler, "_prepare_trial_run", prepare_trial_run)
+    monkeypatch.setattr(trial_handler, "prepare_trial_run", prepare_trial_run)
     monkeypatch.setattr(
         trial_handler,
         "_prepare_claimed_trial_attempt",
         prepare_claimed_trial_attempt,
     )
-    monkeypatch.setattr(trial_handler, "_settle_trial_attempt", settle_trial_attempt)
+    monkeypatch.setattr(trial_handler, "settle_trial_attempt", settle_trial_attempt)
 
     await trial_handler.run_trial_job(
         trial_id,
@@ -295,7 +295,7 @@ async def test_run_trial_job_keeps_successful_upload_when_analysis_validation_fa
 
     monkeypatch.setattr(trial_handler, "_trial_session", trial_session)
     monkeypatch.setattr(
-        trial_handler, "_prepare_trial_run", AsyncMock(return_value=prepared)
+        trial_handler, "prepare_trial_run", AsyncMock(return_value=prepared)
     )
     monkeypatch.setattr(
         trial_handler,
@@ -305,7 +305,7 @@ async def test_run_trial_job_keeps_successful_upload_when_analysis_validation_fa
     monkeypatch.setattr(
         trial_handler, "_execute_trial", AsyncMock(return_value=execution)
     )
-    monkeypatch.setattr(trial_handler, "_settle_compute_costs", AsyncMock())
+    monkeypatch.setattr(trial_handler, "settle_compute_costs", AsyncMock())
     monkeypatch.setattr(trial_handler, "_heartbeat_trial_execution", AsyncMock())
     storage = SimpleNamespace(
         upload_trial_results=AsyncMock(return_value=upload_prefix)
@@ -320,7 +320,7 @@ async def test_run_trial_job_keeps_successful_upload_when_analysis_validation_fa
         trial_handler, "_qa_artifact_validation_error", Mock(return_value=None)
     )
     settle_trial_attempt = AsyncMock(return_value=False)
-    monkeypatch.setattr(trial_handler, "_settle_trial_attempt", settle_trial_attempt)
+    monkeypatch.setattr(trial_handler, "settle_trial_attempt", settle_trial_attempt)
     monkeypatch.setattr(trial_handler, "_release_prepared_trial_attempt", AsyncMock())
     cleanup_uploaded_job_dir = Mock()
     monkeypatch.setattr(
@@ -425,7 +425,7 @@ async def test_run_trial_job_defers_thunder_capacity_to_atomic_reroute(
     async def execute_trial(**_kwargs):
         from harbor.trial.hooks import TrialEvent
 
-        await trial_handler._handle_harbor_event(
+        await trial_handler.handle_harbor_event(
             SimpleNamespace(
                 event=TrialEvent.END, environment_provider=None,
                 environment_external_id=None, environment=None,
@@ -473,7 +473,7 @@ async def test_run_trial_job_defers_thunder_capacity_to_atomic_reroute(
     monkeypatch.setattr(settings, "thunder_fallback_provider", "modal")
     monkeypatch.setattr(settings, "job_scoped_tokens_enabled", False)
     monkeypatch.setattr(trial_handler, "_trial_session", trial_session)
-    monkeypatch.setattr(trial_handler, "_prepare_trial_run", prepare_run)
+    monkeypatch.setattr(trial_handler, "prepare_trial_run", prepare_run)
     monkeypatch.setattr(
         trial_handler,
         "_prepare_claimed_trial_attempt",
@@ -485,8 +485,8 @@ async def test_run_trial_job_defers_thunder_capacity_to_atomic_reroute(
         heartbeat_trial_execution,
     )
     monkeypatch.setattr(trial_handler, "_execute_trial", execute_trial)
-    monkeypatch.setattr(trial_handler, "_settle_compute_costs", noop_async)
-    monkeypatch.setattr(trial_handler, "_settle_trial_attempt", fail_if_settled)
+    monkeypatch.setattr(trial_handler, "settle_compute_costs", noop_async)
+    monkeypatch.setattr(trial_handler, "settle_trial_attempt", fail_if_settled)
     monkeypatch.setattr(
         trial_handler,
         "_release_prepared_trial_attempt",

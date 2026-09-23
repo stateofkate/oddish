@@ -88,7 +88,7 @@ async def test_the_worker_hook_starts_the_tail_with_the_database_persist(monkeyp
     )
     monkeypatch.setattr(trial_handler.console, "print", lambda *a, **k: None)
 
-    await trial_handler._handle_harbor_event(
+    await trial_handler.handle_harbor_event(
         SimpleNamespace(
             event=TrialEvent.AGENT_START,
             environment=object(),

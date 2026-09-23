@@ -26,7 +26,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from oddish.workers.queue import trial_handler  # noqa: E402
+from oddish.workers.queue import trial_handler, trial_steps  # noqa: E402
 
 
 @pytest.mark.asyncio
@@ -50,7 +50,7 @@ async def test_heartbeat_also_writes_worker_jobs_when_job_id_provided(monkeypatc
         wj_calls.append({"job_id": job_id, **kwargs})
         return True
 
-    monkeypatch.setattr(trial_handler, "_touch_trial_execution", fake_touch)
+    monkeypatch.setattr(trial_handler, "touch_trial_execution", fake_touch)
     monkeypatch.setattr(
         trial_handler, "heartbeat_worker_job", fake_heartbeat_worker_job
     )
@@ -99,7 +99,7 @@ async def test_heartbeat_writes_worker_jobs_after_trial_goes_terminal(monkeypatc
         wj_calls.append(job_id)
         return True
 
-    monkeypatch.setattr(trial_handler, "_touch_trial_execution", fake_touch)
+    monkeypatch.setattr(trial_handler, "touch_trial_execution", fake_touch)
     monkeypatch.setattr(
         trial_handler, "heartbeat_worker_job", fake_heartbeat_worker_job
     )
@@ -137,7 +137,7 @@ async def test_heartbeat_interrupts_execution_after_worker_job_is_cancelled(
     async def fake_heartbeat_worker_job(job_id, **kwargs):
         return False
 
-    monkeypatch.setattr(trial_handler, "_touch_trial_execution", fake_touch)
+    monkeypatch.setattr(trial_handler, "touch_trial_execution", fake_touch)
     monkeypatch.setattr(
         trial_handler, "heartbeat_worker_job", fake_heartbeat_worker_job
     )
@@ -173,7 +173,7 @@ async def test_heartbeat_skips_worker_jobs_write_when_job_id_absent(monkeypatch)
     async def fake_heartbeat_worker_job(job_id, **kwargs):
         wj_calls.append({"job_id": job_id})
 
-    monkeypatch.setattr(trial_handler, "_touch_trial_execution", fake_touch)
+    monkeypatch.setattr(trial_handler, "touch_trial_execution", fake_touch)
     monkeypatch.setattr(
         trial_handler, "heartbeat_worker_job", fake_heartbeat_worker_job
     )
@@ -240,7 +240,7 @@ async def test_heartbeat_accumulates_failures_and_flushes_on_recovery(monkeypatc
         if isinstance(behavior, Exception):
             raise behavior
 
-    monkeypatch.setattr(trial_handler, "_touch_trial_execution", fake_touch)
+    monkeypatch.setattr(trial_handler, "touch_trial_execution", fake_touch)
     monkeypatch.setattr(trial_handler, "TRIAL_HEARTBEAT_INTERVAL_SECONDS", 0)
 
     stop_event = asyncio.Event()
@@ -284,7 +284,7 @@ async def test_heartbeat_accumulates_failures_and_flushes_on_recovery(monkeypatc
 async def test_touch_trial_execution_flushes_pending_failure_metadata(
     monkeypatch, status
 ):
-    """_touch_trial_execution persists pending failure info onto the row."""
+    """touch_trial_execution persists pending failure info onto the row."""
 
     from oddish.db import TrialStatus
 
@@ -314,13 +314,13 @@ async def test_touch_trial_execution_flushes_pending_failure_metadata(
     ):
         yield _FakeSession(), trial
 
-    monkeypatch.setattr(trial_handler, "_trial_session", fake_trial_session)
+    monkeypatch.setattr(trial_steps, "_trial_session", fake_trial_session)
 
     from datetime import datetime, timezone
 
     error_ts = datetime(2026, 4, 17, 21, 0, 0, tzinfo=timezone.utc)
 
-    await trial_handler._touch_trial_execution(
+    await trial_handler.touch_trial_execution(
         trial_id="trial-1",
         worker_id="worker-1",
         queue_slot=7,
@@ -369,10 +369,10 @@ async def test_touch_trial_execution_truncates_long_errors(monkeypatch):
     ):
         yield _FakeSession(), trial
 
-    monkeypatch.setattr(trial_handler, "_trial_session", fake_trial_session)
+    monkeypatch.setattr(trial_steps, "_trial_session", fake_trial_session)
 
     huge_error = "x" * 5000
-    await trial_handler._touch_trial_execution(
+    await trial_handler.touch_trial_execution(
         trial_id="trial-1",
         worker_id="worker-1",
         queue_slot=0,
@@ -381,4 +381,4 @@ async def test_touch_trial_execution_truncates_long_errors(monkeypatch):
     )
 
     assert trial.last_heartbeat_error is not None
-    assert len(trial.last_heartbeat_error) == trial_handler._HEARTBEAT_ERROR_MAX_LEN
+    assert len(trial.last_heartbeat_error) == trial_steps._HEARTBEAT_ERROR_MAX_LEN

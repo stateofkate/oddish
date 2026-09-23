@@ -3,7 +3,7 @@
 The worker path opens an ``agent_sandbox`` span when Harbor reports its sandbox
 and closes and prices it when the trial ends. Here the billable sandbox is the
 outer one the launcher starts, so the launcher opens the span and settlement
-closes it, through the same recorder and ``_settle_compute_costs``.
+closes it, through the same recorder and ``settle_compute_costs``.
 
 Spans are keyed by job and attempt in the database. Only what the ledger cannot
 hold (the provider and the verifier's resources) rides on the job's payload.
@@ -111,7 +111,7 @@ def cost_state_for_settle(
     trial_id: str,
     prepared: PreparedTrialRun,
 ) -> SandboxCostState | None:
-    """The state ``_settle_compute_costs`` needs, rebuilt from the job row.
+    """The state ``settle_compute_costs`` needs, rebuilt from the job row.
     ``None`` when the launcher never opened a span (nothing to close)."""
     stored = (payload or {}).get(PAYLOAD_KEY)
     resources = _load((stored or {}).get("resources"))

@@ -203,7 +203,7 @@ async def test_settlement_reuses_hook_boundary_and_adds_verifier_span(
         }
     )
 
-    await trial_handler._settle_compute_costs(state, outcome)
+    await trial_handler.settle_compute_costs(state, outcome)
 
     assert [name for name, _ in calls] == ["close", "verifier", "price"]
     assert calls[0][1]["finished_at"] == terminal
@@ -230,7 +230,7 @@ async def test_settlement_failure_never_escapes(monkeypatch) -> None:
         worker_job_attempt=1,
         terminal_at=datetime.now(timezone.utc),
     )
-    await trial_handler._settle_compute_costs(state, None)
+    await trial_handler.settle_compute_costs(state, None)
 
 
 @pytest.mark.asyncio
@@ -275,7 +275,7 @@ async def test_terminal_hook_closes_cost_span_before_ownership_guard(
         result=None,
     )
 
-    await trial_handler._handle_harbor_event(
+    await trial_handler.handle_harbor_event(
         event,
         trial_id="trial-1",
         worker_job_id="job-1",
@@ -320,7 +320,7 @@ async def test_archil_provisioned_event_uses_worker_job_without_ec2_ledger(
         trial_handler, "mark_environment_provisioned", unexpected_ec2_ledger_call
     )
 
-    await trial_handler._handle_harbor_event(
+    await trial_handler.handle_harbor_event(
         SimpleNamespace(
             event=TrialEvent.ENVIRONMENT_PROVISIONED,
             timestamp=datetime.now(timezone.utc),
@@ -341,7 +341,7 @@ async def test_archil_provisioned_event_uses_worker_job_without_ec2_ledger(
 @pytest.mark.asyncio
 async def test_ec2_provisioned_event_still_requires_sandbox_ledger() -> None:
     with pytest.raises(RuntimeError, match="EC2.*without a sandbox ledger row"):
-        await trial_handler._handle_harbor_event(
+        await trial_handler.handle_harbor_event(
             SimpleNamespace(
                 event=TrialEvent.ENVIRONMENT_PROVISIONED,
                 timestamp=datetime.now(timezone.utc),
@@ -397,7 +397,7 @@ async def test_worker_span_uses_claim_and_outcome_boundaries(monkeypatch) -> Non
     monkeypatch.setattr(worker_job_single_job, "claim_single_worker_job", claim)
     monkeypatch.setattr(worker_job_single_job, "get_handler", lambda kind: Handler())
     monkeypatch.setattr(worker_job_single_job, "open_worker_span", open_span)
-    monkeypatch.setattr(worker_job_single_job, "_record_outcome", record)
+    monkeypatch.setattr(worker_job_single_job, "record_outcome", record)
     monkeypatch.setattr(worker_job_single_job, "close_worker_span", close_span)
 
     await worker_job_single_job.run_single_worker_job(

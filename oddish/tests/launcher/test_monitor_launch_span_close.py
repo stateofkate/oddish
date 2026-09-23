@@ -51,7 +51,7 @@ def _fake_row(monkeypatch, payload):
     async def _settle(state, outcome):
         settled.append((state, outcome))
 
-    monkeypatch.setattr(monitor_launch, "_settle_compute_costs", _settle)
+    monkeypatch.setattr(monitor_launch, "settle_compute_costs", _settle)
     return settled
 
 

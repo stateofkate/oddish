@@ -55,7 +55,7 @@ def _trial(kind: str, attempts: int):
 
 async def _settle_args(monkeypatch, *, kind, attempts, archive_key):
     """Run settlement with a result that has no stored artifacts; return what it
-    handed ``_settle_trial_attempt``."""
+    handed ``settle_trial_attempt``."""
     job = SimpleNamespace(
         id="job-1", kind="trial", queue_key="q", status=WorkerJobStatus.RUNNING,
         attempts=2, max_attempts=6, subject_table="trials", subject_id="task-1-0",
@@ -86,13 +86,13 @@ async def _settle_args(monkeypatch, *, kind, attempts, archive_key):
     handler = SimpleNamespace(outcome_for_settled_trial=outcome_for_settled_trial)
     monkeypatch.setattr(monitor_settle, "get_session", get_session)
     monkeypatch.setattr(monitor_settle, "get_storage_client", lambda: _Storage())
-    monkeypatch.setattr(monitor_settle, "_mirror_to_sauron", noop)
-    monkeypatch.setattr(monitor_settle, "_settle_trial_attempt", capture)
+    monkeypatch.setattr(monitor_settle, "mirror_to_sauron", noop)
+    monkeypatch.setattr(monitor_settle, "settle_trial_attempt", capture)
     monkeypatch.setattr(
         monitor_settle, "ensure_builtin_handlers_registered", lambda: None
     )
     monkeypatch.setattr(monitor_settle, "get_handler", lambda _kind: handler)
-    monkeypatch.setattr(monitor_settle, "_record_outcome", noop)
+    monkeypatch.setattr(monitor_settle, "record_outcome", noop)
     monkeypatch.setattr(monitor_settle.monitor_token, "revoke_monitor_credential", noop)
     monkeypatch.setattr(monitor_settle, "_post_success_hook", None)
 

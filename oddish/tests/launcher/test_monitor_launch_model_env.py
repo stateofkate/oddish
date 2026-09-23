@@ -13,6 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 from oddish.workers.launcher import launch as ml
+from oddish.workers.queue import job_tokens
 
 
 def _job():
@@ -48,7 +49,7 @@ async def test_launch_forwards_the_stored_harbor_config(monkeypatch):
 
     monkeypatch.setattr(ml, "control_plane_url", lambda: "https://api.test")
     monkeypatch.setattr(ml, "record_monitor_heartbeat", _noop)
-    monkeypatch.setattr(ml, "_prepare_trial_run", lambda **k: _val(prepared))
+    monkeypatch.setattr(ml, "prepare_trial_run", lambda **k: _val(prepared))
     monkeypatch.setattr(
         ml.monitor_sandbox, "provider_for_environment", lambda e: "modal"
     )
@@ -59,12 +60,12 @@ async def test_launch_forwards_the_stored_harbor_config(monkeypatch):
         staticmethod(lambda r, **kw: None),
     )
     monkeypatch.setattr(ml, "_resolve_image", _noop)
-    monkeypatch.setattr(ml, "_claim_funding_key", lambda **k: _val((True, {})))
+    monkeypatch.setattr(ml, "claim_funding_key", lambda **k: _val((True, {})))
     monkeypatch.setattr(ml, "_task_facts", lambda *a, **k: _val((None, None, {})))
     monkeypatch.setattr(
         ml.monitor_token, "mint_monitor_credential", lambda *a: _val("tok")
     )
-    monkeypatch.setattr(ml.job_tokens, "scoped_model_env", _scoped)
+    monkeypatch.setattr(job_tokens, "scoped_model_env", _scoped)
     monkeypatch.setattr(
         ml.monitor_image_cache, "resolve", lambda *a, **k: _val(("img", None))
     )

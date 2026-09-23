@@ -11,17 +11,10 @@ import asyncio
 import sys
 import uuid
 from datetime import timedelta
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "src"))
-
-from oddish.config import Settings
-
-Settings.db_use_null_pool = True
-
-import oddish.db.connection as _conn
+import _harness  # sets the path and the null pool first
 from oddish.db import WorkerJobKind, WorkerJobStatus, get_session
-from oddish.db.models import Base, WorkerJobModel, utcnow
+from oddish.db.models import WorkerJobModel, utcnow
 from oddish.workers.launcher import token as monitor_token
 from oddish.workers.launcher.heartbeat import (
     record_monitor_heartbeat,
@@ -37,14 +30,7 @@ async def _raises(exc_type, credential: str) -> bool:
 
 
 async def _main() -> int:
-    _conn.engine = _conn._create_engine()
-    _conn.async_session_maker = _conn._create_session_maker(_conn.engine)
-    tables = [t for name, t in Base.metadata.tables.items() if name != "api_keys"]
-    async with _conn.engine.begin() as connection:
-        await connection.run_sync(
-            lambda sync_conn: Base.metadata.create_all(sync_conn, tables=tables)
-        )
-
+    await _harness.boot()
     job_id = "wj_" + uuid.uuid4().hex[:12]
     stale = utcnow() - timedelta(minutes=20)
     async with get_session() as session:

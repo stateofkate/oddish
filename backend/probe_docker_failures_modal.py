@@ -1,7 +1,7 @@
 """Find trial-execution failures via the AUTHORITATIVE error source.
 
 Why this exists: ``trials.error_message`` is unreliable for these failures. It
-is wiped to NULL at the start of every attempt (``_prepare_trial_run``) and only
+is wiped to NULL at the start of every attempt (``prepare_trial_run``) and only
 repopulated if the final terminal attempt runs ``_store_trial_results`` to
 completion. A trial stuck retrying, stale-reaped while RUNNING, or whose worker
 died mid-failure shows ``error_message = NULL`` even though every attempt hit the

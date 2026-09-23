@@ -4,7 +4,7 @@ from oddish.config import Settings
 
 # Worker containers run ONE job for its full duration -- agent trials can run
 # for many minutes up to ~10 hours. A pooled (QueuePool) connection would be
-# opened by the first session (``_prepare_trial_run``) and then held *idle* for
+# opened by the first session (``prepare_trial_run``) and then held *idle* for
 # the entire trial, even though the worker only touches the DB for a few ms
 # every 30s (heartbeats) plus a claim and a final write. Across a large fleet
 # that's hundreds of connections held idle for hours against the Supavisor

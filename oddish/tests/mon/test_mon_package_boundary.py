@@ -37,9 +37,9 @@ def test_task_fetch_plan_matches_every_form_the_worker_downloads():
     from oddish.db.storage import StorageClient
     from oddish.workers.launcher.attempt import select_task_objects
 
-    name = StorageClient._TASK_ARCHIVE_OBJECT_NAME
+    name = StorageClient.TASK_ARCHIVE_OBJECT_NAME
     prefix = "tasks/abc/"
-    top = StorageClient._task_archive_key_from_prefix(prefix)
+    top = StorageClient.task_archive_key_from_prefix(prefix)
 
     # 1. archive at the prefix wins over anything else
     assert select_task_objects(prefix, [top, f"{prefix}task.toml"]) == (top, [])

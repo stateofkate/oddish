@@ -2,9 +2,11 @@
 
 Runs the worker's own settlement on the accepted result: the artifact archive
 is unpacked and uploaded in today's layout, the trial is settled by
-``_settle_trial_attempt``, the worker-job outcome comes from the trial handler,
-and ``_record_outcome`` records it. Then the token is revoked and the queue slot
-and the capacity lease the launcher recorded are released.
+``settle_trial_attempt``, the worker-job outcome comes from the trial handler,
+and ``record_outcome`` records it. The attempt context comes from
+``load_trial_context`` on the observed attempt and its pinned task version.
+Then the token is revoked and the queue slot and the capacity lease the
+launcher recorded are released.
 
 Built from the ``worker_jobs`` row alone, so it can run after the sandbox is
 gone and can be re-run if interrupted: a job that is no longer RUNNING is
@@ -22,14 +24,7 @@ from dataclasses import fields
 from pathlib import Path
 from typing import Literal
 
-from oddish.db import (
-    ExperimentModel,
-    TaskModel,
-    TrialModel,
-    WorkerJobModel,
-    WorkerJobStatus,
-    get_session,
-)
+from oddish.db import TrialModel, WorkerJobModel, WorkerJobStatus, get_session
 from oddish.db.storage import get_storage_client
 from oddish.workers.harbor.outcome import HarborOutcome
 from oddish.workers.jobs import ensure_builtin_handlers_registered
@@ -40,15 +35,13 @@ from oddish.workers.queue.sandbox_capacity import release_sandbox_capacity_lease
 from oddish.workers.console import console
 from oddish.workers.queue.slots import release_queue_slot
 from oddish.workers.queue.trial_handler import (
-    PreparedTrialRun,
     TrialExecutionResult,
-    _artifact_subprefix,
-    _extract_trial_index,
-    _mirror_to_sauron,
-    _settle_compute_costs,
-    _settle_trial_attempt,
+    mirror_to_sauron,
+    settle_compute_costs,
+    settle_trial_attempt,
 )
-from oddish.workers.queue.worker_job_single_job import ClaimedWorkerJob, _record_outcome
+from oddish.workers.queue.trial_steps import artifact_subprefix, load_trial_context
+from oddish.workers.queue.worker_job_single_job import ClaimedWorkerJob, record_outcome
 
 logger = logging.getLogger(__name__)
 
@@ -178,33 +171,11 @@ async def settle_monitor_result(
             return "no_result"
         sandbox_provider, sandbox_id = job.provider, job.external_id
         trial = await session.get(TrialModel, job.subject_id)
-        task = await session.get(TaskModel, trial.task_id) if trial else None
         if trial is None:
             return "no_result"
-        experiment = (
-            await session.get(ExperimentModel, trial.experiment_id)
-            if trial.experiment_id
-            else None
-        )
-        prepared = PreparedTrialRun(
-            task_path=task.task_path if task else None,
-            task_s3_key=task.task_s3_key if task else None,
-            task_id=trial.task_id,
-            task_version_id=trial.task_version_id,
-            trial_agent=trial.agent,
-            trial_model=trial.model,
-            trial_environment=trial.environment,
-            trial_harbor_config=trial.harbor_config,
-            trial_kind=trial.kind or "agent",
-            task_name=task.name if task else trial.task_id,
-            experiment_id=trial.experiment_id or "",
-            experiment_name=experiment.name if experiment else None,
-            attempt_number=_extract_trial_index(trial.id, trial.task_id) + 1,
-            task_tags=dict(task.tags) if task and task.tags else None,
-            org_id=trial.org_id,
-            billed_user_id=trial.billed_user_id,
-            trial_attempt=trial.attempts,
-        )
+        # The observed attempt's context, read from its pinned task version.
+        # Never the attempt starter: that would restart the attempt.
+        prepared = await load_trial_context(session, trial)
         claimed = ClaimedWorkerJob(
             id=job.id,
             kind=job.kind,
@@ -231,7 +202,7 @@ async def settle_monitor_result(
                 trial_s3_key = await get_storage_client().upload_trial_results(
                     trial_id,
                     job_dir,
-                    subprefix=_artifact_subprefix(
+                    subprefix=artifact_subprefix(
                         prepared.trial_kind, prepared.trial_attempt
                     ),
                 )
@@ -249,7 +220,7 @@ async def settle_monitor_result(
                 "artifact archive"
             )
         if job_dir is not None:
-            await _mirror_to_sauron(prepared, job_dir)
+            await mirror_to_sauron(prepared, job_dir)
         execution = TrialExecutionResult(
             outcome=_outcome_from_payload(result.get("outcome"), job_dir),
             execution_error=result.get("execution_error"),
@@ -263,8 +234,8 @@ async def settle_monitor_result(
             prepared=prepared,
         )
         if cost_state is not None:
-            await _settle_compute_costs(cost_state, execution.outcome)
-        await _settle_trial_attempt(
+            await settle_compute_costs(cost_state, execution.outcome)
+        await settle_trial_attempt(
             trial_id=trial_id,
             prepared_trial=prepared,
             execution=execution,
@@ -278,7 +249,7 @@ async def settle_monitor_result(
     outcome = await get_handler(claimed.kind).outcome_for_settled_trial(
         claimed, execution.outcome
     )
-    persisted = await _record_outcome(
+    persisted = await record_outcome(
         job_id=claimed.id,
         worker_id=worker_id,
         outcome=outcome,

@@ -93,7 +93,7 @@ async def _main() -> int:
     # Deterministic verdict in place of the real sandbox run.
     wjsj.get_handler = lambda kind: _StubHandler()
 
-    # The REAL claim + outcome machinery (FOR UPDATE SKIP LOCKED, _record_outcome).
+    # The REAL claim + outcome machinery (FOR UPDATE SKIP LOCKED, record_outcome).
     claimed = await wjsj.run_single_worker_job(
         QUEUE_KEY, worker_id="proof", queue_slot=0
     )

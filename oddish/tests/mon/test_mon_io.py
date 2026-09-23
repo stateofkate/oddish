@@ -356,7 +356,7 @@ async def test_a_storage_outage_is_retried_but_a_refused_upload_is_not(
         ),
     )
     outcome = _Outcome(1.0, 0, job_dir)
-    await runner._report_until_accepted(_client(api), outcome, None, delay=0)
+    await runner._deliver_result(_client(api), outcome, None, delay=0)
     # Every try asks for a fresh upload target: a presigned URL can expire.
     assert calls == ["artifacts", "put"] * 3 + ["result"]
 
@@ -364,7 +364,7 @@ async def test_a_storage_outage_is_retried_but_a_refused_upload_is_not(
     storage.append(httpx.Response(400))
     # Refused for good: not retried, but the verdict is still reported, without
     # artifacts, instead of being dropped as a failed start.
-    await runner._report_until_accepted(_client(api), outcome, None, delay=0)
+    await runner._deliver_result(_client(api), outcome, None, delay=0)
     assert calls == ["artifacts", "put", "result"]
 
 
@@ -491,7 +491,7 @@ async def test_a_dead_attempt_is_not_retried_by_the_report_loop():
         return httpx.Response(410, json={"detail": "A newer attempt owns this job"})
 
     with pytest.raises(AttemptGone):
-        await runner._report_until_accepted(_client(api), None, "boom", delay=0)
+        await runner._deliver_result(_client(api), None, "boom", delay=0)
     assert posted == ["result"]
 
 
@@ -632,7 +632,7 @@ async def test_a_refused_lifecycle_event_is_dropped_and_the_result_still_posted(
     client = _client(api)
     reporter = hooks.LifecycleReporter(client)
     reporter._pending.extend([{"event": "agent-end"}, {"event": "end"}])
-    await runner._report_until_accepted(
+    await runner._deliver_result(
         client, None, "boom", reporter=reporter, delay=0
     )
     assert calls == ["lifecycle", "lifecycle", "result"]
@@ -670,5 +670,5 @@ async def test_a_refused_artifact_grant_still_reports_the_verdict(tmp_path):
     job_dir.mkdir()
     (job_dir / "result.json").write_text("{}")
     outcome = _Outcome(1.0, 0, job_dir)
-    await runner._report_until_accepted(_client(api), outcome, None, delay=0)
+    await runner._deliver_result(_client(api), outcome, None, delay=0)
     assert calls == ["artifacts", "result"]

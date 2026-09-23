@@ -88,7 +88,7 @@ def _task_s3_prefix_for_version(task_id: str, version: int) -> str:
 def _task_archive_key_for_version(task_id: str, version: int) -> str:
     return (
         f"{_task_s3_prefix_for_version(task_id, version)}"
-        f"{StorageClient._TASK_ARCHIVE_OBJECT_NAME}"
+        f"{StorageClient.TASK_ARCHIVE_OBJECT_NAME}"
     )
 
 
@@ -260,7 +260,7 @@ async def complete_task_upload(
         if validated_staging_key is not None
         else _task_s3_prefix_for_version(task_id, version)
     )
-    archive_key = f"{s3_key}{StorageClient._TASK_ARCHIVE_OBJECT_NAME}"
+    archive_key = f"{s3_key}{StorageClient.TASK_ARCHIVE_OBJECT_NAME}"
     upload_key = validated_staging_key or archive_key
     version_id = f"{task_id}-v{version}"
     task_path = f"s3://{s3_key}"
@@ -592,7 +592,7 @@ async def resolve_task_storage(
     correct S3 key.
     """
     storage = get_storage_client()
-    archive_name = StorageClient._TASK_ARCHIVE_OBJECT_NAME
+    archive_name = StorageClient.TASK_ARCHIVE_OBJECT_NAME
 
     # Try versioned prefix first
     if version is not None:

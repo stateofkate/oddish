@@ -194,7 +194,7 @@ def test_resolve_mounted_task_directory_skips_archive_only_mount(monkeypatch, tm
     mounted_root = tmp_path / "mounted-tasks"
     task_dir = mounted_root / "task-123"
     task_dir.mkdir(parents=True)
-    (task_dir / storage_mod.StorageClient._TASK_ARCHIVE_OBJECT_NAME).write_bytes(
+    (task_dir / storage_mod.StorageClient.TASK_ARCHIVE_OBJECT_NAME).write_bytes(
         b"archive"
     )
 

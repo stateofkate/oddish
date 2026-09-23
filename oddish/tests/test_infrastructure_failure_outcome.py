@@ -322,7 +322,7 @@ async def _handle_end(monkeypatch, trial, hook_event):
         yield SimpleNamespace(execute=lambda *_a, **_kw: None), trial
 
     monkeypatch.setattr(trial_handler, "_trial_session", fake_trial_session)
-    await trial_handler._handle_harbor_event(hook_event, trial_id=trial.id)
+    await trial_handler.handle_harbor_event(hook_event, trial_id=trial.id)
 
 
 @pytest.mark.asyncio

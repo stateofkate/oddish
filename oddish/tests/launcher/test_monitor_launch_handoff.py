@@ -17,6 +17,7 @@ import pytest
 from oddish.costs.modal_cost import SpanResources
 from oddish.workers.launcher import costs as monitor_costs
 from oddish.workers.launcher import launch as ml
+from oddish.workers.queue import byok, job_tokens
 
 
 def _job():
@@ -110,7 +111,7 @@ def _stub_launch(
     monkeypatch.setattr(ml, "_HEARTBEAT_SECONDS", 0.01)
     monkeypatch.setattr(ml, "control_plane_url", lambda: "https://api.test")
     monkeypatch.setattr(ml, "record_monitor_heartbeat", beat or _beat)
-    monkeypatch.setattr(ml, "_prepare_trial_run", lambda **k: _val(prepared))
+    monkeypatch.setattr(ml, "prepare_trial_run", lambda **k: _val(prepared))
     monkeypatch.setattr(ml.monitor_sandbox, "provider_for_environment", lambda e: "modal")
     monkeypatch.setattr(ml.monitor_sandbox, "get_starter", lambda p: starter)
     monkeypatch.setattr(
@@ -119,19 +120,19 @@ def _stub_launch(
         staticmethod(lambda r, **kw: None),
     )
     monkeypatch.setattr(ml, "_resolve_image", _noop)
-    monkeypatch.setattr(ml, "_claim_funding_key", lambda **k: _val((True, {})))
+    monkeypatch.setattr(ml, "claim_funding_key", lambda **k: _val((True, {})))
     monkeypatch.setattr(ml, "_task_facts", lambda *a, **k: _val((None, None, {})))
     monkeypatch.setattr(ml.monitor_token, "mint_monitor_credential", lambda *a: _val("tok"))
     monkeypatch.setattr(ml.monitor_token, "revoke_monitor_credential", _revoke)
-    monkeypatch.setattr(ml.job_tokens, "scoped_model_env", lambda **k: {})
-    monkeypatch.setattr(ml.byok, "merge_byok_env", lambda *a: {})
+    monkeypatch.setattr(job_tokens, "scoped_model_env", lambda **k: {})
+    monkeypatch.setattr(byok, "merge_byok_env", lambda *a: {})
     monkeypatch.setattr(ml.monitor_image_cache, "resolve", resolve or _resolve)
     monkeypatch.setattr(ml, "warm_source_for_trial", _noop)
     monkeypatch.setattr(ml, "_start", _start)
     monkeypatch.setattr(ml, "_persist_handle", _persist)
     monkeypatch.setattr(ml, "_still_owns", _still_owns)
     monkeypatch.setattr(ml.monitor_costs, "open_sandbox_span", _span)
-    monkeypatch.setattr(ml, "_settle_trial_attempt", _settle)
+    monkeypatch.setattr(ml, "settle_trial_attempt", _settle)
     # Any row read after create (a check-in poll) fails the test.
     monkeypatch.setattr(ml, "get_session", _no_reads)
     return calls
@@ -381,7 +382,7 @@ async def test_the_cancel_teardown_closes_the_span_the_payload_records(monkeypat
         settled.append((state.worker_job_id, state.worker_job_attempt, outcome))
 
     monkeypatch.setattr(ml, "get_session", _get_session)
-    monkeypatch.setattr(ml, "_settle_compute_costs", _settle)
+    monkeypatch.setattr(ml, "settle_compute_costs", _settle)
     monkeypatch.setattr(ml.monitor_token, "revoke_monitor_credential", _noop)
     prepared = SimpleNamespace(
         trial_attempt=1, experiment_id="", org_id=None, billed_user_id=None,

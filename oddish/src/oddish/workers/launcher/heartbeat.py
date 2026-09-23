@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from oddish.workers.launcher.token import MonitorAttempt
-from oddish.workers.queue.trial_handler import _touch_trial_execution
+from oddish.workers.queue.trial_steps import touch_trial_execution
 from oddish.workers.queue.worker_job_single_job import heartbeat_worker_job
 
 
@@ -20,7 +20,7 @@ async def record_monitor_heartbeat(
     ``SandboxCapacityLeaseLostError`` when the capacity lease is gone.
     """
     if attempt.trial_id is not None:
-        await _touch_trial_execution(
+        await touch_trial_execution(
             trial_id=attempt.trial_id,
             worker_id=attempt.worker_id,
             queue_slot=attempt.queue_slot,

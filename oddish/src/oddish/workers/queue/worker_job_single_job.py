@@ -1109,7 +1109,7 @@ async def _settle_rejected_reroute(
     return WorkerJobStatus.FAILED
 
 
-async def _record_outcome(
+async def record_outcome(
     *,
     job_id: str,
     worker_id: str,
@@ -1575,7 +1575,7 @@ async def run_single_worker_job(
             )
 
         outcome_at = datetime.now(timezone.utc)
-        persisted_status = await _record_outcome(
+        persisted_status = await record_outcome(
             job_id=job.id,
             worker_id=worker_id,
             outcome=outcome,

@@ -210,7 +210,7 @@ async def test_retry_preparation_reuses_the_environment_stored_on_the_trial():
         )
         trial_id = trials[0].id
 
-    first_attempt = await trial_handler._prepare_trial_run(
+    first_attempt = await trial_handler.prepare_trial_run(
         trial_id=trial_id,
         worker_id=None,
         queue_slot=None,
@@ -238,7 +238,7 @@ async def test_retry_preparation_reuses_the_environment_stored_on_the_trial():
     assert terminal is False
     assert event is None
 
-    second_attempt = await trial_handler._prepare_trial_run(
+    second_attempt = await trial_handler.prepare_trial_run(
         trial_id=trial_id,
         worker_id=None,
         queue_slot=None,

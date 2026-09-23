@@ -76,13 +76,13 @@ async def test_settle_deletes_the_stored_archive_key_only_after_the_upload(
     handler = SimpleNamespace(outcome_for_settled_trial=outcome_for_settled_trial)
     monkeypatch.setattr(monitor_settle, "get_session", get_session)
     monkeypatch.setattr(monitor_settle, "get_storage_client", lambda: storage)
-    monkeypatch.setattr(monitor_settle, "_mirror_to_sauron", noop)
-    monkeypatch.setattr(monitor_settle, "_settle_trial_attempt", noop)
+    monkeypatch.setattr(monitor_settle, "mirror_to_sauron", noop)
+    monkeypatch.setattr(monitor_settle, "settle_trial_attempt", noop)
     monkeypatch.setattr(
         monitor_settle, "ensure_builtin_handlers_registered", lambda: None
     )
     monkeypatch.setattr(monitor_settle, "get_handler", lambda _kind: handler)
-    monkeypatch.setattr(monitor_settle, "_record_outcome", noop)
+    monkeypatch.setattr(monitor_settle, "record_outcome", noop)
     monkeypatch.setattr(monitor_settle.monitor_token, "revoke_monitor_credential", noop)
     monkeypatch.setattr(monitor_settle, "_post_success_hook", None)
 

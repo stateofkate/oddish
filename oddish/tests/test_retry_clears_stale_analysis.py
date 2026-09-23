@@ -200,7 +200,7 @@ async def test_a_first_attempt_analysis_is_left_alone(cleanup_task_ids):
 async def test_a_label_written_mid_attempt_is_dropped_too(cleanup_task_ids):
     """An in-flight QA job can classify a trial while its attempt is running.
 
-    ``_prepare_trial_run`` wipes ``trial_s3_key``/``result`` at attempt start, so
+    ``prepare_trial_run`` wipes ``trial_s3_key``/``result`` at attempt start, so
     such a label is derived from an empty row -- and it carries a stamp NEWER
     than the attempt's own start, which is why the clear cannot key on
     timestamps.

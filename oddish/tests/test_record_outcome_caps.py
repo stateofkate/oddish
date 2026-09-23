@@ -10,7 +10,7 @@ import asyncio
 import oddish.workers.queue.worker_job_single_job as wjs
 from oddish.db import WorkerJobStatus
 from oddish.workers.jobs.registry import JobFailure, JobOutcome
-from oddish.workers.queue.worker_job_single_job import _record_outcome
+from oddish.workers.queue.worker_job_single_job import record_outcome
 
 
 class _FakeConnection:
@@ -37,7 +37,7 @@ def _run(outcome_kwargs, *, snapshot, current, monkeypatch):
 
     monkeypatch.setattr(wjs, "_open_connection", _fake_open)
     status = asyncio.run(
-        _record_outcome(
+        record_outcome(
             job_id="j1",
             worker_id="w1",
             outcome=JobOutcome(

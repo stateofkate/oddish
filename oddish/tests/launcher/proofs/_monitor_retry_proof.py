@@ -10,18 +10,10 @@ import asyncio
 import sys
 import uuid
 from datetime import timedelta
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "src"))
-
-from oddish.config import Settings
-
-Settings.db_use_null_pool = True
-
-import oddish.db.connection as _conn
+import _harness  # sets the path and the null pool first
 from oddish.db import WorkerJobKind, WorkerJobStatus, get_session
 from oddish.db.models import (
-    Base,
     QueueSlotModel,
     SandboxCapacityLeaseModel,
     WorkerJobModel,
@@ -35,7 +27,7 @@ from oddish.workers.launcher.result import accept_monitor_result
 from oddish.workers.launcher.settle import settle_monitor_result
 from oddish.workers.queue.worker_job_single_job import (
     _ensure_handlers_registered,
-    _record_outcome,
+    record_outcome,
     claim_single_worker_job,
 )
 from sqlalchemy import update
@@ -99,14 +91,7 @@ async def _job(job_id: str) -> WorkerJobModel:
 
 
 async def _main() -> int:
-    _conn.engine = _conn._create_engine()
-    _conn.async_session_maker = _conn._create_session_maker(_conn.engine)
-    tables = [t for name, t in Base.metadata.tables.items() if name != "api_keys"]
-    async with _conn.engine.begin() as connection:
-        await connection.run_sync(
-            lambda sync_conn: Base.metadata.create_all(sync_conn, tables=tables)
-        )
-
+    await _harness.boot()
     # Attempt 1 checked in, reported a failure, took a strike, and was retried.
     job_id = "wj_" + uuid.uuid4().hex[:12]
     long_ago = utcnow() - timedelta(minutes=30)
@@ -236,7 +221,7 @@ async def _main() -> int:
         )  # fmt: skip
     written = await asyncio.gather(
         *(
-            _record_outcome(
+            record_outcome(
                 job_id=raced_id, worker_id="launcher-1", outcome=JobOutcome.ok(),
                 attempts=1, max_attempts=6,
             )
@@ -369,7 +354,7 @@ async def _main() -> int:
 
     for name, ok in checks.items():
         print(f"CHECK {name}={ok}")
-    await _conn.engine.dispose()
+    await _harness.dispose()
     return 0 if all(checks.values()) else 1
 
 

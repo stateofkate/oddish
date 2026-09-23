@@ -157,7 +157,7 @@ async def _promote_expansion_if_current(
             archive_key
             and row.task_s3_key
             and (
-                StorageClient._task_archive_key_from_prefix(row.task_s3_key)
+                StorageClient.task_archive_key_from_prefix(row.task_s3_key)
                 != archive_key
             )
         ):
@@ -243,7 +243,7 @@ async def _list_loose_task_files(
             tail = first[1:].split("-", 1)[0]
             if tail.isdigit():
                 continue
-        if rel == StorageClient._TASK_ARCHIVE_OBJECT_NAME:
+        if rel == StorageClient.TASK_ARCHIVE_OBJECT_NAME:
             continue
         out.append(
             {

@@ -623,9 +623,9 @@ async def _run_harbor_trial(trial_id: str) -> None:
         # Stamp the record with what this process actually executes
         # (worker-runtime invariant 7); the refresh reads the imported
         # harbor's installation metadata, so local mode needs no override.
-        from oddish.workers.queue.trial_handler import _refresh_stable_variant_pin
+        from oddish.workers.queue.trial_steps import refresh_stable_variant_pin
 
-        harbor_config = _refresh_stable_variant_pin(trial) or {}
+        harbor_config = refresh_stable_variant_pin(trial) or {}
         agent_name = trial.agent
         model_name = trial.model
         trial_org_id = trial.org_id

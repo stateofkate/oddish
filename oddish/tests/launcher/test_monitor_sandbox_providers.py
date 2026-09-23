@@ -295,9 +295,7 @@ async def test_the_launcher_reads_the_size_from_the_tasks_own_toml(
     async def _no_judge_costs(**_):
         return None
 
-    monkeypatch.setattr(
-        monitor_launch, "_begin_judge_costs_if_enabled", _no_judge_costs
-    )
+    monkeypatch.setattr(monitor_launch, "begin_judge_costs_if_enabled", _no_judge_costs)
     prepared = SimpleNamespace(
         task_id="t", task_s3_key=None, task_path=str(tmp_path), trial_harbor_config={}
     )

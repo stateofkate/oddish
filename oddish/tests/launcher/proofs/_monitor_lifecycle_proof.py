@@ -10,18 +10,10 @@ from __future__ import annotations
 import asyncio
 import sys
 import uuid
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "src"))
-
-from oddish.config import Settings
-
-Settings.db_use_null_pool = True
-
-import oddish.db.connection as _conn
+import _harness  # sets the path and the null pool first
 from oddish.db import WorkerJobKind, WorkerJobStatus, get_session
 from oddish.db.models import (
-    Base,
     ExperimentModel,
     TaskModel,
     TrialModel,
@@ -39,14 +31,7 @@ async def _trial(trial_id: str) -> TrialModel:
 
 
 async def _main() -> int:
-    _conn.engine = _conn._create_engine()
-    _conn.async_session_maker = _conn._create_session_maker(_conn.engine)
-    tables = [t for name, t in Base.metadata.tables.items() if name != "api_keys"]
-    async with _conn.engine.begin() as connection:
-        await connection.run_sync(
-            lambda sync_conn: Base.metadata.create_all(sync_conn, tables=tables)
-        )
-
+    await _harness.boot()
     suffix = uuid.uuid4().hex[:10]
     trial_id, job_id = f"tr_{suffix}", f"wj_{suffix}"
     async with get_session() as session:

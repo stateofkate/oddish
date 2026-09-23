@@ -177,21 +177,21 @@ class _FakeStorage:
         """
         if task_s3_prefix:
             root = task_s3_prefix.rstrip("/") + "/"
-            return root, f"{root}{StorageClient._TASK_ARCHIVE_OBJECT_NAME}"
+            return root, f"{root}{StorageClient.TASK_ARCHIVE_OBJECT_NAME}"
         if version is not None:
             vroot = f"tasks/{task_id}/v{version}/"
-            varchive = f"{vroot}{StorageClient._TASK_ARCHIVE_OBJECT_NAME}"
+            varchive = f"{vroot}{StorageClient.TASK_ARCHIVE_OBJECT_NAME}"
             if varchive in self._objects:
                 return vroot, varchive
             fallback_archive = (
-                f"tasks/{task_id}/{StorageClient._TASK_ARCHIVE_OBJECT_NAME}"
+                f"tasks/{task_id}/{StorageClient.TASK_ARCHIVE_OBJECT_NAME}"
             )
             if fallback_archive in self._objects:
                 return f"tasks/{task_id}/", fallback_archive
             return vroot, varchive
         return (
             f"tasks/{task_id}/",
-            f"tasks/{task_id}/{StorageClient._TASK_ARCHIVE_OBJECT_NAME}",
+            f"tasks/{task_id}/{StorageClient.TASK_ARCHIVE_OBJECT_NAME}",
         )
 
 

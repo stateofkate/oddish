@@ -52,12 +52,12 @@ def _settle_fakes(monkeypatch, job):
 
     handler = SimpleNamespace(outcome_for_settled_trial=outcome_for_settled_trial)
     monkeypatch.setattr(monitor_settle, "get_session", get_session)
-    monkeypatch.setattr(monitor_settle, "_settle_trial_attempt", noop)
+    monkeypatch.setattr(monitor_settle, "settle_trial_attempt", noop)
     monkeypatch.setattr(
         monitor_settle, "ensure_builtin_handlers_registered", lambda: None
     )
     monkeypatch.setattr(monitor_settle, "get_handler", lambda _kind: handler)
-    monkeypatch.setattr(monitor_settle, "_record_outcome", record_outcome)
+    monkeypatch.setattr(monitor_settle, "record_outcome", record_outcome)
     monkeypatch.setattr(monitor_settle, "_post_success_hook", None)
 
 

@@ -322,7 +322,7 @@ class StorageClient:
         return self._client  # type: ignore[return-value]
 
     _MAX_CONCURRENT_UPLOADS = 8
-    _TASK_ARCHIVE_OBJECT_NAME = ".oddish-task.tar.gz"
+    TASK_ARCHIVE_OBJECT_NAME = ".oddish-task.tar.gz"
     _EXPANDED_MANIFEST_OBJECT_NAME = ".oddish-manifest.json"
     # Staging archive written by ``oddish import`` clients via a presigned
     # PUT; the complete endpoint extracts it into the trial prefix and
@@ -584,14 +584,14 @@ class StorageClient:
 
     @classmethod
     def _task_archive_key(cls, task_id: str) -> str:
-        return f"tasks/{task_id}/{cls._TASK_ARCHIVE_OBJECT_NAME}"
+        return f"tasks/{task_id}/{cls.TASK_ARCHIVE_OBJECT_NAME}"
 
     @classmethod
-    def _task_archive_key_from_prefix(cls, s3_prefix: str) -> str:
+    def task_archive_key_from_prefix(cls, s3_prefix: str) -> str:
         normalized_prefix = normalize_s3_prefix(s3_prefix)
         if not normalized_prefix:
             raise ValueError(f"Invalid task S3 prefix: {s3_prefix}")
-        return f"{normalized_prefix}{cls._TASK_ARCHIVE_OBJECT_NAME}"
+        return f"{normalized_prefix}{cls.TASK_ARCHIVE_OBJECT_NAME}"
 
     async def _resolve_task_prefix(
         self,
@@ -613,11 +613,11 @@ class StorageClient:
             root = normalize_s3_prefix(task_s3_prefix)
             if not root:
                 raise ValueError(f"Invalid task S3 prefix: {task_s3_prefix}")
-            return root, self._task_archive_key_from_prefix(root)
+            return root, self.task_archive_key_from_prefix(root)
 
         if version is not None:
             vroot = f"tasks/{task_id}/v{version}/"
-            varchive = f"{vroot}{self._TASK_ARCHIVE_OBJECT_NAME}"
+            varchive = f"{vroot}{self.TASK_ARCHIVE_OBJECT_NAME}"
             if await self.object_exists(varchive):
                 return vroot, varchive
             # Check if unversioned prefix has the archive instead (backfill)
@@ -672,7 +672,7 @@ class StorageClient:
         await self._ensure_client()
         local_path.mkdir(parents=True, exist_ok=True)
 
-        archive_key = self._task_archive_key_from_prefix(s3_prefix)
+        archive_key = self.task_archive_key_from_prefix(s3_prefix)
         if await self.object_exists(archive_key):
             await self._download_and_extract_task_archive(archive_key, local_path)
             return
@@ -689,7 +689,7 @@ class StorageClient:
         ):
             for obj in page.get("Contents", []):
                 s3_key = obj["Key"]
-                if s3_key.endswith(f"/{self._TASK_ARCHIVE_OBJECT_NAME}"):
+                if s3_key.endswith(f"/{self.TASK_ARCHIVE_OBJECT_NAME}"):
                     if nested_archive_key is None or s3_key > nested_archive_key:
                         nested_archive_key = s3_key
                 else:
@@ -1136,7 +1136,7 @@ class StorageClient:
             if (
                 len(token) == 32
                 and all(c in "0123456789abcdef" for c in token)
-                and name == self._TASK_ARCHIVE_OBJECT_NAME
+                and name == self.TASK_ARCHIVE_OBJECT_NAME
             ):
                 etag = self._archive_etag_hints.get(archive_key)
                 if etag and self._archive_cache_get((archive_key, etag)) is not None:

@@ -11,17 +11,10 @@ import sys
 import time
 import uuid
 from datetime import timedelta
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "src"))
-
-from oddish.config import Settings
-
-Settings.db_use_null_pool = True
-
-import oddish.db.connection as _conn
+import _harness  # sets the path and the null pool first
 from oddish.db import WorkerJobKind, WorkerJobStatus, get_session
-from oddish.db.models import Base, WorkerJobModel, utcnow
+from oddish.db.models import WorkerJobModel, utcnow
 from oddish.workers.launcher import reaper as check
 from sqlalchemy import func, select
 
@@ -55,13 +48,7 @@ async def _checked(queue: str) -> int:
 
 
 async def _main() -> int:
-    _conn.engine = _conn._create_engine()
-    _conn.async_session_maker = _conn._create_session_maker(_conn.engine)
-    tables = [t for name, t in Base.metadata.tables.items() if name != "api_keys"]
-    async with _conn.engine.begin() as connection:
-        await connection.run_sync(
-            lambda sync_conn: Base.metadata.create_all(sync_conn, tables=tables)
-        )
+    await _harness.boot()
     checks: dict[str, bool] = {}
 
     async def _slow_unresponsive(provider, external_id):
@@ -96,7 +83,7 @@ async def _main() -> int:
 
     for name, ok in checks.items():
         print(f"CHECK {name}={ok}")
-    await _conn.engine.dispose()
+    await _harness.dispose()
     return 0 if all(checks.values()) else 1
 
 

@@ -98,7 +98,7 @@ async def test_finished_event_is_emitted_after_result_storage_returns(monkeypatc
 
     prepared = SimpleNamespace(trial_attempt=1, org_id=None, billed_user_id=None)
     execution = SimpleNamespace(outcome=None, execution_error=None, retryable=True)
-    await trial_handler._settle_trial_attempt(
+    await trial_handler.settle_trial_attempt(
         trial_id="trial-1",
         prepared_trial=prepared,
         execution=execution,

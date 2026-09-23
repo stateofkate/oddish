@@ -12,7 +12,6 @@ deadline bounds it.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import shutil
@@ -27,7 +26,6 @@ from oddish.config import api_base_url_for_modal_app, settings
 from oddish.db import WorkerJobModel, WorkerJobStatus, get_session
 from oddish.db.models import utcnow
 from oddish.db.storage import resolve_task_directory
-from oddish.mon.contract import AGENT_ENV_VAR, API_URL_VAR, REGISTRY_AUTH_VAR, TOKEN_VAR
 from oddish.workers.harbor.runner import (
     capture_sandbox_resources,
     capture_verifier_resources,
@@ -35,21 +33,21 @@ from oddish.workers.harbor.runner import (
 from oddish.workers.jobs.registry import JobOutcome
 from oddish.workers.launcher import costs as monitor_costs
 from oddish.workers.launcher import image_cache as monitor_image_cache
+from oddish.workers.launcher import launch_env
 from oddish.workers.launcher import token as monitor_token
 from oddish.workers.launcher.attempt import warm_source_for_trial
 from oddish.workers.launcher.providers import base as monitor_sandbox
-from oddish.workers.queue import byok, job_tokens
 from oddish.workers.queue import judge_keys as verifier_secrets
 from oddish.workers.launcher.heartbeat import record_monitor_heartbeat
 from oddish.workers.launcher.settle import CAPACITY_PAYLOAD_KEY
 from oddish.workers.console import console
 from oddish.workers.queue.trial_handler import (
     TrialExecutionResult,
-    _begin_judge_costs_if_enabled,
-    _claim_funding_key,
-    _prepare_trial_run,
-    _settle_compute_costs,
-    _settle_trial_attempt,
+    begin_judge_costs_if_enabled,
+    claim_funding_key,
+    prepare_trial_run,
+    settle_compute_costs,
+    settle_trial_attempt,
 )
 from oddish.workers.queue.worker_job_single_job import ClaimedWorkerJob
 
@@ -202,7 +200,7 @@ async def _task_facts(job: ClaimedWorkerJob, prepared, provider: str):
         task_path=prepared.task_path,
     )
     try:
-        await _begin_judge_costs_if_enabled(
+        await begin_judge_costs_if_enabled(
             trial_id=job.subject_id,
             prepared_trial=prepared,
             task_path=task_path,
@@ -242,7 +240,7 @@ async def _close_sandbox_span_after_failed_launch(
             prepared=prepared,
         )
         if state is not None:
-            await _settle_compute_costs(state, None)
+            await settle_compute_costs(state, None)
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "could not close the cost span for job=%s after a failed launch: %s",
@@ -251,7 +249,7 @@ async def _close_sandbox_span_after_failed_launch(
         )
 
 
-async def _after_failed_launch(
+async def fail_launch(
     exc: Exception,
     *,
     job: ClaimedWorkerJob,
@@ -292,7 +290,7 @@ async def _after_failed_launch(
     if ownership_lost:
         return
     await monitor_token.revoke_monitor_credential(job.id, attempt=job.attempts)
-    await _settle_trial_attempt(
+    await settle_trial_attempt(
         trial_id=trial_id,
         prepared_trial=prepared,
         execution=TrialExecutionResult(
@@ -372,7 +370,7 @@ async def launch_monitor_attempt(
             "No control-plane URL for the monitor: set ODDISH_MONITOR_API_URL"
         )
     trial_id = job.subject_id
-    prepared = await _prepare_trial_run(
+    prepared = await prepare_trial_run(
         trial_id=trial_id,
         worker_id=job.worker_id,
         queue_slot=job.queue_slot,
@@ -443,7 +441,7 @@ async def launch_monitor_attempt(
             job, prepared.task_id, prepared.task_version, image_resolver
         )
         # The user's own model key, and which key funds this attempt.
-        owned, byok_env = await _claim_funding_key(
+        owned, byok_env = await claim_funding_key(
             trial_id=trial_id, prepared_trial=prepared, worker_id=job.worker_id
         )
         if not owned:
@@ -460,49 +458,14 @@ async def launch_monitor_attempt(
             # Price what is really provisioned: provider rounding included.
             resources = starter.provisioned(size).billed_as(resources)
         credential = await monitor_token.mint_monitor_credential(job.id, job.attempts)
-        # The sandbox has no ambient secrets, so the platform key for this
-        # provider is passed in; a user key wins over it.
-        agent_env = {
-            **job_tokens.scoped_model_env(
-                agent=prepared.trial_agent,
-                model=prepared.trial_model,
-                settings=settings,
-                byok_env=byok_env,
-                raw_harbor_config=prepared.trial_harbor_config,
-                # The launcher runs in the worker, whose environment holds the
-                # names some agents authenticate with and no settings field
-                # carries (grok-build's xAI keys, single-llm's AWS chain on
-                # Bedrock). Select those by name for the sandbox, which has no
-                # ambient environment of its own.
-                ambient=os.environ,
-            ),
-            # Harness credentials read from the host by agent, not provider
-            # (cursor-cli's CURSOR_API_KEY).
-            **job_tokens.agent_ambient_env(prepared.trial_agent, os.environ),
-            **(byok.merge_byok_env(byok_env, None) or {}),
-        }
-        env = {
-            API_URL_VAR: api_url,
-            TOKEN_VAR: credential,
-            AGENT_ENV_VAR: json.dumps(agent_env),
-            # Judge keys the task's env blocks interpolate (verifier, environment,
-            # solution, step verifiers). They go into the monitor's process env,
-            # the same place the agent's model keys land (mon/runner.py updates
-            # os.environ with them) and where Harbor resolves ``${VAR}``. Harbor's
-            # agent adapters forward only the provider keys they know by name, so
-            # a judge key reaches the agent container only when the agent's own
-            # provider is that judge's provider, as on the worker path.
-            **judge_env,
-            **(
-                {
-                    REGISTRY_AUTH_VAR: json.dumps(
-                        [c.to_dict() for c in registry_credentials]
-                    )
-                }
-                if registry_credentials
-                else {}
-            ),
-        }
+        env = launch_env.build_sandbox_env(
+            prepared,
+            api_url=api_url,
+            credential=credential,
+            byok_env=byok_env,
+            judge_env=judge_env,
+            registry_credentials=registry_credentials,
+        )
         image, cache_key = await monitor_image_cache.resolve(
             starter,
             monitor_image=settings.monitor_image,
@@ -571,7 +534,7 @@ async def launch_monitor_attempt(
         )
         raise
     except Exception as exc:
-        await _after_failed_launch(
+        await fail_launch(
             exc,
             job=job,
             trial_id=trial_id,

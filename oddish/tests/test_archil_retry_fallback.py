@@ -7,7 +7,7 @@ import pytest
 
 from oddish.db import TrialModel, TrialStatus
 from oddish.workers.harbor.outcome import HarborOutcome
-from oddish.workers.queue import trial_handler
+from oddish.workers.queue import trial_handler, trial_steps
 
 
 @pytest.mark.asyncio
@@ -59,13 +59,13 @@ async def test_retry_pickup_persists_and_executes_the_fallback(
         yield session, trial
         committed_environments.append(trial.environment)
 
-    monkeypatch.setattr(trial_handler, "_trial_session", trial_session)
-    monkeypatch.setattr(trial_handler, "refresh_task_browse_summaries", AsyncMock())
+    monkeypatch.setattr(trial_steps, "_trial_session", trial_session)
+    monkeypatch.setattr(trial_steps, "refresh_task_browse_summaries", AsyncMock())
     monkeypatch.setattr(
         trial_handler.settings, "harbor_environment", default_environment
     )
 
-    prepared = await trial_handler._prepare_trial_run(
+    prepared = await trial_handler.prepare_trial_run(
         trial_id=trial.id,
         worker_id="worker-1",
         queue_slot=None,
@@ -99,11 +99,13 @@ async def test_failed_attempts_then_modal_success(monkeypatch, failure):
     async def trial_session(_trial_id, **_kwargs):
         yield session, trial
 
+    monkeypatch.setattr(trial_steps, "_trial_session", trial_session)
     monkeypatch.setattr(trial_handler, "_trial_session", trial_session)
+    monkeypatch.setattr(trial_steps, "refresh_task_browse_summaries", AsyncMock())
     monkeypatch.setattr(trial_handler, "refresh_task_browse_summaries", AsyncMock())
 
     for attempt, provider in [(1, "archil"), (2, "archil"), (3, "modal")]:
-        prepared = await trial_handler._prepare_trial_run(
+        prepared = await trial_handler.prepare_trial_run(
             trial_id=trial.id,
             worker_id=None,
             queue_slot=None,

@@ -11,19 +11,12 @@ import json
 import sys
 import uuid
 from datetime import timedelta
-from pathlib import Path
 from types import SimpleNamespace
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "src"))
-
-from oddish.config import Settings, settings
-
-Settings.db_use_null_pool = True
-
-import oddish.db.connection as _conn
+import _harness  # sets the path and the null pool first
+from oddish.config import settings
 from oddish.db import WorkerJobKind, WorkerJobStatus, get_session
 from oddish.db.models import (
-    Base,
     ExperimentModel,
     SandboxCapacityLeaseModel,
     TaskModel,
@@ -116,11 +109,7 @@ async def _rows(job):
 
 
 async def _main() -> int:
-    _conn.engine = _conn._create_engine()
-    _conn.async_session_maker = _conn._create_session_maker(_conn.engine)
-    tables = [t for n, t in Base.metadata.tables.items() if n != "api_keys"]
-    async with _conn.engine.begin() as c:
-        await c.run_sync(lambda sc: Base.metadata.create_all(sc, tables=tables))
+    await _harness.boot()
     settings.monitor_api_url = "http://localhost:1"
     settings.monitor_sandbox_starter = "fake"
 

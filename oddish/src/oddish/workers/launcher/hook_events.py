@@ -1,6 +1,6 @@
 """Harbor lifecycle events from the in-sandbox monitor.
 
-The worker's hook handler (``trial_handler._handle_harbor_event``) writes the
+The worker's hook handler (``trial_handler.handle_harbor_event``) writes the
 trial's stage, reward, status and errors. It is reused unchanged: the monitor
 sends a plain summary of each event and the API rebuilds the small part of the
 hook event the handler reads.
@@ -51,11 +51,11 @@ def hook_event_from_summary(summary: dict[str, Any]) -> SimpleNamespace:
 async def apply_lifecycle_event(
     attempt: MonitorAttempt, summary: dict[str, Any]
 ) -> None:
-    from oddish.workers.queue.trial_handler import _handle_harbor_event
+    from oddish.workers.queue.trial_handler import handle_harbor_event
 
     if attempt.trial_id is None:
         raise ValueError("This attempt does not drive a trial")
-    await _handle_harbor_event(
+    await handle_harbor_event(
         hook_event_from_summary(summary),  # type: ignore[arg-type]
         trial_id=attempt.trial_id,
         worker_id=attempt.worker_id,
