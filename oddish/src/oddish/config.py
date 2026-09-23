@@ -1850,6 +1850,15 @@ class Settings(BaseSettings):
     # whose entrypoint is the monitor, hands the job off and exits. The flag is
     # the rollout's rollback lever; it goes when the old worker path is deleted.
     monitor_execution_enabled: bool = True
+    # Sampled rollout. A trial is routed to the monitor when its id hashes into
+    # a bucket below this percent (100: every eligible trial, 0: none), and only
+    # for its first ``monitor_execution_fallback_after_attempts`` attempts: a
+    # sampled trial that keeps failing on the monitor finishes on the worker.
+    # Both are per-environment env vars (ODDISH_MONITOR_EXECUTION_SAMPLE_PERCENT,
+    # ODDISH_MONITOR_EXECUTION_FALLBACK_AFTER_ATTEMPTS); the route and its
+    # reason are logged once per claim as ``metric=monitor_route``.
+    monitor_execution_sample_percent: int = Field(100, ge=0, le=100)
+    monitor_execution_fallback_after_attempts: int = Field(2, ge=1)
     # How the sandbox reaches the control plane. Unset: the resolution probe
     # sandboxes already use (ODDISH_PUBLIC_API_BASE_URL, else the Modal app name).
     monitor_api_url: str | None = None

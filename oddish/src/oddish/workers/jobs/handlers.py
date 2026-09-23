@@ -86,6 +86,25 @@ async def _monitor_can_drive(trial_id: str) -> bool:
         return False
 
 
+async def _monitor_routes(trial_id: str, attempt: int) -> bool:
+    """The sampled-rollout decision, logged once per claim with its reason."""
+    from oddish.config import settings
+    from oddish.workers.console import console
+    from oddish.workers.launcher.route import monitor_route
+
+    route = monitor_route(
+        trial_id,
+        attempt,
+        percent=settings.monitor_execution_sample_percent,
+        fallback_after=settings.monitor_execution_fallback_after_attempts,
+    )
+    console.print(
+        f"metric=monitor_route trial={trial_id} attempt={attempt} "
+        f"route={route.name} reason={route.reason}"
+    )
+    return route.monitor and await _monitor_can_drive(trial_id)
+
+
 class TrialJobHandler:
     kind = WorkerJobKind.TRIAL
 
@@ -106,7 +125,9 @@ class TrialJobHandler:
             return _fail_permanent(str(exc))
         from oddish.config import settings
 
-        if settings.monitor_execution_enabled and await _monitor_can_drive(trial_id):
+        if settings.monitor_execution_enabled and await _monitor_routes(
+            trial_id, job.attempts
+        ):
             from oddish.workers.launcher.launch import launch_monitor_attempt
 
             handoff = await launch_monitor_attempt(job, creds or None)

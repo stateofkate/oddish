@@ -940,13 +940,14 @@ ENV_VARS = {
     # Gate LLM trials on nop/oracle baseline outcomes. Off unless the deploy
     # environment sets it (preview sets "1"); prod stays off until flipped here.
     "ODDISH_GATE_LLM_ON_BASELINES": os.environ.get("ODDISH_GATE_LLM_ON_BASELINES", "0"),
-    # oddish-mon rollout lever (oddish.config.Settings.monitor_execution_enabled).
-    # Unset keeps the code default (on); production sets "false" in modal-deploy.yml.
-    **(
-        {"ODDISH_MONITOR_EXECUTION_ENABLED": os.environ["ODDISH_MONITOR_EXECUTION_ENABLED"]}
-        if os.environ.get("ODDISH_MONITOR_EXECUTION_ENABLED")
-        else {}
-    ),
+    # oddish-mon rollout levers (oddish.config.Settings.monitor_execution_*):
+    # the flag, the sample percent and the fallback attempt count. Unset keeps
+    # the code defaults; each deploy workflow sets its own lines.
+    **{
+        k: v
+        for k, v in {**LOCAL_DOTENV_VARS, **os.environ}.items()
+        if k.startswith("ODDISH_MONITOR_EXECUTION_")
+    },
     # GKE coordinates resolved at deploy time (process env wins over
     # backend/.env, mirroring _effective_gke_cluster_name), baked into the
     # image like MODAL_APP_NAME above. The oddish-gcp secret gate and the
@@ -987,22 +988,16 @@ ENV_VARS = {
     _THUNDER_ENABLED_ENV: str(_THUNDER_ENABLED).lower(),
     _THUNDER_CAPACITY_FALLBACK_ENV: str(
         _is_truthy(
-            _deploy_value(
-                _THUNDER_CAPACITY_FALLBACK_ENV, os.environ, LOCAL_DOTENV_VARS
-            )
+            _deploy_value(_THUNDER_CAPACITY_FALLBACK_ENV, os.environ, LOCAL_DOTENV_VARS)
         )
     ).lower(),
     _THUNDER_FALLBACK_PROVIDER_ENV: (
-        _deploy_value(
-            _THUNDER_FALLBACK_PROVIDER_ENV, os.environ, LOCAL_DOTENV_VARS
-        )
+        _deploy_value(_THUNDER_FALLBACK_PROVIDER_ENV, os.environ, LOCAL_DOTENV_VARS)
         or "modal"
     ),
     "ODDISH_THUNDER_MAX_CAPACITY": str(
         int(
-            _deploy_value(
-                "ODDISH_THUNDER_MAX_CAPACITY", os.environ, LOCAL_DOTENV_VARS
-            )
+            _deploy_value("ODDISH_THUNDER_MAX_CAPACITY", os.environ, LOCAL_DOTENV_VARS)
             or "128"
         )
     ),
@@ -1163,7 +1158,8 @@ def _build_worker_image(harbor_override: "HarborVariant | None" = None) -> modal
         # variant's Harbor override and repeat third-party dependency work.
         .run_commands(
             "/.uv/uv pip install --python /.uv/.venv/bin/python --no-deps -e /oddish"
-        ).env(ENV_VARS)
+        )
+        .env(ENV_VARS)
     )
     # Runtime secrets can override env vars, so keep the provider plan and
     # coordinates in immutable files after all shared dependency layers.

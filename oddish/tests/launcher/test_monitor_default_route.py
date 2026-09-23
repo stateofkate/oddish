@@ -140,10 +140,25 @@ async def test_launch_that_settled_here_reports_the_settled_outcome(monkeypatch)
 @pytest.mark.parametrize(
     ("explicit", "public", "app", "expected"),
     [
-        ("https://mine.example", "https://pub.example", "oddish", "https://mine.example"),
+        (
+            "https://mine.example",
+            "https://pub.example",
+            "oddish",
+            "https://mine.example",
+        ),
         (None, "https://pub.example", "oddish", "https://pub.example"),
-        (None, None, "oddish-pr-1760", "https://abundant-ai-preview--oddish-pr-1760-api.modal.run"),
-        (None, None, "oddish-staging", "https://abundant-ai-staging--oddish-staging-api.modal.run"),
+        (
+            None,
+            None,
+            "oddish-pr-1760",
+            "https://abundant-ai-preview--oddish-pr-1760-api.modal.run",
+        ),
+        (
+            None,
+            None,
+            "oddish-staging",
+            "https://abundant-ai-staging--oddish-staging-api.modal.run",
+        ),
         (None, None, "oddish", "https://abundant-ai--api.modal.run"),
         (None, None, "someone-elses-app", ""),
         (None, None, None, ""),
@@ -151,7 +166,10 @@ async def test_launch_that_settled_here_reports_the_settled_outcome(monkeypatch)
 )
 def test_control_plane_url_resolution(monkeypatch, explicit, public, app, expected):
     monkeypatch.setattr(settings, "monitor_api_url", explicit)
-    for name, value in (("ODDISH_PUBLIC_API_BASE_URL", public), ("MODAL_APP_NAME", app)):
+    for name, value in (
+        ("ODDISH_PUBLIC_API_BASE_URL", public),
+        ("MODAL_APP_NAME", app),
+    ):
         if value is None:
             monkeypatch.delenv(name, raising=False)
         else:
@@ -159,9 +177,10 @@ def test_control_plane_url_resolution(monkeypatch, explicit, public, app, expect
     assert (monitor_launch.control_plane_url() or "") == expected
 
 
-
 @pytest.mark.asyncio
-@pytest.mark.parametrize("url", ["", None, RuntimeError("no app")], ids=["empty", "none", "raises"])
+@pytest.mark.parametrize(
+    "url", ["", None, RuntimeError("no app")], ids=["empty", "none", "raises"]
+)
 async def test_no_control_plane_url_keeps_the_trial_on_the_worker(monkeypatch, url):
     def _url():
         if isinstance(url, Exception):
@@ -169,4 +188,102 @@ async def test_no_control_plane_url_keeps_the_trial_on_the_worker(monkeypatch, u
         return url
 
     monkeypatch.setattr(monitor_launch, "control_plane_url", _url)
-    assert await _can_drive(monkeypatch, SimpleNamespace(kind="agent", harbor_config={})) is False
+    assert (
+        await _can_drive(monkeypatch, SimpleNamespace(kind="agent", harbor_config={}))
+        is False
+    )
+
+
+def _claim_attempt(n: int) -> ClaimedWorkerJob:
+    from dataclasses import replace
+
+    return replace(_claim(), attempts=n)
+
+
+def _settled_agent_trial():
+    from oddish.db import TrialStatus
+
+    return SimpleNamespace(
+        kind="agent",
+        harbor_config={},
+        status=TrialStatus.SUCCESS,
+        error_message=None,
+        environment=None,
+    )
+
+
+def _route_lines(monkeypatch) -> list[str]:
+    from oddish.workers.console import console
+
+    lines: list[str] = []
+    monkeypatch.setattr(
+        console, "print", lambda *a, **k: lines.append(" ".join(map(str, a)))
+    )
+    return lines
+
+
+@pytest.mark.asyncio
+async def test_sampled_out_trial_runs_on_the_worker_and_says_why(monkeypatch):
+    monkeypatch.setattr(settings, "monitor_execution_enabled", True)
+    monkeypatch.setattr(settings, "monitor_execution_sample_percent", 0)
+    monkeypatch.setattr(
+        handlers_module, "get_session", _session_returning(_settled_agent_trial())
+    )
+    launched = _stub(
+        monkeypatch, monitor_launch, "launch_monitor_attempt", JobOutcome.handed_off()
+    )
+    drove = _stub(monkeypatch, handlers_module, "run_trial_job", None)
+    lines = _route_lines(monkeypatch)
+
+    await TrialJobHandler().run(_claim())
+
+    assert launched == [] and len(drove) == 1
+    assert any("route=worker reason=percent=0" in line for line in lines)
+
+
+@pytest.mark.asyncio
+async def test_sampled_trial_falls_back_to_the_worker_on_its_third_attempt(monkeypatch):
+    from oddish.workers.launcher.route import bucket_for
+
+    percent = bucket_for("trial-abc") + 1  # the fixture id is inside the sample
+    monkeypatch.setattr(settings, "monitor_execution_enabled", True)
+    monkeypatch.setattr(settings, "monitor_execution_sample_percent", percent)
+    monkeypatch.setattr(settings, "monitor_execution_fallback_after_attempts", 2)
+    monkeypatch.setattr(
+        handlers_module, "get_session", _session_returning(_settled_agent_trial())
+    )
+    launched = _stub(
+        monkeypatch, monitor_launch, "launch_monitor_attempt", JobOutcome.handed_off()
+    )
+    drove = _stub(monkeypatch, handlers_module, "run_trial_job", None)
+    lines = _route_lines(monkeypatch)
+
+    await TrialJobHandler().run(_claim_attempt(2))
+    await TrialJobHandler().run(_claim_attempt(3))
+
+    assert len(launched) == 1 and len(drove) == 1
+    assert any(
+        "attempt=2 route=monitor reason=sampled bucket=" in line for line in lines
+    )
+    assert any(
+        "attempt=3 route=worker reason=fallback attempt=3>2" in line for line in lines
+    )
+
+
+@pytest.mark.asyncio
+async def test_at_100_percent_every_attempt_stays_on_the_monitor(monkeypatch):
+    monkeypatch.setattr(settings, "monitor_execution_enabled", True)
+    monkeypatch.setattr(settings, "monitor_execution_sample_percent", 100)
+    monkeypatch.setattr(
+        handlers_module, "get_session", _session_returning(_settled_agent_trial())
+    )
+    launched = _stub(
+        monkeypatch, monitor_launch, "launch_monitor_attempt", JobOutcome.handed_off()
+    )
+    _stub(monkeypatch, handlers_module, "run_trial_job", None)
+    lines = _route_lines(monkeypatch)
+
+    await TrialJobHandler().run(_claim_attempt(6))
+
+    assert len(launched) == 1
+    assert any("attempt=6 route=monitor reason=percent=100" in line for line in lines)
