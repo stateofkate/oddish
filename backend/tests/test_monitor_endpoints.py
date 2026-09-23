@@ -9,8 +9,8 @@ import pytest
 from api.routers import monitor
 from fastapi import FastAPI, HTTPException
 from oddish.db.storage import StorageClient
-from oddish.workers.queue import monitor_token
-from oddish.workers.queue.monitor_token import MonitorAttempt
+from oddish.workers.launcher import token as monitor_token
+from oddish.workers.launcher.token import MonitorAttempt
 from oddish.workers.queue.worker_job_single_job import SandboxCapacityLeaseLostError
 
 ATTEMPT = MonitorAttempt(
@@ -352,7 +352,7 @@ async def test_lifecycle_event_goes_to_the_workers_hook_handler(client, monkeypa
 @pytest.mark.asyncio
 async def test_attempt_spec_is_served_to_the_owning_attempt_only(client, monkeypatch):
     http, _ = client
-    from oddish.mon.spec import AttemptSpec
+    from oddish.mon.contract import AttemptSpec
 
     async def build(attempt):
         assert attempt == ATTEMPT
@@ -393,7 +393,7 @@ async def test_attempt_spec_is_served_to_the_owning_attempt_only(client, monkeyp
 async def test_inline_settle_is_fenced_to_its_attempt_and_notifies_github(
     client, monkeypatch
 ):
-    from oddish.workers.queue import monitor_settle
+    from oddish.workers.launcher import settle as monitor_settle
     from worker.github import notify_github_trial
 
     http, _ = client

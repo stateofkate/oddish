@@ -15,7 +15,7 @@ import tomllib
 from pathlib import Path
 
 from oddish.mon import task_fetch, task_image
-from oddish.mon.spec import WarmRequest
+from oddish.mon.contract import WarmRequest
 
 logger = logging.getLogger(__name__)
 

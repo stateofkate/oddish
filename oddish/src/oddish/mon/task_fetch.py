@@ -8,7 +8,7 @@ from pathlib import Path
 
 import httpx
 
-from oddish.mon.spec import AttemptSpec
+from oddish.mon.contract import AttemptSpec
 
 
 class TaskFetchError(RuntimeError):

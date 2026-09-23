@@ -567,7 +567,7 @@ async def cleanup_orphaned_queue_state(
 
     # Provider calls, so before (and outside) the reconciliation transaction.
     try:
-        from oddish.workers.queue.monitor_status_check import check_stale_monitor_jobs
+        from oddish.workers.launcher.reaper import check_stale_monitor_jobs
 
         monitor_status_checks = await check_stale_monitor_jobs(
             stale_after_minutes=stale_after_minutes
@@ -1199,7 +1199,7 @@ async def _reap_stale_worker_jobs(
     monitor-driven attempt, what its hand-off kept (the queue slot and capacity
     lease under the pre-reap worker id); the caller releases them after commit.
     """
-    from oddish.workers.queue.monitor_status_check import REAPABLE
+    from oddish.workers.launcher.reaper import REAPABLE
 
     stale_candidates = (
         await session.execute(
@@ -2325,7 +2325,7 @@ async def _release_reaped_monitor_attempts(releases: list[dict[str, Any]]) -> No
     ``cleanup_sandbox_capacity_leases`` on the next sweep are the backstop."""
     if not releases:
         return
-    from oddish.workers.queue.monitor_settle import release_after_attempt
+    from oddish.workers.launcher.settle import release_after_attempt
 
     for release in releases:
         try:

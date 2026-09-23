@@ -15,7 +15,7 @@ from oddish.mon.client import (
     MonitorClient,
     MonitorRejected,
 )
-from oddish.mon.spec import AttemptSpec, summarize_hook_event
+from oddish.mon.contract import AttemptSpec, summarize_hook_event
 from oddish.mon.status import write_status
 from oddish.workers.harbor import live_tail
 

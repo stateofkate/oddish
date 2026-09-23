@@ -105,7 +105,7 @@ from oddish.workers.queue.concurrency_controller import (
     merge_advisory_over_static,
     recompute_advisory_limits,
 )
-from oddish.workers.queue.monitor_settle import (
+from oddish.workers.launcher.settle import (
     set_post_success_hook as set_monitor_post_success_hook,
 )
 from oddish.workers.queue.runtime_status import (

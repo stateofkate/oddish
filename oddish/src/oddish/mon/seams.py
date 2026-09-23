@@ -14,7 +14,7 @@ from oddish.mon.client import (
     ControlPlaneUnavailable,
     MonitorClient,
 )
-from oddish.mon.spec import MAX_EVENTS_PER_POST
+from oddish.mon.contract import MAX_EVENTS_PER_POST
 from oddish.workers.harbor import live_tail, quota_control
 
 logger = logging.getLogger(__name__)

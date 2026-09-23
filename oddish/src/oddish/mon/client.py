@@ -15,7 +15,7 @@ from typing import Any
 import httpx
 
 from oddish.mon.env import MonitorEnv
-from oddish.mon.spec import AttemptSpec
+from oddish.mon.contract import AttemptSpec
 from oddish.mon.status import write_status
 from oddish.worker.skills_overlay import SkillBundle
 

@@ -73,8 +73,8 @@ async def _monitor_can_drive(trial_id: str) -> bool:
     if (trial.kind or "agent") not in _MONITOR_TRIAL_KINDS or is_probe:
         return False
     # A trial runs on the provider it asked for. No starter for it: the worker.
-    from oddish.workers.queue.monitor_launch import control_plane_url
-    from oddish.workers.queue.monitor_sandbox import provider_for_environment
+    from oddish.workers.launcher.launch import control_plane_url
+    from oddish.workers.launcher.providers.base import provider_for_environment
 
     if provider_for_environment(getattr(trial, "environment", None)) is None:
         return False
@@ -107,7 +107,7 @@ class TrialJobHandler:
         from oddish.config import settings
 
         if settings.monitor_execution_enabled and await _monitor_can_drive(trial_id):
-            from oddish.workers.queue.monitor_launch import launch_monitor_attempt
+            from oddish.workers.launcher.launch import launch_monitor_attempt
 
             handoff = await launch_monitor_attempt(job, creds or None)
             if handoff is not None:

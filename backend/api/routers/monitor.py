@@ -13,18 +13,16 @@ from oddish.config import settings
 from oddish.core.quota_pause import quota_pause_requested
 from oddish.db import TrialModel, get_read_session
 from oddish.db.storage import StorageClient, get_storage_client
-from oddish.mon.spec import AttemptSpec
+from oddish.mon.contract import AttemptSpec
 from oddish.schemas import SkillFile
 from oddish.worker.probe_staging import load_org_skills
 from oddish.workers.harbor import live_tail
-from oddish.workers.queue import (
-    monitor_attempt,
-    monitor_heartbeat,
-    monitor_lifecycle,
-    monitor_result,
-    monitor_token,
-)
-from oddish.workers.queue.monitor_token import MonitorAttempt
+from oddish.workers.launcher import attempt as monitor_attempt
+from oddish.workers.launcher import heartbeat as monitor_heartbeat
+from oddish.workers.launcher import hook_events as monitor_lifecycle
+from oddish.workers.launcher import result as monitor_result
+from oddish.workers.launcher import token as monitor_token
+from oddish.workers.launcher.token import MonitorAttempt
 from oddish.workers.queue.worker_job_single_job import SandboxCapacityLeaseLostError
 from org_access import require_execution_org
 from pydantic import BaseModel, Field
@@ -33,7 +31,7 @@ router = APIRouter(prefix="/monitor", tags=["Trial monitor"])
 
 # The API settles results inline, outside the worker process that normally
 # registers this hook, so it registers the same one here. One mechanism.
-from oddish.workers.queue.monitor_settle import set_post_success_hook  # noqa: E402
+from oddish.workers.launcher.settle import set_post_success_hook  # noqa: E402
 from worker.github import notify_github_trial  # noqa: E402
 
 set_post_success_hook(notify_github_trial)
@@ -251,7 +249,7 @@ async def result(
     except monitor_token.MonitorGone as exc:
         raise HTTPException(410, str(exc)) from exc
     if accepted == "accepted" and settings.monitor_settle_inline:
-        from oddish.workers.queue.monitor_settle import settle_monitor_result
+        from oddish.workers.launcher.settle import settle_monitor_result
 
         # The result is durable, so a crash here loses nothing: the reconciler
         # re-drives settlement for any accepted result.
