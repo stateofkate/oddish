@@ -1,4 +1,5 @@
 import { requirementExamples } from "../../../requirement-examples";
+import { liveEvents, trajectory } from "../../../trajectory";
 import {
   pageFixture,
   selectionFixture,
@@ -36,6 +37,22 @@ export async function GET(request: NextRequest) {
     .slice(5)
     .split("/")
     .map(decodeURIComponent);
+  if (parts[0] === "trials" && parts[1] === "trajectory-fixture") {
+    if (parts[2] === "live") {
+      const after = Number(request.nextUrl.searchParams.get("after_seq") ?? 0);
+      return NextResponse.json({
+        attempt: 1,
+        events: liveEvents.filter((event) => event.seq > after),
+        next_seq: liveEvents.length,
+        usage: { input_tokens: null, output_tokens: null, cost_usd: null },
+        harbor_stage: null,
+        done: true,
+      });
+    }
+    return parts.at(-1) === "trajectory"
+      ? NextResponse.json(trajectory)
+      : NextResponse.json({ detail: "Not found" }, { status: 404 });
+  }
   if (parts[0] === "duplication" && parts.at(-1) === "trials") {
     const original = tasks[0].trials![0];
     return NextResponse.json(

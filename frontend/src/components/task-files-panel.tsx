@@ -457,8 +457,6 @@ function getFileIcon(name: string) {
   }
 }
 
-// Language detection is handled by getLanguageFromFilename from code-block
-
 export function TaskFilesPanel({
   isOpen,
   onClose,

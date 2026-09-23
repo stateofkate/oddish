@@ -11,9 +11,16 @@ import {
 import { Badge } from "@/components/ui/badge";
 import {
   StepHeader,
-  ToolCallBlock,
+  ToolCallCard,
   ObservationBlock,
 } from "@/components/trajectory-blocks";
+import { MessageText } from "@/components/trajectory-message";
+import {
+  outputViews,
+  toolInput,
+  toolTitle,
+  type CodeView,
+} from "@/lib/trajectory-view";
 import { HarborStageBadge } from "@/components/harbor-stage-badge";
 import { fetcher } from "@/lib/api";
 import { formatCostUsd } from "@/lib/format";
@@ -103,14 +110,34 @@ function SanitizedBadge() {
   );
 }
 
-function prettyJson(text: string): string {
-  const trimmed = text.trim();
-  if (trimmed[0] !== "{" && trimmed[0] !== "[") return text;
+/** Tool arguments arrive as JSON text; partial or freeform input stays text. */
+function liveArgs(input: unknown): Record<string, unknown> | string {
+  const text = typeof input === "string" ? input : "";
   try {
-    return JSON.stringify(JSON.parse(trimmed), null, 2);
+    const parsed: unknown = JSON.parse(text);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
+      return parsed as Record<string, unknown>;
   } catch {
-    return text;
+    // Still streaming, or not JSON.
   }
+  return text;
+}
+
+/** Decoding can surface control characters that were escaped on the wire
+ *  (`\u001b` in JSON), so decoded views get the same visible-character policy. */
+function safeView<T extends CodeView>(view: T, onChange: () => void): T {
+  const safe = (text: string) => {
+    const result = safeText(text);
+    if (result.changed) onChange();
+    return result.text;
+  };
+  return {
+    ...view,
+    code: safe(view.code),
+    copyText: view.copyText === undefined ? undefined : safe(view.copyText),
+    language: view.language === "ansi" ? "text" : view.language,
+    meta: view.meta.map(safe),
+  };
 }
 
 function turnId(event: LiveEvent): string | null {
@@ -219,7 +246,10 @@ function stepPreview(step: LiveStep): string | null {
     .trim();
   if (text) return text.split("\n")[0].slice(0, 80);
   const firstTool = step.events.find((e) => e.kind === "tool_use");
-  if (firstTool) return safeText(firstTool.payload.name).text || "tool";
+  if (firstTool) {
+    const name = safeText(firstTool.payload.name).text;
+    return safeText(toolTitle(name, liveArgs(firstTool.payload.input))).text;
+  }
   return null;
 }
 
@@ -256,8 +286,8 @@ function LiveMessage({ events }: { events: LiveEvent[] }) {
     events.some((event) => event.payload.sanitized === true) ||
     parts.some((part) => part.changed);
   return (
-    <div className="text-sm wrap-break-word whitespace-pre-wrap">
-      {text}
+    <div>
+      <MessageText text={text} />
       {truncated ? " …" : ""}
       {sanitized && <SanitizedBadge />}
     </div>
@@ -265,27 +295,36 @@ function LiveMessage({ events }: { events: LiveEvent[] }) {
 }
 
 function LiveToolUse({ payload }: { payload: Record<string, unknown> }) {
-  const name = safeText(payload.name);
-  const input = safeText(payload.input);
-  const sanitized = payload.sanitized === true || name.changed || input.changed;
-  return (
-    <ToolCallBlock
-      name={name.text}
-      args={prettyJson(input.text)}
-      trailing={markers(payload, sanitized)}
-    />
-  );
+  const { view, sanitized } = useMemo(() => {
+    const name = safeText(payload.name);
+    let changed = payload.sanitized === true || name.changed;
+    const input = toolInput(name.text, liveArgs(payload.input));
+    const view = {
+      name: name.text,
+      input: input && safeView(input, () => (changed = true)),
+      outputs: [],
+      meta: [],
+    };
+    return { view, sanitized: changed };
+  }, [payload]);
+  return <ToolCallCard view={view} trailing={markers(payload, sanitized)} />;
 }
 
 function LiveToolResult({ payload }: { payload: Record<string, unknown> }) {
-  const content = safeText(payload.content);
-  const sanitized = payload.sanitized === true || content.changed;
+  const { outputs, sanitized } = useMemo(() => {
+    let changed = payload.sanitized === true;
+    const raw = typeof payload.content === "string" ? payload.content : "";
+    const outputs = outputViews(raw).outputs.map((view) =>
+      view.kind === "code" ? safeView(view, () => (changed = true)) : view
+    );
+    return { outputs, sanitized: changed };
+  }, [payload]);
   const truncated = payload.truncated ? (
     <span className="text-muted-foreground">truncated …</span>
   ) : null;
   return (
     <ObservationBlock
-      content={content.text.trim() ? content.text : "(no output)"}
+      outputs={outputs}
       isError={payload.is_error === true}
       trailing={
         truncated || sanitized ? (
@@ -530,7 +569,7 @@ export function LiveTranscriptPanel({
                   value={`live-${step.key}`}
                   className="px-4"
                 >
-                  <AccordionTrigger className="py-2 hover:no-underline">
+                  <AccordionTrigger className="min-w-0 py-2 hover:no-underline">
                     <StepHeader
                       index={num}
                       source="agent"

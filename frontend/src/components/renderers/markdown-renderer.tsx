@@ -17,6 +17,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { cn } from "@/lib/utils";
 import { useIsDark } from "./use-is-dark";
 import {
   lineRangesIntersect,
@@ -39,6 +40,7 @@ interface MarkdownRendererProps {
    */
   selectedLines?: LineRange | null;
   onSelectLines?: (range: LineRange | null) => void;
+  className?: string;
 }
 
 /** Position payload remark attaches to every node it parsed from source. */
@@ -234,6 +236,7 @@ export function MarkdownRenderer({
   fileName,
   selectedLines,
   onSelectLines,
+  className,
 }: MarkdownRendererProps) {
   const anchorsEnabled = onSelectLines !== undefined || selectedLines != null;
   const containerRef = useRef<HTMLDivElement>(null);
@@ -350,7 +353,11 @@ export function MarkdownRenderer({
   return (
     <div
       ref={containerRef}
-      className={`markdown-body max-w-none p-4 text-sm ${anchorsEnabled ? "pl-10" : ""}`}
+      className={cn(
+        "markdown-body max-w-none p-4 text-sm",
+        anchorsEnabled && "pl-10",
+        className
+      )}
     >
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkBreaks]}

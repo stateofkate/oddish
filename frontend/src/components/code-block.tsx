@@ -6,6 +6,9 @@ import { Button } from "@/components/ui/button";
 
 let shikiPromise: Promise<typeof import("shiki")> | null = null;
 const HIGHLIGHT_MAX_CHARS = 20_000;
+// A collapsed preview also stops at this many characters, so one enormous
+// line cannot stretch it.
+const COLLAPSED_MAX_CHARS = 4_000;
 
 function getShiki() {
   if (!shikiPromise) {
@@ -14,93 +17,56 @@ function getShiki() {
   return shikiPromise;
 }
 
-export function getLanguageFromFilename(name: string): string {
-  const ext = name.split(".").pop()?.toLowerCase();
-  const langMap: Record<string, string> = {
-    ts: "typescript",
-    tsx: "typescript",
-    js: "javascript",
-    jsx: "javascript",
-    py: "python",
-    toml: "toml",
-    yaml: "yaml",
-    yml: "yaml",
-    sh: "bash",
-    bash: "bash",
-    zsh: "bash",
-    json: "json",
-    md: "markdown",
-    txt: "text",
-    html: "html",
-    htm: "html",
-    css: "css",
-    xml: "xml",
-    sql: "sql",
-    rs: "rust",
-    go: "go",
-    rb: "ruby",
-    java: "java",
-    c: "c",
-    h: "c",
-    cpp: "cpp",
-    hpp: "cpp",
-    cs: "csharp",
-    dockerfile: "dockerfile",
-    diff: "diff",
-    patch: "diff",
-    log: "text",
-    cfg: "ini",
-    ini: "ini",
-    conf: "ini",
-    env: "shell",
-    csv: "text",
-    r: "r",
-    swift: "swift",
-    kt: "kotlin",
-    kts: "kotlin",
-    lua: "lua",
-    php: "php",
-    pl: "perl",
-    tex: "latex",
-    makefile: "makefile",
-  };
-  if (!ext) {
-    const lower = name.toLowerCase();
-    if (lower === "dockerfile") return "dockerfile";
-    if (lower === "makefile") return "makefile";
-    return "text";
-  }
-  return langMap[ext] || "text";
-}
-
 interface CodeBlockProps {
   code: string;
+  /** Exact text for Copy when `code` is a reformatted view of it. */
+  copyText?: string;
   language?: string;
   className?: string;
   /** CSS max-height value. "none" disables the constraint (fills parent). Default: "16rem". */
   maxHeight?: string;
   /** Max character count before truncation. 0 disables truncation. Default: 50000. */
   truncateAt?: number;
+  /** Show this many lines with a "Show all" toggle instead of a scrolling
+   *  height cap; the full text is one click away. */
+  collapseAfter?: number;
   showCopyButton?: boolean;
 }
 
 export function CodeBlock({
   code,
+  copyText,
   language = "text",
   className,
   maxHeight = "16rem",
   truncateAt = 50000,
+  collapseAfter,
   showCopyButton = true,
 }: CodeBlockProps) {
   const [copied, setCopied] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [highlightedHtml, setHighlightedHtml] = useState<string | null>(null);
 
+  // Collapsible blocks drop trailing blank lines from the view (Copy keeps them).
+  const shown = collapseAfter ? code.trimEnd() : code;
+  const preview = useMemo(
+    () =>
+      collapseAfter
+        ? shown
+            .slice(0, COLLAPSED_MAX_CHARS)
+            .split("\n", collapseAfter)
+            .join("\n")
+        : shown,
+    [shown, collapseAfter]
+  );
+  const collapsed = !expanded && preview.length < shown.length;
   const truncatedCode = useMemo(() => {
+    if (collapseAfter) return collapsed ? preview : shown;
     if (truncateAt > 0 && code.length > truncateAt) {
       return code.slice(0, truncateAt) + "\n\n... (truncated)";
     }
     return code;
-  }, [code, truncateAt]);
+  }, [code, shown, truncateAt, collapseAfter, collapsed, preview]);
   const shouldHighlight = useMemo(
     () => language !== "text" && truncatedCode.length <= HIGHLIGHT_MAX_CHARS,
     [language, truncatedCode],
@@ -138,22 +104,27 @@ export function CodeBlock({
   }, [truncatedCode, language, shouldHighlight]);
 
   const handleCopy = useCallback(async () => {
-    await navigator.clipboard.writeText(code);
+    await navigator.clipboard.writeText(copyText ?? code);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-  }, [code]);
+  }, [code, copyText]);
 
-  const heightStyle = maxHeight === "none" ? { height: "100%" } : { maxHeight };
+  const heightStyle = collapseAfter
+    ? undefined
+    : maxHeight === "none"
+      ? { height: "100%" }
+      : { maxHeight };
+  const lineCount = collapseAfter ? shown.split("\n").length : 0;
 
   return (
-    <div className={`group relative ${className || ""}`}>
+    <div className={`group relative min-w-0 ${className || ""}`}>
       {showCopyButton && (
         <Button
           type="button"
           variant="ghost"
           size="icon"
           onClick={handleCopy}
-          className="absolute right-1.5 top-1.5 z-10 h-6 w-6 rounded bg-muted/80 opacity-0 transition-opacity hover:bg-muted group-hover:opacity-100"
+          className="absolute right-1.5 top-1.5 z-10 h-6 w-6 rounded bg-muted/80 opacity-0 transition-opacity hover:bg-muted group-hover:opacity-100 focus-visible:opacity-100"
           title="Copy to clipboard"
           aria-label="Copy to clipboard"
         >
@@ -177,6 +148,22 @@ export function CodeBlock({
         >
           {truncatedCode}
         </pre>
+      )}
+      {collapseAfter && preview.length < shown.length && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() => setExpanded(!expanded)}
+          aria-expanded={expanded}
+          className="text-muted-foreground h-6 w-full rounded-t-none text-[11px]"
+        >
+          {expanded
+            ? "Show less"
+            : lineCount > collapseAfter
+              ? `Show all ${lineCount.toLocaleString()} lines`
+              : "Show all"}
+        </Button>
       )}
     </div>
   );

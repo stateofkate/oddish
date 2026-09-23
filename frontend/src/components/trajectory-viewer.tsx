@@ -16,9 +16,12 @@ import { Input } from "@/components/ui/input";
 import { Route, Download, ImageOff, Search, X } from "lucide-react";
 import {
   StepHeader,
-  ToolCallBlock,
+  ToolCallCard,
   ObservationBlock,
+  RawDisclosure,
 } from "@/components/trajectory-blocks";
+import { MessageText } from "@/components/trajectory-message";
+import { CodeBlock } from "@/components/code-block";
 import { TrajectorySummary } from "@/components/trajectory-summary";
 import {
   Tooltip,
@@ -28,6 +31,7 @@ import {
 } from "@/components/ui/tooltip";
 import { fetcher } from "@/lib/api";
 import type {
+  ContentPart,
   Trajectory,
   TrajectoryStep,
   FinalMetrics,
@@ -35,12 +39,16 @@ import type {
   ObservationContent,
 } from "@/lib/types";
 import {
-  contentText,
   isEmptyStep,
   phaseColorVars,
   stepDurationsMs,
-  stepPreview,
 } from "@/lib/trajectory-metrics";
+import {
+  contentText,
+  stepRejection,
+  stepTitle,
+  stepView,
+} from "@/lib/trajectory-view";
 import {
   groupStatsLabel,
   groupStepsBySegment,
@@ -77,6 +85,8 @@ function getOscillatingColor(index: number): string {
   const colorIndex = position <= 3 ? position : 6 - position;
   return colors[colorIndex];
 }
+
+type ImageSource = NonNullable<ContentPart["source"]>;
 
 interface ImageError {
   status: number;
@@ -213,27 +223,14 @@ function ContentRenderer({
   }
 
   if (typeof content === "string") {
-    return (
-      <div className="text-sm wrap-break-word whitespace-pre-wrap">
-        {content || (
-          <span className="text-muted-foreground italic">(empty)</span>
-        )}
-      </div>
-    );
+    return <MessageText text={content} />;
   }
 
   return (
     <div className="space-y-3">
       {content.map((part, idx) => {
         if (part.type === "text") {
-          return (
-            <div
-              key={idx}
-              className="text-sm wrap-break-word whitespace-pre-wrap"
-            >
-              {part.text}
-            </div>
-          );
+          return <MessageText key={idx} text={part.text ?? ""} />;
         }
 
         if (part.type === "image" && part.source?.path) {
@@ -539,17 +536,26 @@ function StepTrigger({
   const stepDuration =
     durationMs != null && step.timestamp ? formatMs(durationMs) : null;
   const sinceStart = formatStepDuration(startTimestamp, step.timestamp);
-  const firstLine = stepPreview(step)?.slice(0, 60) || null;
+  const title = stepTitle(step)?.slice(0, 200) || null;
+  const rejected = stepRejection(step) !== null;
 
   return (
     <StepHeader
       index={step.step_id}
       source={step.source}
       model={step.model_name}
-      preview={firstLine}
+      preview={title}
       badges={
-        stepDuration || sinceStart ? (
+        stepDuration || sinceStart || rejected ? (
           <>
+            {rejected && (
+              <Badge
+                variant="destructive"
+                className="px-1.5 py-0 text-[10px] font-normal"
+              >
+                Rejected
+              </Badge>
+            )}
             {stepDuration && (
               <Badge
                 variant="secondary"
@@ -586,10 +592,27 @@ function StepContent({
   trialId: string;
   apiBaseUrl: string;
 }) {
+  const view = useMemo(() => stepView(step), [step]);
+  const renderImage = (source: ImageSource) => (
+    <ContentRenderer
+      content={[{ type: "image", source }]}
+      trialId={trialId}
+      apiBaseUrl={apiBaseUrl}
+    />
+  );
+
   return (
-    <div className="space-y-3 text-sm">
-      {/* Message */}
-      {step.message && (
+    <div className="min-w-0 space-y-3 text-sm">
+      {view.rejection && (
+        <div className="space-y-2 rounded-md border border-red-500/40 bg-red-500/5 p-3">
+          <p className="text-xs whitespace-pre-wrap text-red-700 dark:text-red-300">
+            {view.rejection.diagnostic}
+          </p>
+          <CodeBlock code={contentText(step.message)} collapseAfter={20} />
+        </div>
+      )}
+
+      {view.showMessage && step.message && (
         <ContentRenderer
           content={step.message}
           trialId={trialId}
@@ -597,72 +620,29 @@ function StepContent({
         />
       )}
 
-      {/* Reasoning */}
       {step.reasoning_content && (
-        <div>
+        <div className="border-l-2 border-blue-500/40 pl-3">
           <h5 className="text-muted-foreground mb-1 text-xs font-medium">
             Reasoning
           </h5>
-          <div className="rounded border border-blue-500/20 bg-blue-500/10 p-2 text-xs whitespace-pre-wrap">
-            {step.reasoning_content}
-          </div>
+          <MessageText text={step.reasoning_content} />
         </div>
       )}
 
-      {/* Tool Calls */}
-      {step.tool_calls && step.tool_calls.length > 0 && (
+      {view.tools.map((tool, idx) => (
+        <ToolCallCard key={idx} view={tool} renderImage={renderImage} />
+      ))}
+
+      {view.unlinked.length > 0 && (
         <div>
           <h5 className="text-muted-foreground mb-1 text-xs font-medium">
-            Tool Calls
+            {view.tools.length ? "Output not linked to a call" : "Observations"}
           </h5>
-          <div className="space-y-2">
-            {step.tool_calls.map((tc) => (
-              <ToolCallBlock
-                key={tc.tool_call_id}
-                name={tc.function_name}
-                args={JSON.stringify(tc.arguments, null, 2)}
-              />
-            ))}
-          </div>
+          <ObservationBlock outputs={view.unlinked} renderImage={renderImage} />
         </div>
       )}
 
-      {/* Observations */}
-      {step.observation && step.observation.results.length > 0 && (
-        <div>
-          <h5 className="text-muted-foreground mb-1 text-xs font-medium">
-            Observations
-          </h5>
-          <div className="space-y-2">
-            {step.observation.results.map((result, idx) => {
-              const text = contentText(result.content);
-              const hasMultimodalContent =
-                !!result.content &&
-                typeof result.content !== "string" &&
-                result.content.some((part) => part.type === "image");
-
-              if (!hasMultimodalContent) {
-                return (
-                  <ObservationBlock key={idx} content={text || "(empty)"} />
-                );
-              }
-
-              return (
-                <div
-                  key={idx}
-                  className="border-border/60 bg-muted/20 rounded border p-2"
-                >
-                  <ContentRenderer
-                    content={result.content}
-                    trialId={trialId}
-                    apiBaseUrl={apiBaseUrl}
-                  />
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
+      <RawDisclosure value={step} />
 
       {/* Metrics */}
       {step.metrics && (
@@ -1106,7 +1086,7 @@ export function TrajectoryViewer({
                         stepRefs.current[idx] = el;
                       }}
                     >
-                      <AccordionTrigger className="py-3 hover:no-underline">
+                      <AccordionTrigger className="min-w-0 py-3 hover:no-underline">
                         <StepTrigger
                           step={step}
                           durationMs={

@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import json
 import re
 import shlex
+from typing import Any
 
 from harbor.agents.installed.codex import Codex
 from harbor.agents.installed.base import NonZeroAgentExitCodeError
+
+from oddish.core.trajectory_content import codex_text_parts
 
 from .codex_stdout_trajectory import write_trajectory_if_richer
 from .network import normalize_domain_or_url
@@ -25,6 +29,22 @@ def _toml_quote(value: str) -> str:
 
 class OddishCodex(Codex):
     """Oddish's Codex wrapper for compatibility with current Codex CLI output."""
+
+    @staticmethod
+    def _parse_output_blob(raw: Any) -> tuple[Any, dict[str, Any] | None]:
+        # Harbor str()s list outputs into a Python repr; keep text blocks typed.
+        parsed = raw
+        if isinstance(raw, str) and raw.startswith(("[", "{")):
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError:
+                pass
+        envelope = isinstance(parsed, dict)
+        parts = codex_text_parts(parsed.get("output") if envelope else parsed)
+        if parts is None:
+            return Codex._parse_output_blob(raw)
+        metadata = parsed.get("metadata") if envelope else None
+        return parts, metadata if isinstance(metadata, dict) else None
 
     def _ensure_codex_config_override(self, command: str, key: str, value: str) -> str:
         if "codex exec " not in command or f" -c {key}=" in command:

@@ -408,6 +408,14 @@ answers 409. `refresh` carries `status`, `job_id`, and either
 exists. The frontend's one summary hook owns POST, the cache transition, and
 SWR polling.
 
+Trajectory display parsing lives in `frontend/src/lib/trajectory-view.ts`,
+shared by the completed viewer and the live transcript. It picks each known
+tool's command, patch, or Codex code-mode script, unwraps Codex output
+envelopes (text blocks, `Promise.allSettled` entries, `exec_command` process
+records), and indents JSON; each step keeps its raw JSON one disclosure away.
+Harbor stores list-valued Codex outputs as Python reprs: `OddishCodex` keeps new
+ones typed, and `normalize_codex_trajectory` repairs stored ones on read.
+
 A QA/audit/summarize trial's **own** summary is deterministic, never an LLM call:
 settlement (`handle_analysis_trial_settled`) counts one from the run's tool
 calls. `oddish.analyze.trajectory_tool_calls` owns the external ATIF tool-call

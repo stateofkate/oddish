@@ -7,6 +7,7 @@ export default defineConfig({
     "public-experiment-tasks.spec.ts",
     "public-share-qa.spec.ts",
     "review-meaning.spec.ts",
+    "trajectory-rendering.spec.ts",
     "ui-duplication.spec.ts",
     "user-ui-layout.spec.ts",
   ],
