@@ -353,6 +353,21 @@ export function TaskOverviewPanel({
     return `/tasks/${taskId}?${params.toString()}`;
   };
 
+  // Audit and QA runs live in a hidden analysis experiment, so link them here.
+  const analysisTrialLink = (
+    trialId: string | null | undefined,
+    label: string
+  ) =>
+    trialId && taskId && !readOnly ? (
+      <a
+        href={`/tasks/${encodeURIComponent(taskId)}?trial=${encodeURIComponent(trialId)}`}
+        className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 font-mono text-[10px] underline decoration-dotted underline-offset-2"
+      >
+        {label}
+        <ArrowUpRight className="h-3 w-3 shrink-0" aria-hidden="true" />
+      </a>
+    ) : null;
+
   const openTrial = (trial: Trial) => {
     if (onOpenTrial?.(trial)) return;
     const href = taskTrialHref(trial);
@@ -639,6 +654,7 @@ export function TaskOverviewPanel({
             action={readOnly ? undefined : executionReviewAction}
             error={executionReviewError}
           />
+          {analysisTrialLink(verdictTask.verdict?._graded_by, "View QA run")}
         </div>
       ) : null}
 
@@ -664,6 +680,7 @@ export function TaskOverviewPanel({
               {findingsSummary}
             </span>
           )}
+          {analysisTrialLink(checksTrialId, "View audit")}
           <div className="ml-auto flex items-center gap-2">
             {findingItems.length > 0 ? (
               <CopyJsonButton

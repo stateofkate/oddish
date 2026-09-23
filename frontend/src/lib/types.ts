@@ -237,6 +237,8 @@ export interface TaskVerdict {
   agent_problem_count?: number;
   success_count?: number;
   harness_error_count?: number;
+  /** QA trial that produced this verdict. */
+  _graded_by?: string;
 }
 
 export interface Task {

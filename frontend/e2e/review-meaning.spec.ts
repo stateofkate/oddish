@@ -1382,3 +1382,24 @@ test("finding source opens the file and line inside the experiment pane", async 
   await expect(page.getByText("exit 0", { exact: true })).toBeVisible();
   expect(context.pages()).toHaveLength(1);
 });
+
+test("overview links the audit and QA runs stored outside the experiment", async ({
+  page,
+}) => {
+  test.skip(process.env.E2E_REVIEW_FIXTURES !== "1");
+  await page.route(/\/api\/tasks\/task-a\/panel(?:\?|$)/, async (route) => {
+    const data = await (await route.fetch()).json();
+    data.version.pre_trial_trial_id = "task-a-audit";
+    data.task.verdict = { ...data.task.verdict, _graded_by: "task-a-qa" };
+    await route.fulfill({ json: data });
+  });
+  await page.goto("/tasks/task-a?version=7&drawer=task&taskPane=overview");
+  await expect(
+    page.getByRole("link", { name: "View audit", exact: true })
+  ).toHaveAttribute("href", "/tasks/task-a?trial=task-a-audit");
+  await expect(
+    page.getByRole("link", { name: "View QA run", exact: true })
+  ).toHaveAttribute("href", "/tasks/task-a?trial=task-a-qa");
+  if (process.env.SCREENSHOT_PATH)
+    await page.screenshot({ path: process.env.SCREENSHOT_PATH });
+});
