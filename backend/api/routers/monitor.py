@@ -13,7 +13,7 @@ from oddish.config import settings
 from oddish.core.quota_pause import quota_pause_requested
 from oddish.db import TrialModel, get_read_session
 from oddish.db.storage import StorageClient, get_storage_client
-from oddish.mon.contract import AttemptSpec
+from oddish.mon.contract import MAX_EVENTS_PER_POST, AttemptSpec, ResultPayload
 from oddish.schemas import SkillFile
 from oddish.worker.probe_staging import load_org_skills
 from oddish.workers.harbor import live_tail
@@ -75,7 +75,9 @@ class UsageCheckpoint(BaseModel):
 
 class EventsRequest(BaseModel):
     trial_attempt: int = Field(ge=0)
-    events: list[LiveEvent] = Field(default_factory=list, max_length=1000)
+    events: list[LiveEvent] = Field(
+        default_factory=list, max_length=MAX_EVENTS_PER_POST
+    )
     checkpoint: UsageCheckpoint | None = None
 
 
@@ -91,25 +93,6 @@ class ArtifactUploadResponse(BaseModel):
     upload_url: str
     upload_headers: dict[str, str]
     archive_key: str
-
-
-class MonitorStats(BaseModel):
-    """What the monitor's heartbeat and control loops delivered."""
-
-    heartbeats_sent: int = Field(default=0, ge=0)
-    heartbeats_failed: int = Field(default=0, ge=0)
-    control_checks: int = Field(default=0, ge=0)
-    control_failed: int = Field(default=0, ge=0)
-
-
-class ResultRequest(BaseModel):
-    # The flattened HarborOutcome, minus its sandbox-local paths.
-    outcome: dict | None = None
-    archive_uploaded: bool = False
-    # Set when the driver raised instead of returning an outcome.
-    execution_error: str | None = None
-    retryable: bool = True
-    monitor_stats: MonitorStats | None = None
 
 
 class ResultResponse(BaseModel):
@@ -225,7 +208,7 @@ async def artifact_upload(attempt: Attempt) -> ArtifactUploadResponse:
 
 @router.post("/result")
 async def result(
-    attempt: Attempt, body: ResultRequest, background: BackgroundTasks
+    attempt: Attempt, body: ResultPayload, background: BackgroundTasks
 ) -> ResultResponse:
     """Accept the outcome once its artifact archive is really in storage."""
     archive_key: str | None = None

@@ -18,7 +18,7 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from oddish.mon.contract import WarmRequest
+from oddish.mon.contract import NOTHING_TO_WARM, WARM_VAR, WarmRequest
 from oddish.workers.launcher.providers.base import (
     WARM_UP_SECONDS,
     MonitorSandboxError,
@@ -227,7 +227,6 @@ class DaytonaStarter:
         A sandbox booted from a snapshot cannot be given a size, so the warm-up
         runs at the task's size and ``start`` checks the size it got."""
         from oddish.config import settings
-        from oddish.mon.warm import NOTHING_TO_WARM, WARM_VAR
 
         snapshot = f"{SNAPSHOT_NAME_PREFIX}{uuid.uuid4().hex[:12]}"
         async with _client() as client:

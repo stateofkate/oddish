@@ -62,8 +62,12 @@ def test_an_unknown_provider_is_refused():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("environment", "drives"), [("modal", True), ("daytona", True), ("gke", False)])
-async def test_the_gate_keeps_unsupported_environments_on_the_worker(monkeypatch, environment, drives):
+@pytest.mark.parametrize(
+    ("environment", "drives"), [("modal", True), ("daytona", True), ("gke", False)]
+)
+async def test_the_gate_keeps_unsupported_environments_on_the_worker(
+    monkeypatch, environment, drives
+):
     trial = SimpleNamespace(kind="agent", harbor_config={}, environment=environment)
 
     class _Session:
@@ -146,7 +150,9 @@ def fake_daytona(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_start_passes_secrets_at_creation_and_starts_the_monitor_once(fake_daytona):
+async def test_start_passes_secrets_at_creation_and_starts_the_monitor_once(
+    fake_daytona,
+):
     env = {"ODDISH_MON_TOKEN": "j.1.t", "ODDISH_MON_API_URL": "https://api"}
     external_id = await daytona_starter.DaytonaStarter().start(
         name="oddish-mon-wj-1", image="/oddish/mon.Dockerfile", env=env
@@ -285,10 +291,13 @@ async def test_the_launcher_reads_the_size_from_the_tasks_own_toml(
         return tmp_path, None, None
 
     monkeypatch.setattr(monitor_launch, "resolve_task_directory", _resolve)
+
     async def _no_judge_costs(**_):
         return None
 
-    monkeypatch.setattr(monitor_launch, "_begin_judge_costs_if_enabled", _no_judge_costs)
+    monkeypatch.setattr(
+        monitor_launch, "_begin_judge_costs_if_enabled", _no_judge_costs
+    )
     prepared = SimpleNamespace(
         task_id="t", task_s3_key=None, task_path=str(tmp_path), trial_harbor_config={}
     )
@@ -308,7 +317,7 @@ async def test_the_launcher_reads_the_size_from_the_tasks_own_toml(
 @pytest.mark.asyncio
 async def test_daytona_warms_at_the_tasks_size_without_secrets(fake_daytona):
     from oddish.mon.contract import WarmRequest
-    from oddish.mon.warm import WARM_VAR
+    from oddish.mon.contract import WARM_VAR
 
     image = await daytona_starter.DaytonaStarter().build_warm_image(
         image="/oddish/mon.Dockerfile",
@@ -331,7 +340,7 @@ async def test_daytona_warms_at_the_tasks_size_without_secrets(fake_daytona):
 async def test_nothing_pulled_means_no_snapshot(fake_daytona, monkeypatch):
     from oddish.mon.contract import WarmRequest
 
-    from oddish.mon.warm import NOTHING_TO_WARM
+    from oddish.mon.contract import NOTHING_TO_WARM
 
     # The task names no image: nothing to snapshot, and not a failure.
     monkeypatch.setattr(_Process, "warm_exit_code", NOTHING_TO_WARM)
@@ -414,8 +423,6 @@ async def test_a_snapshot_boot_starts_the_monitor_the_same_way(fake_daytona):
     assert fake_daytona.deleted == []
 
 
-
-
 def _fake_modal(monkeypatch, *, poll=None, not_found=False, error=None):
     class NotFoundError(Exception):
         pass
@@ -434,5 +441,3 @@ def _fake_modal(monkeypatch, *, poll=None, not_found=False, error=None):
     sdk.Sandbox = SimpleNamespace(from_id=SimpleNamespace(aio=_from_id))
     sdk.exception = SimpleNamespace(NotFoundError=NotFoundError)
     monkeypatch.setitem(sys.modules, "modal", sdk)
-
-

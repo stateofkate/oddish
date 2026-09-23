@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from oddish.mon.contract import WarmRequest
+from oddish.mon.contract import NOTHING_TO_WARM, WARM_VAR, WarmRequest
 from oddish.workers.launcher.providers.base import (
     WARM_IMAGE_TTL_SECONDS,
     WARM_UP_SECONDS,
@@ -87,7 +87,9 @@ class ModalStarter:
 
     def provisioned(self, size: SandboxSize) -> SandboxSize:
         # Modal allocates fractional CPU and MiB as asked.
-        return size.model_copy(update={"memory_mb": size.total_memory_mb, "headroom_mb": 0})
+        return size.model_copy(
+            update={"memory_mb": size.total_memory_mb, "headroom_mb": 0}
+        )
 
     async def build_warm_image(
         self, *, image: str, request: WarmRequest, size: SandboxSize | None = None
@@ -99,7 +101,6 @@ class ModalStarter:
         import modal
 
         from oddish.config import settings
-        from oddish.mon.warm import NOTHING_TO_WARM, WARM_VAR
 
         app = await modal.App.lookup.aio(
             settings.monitor_modal_app, create_if_missing=True

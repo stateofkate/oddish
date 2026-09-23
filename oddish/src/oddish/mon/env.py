@@ -12,10 +12,12 @@ import os
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
-API_URL_VAR = "ODDISH_MON_API_URL"
-TOKEN_VAR = "ODDISH_MON_TOKEN"
-AGENT_ENV_VAR = "ODDISH_MON_AGENT_ENV"  # JSON object: env for the agent only
-REGISTRY_AUTH_VAR = "ODDISH_MON_REGISTRY_AUTH"  # JSON list: the run's registry login
+from oddish.mon.contract import (
+    AGENT_ENV_VAR,
+    API_URL_VAR,
+    REGISTRY_AUTH_VAR,
+    TOKEN_VAR,
+)
 
 
 class MonitorEnvError(RuntimeError):

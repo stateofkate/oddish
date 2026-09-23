@@ -15,13 +15,14 @@ import tomllib
 from pathlib import Path
 
 from oddish.mon import task_fetch, task_image
-from oddish.mon.contract import WarmRequest
+from oddish.mon.contract import NOTHING_TO_WARM, WARM_VAR, WarmRequest
 
 logger = logging.getLogger(__name__)
 
-WARM_VAR = "ODDISH_MON_WARM"  # a WarmRequest as JSON
-NOTHING_TO_WARM = 3  # exit code: the task names no image, unlike a failed pull
-_FROM = re.compile(r"^\s*FROM\s+(?:--platform=\S+\s+)?(\S+)(?:\s+AS\s+(\S+))?", re.IGNORECASE | re.MULTILINE)
+_FROM = re.compile(
+    r"^\s*FROM\s+(?:--platform=\S+\s+)?(\S+)(?:\s+AS\s+(\S+))?",
+    re.IGNORECASE | re.MULTILINE,
+)
 _COMPOSE_IMAGE = re.compile(r"^\s*image:\s*[\"']?([^\s\"'#]+)", re.MULTILINE)
 
 
@@ -47,18 +48,28 @@ def image_refs(task_dir: Path, docker_image: str | None = None) -> list[str]:
             if alias:
                 stages.add(alias)
     for compose in sorted(env_dir.glob("*compose*.y*ml")):
-        refs += [r for r in _COMPOSE_IMAGE.findall(compose.read_text(errors="replace")) if "$" not in r]
+        refs += [
+            r
+            for r in _COMPOSE_IMAGE.findall(compose.read_text(errors="replace"))
+            if "$" not in r
+        ]
     return list(dict.fromkeys(refs))
 
 
 async def _pull(ref: str) -> bool:
     process = await asyncio.create_subprocess_exec(
-        "docker", "pull", "-q", ref,
-        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+        "docker",
+        "pull",
+        "-q",
+        ref,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,
     )
     _, err = await process.communicate()
     if process.returncode != 0:
-        logger.warning("could not pull %s: %s", ref, err.decode(errors="replace")[-200:])
+        logger.warning(
+            "could not pull %s: %s", ref, err.decode(errors="replace")[-200:]
+        )
     return process.returncode == 0
 
 
@@ -74,5 +85,10 @@ async def run() -> int:
     if not refs:
         return NOTHING_TO_WARM
     pulled = [ref for ref in refs if await _pull(ref)]
-    logger.info("warm-up pulled %d of %d image(s): %s", len(pulled), len(refs), ", ".join(pulled))
+    logger.info(
+        "warm-up pulled %d of %d image(s): %s",
+        len(pulled),
+        len(refs),
+        ", ".join(pulled),
+    )
     return 0 if pulled else 1

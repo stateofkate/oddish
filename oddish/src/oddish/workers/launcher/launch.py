@@ -27,7 +27,7 @@ from oddish.config import api_base_url_for_modal_app, settings
 from oddish.db import WorkerJobModel, WorkerJobStatus, get_session
 from oddish.db.models import utcnow
 from oddish.db.storage import resolve_task_directory
-from oddish.mon.env import AGENT_ENV_VAR, API_URL_VAR, REGISTRY_AUTH_VAR, TOKEN_VAR
+from oddish.mon.contract import AGENT_ENV_VAR, API_URL_VAR, REGISTRY_AUTH_VAR, TOKEN_VAR
 from oddish.workers.harbor.runner import (
     capture_sandbox_resources,
     capture_verifier_resources,

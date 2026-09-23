@@ -14,8 +14,8 @@ from typing import Any
 
 import httpx
 
+from oddish.mon.contract import AttemptSpec, ResultPayload
 from oddish.mon.env import MonitorEnv
-from oddish.mon.contract import AttemptSpec
 from oddish.mon.status import write_status
 from oddish.worker.skills_overlay import SkillBundle
 
@@ -175,14 +175,11 @@ class MonitorClient:
         retryable: bool = True,
         monitor_stats: dict[str, int] | None = None,
     ) -> dict[str, Any]:
-        return await self._call(
-            "POST",
-            "/result",
-            {
-                "outcome": outcome,
-                "archive_uploaded": archive_uploaded,
-                "execution_error": execution_error,
-                "retryable": retryable,
-                "monitor_stats": monitor_stats,
-            },
+        payload = ResultPayload(
+            outcome=outcome,
+            archive_uploaded=archive_uploaded,
+            execution_error=execution_error,
+            retryable=retryable,
+            monitor_stats=monitor_stats,
         )
+        return await self._call("POST", "/result", payload.model_dump())

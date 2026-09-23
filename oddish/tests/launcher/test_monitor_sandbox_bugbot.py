@@ -10,8 +10,7 @@ import modal
 import pytest
 
 from oddish.config import settings
-from oddish.mon.contract import WarmRequest
-from oddish.mon.warm import NOTHING_TO_WARM
+from oddish.mon.contract import NOTHING_TO_WARM, WarmRequest
 from oddish.workers.launcher import image_cache as cache
 from oddish.workers.launcher.attempt import WarmSource
 from oddish.workers.launcher.providers.base import (
@@ -92,7 +91,11 @@ async def test_a_failed_warm_up_is_not_cached_as_empty(monkeypatch):
     source = WarmSource(
         identity="task|v1|", request=WarmRequest(task_archive_url="https://signed")
     )
-    args = dict(monitor_image="/oddish/mon.Dockerfile", warm_source=source, has_registry_login=False)
+    args = dict(
+        monitor_image="/oddish/mon.Dockerfile",
+        warm_source=source,
+        has_registry_login=False,
+    )
 
     assert await cache.resolve(starter, **args) == ("/oddish/mon.Dockerfile", None)
     assert all(e.state is not cache.CacheState.EMPTY for e in entries.values())
@@ -129,7 +132,8 @@ async def test_modal_warm_up_tells_failure_from_nothing_to_pull(monkeypatch, exi
     monkeypatch.setattr(ModalStarter, "_image", staticmethod(lambda image: None))
 
     warm = ModalStarter().build_warm_image(
-        image="/oddish/mon.Dockerfile", request=WarmRequest(task_archive_url="https://signed")
+        image="/oddish/mon.Dockerfile",
+        request=WarmRequest(task_archive_url="https://signed"),
     )
     if exit_code == NOTHING_TO_WARM:
         assert await warm is None
@@ -364,7 +368,9 @@ async def test_modal_trial_and_warm_up_sandboxes_are_sized(monkeypatch):
     request = WarmRequest(task_archive_url="https://signed")
     given = SandboxSize(cpu=8, memory_mb=16384, headroom_mb=1024)
     await ModalStarter().start(name="t", image="/oddish/mon.Dockerfile", env={})
-    await ModalStarter().build_warm_image(image="/oddish/mon.Dockerfile", request=request)
+    await ModalStarter().build_warm_image(
+        image="/oddish/mon.Dockerfile", request=request
+    )
     await ModalStarter().build_warm_image(
         image="/oddish/mon.Dockerfile", request=request, size=given
     )

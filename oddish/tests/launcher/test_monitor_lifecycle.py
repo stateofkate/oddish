@@ -6,8 +6,9 @@ from types import SimpleNamespace
 import pytest
 from harbor.trial.hooks import TrialEvent
 
-from oddish.workers.queue import trial_handler
+from oddish.mon.contract import summarize_hook_event
 from oddish.workers.launcher import hook_events as monitor_lifecycle
+from oddish.workers.queue import trial_handler
 
 
 def _hook_event(**overrides):
@@ -31,7 +32,7 @@ def _hook_event(**overrides):
 
 
 def test_summary_round_trips_what_the_handler_reads():
-    summary = monitor_lifecycle.summarize_hook_event(_hook_event())
+    summary = summarize_hook_event(_hook_event())
     rebuilt = monitor_lifecycle.hook_event_from_summary(summary)
 
     assert rebuilt.event is TrialEvent.END
@@ -41,7 +42,7 @@ def test_summary_round_trips_what_the_handler_reads():
 
 
 def test_rebuilt_event_never_carries_the_inner_container_identity():
-    summary = monitor_lifecycle.summarize_hook_event(_hook_event())
+    summary = summarize_hook_event(_hook_event())
     assert "inner-container" not in str(summary)
     rebuilt = monitor_lifecycle.hook_event_from_summary(summary)
     assert rebuilt.environment is None
@@ -50,7 +51,7 @@ def test_rebuilt_event_never_carries_the_inner_container_identity():
 
 
 def test_event_without_a_result_and_an_unknown_event():
-    summary = monitor_lifecycle.summarize_hook_event(
+    summary = summarize_hook_event(
         _hook_event(event=TrialEvent.AGENT_START, result=None)
     )
     assert monitor_lifecycle.hook_event_from_summary(summary).result is None

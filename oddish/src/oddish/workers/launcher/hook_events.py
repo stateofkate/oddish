@@ -20,7 +20,6 @@ from typing import Any
 
 from harbor.trial.hooks import TrialEvent
 
-from oddish.mon.contract import summarize_hook_event  # noqa: F401 - re-exported
 from oddish.workers.launcher.token import MonitorAttempt
 
 
