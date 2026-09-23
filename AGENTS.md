@@ -1508,7 +1508,9 @@ Keep these routing rules in sync with `oddish/src/oddish/config.py` and
   `ODDISH_CLAUDE_CODE_FORCE_DIRECT_API` defaults to `1`. Set the flag to `0`
   to restore the Modal image's Bedrock route (`CLAUDE_CODE_USE_BEDROCK=1`).
   Bedrock model aliases must normalize to an invokable inference profile
-  (`global.` / `us.` / ARN) via `to_bedrock_model_id`. The separate
+  (`global.` / `us.` / ARN) via `to_bedrock_model_id`. Opus 5.5 aliases use
+  `global.anthropic.claude-opus-5-5` for storage and queueing; the reverse
+  mapping supplies `claude-opus-5-5` to direct Anthropic requests. The separate
   `anthropic-hdo/<model>` prefix always uses `ANTHROPIC_HDO_API_KEY` and blanks
   Bedrock routing for that trial.
   The ephemeral Claude Code runner applies this credential precedence when building

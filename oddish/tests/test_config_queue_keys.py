@@ -13,6 +13,7 @@ from oddish.config import (
     Settings,
     normalize_model_id,
     require_geometric_served_model_id,
+    to_anthropic_api_model_id,
 )  # noqa: E402
 
 
@@ -146,6 +147,27 @@ def test_anthropic_hdo_prefix_stays_off_bedrock_queue(monkeypatch):
         settings.normalize_trial_model("claude-code", "claude-sonnet-4-6")
         == "global.anthropic.claude-sonnet-4-6"
     )
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "claude-opus-5-5",
+        "claude-opus-5.5",
+        "anthropic/claude-opus-5-5",
+        "anthropic/claude-opus-5.5",
+        "global.anthropic.claude-opus-5-5",
+        "bedrock/global.anthropic.claude-opus-5-5",
+    ],
+)
+def test_opus_5_5_normalizes_for_storage_and_anthropic_requests(monkeypatch, model):
+    settings = _settings(monkeypatch, clear_openai_env=False)
+    stored_model = settings.normalize_trial_model("claude-code", model)
+
+    assert stored_model == "global.anthropic.claude-opus-5-5"
+    assert settings.get_queue_key_for_trial("claude-code", model) == stored_model
+    assert to_anthropic_api_model_id(stored_model) == "claude-opus-5-5"
+    assert to_anthropic_api_model_id(f"bedrock/{stored_model}") == "claude-opus-5-5"
 
 
 def test_opus_4_8_maps_to_global_inference_profile(monkeypatch):

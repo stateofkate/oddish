@@ -1704,7 +1704,10 @@ async def test_upload_probe_assets_fails_when_qa_submission_contract_is_missing(
         await _upload_probe_assets(FailingEnv(), assets, "qa-1")
 
 
-def test_build_payload_normalizes_claude_model_when_bedrock_is_blanked(monkeypatch):
+@pytest.mark.parametrize("api_model", ["claude-opus-5", "claude-opus-5-5"])
+def test_build_payload_normalizes_claude_model_when_bedrock_is_blanked(
+    monkeypatch, api_model
+):
     """A claude-code trial forced to the direct Anthropic API must not carry a
     Bedrock inference-profile id.
 
@@ -1720,21 +1723,22 @@ def test_build_payload_normalizes_claude_model_when_bedrock_is_blanked(monkeypat
         jobs_dir=Path("/tmp/jobs"),
         outcome_path=Path("/tmp/jobs/outcome.json"),
         agent="claude-code",
-        model="global.anthropic.claude-opus-5",
+        model=f"global.anthropic.{api_model}",
         environment=EnvironmentType.DOCKER,
         raw_harbor_config=dict(_EPHEMERAL_HC),
         is_probe=False,
     )
 
     assert payload["runtime_env"]["CLAUDE_CODE_USE_BEDROCK"] == ""
-    assert payload["model"] == "claude-opus-5"
+    assert payload["model"] == api_model
 
 
 @pytest.mark.parametrize(
     "force_direct,ambient_key", [(False, "sk-ant-test"), (True, None)]
 )
+@pytest.mark.parametrize("api_model", ["claude-opus-5", "claude-opus-5-5"])
 def test_build_payload_keeps_bedrock_model_when_bedrock_stays_on(
-    monkeypatch, force_direct, ambient_key
+    monkeypatch, force_direct, ambient_key, api_model
 ):
     """With Bedrock routing left in place the stored Bedrock id is correct."""
     if ambient_key:
@@ -1749,14 +1753,14 @@ def test_build_payload_keeps_bedrock_model_when_bedrock_stays_on(
         jobs_dir=Path("/tmp/jobs"),
         outcome_path=Path("/tmp/jobs/outcome.json"),
         agent="claude-code",
-        model="global.anthropic.claude-opus-5",
+        model=f"global.anthropic.{api_model}",
         environment=EnvironmentType.DOCKER,
         raw_harbor_config=dict(_EPHEMERAL_HC),
         is_probe=False,
     )
 
     assert "CLAUDE_CODE_USE_BEDROCK" not in payload["runtime_env"]
-    assert payload["model"] == "global.anthropic.claude-opus-5"
+    assert payload["model"] == f"global.anthropic.{api_model}"
 
 
 def test_build_payload_leaves_non_claude_agents_alone(monkeypatch):
@@ -1778,7 +1782,8 @@ def test_build_payload_leaves_non_claude_agents_alone(monkeypatch):
     assert payload["model"] == "openrouter/tencent/hy3"
 
 
-def test_dispatch_paths_agree_on_the_claude_model_id(monkeypatch):
+@pytest.mark.parametrize("api_model", ["claude-opus-5", "claude-opus-5-5"])
+def test_dispatch_paths_agree_on_the_claude_model_id(monkeypatch, api_model):
     """Both dispatch paths must hand Claude Code the same model id.
 
     The in-process path normalizes in ``_build_agent_config`` and the ephemeral
@@ -1790,7 +1795,7 @@ def test_dispatch_paths_agree_on_the_claude_model_id(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
     monkeypatch.setattr(harbor_ephemeral.settings, "claude_code_force_direct_api", True)
     agent = "claude-code"
-    model = "global.anthropic.claude-opus-5"
+    model = f"global.anthropic.{api_model}"
 
     in_process = _build_agent_config(
         agent=agent,
@@ -1809,7 +1814,7 @@ def test_dispatch_paths_agree_on_the_claude_model_id(monkeypatch):
         is_probe=False,
     )
 
-    assert payload["model"] == in_process.model_name == "claude-opus-5"
+    assert payload["model"] == in_process.model_name == api_model
 
 
 @pytest.mark.parametrize(

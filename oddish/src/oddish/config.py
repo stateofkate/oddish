@@ -996,9 +996,9 @@ def looks_like_bedrock_model_id(model: str | None) -> bool:
 
 
 # Anthropic-style Claude model ids mapped to their invokable AWS Bedrock ids.
-# oddish runs Claude exclusively through AWS Bedrock. Claude Code invokes
-# Bedrock via the legacy InvokeModel API, which only accepts cross-region
-# inference profile ids (a "global."/"us."/... prefix) or ARNs — bare
+# Oddish stores default Claude routes as Bedrock ids and reverses this table
+# when calling Anthropic directly. Claude Code's Bedrock InvokeModel API accepts
+# cross-region inference profile ids (a "global."/"us."/... prefix) or ARNs — bare
 # "anthropic.claude-..." foundation-model ids are NOT invokable on-demand.
 # So every value below is a "global." inference profile id, except the two
 # legacy Opus models that have no global profile (they use "us.").
@@ -1022,6 +1022,7 @@ _ANTHROPIC_TO_BEDROCK_MODEL_IDS: dict[str, str] = {
     # 'default' is not available for this model".
     "claude-fable-5-1": "global.anthropic.claude-fable-5-1",
     "claude-fable-5": "global.anthropic.claude-fable-5",
+    "claude-opus-5-5": "global.anthropic.claude-opus-5-5",
     "claude-opus-5": "global.anthropic.claude-opus-5",
     "claude-opus-4-8": "global.anthropic.claude-opus-4-8",
     # Sonnet 5 follows the dateless "global.anthropic.claude-<model>" spelling
@@ -1053,15 +1054,15 @@ _ANTHROPIC_TO_BEDROCK_MODEL_IDS: dict[str, str] = {
 def to_bedrock_model_id(model: str | None) -> str | None:
     """Normalize any Claude model reference to an invokable AWS Bedrock id.
 
-    oddish routes Claude exclusively through AWS Bedrock. Claude Code invokes
-    Bedrock via the legacy InvokeModel API, which only accepts ids that are
-    directly invokable: ARNs and cross-region inference profile ids
+    Oddish stores default Claude routes as Bedrock ids, even when execution
+    uses Anthropic directly. Claude Code's Bedrock InvokeModel API accepts
+    directly invokable ids: ARNs and cross-region inference profile ids
     (``global.``/``us.``/``eu.``/... prefixed). Bare ``anthropic.claude-...``
     foundation-model ids are NOT invokable on-demand, so they get re-resolved
     through the mapping table like any other Claude reference.
 
-    This is the single chokepoint that guarantees whatever reaches Claude Code
-    is an invokable Bedrock id:
+    Explicit provider choices are preserved; default Claude routes normalize
+    to a Bedrock id:
 
       * ``None`` / blank -> returned unchanged
       * non-Claude models (``openai/...``, ``gemini-...``) -> returned unchanged
