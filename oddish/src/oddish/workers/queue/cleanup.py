@@ -497,6 +497,15 @@ async def _mirror_stale_job_to_domain_row(session, row) -> str | None:
     return None
 
 
+# An inventory call that never returns must not take the whole pass with it:
+# Modal cancels the reconciler at its own timeout, and nothing after the
+# snapshot (stale-job reaping, monitor status checks) runs. Staging showed it:
+# the Thunder inventory function had no secret to start with, its remote call
+# sat pending, and every sweep died at 600 s. Past this bound the snapshot is
+# recorded as an error and the pass goes on without it.
+INVENTORY_SNAPSHOT_TIMEOUT_SECONDS = 120
+
+
 async def cleanup_orphaned_queue_state(
     *,
     stale_after_minutes: int = STALE_HEARTBEAT_MINUTES,
@@ -519,7 +528,10 @@ async def cleanup_orphaned_queue_state(
         try:
             if ec2_backend is None:
                 raise RuntimeError("EC2 is enabled but its backend is not registered")
-            ec2_inventory = await ec2_backend.snapshot_managed_instances()
+            ec2_inventory = await asyncio.wait_for(
+                ec2_backend.snapshot_managed_instances(),
+                timeout=INVENTORY_SNAPSHOT_TIMEOUT_SECONDS,
+            )
             console.print(
                 "metric=ec2_orphan_snapshot "
                 f"outcome=success count={len(ec2_inventory.instances)}"
@@ -534,7 +546,9 @@ async def cleanup_orphaned_queue_state(
 
     if settings.thunder_enabled:
         try:
-            thunder_inventory = await snapshot_thunder_sandboxes()
+            thunder_inventory = await asyncio.wait_for(
+                snapshot_thunder_sandboxes(), timeout=INVENTORY_SNAPSHOT_TIMEOUT_SECONDS
+            )
             console.print(
                 "metric=thunder_orphan_snapshot "
                 f"outcome=success count={len(thunder_inventory)}"
