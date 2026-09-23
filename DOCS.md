@@ -41,7 +41,7 @@ are excluded. This does not enable trace export or replace `ODDISH_API_KEY`.
 - `oddish cancel` - stop in-flight task runs, or just the QA/audit runs with `--qa`
 - `oddish backfill-analysis` - (re)run trial analysis for a trial, task, or experiment
 - `oddish assign` - assign QA review ownership for a batch of task IDs
-- `oddish costs` - view billable-spend accounting (org-wide, or per-user with `--user`)
+- `oddish costs` - view billable-spend accounting (org-wide, per user, or per task split into solver and QA)
 - `oddish admin concurrency` - inspect, set, or clear operator queue-key limits
 - `oddish cost-exclusions` - hide spend for models and experiments that were never really paid for
 - `oddish pull` - download logs and artifacts
@@ -765,12 +765,29 @@ oddish costs --window-days 0 --json
 
 # One user's billed spend over 30 days
 oddish costs --user <user_id> --window-days 30
+
+# Per-task cost by type for an experiment
+oddish costs --experiment <experiment_id>
+
+# Specific tasks, all versions, as CSV
+oddish costs --task my-task --task other-task --csv
 ```
+
+Each task row splits spend into Solver (the agent runs, excluding probes and
+imported runs), QA, Audit, Summaries, Judge & other (Reward Kit judges and
+older QA charges), and Verifier (computer-use verification), plus Total and
+the QA share. With `--experiment`, Solver counts only that experiment's runs;
+review and verifier spend is the task's total, since one QA pass covers the
+whole task. `--task` and `--experiment` need only a read key and also work on
+a self-hosted server.
 
 Options
 
 - `--user TEXT` - Show one user's billed spend (by id) instead of the org-wide breakdown
 - `--window-days INTEGER` - Trailing window in days; `0` = all-time (default 7)
+- `--task, -t TEXT` - Per-task cost by type (solver, QA, audit, summaries, judges, verifier); repeatable
+- `--experiment, -e TEXT` - The same split for every task in an experiment (id)
+- `--csv` - With `--task`/`--experiment`, write CSV
 - `--api TEXT` - Override the API URL
 - `--json` - Emit the raw cost breakdown JSON
 

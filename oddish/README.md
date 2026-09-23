@@ -90,7 +90,7 @@ reference. The main commands are:
 - `oddish preflight` — check task name, internet/reward declarations, optional GPU types, and task integrity before `run` or `upload` (pass `--force` there to submit anyway).
 - `oddish ls` / `oddish status` — browse tasks (including lab history, QA, author, model, run coverage (`--run-coverage`), model-score sorting, and trajectory-metric filters; `--filter-options`, `--count`, and `--ids` for selection) and inspect progress. `oddish status <trial_id>` shows single-trial detail; `--detail`/`--versions` show a task's version history and cost rollups; `--queue` shows queue & worker scheduler diagnostics.
 - `oddish logs` — stream a running trial's live transcript and cost estimate (`--follow` to poll until it ends); finished trials are served by `oddish pull` instead.
-- `oddish costs` — billable-spend accounting (org-wide, or per-user with `--user`).
+- `oddish costs` — billable-spend accounting (org-wide, per user, or per task with `--task`/`--experiment`).
 - `oddish admin concurrency` — inspect, set, or clear operator queue-key concurrency overrides with verified readback.
 - `oddish cost-exclusions` — hide spend for models and experiments that were never really paid for.
 - `oddish cancel` — cancel active runs or task-level QA.
