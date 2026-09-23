@@ -142,6 +142,7 @@ async def test_rejected_job_is_atomic_and_does_not_stop_neighbors(
                     trials,
                     targets,
                     errors,
+                    _,
                 ) = await cleanup._reap_stale_worker_jobs(
                     session, stale_after_minutes=15
                 )

@@ -224,7 +224,7 @@ def _patch_unrelated_cleanup_phases(
 
     async def reap(*_args, **_kwargs):
         events.append("stale_reap")
-        return 0, 0, [], set(stale_targets or ()), reap_errors
+        return 0, 0, [], set(stale_targets or ()), reap_errors, []
 
     async def unwedge(*_args, **_kwargs):
         return 0, 0, 0
@@ -545,8 +545,8 @@ async def test_stale_reap_discovers_one_ec2_teardown_target(monkeypatch) -> None
 
         async def execute(self, statement, _params=None):
             sql = str(statement)
-            if sql.lstrip().startswith("SELECT id FROM worker_jobs"):
-                return Result(rows=[("job-stale",)])
+            if sql.lstrip().startswith("SELECT id, attempts FROM worker_jobs"):
+                return Result(rows=[("job-stale", 1)])
             if "SET    status = CASE" in sql:
                 return Result(
                     mapping={
@@ -579,9 +579,14 @@ async def test_stale_reap_discovers_one_ec2_teardown_target(monkeypatch) -> None
     monkeypatch.setattr(cleanup, "_mirror_stale_job_to_domain_row", mirror)
     monkeypatch.setattr(cleanup, "cancel_job_by_worker", terminate)
 
-    retried, failed, trial_ids, targets, errors = await cleanup._reap_stale_worker_jobs(
-        Session(), stale_after_minutes=15
-    )
+    (
+        retried,
+        failed,
+        trial_ids,
+        targets,
+        errors,
+        _,
+    ) = await cleanup._reap_stale_worker_jobs(Session(), stale_after_minutes=15)
     terminated = await cleanup._terminate_orphaned_sandboxes(targets)
 
     assert (retried, failed, trial_ids, errors) == (0, 1, ["trial-stale"], 0)

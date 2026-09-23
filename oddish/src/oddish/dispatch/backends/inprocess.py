@@ -175,9 +175,16 @@ class InProcessDispatcher:
                 await self._run_job(queue_key, **run_kwargs)
                 release_capacity_lease = True
             finally:
-                await self._release_slot(
-                    queue_key=queue_key, slot=slot, worker_id=worker_id
-                )
+                from oddish.workers.queue.worker_job_single_job import worker_handed_off
+
+                if worker_handed_off(worker_id):
+                    # The job was handed to the in-sandbox monitor: it keeps
+                    # this slot and the capacity lease until settlement.
+                    release_capacity_lease = False
+                else:
+                    await self._release_slot(
+                        queue_key=queue_key, slot=slot, worker_id=worker_id
+                    )
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - worker errors must not crash the loop

@@ -84,13 +84,30 @@ async def ensure_task_image(task_id: str, version: int) -> str:
     Returns a short outcome marker (for logs/tests): ``no-gke-config``,
     ``task-docker-image``, ``exists``, or ``built <image_url>``.
     """
+    marker, _ = await _ensure_task_image(task_id, version)
+    return marker
+
+
+async def resolve_task_image(task_id: str, version: int) -> str | None:
+    """The image a sandbox should pull for this task version, building it once.
+
+    ``None`` when there is nothing to hand over: the registry is not configured,
+    the task names its own ``docker_image``, or it has no environment directory.
+    The tag is the content hash, so unchanged inputs reuse the image and a
+    changed Dockerfile gets a new one.
+    """
+    _, image_url = await _ensure_task_image(task_id, version)
+    return image_url
+
+
+async def _ensure_task_image(task_id: str, version: int) -> tuple[str, str | None]:
     if not (
         settings.gke_project_id
         and settings.gke_region
         and settings.gke_registry_location
         and settings.gke_registry_name
     ):
-        return "no-gke-config"
+        return "no-gke-config", None
 
     archive_bytes = await _fetch_task_archive(task_id, version)
     with tempfile.TemporaryDirectory() as tmp:
@@ -104,11 +121,11 @@ async def ensure_task_image(task_id: str, version: int) -> str:
         docker_image = (task_toml.get("environment") or {}).get("docker_image")
         if docker_image:
             # The pod uses the task-provided image verbatim; nothing to build.
-            return "task-docker-image"
+            return "task-docker-image", None
 
         env_dir = root / "environment"
         if not env_dir.is_dir():
-            return "no-environment-dir"
+            return "no-environment-dir", None
 
         image_name = _task_short_name(task_toml) or task_id
         tag = _content_hash(env_dir, docker_image=None)
@@ -119,7 +136,7 @@ async def ensure_task_image(task_id: str, version: int) -> str:
         )
 
         if _image_exists(image=image_name, tag=tag):
-            return "exists"
+            return "exists", image_url
 
         _run_cloud_build(context_dir=str(env_dir), image_url=image_url)
-        return f"built {image_url}"
+        return f"built {image_url}", image_url

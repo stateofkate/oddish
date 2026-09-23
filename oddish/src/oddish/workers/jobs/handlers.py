@@ -58,6 +58,34 @@ def _fail_permanent(message: str) -> JobOutcome:
     return JobOutcome.fail(message, retryable=False)
 
 
+# Trial kinds the in-sandbox monitor can drive today. Probe and analysis kinds
+# have the launcher modify the task copy and mint extra credentials, which the
+# monitor path does not carry yet, so they stay on the worker.
+_MONITOR_TRIAL_KINDS = {"agent"}
+
+
+async def _monitor_can_drive(trial_id: str) -> bool:
+    async with get_session() as session:
+        trial = await session.get(TrialModel, trial_id)
+    if trial is None:
+        return False
+    is_probe = (trial.harbor_config or {}).get("mode") == "probe"
+    if (trial.kind or "agent") not in _MONITOR_TRIAL_KINDS or is_probe:
+        return False
+    # A trial runs on the provider it asked for. No starter for it: the worker.
+    from oddish.workers.queue.monitor_launch import control_plane_url
+    from oddish.workers.queue.monitor_sandbox import provider_for_environment
+
+    if provider_for_environment(getattr(trial, "environment", None)) is None:
+        return False
+    # The sandbox must be able to reach the control plane; a host with no
+    # resolvable API URL keeps the trial on the worker instead of failing it.
+    try:
+        return bool(control_plane_url())
+    except Exception:  # noqa: BLE001 - not configured is not an error here
+        return False
+
+
 class TrialJobHandler:
     kind = WorkerJobKind.TRIAL
 
@@ -76,6 +104,16 @@ class TrialJobHandler:
             creds = decrypt_credentials((job.payload or {}).get("registry_auth_enc"))
         except RegistryAuthDecryptError as exc:
             return _fail_permanent(str(exc))
+        from oddish.config import settings
+
+        if settings.monitor_execution_enabled and await _monitor_can_drive(trial_id):
+            from oddish.workers.queue.monitor_launch import launch_monitor_attempt
+
+            handoff = await launch_monitor_attempt(job, creds or None)
+            if handoff is not None:
+                return handoff
+            return await self.outcome_for_settled_trial(job, None)
+
         cred_token = current_registry_credentials.set(creds or None)
         try:
             harbor_outcome = await run_trial_job(

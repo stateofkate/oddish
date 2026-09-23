@@ -85,7 +85,7 @@ async def _unpack_archive(archive_key: str, dest: Path) -> Path:
     return job_dir
 
 
-async def _revoke_and_release(
+async def release_after_attempt(
     job_id: str,
     attempt: int,
     *,
@@ -94,8 +94,10 @@ async def _revoke_and_release(
     worker_id: str | None,
     payload: dict | None,
 ) -> None:
-    """Revoke the attempt's token and free its queue slot and capacity lease,
-    after the outcome write and never before it (a free slot with the row still
+    """Revoke the attempt's token and free the queue slot and capacity lease
+    its hand-off kept. Whoever ends a monitor attempt calls this: settlement,
+    and the stale reap (for an attempt that never reported). Only after the
+    outcome write and never before it (a free slot with the row still
     RUNNING lets the queue exceed its limit). All are no-ops once done: the
     revoke matches only this attempt's unrevoked token, each release only a
     slot this worker still holds. A failure in one never skips the others."""
@@ -159,7 +161,7 @@ async def settle_monitor_result(
             if job.monitor_result_accepted_at is not None and (
                 (job.monitor_result or {}).get("attempt") == attempt
             ):
-                await _revoke_and_release(
+                await release_after_attempt(
                     job.id,
                     attempt,
                     queue_key=job.queue_key,
@@ -300,7 +302,7 @@ async def settle_monitor_result(
             await monitor_sandbox.get_starter(sandbox_provider).stop(sandbox_id)
         except Exception:  # noqa: BLE001 - the provider timeout is the backstop
             logger.warning("could not stop monitor sandbox %s", sandbox_id)
-    await _revoke_and_release(
+    await release_after_attempt(
         claimed.id,
         attempt,
         queue_key=claimed.queue_key,

@@ -64,8 +64,8 @@ class _FakeSession:
 
     async def execute(self, statement, params: dict[str, Any] | None = None):
         sql = str(statement)
-        if sql.lstrip().startswith("SELECT id FROM worker_jobs"):
-            return _FakeResult(rows=[("wj-1",)])
+        if sql.lstrip().startswith("SELECT id, attempts FROM worker_jobs"):
+            return _FakeResult(rows=[("wj-1", 2)])
         if "UPDATE worker_jobs" in sql and "SET    status = CASE" in sql:
             return _FakeResult(
                 mappings_rows=[

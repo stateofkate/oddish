@@ -241,7 +241,7 @@ async def _main() -> int:
             )
         )  # fmt: skip
     for _ in range(2):  # a re-run after a crash no-ops
-        await monitor_settle._revoke_and_release(
+        await monitor_settle.release_after_attempt(
             row.id, 1, queue_key="b", slot=None, worker_id="launcher-1",
             payload=row.payload,
         )  # fmt: skip

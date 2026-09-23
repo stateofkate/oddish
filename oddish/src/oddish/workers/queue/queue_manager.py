@@ -23,6 +23,7 @@ from oddish.workers.queue.slots import acquire_queue_slot, release_queue_slot
 from oddish.workers.queue.worker_job_dispatcher import stamp_dispatch_stage
 from oddish.workers.queue.worker_job_single_job import (
     drain_worker_jobs,
+    worker_handed_off,
 )
 
 POLL_INTERVAL_SECONDS = 2.0
@@ -146,11 +147,17 @@ async def run_assigned_queue_worker(
             release_capacity_lease = True
             return jobs_processed
         finally:
-            await release_queue_slot(
-                queue_key=queue_key,
-                slot=slot,
-                worker_id=worker_id,
-            )
+            if worker_handed_off(worker_id):
+                # Launch succeeded is not trial finished: the handed-off job is
+                # still RUNNING in its sandbox and keeps this slot and the
+                # capacity lease. Settlement (or the reaper) releases them.
+                release_capacity_lease = False
+            else:
+                await release_queue_slot(
+                    queue_key=queue_key,
+                    slot=slot,
+                    worker_id=worker_id,
+                )
     finally:
         if capacity_slot is not None and release_capacity_lease:
             await release_sandbox_capacity_lease(

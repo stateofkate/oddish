@@ -1198,6 +1198,20 @@ Handler registration lives in `oddish.workers.jobs` (`registry.py`,
 `handlers.py`). Both the standalone worker and the backend call
 `ensure_builtin_handlers_registered()` at startup.
 
+The experimental monitor cache builds standard single-Dockerfile task images
+before snapshotting. Images use Harbor's environment content hash; restored
+monitors verify them locally and select Harbor's existing prebuilt-image path.
+Explicit force-build and image overrides take precedence. Compose, environment
+kwargs and symlink contexts keep the existing build path. Warm-up runs no agent
+or verifier and receives no model keys, registry login or attempt token.
+
+Keep `/var/lib/docker` in the sandbox filesystem: a Dockerfile `VOLUME` there
+excludes the store from Daytona's snapshot. The warm entrypoint waits for Docker
+to exit, and every boot allocates fresh Docker execution state. Integration
+checks must use fresh sandboxes and verify image/build identity, changed-input
+invalidation, task/verifier success and network policy. Track and delete
+experiment snapshots explicitly; this adds no fleet-wide retention policy.
+
 ### Trace context across queued work
 
 The API's active W3C trace context is saved in the existing

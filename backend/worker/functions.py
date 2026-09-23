@@ -26,14 +26,9 @@ import time
 from uuid import uuid4
 
 import modal
-
-# ``configure_logfire`` runs in ``worker/__init__.py`` (so auto-tracing
-# can patch our modules before they're imported); we just need the
-# ``span`` helper here to wrap entry points.
-from observability import log_exception, span as _otel_span
-
+from backfill_github_id import backfill_github_id
+from dashboard_owner_backfill import backfill_experiment_owners
 from modal_app import (
-    MODAL_APP_NAME,
     CLEANUP_INTERVAL_SECONDS,
     CLEANUP_TIMEOUT_SECONDS,
     DASHBOARD_PRECOMPUTE_INTERVAL_SECONDS,
@@ -43,6 +38,7 @@ from modal_app import (
     DISPATCHER_NONPREEMPTIBLE,
     DISPATCHER_TIMEOUT_SECONDS,
     MAX_WORKERS_PER_POLL,
+    MODAL_APP_NAME,
     POLL_INTERVAL_SECONDS,
     RECONCILER_CPU,
     RECONCILER_MEMORY_MB,
@@ -50,12 +46,12 @@ from modal_app import (
     TRIAL_FACETS_REFRESH_TIMEOUT_SECONDS,
     WORKER_BATCH_BUDGET_SECONDS,
     WORKER_BUFFER_CONTAINERS,
-    WORKER_CPU,
+    WORKER_CANDIDATE_CONFIGURATION,
     WORKER_CANDIDATE_CPU,
     WORKER_CANDIDATE_CPU_LIMIT,
-    WORKER_CANDIDATE_MEMORY_MB,
     WORKER_CANDIDATE_MAX_CONTAINERS,
-    WORKER_CANDIDATE_CONFIGURATION,
+    WORKER_CANDIDATE_MEMORY_MB,
+    WORKER_CPU,
     WORKER_MAX_CONTAINERS,
     WORKER_MEMORY_MB,
     WORKER_MIN_CONTAINERS,
@@ -71,18 +67,37 @@ from modal_app import (
     thunder_worker_secrets,
     worker_volumes,
 )
-from backfill_github_id import backfill_github_id
-from dashboard_owner_backfill import backfill_experiment_owners
+
+# ``configure_logfire`` runs in ``worker/__init__.py`` (so auto-tracing
+# can patch our modules before they're imported); we just need the
+# ``span`` helper here to wrap entry points.
+from observability import log_exception
+from observability import span as _otel_span
 from oddish.config import settings
-from oddish.costs.recorder import WorkerBillingSpec
+from oddish.core.harbor_source import harbor_variant_function_name
+from oddish.core.helpers import register_provider_teardown_delegate
 from oddish.core.model_concurrency import get_model_concurrency_overrides
-from oddish.db import close_database_connections, get_session, WorkerJobKind
+from oddish.costs.recorder import WorkerBillingSpec
+from oddish.db import WorkerJobKind, close_database_connections, get_session
+from oddish.dispatch.cycle import (
+    build_dispatch_plan,
+    compute_post_spawn_why_waiting,
+)
 from oddish.observability import (
     DispatchCycleOutcome,
     record_dispatch_cycle,
     record_dispatch_snapshot,
 )
 from oddish.runtime.backends.daytona import reap_stale_daytona_sandboxes
+from oddish.runtime.backends.thunder import register_thunder_inventory_delegate
+from oddish.runtime.registry import get_backend
+from oddish.runtime.sandbox_lifecycle import (
+    DEFAULT_EXECUTION_LANE,
+    EC2_TRIAL_EXECUTION_LANE,
+    THUNDER_TRIAL_EXECUTION_LANE,
+    capacity_provider_for_execution_lane,
+)
+from oddish.workers.analysis_trials import register_qa_imported_hook
 from oddish.workers.jobs import ensure_builtin_handlers_registered
 from oddish.workers.queue.cleanup import cleanup_orphaned_queue_state
 from oddish.workers.queue.concurrency_controller import (
@@ -90,14 +105,14 @@ from oddish.workers.queue.concurrency_controller import (
     merge_advisory_over_static,
     recompute_advisory_limits,
 )
-from oddish.workers.queue.slots import (
-    acquire_queue_slot,
-    cleanup_stale_queue_slots,
-    release_queue_slot,
-    reserve_queue_launches,
-    release_launch_reservations,
+from oddish.workers.queue.monitor_settle import (
+    set_post_success_hook as set_monitor_post_success_hook,
 )
-
+from oddish.workers.queue.runtime_status import (
+    DISPATCHER_COMPONENT,
+    RECONCILER_COMPONENT,
+    record_queue_runtime_status,
+)
 from oddish.workers.queue.sandbox_capacity import (
     SANDBOX_CAPACITY_LEASE_SECONDS,
     acquire_sandbox_capacity_lease,
@@ -105,36 +120,23 @@ from oddish.workers.queue.sandbox_capacity import (
     count_held_sandbox_capacity_leases,
     release_sandbox_capacity_lease,
 )
-from oddish.workers.queue.runtime_status import (
-    DISPATCHER_COMPONENT,
-    RECONCILER_COMPONENT,
-    record_queue_runtime_status,
+from oddish.workers.queue.slots import (
+    acquire_queue_slot,
+    cleanup_stale_queue_slots,
+    release_launch_reservations,
+    release_queue_slot,
+    reserve_queue_launches,
 )
 from oddish.workers.queue.worker_job_dispatcher import (
     select_job_function,
     stamp_dispatch_stage,
 )
-from oddish.dispatch.cycle import (
-    build_dispatch_plan,
-    compute_post_spawn_why_waiting,
-)
 from oddish.workers.queue.worker_job_single_job import (
     PostSuccessHooks,
     drain_worker_jobs,
     run_single_worker_job,
+    worker_handed_off,
 )
-from oddish.core.harbor_source import harbor_variant_function_name
-from oddish.core.helpers import register_provider_teardown_delegate
-from oddish.runtime.registry import get_backend
-from oddish.runtime.backends.thunder import register_thunder_inventory_delegate
-from oddish.runtime.sandbox_lifecycle import (
-    DEFAULT_EXECUTION_LANE,
-    EC2_TRIAL_EXECUTION_LANE,
-    THUNDER_TRIAL_EXECUTION_LANE,
-    capacity_provider_for_execution_lane,
-)
-
-from oddish.workers.analysis_trials import register_qa_imported_hook
 
 from .github import notify_github_qa, notify_github_trial
 from .runtime import configure_storage_paths, console
@@ -213,8 +215,8 @@ ensure_builtin_handlers_registered()
 # is on; otherwise trials run on the platform keys as before.
 from .byok_resolver import install_byok_resolver
 from .org_access import (
-    authorize_worker_job,
     approved_worker_job_counts,
+    authorize_worker_job,
     cancel_unapproved_runs,
 )
 
@@ -229,6 +231,9 @@ register_qa_imported_hook(notify_github_qa)
 _POST_SUCCESS_HOOKS: PostSuccessHooks = {
     WorkerJobKind.TRIAL: notify_github_trial,
 }
+# Monitor-driven trials settle outside run_single_worker_job (in the
+# reconciler here, or inline in the API): same hook, registered once.
+set_monitor_post_success_hook(notify_github_trial)
 
 
 async def _effective_model_concurrency_limits(
@@ -444,6 +449,13 @@ async def _run_one_job(
     finally:
         try:
             try:
+                if worker_handed_off(worker_id):
+                    # Launch succeeded is not trial finished: the job is still
+                    # RUNNING in the sandbox and keeps its slot and lease.
+                    # Settlement (or the reaper) releases them.
+                    lock_slot = None
+                    reservation_token = None
+                    release_capacity_lease = False
                 if lock_slot is not None:
                     await release_queue_slot(
                         queue_key=queue_key,

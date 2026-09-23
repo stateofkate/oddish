@@ -565,6 +565,21 @@ async def cleanup_orphaned_queue_state(
     unprovisioned_sandbox_runs_finalized = 0
     completed_thunder_handoffs: list[tuple[str, str, str]] = []
 
+    # Provider calls, so before (and outside) the reconciliation transaction.
+    try:
+        from oddish.workers.queue.monitor_status_check import check_stale_monitor_jobs
+
+        monitor_status_checks = await check_stale_monitor_jobs(
+            stale_after_minutes=stale_after_minutes
+        )
+        if monitor_status_checks:
+            console.print(f"metric=monitor_status_check {monitor_status_checks}")
+    except Exception as exc:
+        console.print(
+            "metric=monitor_status_check outcome=error "
+            f"error_type={type(exc).__name__} error={exc}"
+        )
+
     async with get_session() as session:
         (
             worker_jobs_retried,
@@ -572,6 +587,7 @@ async def cleanup_orphaned_queue_state(
             reaped_trial_ids,
             worker_targets,
             worker_job_reap_errors,
+            monitor_releases,
         ) = await _reap_stale_worker_jobs(
             session, stale_after_minutes=stale_after_minutes
         )
@@ -708,6 +724,10 @@ async def cleanup_orphaned_queue_state(
         await _terminate_orphaned_sandboxes(worker_targets)
         + thunder_sandboxes_terminated
     )
+    # A reaped monitor attempt ended without a result, so settlement never
+    # frees what its hand-off kept. Release it as settle does, after the commit
+    # (the rows are locked until then) and after the sandbox teardown.
+    await _release_reaped_monitor_attempts(monitor_releases)
     if thunder_sandboxes_terminated:
         try:
             sandbox_capacity_leases_cleared += await cleanup_sandbox_capacity_leases()
@@ -1150,9 +1170,22 @@ async def _maybe_reconcile_tag_projections(session) -> int:
 # =============================================================================
 
 
+# A job driven by the in-sandbox monitor is reaped only once its status check
+# says so, and never once a result has been accepted for the attempt: that
+# result is settled instead. The reap UPDATE repeats this predicate, so a
+# result accepted after the candidate SELECT still blocks the reap: the row
+# either has no accepted result when the UPDATE takes it, or the UPDATE
+# matches nothing and settlement takes the result.
+_MONITOR_REAPABLE = """(
+                      monitor_token_hash IS NULL
+                      OR (COALESCE(monitor_status_check_count, 0) >= :reapable
+                          AND monitor_result_accepted_at IS NULL)
+                  )"""
+
+
 async def _reap_stale_worker_jobs(
     session, *, stale_after_minutes: int
-) -> tuple[int, int, list[str], set[tuple[str, str]], int]:
+) -> tuple[int, int, list[str], set[tuple[str, str]], int, list[dict[str, Any]]]:
     """Step 1 -- stale-heartbeat sweep on ``worker_jobs``.
 
     Transitions RUNNING rows whose heartbeat stalled to RETRYING (attempts
@@ -1161,42 +1194,46 @@ async def _reap_stale_worker_jobs(
     (settle/retry is writing its terminal state -- mirroring would clobber it
     and waiting would deadlock, since we hold the job lock and the holder takes
     domain-row -> worker_jobs), the whole unit rolls back and retries next
-    sweep. Returns ``(retried, failed, reaped_trial_ids, worker_targets)``.
+    sweep. Returns ``(retried, failed, reaped_trial_ids, worker_targets,
+    reap_errors, monitor_releases)``. ``monitor_releases`` holds, per reaped
+    monitor-driven attempt, what its hand-off kept (the queue slot and capacity
+    lease under the pre-reap worker id); the caller releases them after commit.
     """
-    stale_candidate_ids = [
-        row[0]
-        for row in (
-            await session.execute(
-                text(
-                    """
-                    SELECT id FROM worker_jobs
-                    WHERE  status::text = 'RUNNING'
-                      AND  (
-                          heartbeat_at IS NULL
-                          OR heartbeat_at < NOW() - make_interval(mins => :stale_after_minutes)
-                      )
-                    ORDER BY id
-                    """
-                ),
-                {"stale_after_minutes": stale_after_minutes},
-            )
-        ).all()
-    ]
+    from oddish.workers.queue.monitor_status_check import REAPABLE
+
+    stale_candidates = (
+        await session.execute(
+            text(
+                f"""
+                SELECT id, attempts FROM worker_jobs
+                WHERE  status::text = 'RUNNING'
+                  AND  (
+                      heartbeat_at IS NULL
+                      OR heartbeat_at < NOW() - make_interval(mins => :stale_after_minutes)
+                  )
+                  AND  {_MONITOR_REAPABLE}
+                ORDER BY id
+                """
+            ),
+            {"stale_after_minutes": stale_after_minutes, "reapable": REAPABLE},
+        )
+    ).all()
 
     worker_jobs_retried = 0
     worker_jobs_failed = 0
     worker_job_reap_errors = 0
     reaped_trial_ids: list[str] = []
     worker_targets: set[tuple[str, str]] = set()
+    monitor_releases: list[dict[str, Any]] = []
 
-    for stale_job_id in stale_candidate_ids:
+    for stale_job_id, observed_attempt in stale_candidates:
         try:
             async with session.begin_nested():
                 row = (
                     (
                         await session.execute(
                             text(
-                                """
+                                f"""
                     UPDATE worker_jobs
                     SET    status = CASE
                                WHEN attempts < max_attempts THEN 'RETRYING'::worker_job_status
@@ -1226,13 +1263,29 @@ async def _reap_stale_worker_jobs(
                                     || :stale_after_minutes
                                     || ' minutes.'
                            END
-                    WHERE  id = :job_id
-                      AND  status::text = 'RUNNING'
-                      AND  (
-                          heartbeat_at IS NULL
-                          OR heartbeat_at < NOW() - make_interval(mins => :stale_after_minutes)
-                      )
+                    FROM   (
+                        -- The fenced row, locked, with its pre-reap owner:
+                        -- RETURNING alone sees the owner columns nulled.
+                        SELECT id AS prev_id,
+                               current_worker_id AS prev_worker_id,
+                               current_queue_slot AS prev_queue_slot
+                        FROM   worker_jobs
+                        WHERE  id = :job_id
+                          AND  attempts = :attempt
+                          AND  status::text = 'RUNNING'
+                          AND  (
+                              heartbeat_at IS NULL
+                              OR heartbeat_at < NOW() - make_interval(mins => :stale_after_minutes)
+                          )
+                          AND  {_MONITOR_REAPABLE}
+                        FOR UPDATE
+                    ) AS prev
+                    WHERE  id = prev.prev_id
                     RETURNING id,
+                              queue_key,
+                              prev.prev_worker_id AS released_worker_id,
+                              prev.prev_queue_slot AS released_queue_slot,
+                              monitor_token_hash IS NOT NULL AS monitor_driven,
                               kind::text AS kind,
                               status::text AS new_status,
                               subject_table,
@@ -1247,7 +1300,9 @@ async def _reap_stale_worker_jobs(
                             ),
                             {
                                 "job_id": stale_job_id,
+                                "attempt": observed_attempt,
                                 "stale_after_minutes": stale_after_minutes,
+                                "reapable": REAPABLE,
                             },
                         )
                     )
@@ -1318,6 +1373,17 @@ async def _reap_stale_worker_jobs(
             worker_targets.add((str(provider), str(external_id)))
         if committed_trial_id is not None:
             reaped_trial_ids.append(committed_trial_id)
+        if row.get("monitor_driven"):
+            monitor_releases.append(
+                {
+                    "job_id": row["id"],
+                    "attempt": row["attempts"],
+                    "queue_key": row["queue_key"],
+                    "slot": row["released_queue_slot"],
+                    "worker_id": row["released_worker_id"],
+                    "payload": row["payload"],
+                }
+            )
 
     await session.flush()
     return (
@@ -1326,6 +1392,7 @@ async def _reap_stale_worker_jobs(
         reaped_trial_ids,
         worker_targets,
         worker_job_reap_errors,
+        monitor_releases,
     )
 
 
@@ -2250,6 +2317,31 @@ async def _unwedge_stuck_analyzing(session) -> tuple[int, int, int]:
         stuck_analyzing_finalized,
         stuck_analysis_nulls_failed,
     )
+
+
+async def _release_reaped_monitor_attempts(releases: list[dict[str, Any]]) -> None:
+    """Best effort per attempt: one failure never skips the others, every
+    release is a no-op once done, and ``_release_orphaned_slots`` plus
+    ``cleanup_sandbox_capacity_leases`` on the next sweep are the backstop."""
+    if not releases:
+        return
+    from oddish.workers.queue.monitor_settle import release_after_attempt
+
+    for release in releases:
+        try:
+            await release_after_attempt(
+                release["job_id"],
+                release["attempt"],
+                queue_key=release["queue_key"],
+                slot=release["slot"],
+                worker_id=release["worker_id"],
+                payload=release["payload"],
+            )
+        except Exception:  # noqa: BLE001 -- the next sweep is the backstop
+            logger.exception(
+                "could not release the reaped monitor attempt of job=%s",
+                release["job_id"],
+            )
 
 
 async def _release_orphaned_slots(session) -> int:

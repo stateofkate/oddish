@@ -36,6 +36,12 @@ from oddish.workers.jobs.handlers import TrialJobHandler  # noqa: E402
 from oddish.workers.queue.worker_job_single_job import ClaimedWorkerJob  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _worker_drives_the_trial(monkeypatch):
+    # These tests cover the path where the worker itself drives the trial.
+    monkeypatch.setattr(settings, "monitor_execution_enabled", False)
+
+
 def _fake_get_session_factory(
     domain_row, *, worker_status=WorkerJobStatus.RUNNING, qa_owner_id="wj-vd-1"
 ):
