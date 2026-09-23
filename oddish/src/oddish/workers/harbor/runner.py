@@ -141,6 +141,17 @@ class FallbackEnvironmentCompatibilityError(RuntimeError):
     """The destination provider cannot honor the source accelerator request."""
 
 
+def is_retryable_execution_error(exc: BaseException) -> bool:
+    """Whether a trial whose driver raised ``exc`` may retry. Another sandbox
+    cannot lift a quota pause or give the provider the missing accelerator.
+    Shared by the worker and the in-sandbox monitor."""
+    from .quota_control import QuotaPauseControlError
+
+    return not isinstance(
+        exc, (QuotaPauseControlError, FallbackEnvironmentCompatibilityError)
+    )
+
+
 # Harbor's default task-environment ``build_timeout_sec`` -- the base it
 # multiplies. Sizing reads each task's own value; this is only the fallback base
 # when a task's task.toml cannot be read. Sourced from Harbor so it cannot drift.

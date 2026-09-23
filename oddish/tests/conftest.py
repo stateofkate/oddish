@@ -35,6 +35,14 @@ async def session():
 
 
 @pytest.fixture(autouse=True)
+def _mon_status_in_tmp(tmp_path, monkeypatch):
+    """The monitor records its phase under /run; tests keep it in their tmp dir."""
+    import oddish.mon.status as mon_status
+
+    monkeypatch.setattr(mon_status, "STATUS_PATH", tmp_path / "oddish-mon-status.json")
+
+
+@pytest.fixture(autouse=True)
 def _fresh_cost_exclusions():
     """Cost exclusions are cached per process for a minute; tests that insert
     exclusion rows must not see another test's (or their own earlier) snapshot."""

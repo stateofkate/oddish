@@ -1,0 +1,67 @@
+"""The monitor's secrets: read once from the environment, then removed from it.
+
+The launcher sets these through the provider's sandbox-creation slot. After
+``load`` they live only in this process's memory, so nothing the monitor starts
+(Docker, Compose, the agent) can inherit the token.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from dataclasses import dataclass, field
+from urllib.parse import urlsplit
+
+API_URL_VAR = "ODDISH_MON_API_URL"
+TOKEN_VAR = "ODDISH_MON_TOKEN"
+AGENT_ENV_VAR = "ODDISH_MON_AGENT_ENV"  # JSON object: env for the agent only
+REGISTRY_AUTH_VAR = "ODDISH_MON_REGISTRY_AUTH"  # JSON list: the run's registry login
+
+
+class MonitorEnvError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True)
+class MonitorEnv:
+    api_url: str
+    token: str = field(repr=False)
+    agent_env: dict[str, str] = field(default_factory=dict, repr=False)
+    registry_auth: list[dict] = field(default_factory=list, repr=False)
+
+
+def _require_https(api_url: str) -> str:
+    parts = urlsplit(api_url)
+    local = parts.hostname in {"localhost", "127.0.0.1", "host.docker.internal"}
+    if parts.scheme != "https" and not (parts.scheme == "http" and local):
+        raise MonitorEnvError(f"{API_URL_VAR} must be https")
+    if parts.username or parts.password or parts.query or parts.fragment:
+        raise MonitorEnvError(f"{API_URL_VAR} must be a bare URL")
+    return api_url.rstrip("/")
+
+
+def load(environ: dict[str, str] | None = None) -> MonitorEnv:
+    environ = os.environ if environ is None else environ
+    api_url, token = environ.get(API_URL_VAR), environ.pop(TOKEN_VAR, None)
+    raw_agent_env = environ.pop(AGENT_ENV_VAR, None)
+    raw_registry_auth = environ.pop(REGISTRY_AUTH_VAR, None)
+    if not api_url or not token:
+        raise MonitorEnvError(f"{API_URL_VAR} and {TOKEN_VAR} are required")
+    try:
+        agent_env = json.loads(raw_agent_env) if raw_agent_env else {}
+    except json.JSONDecodeError as exc:
+        raise MonitorEnvError(f"{AGENT_ENV_VAR} is not valid JSON") from exc
+    if not isinstance(agent_env, dict):
+        raise MonitorEnvError(f"{AGENT_ENV_VAR} must be a JSON object")
+    try:
+        registry_auth = json.loads(raw_registry_auth) if raw_registry_auth else []
+    except json.JSONDecodeError as exc:
+        raise MonitorEnvError(f"{REGISTRY_AUTH_VAR} is not valid JSON") from exc
+    if not isinstance(registry_auth, list):
+        raise MonitorEnvError(f"{REGISTRY_AUTH_VAR} must be a JSON list")
+    return MonitorEnv(
+        api_url=_require_https(api_url),
+        token=token,
+        agent_env={str(k): str(v) for k, v in agent_env.items()},
+        registry_auth=registry_auth,
+    )

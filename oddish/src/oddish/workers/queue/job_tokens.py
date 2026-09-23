@@ -25,6 +25,7 @@ present, else the blanket secret).
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import secrets
 from dataclasses import dataclass
@@ -69,6 +70,35 @@ def authorize_s3_key(key: str, prefix: str) -> bool:
 
 # Providers whose key env is assembled by ``settings.get_openai_agent_env``.
 _OPENAI_FAMILY = {"openai", "azure", "azure_openai"}
+# The names grok-build authenticates with (workers/agents/grok_build.py reads
+# XAI_API_KEY, or a comma-separated pool in XAI_API_KEYS).
+_XAI_AUTH_ENV = ("XAI_API_KEY", "XAI_API_KEYS")
+# The AWS chain LiteLLM/boto read for a ``bedrock/`` model, plus the region
+# setting they require. Ambient on the worker; selected by name for the sandbox.
+_BEDROCK_AUTH_ENV = (
+    "AWS_BEARER_TOKEN_BEDROCK",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "AWS_REGION",
+    "AWS_DEFAULT_REGION",
+    "AWS_REGION_NAME",
+)
+# Providers with no settings field. On the worker their agents read one key
+# from the ambient environment (the ``${NAME}`` the claude-code profiles in
+# harbor/agent_config.py resolve; dsh and other Harbor agents read the host).
+# Names as in runner._PROVIDER_RUNTIME_SECRET_KEYS.
+_AMBIENT_PROVIDER_KEYS: dict[str, tuple[str, ...]] = {
+    "fireworks": ("FIREWORKS_API_KEY",),
+    "zai": ("ZAI_API_KEY",),
+    "minimax": ("MINIMAX_API_KEY",),
+    "moonshot": ("MOONSHOT_API_KEY",),
+    "deepseek": ("DEEPSEEK_API_KEY",),
+    "openrouter": ("OPENROUTER_API_KEY",),
+}
+# cursor-cli authenticates with CURSOR_API_KEY read from the host environment
+# (Harbor agents/installed/cursor_cli.py), whatever model provider it fronts.
+_CURSOR_AUTH_ENV = ("CURSOR_API_KEY",)
 
 
 def _agent_is_claude_code(agent: str | None) -> bool:
@@ -115,6 +145,7 @@ def scoped_model_env(
     settings: Any,
     is_probe: bool = False,
     byok_env: Mapping[str, str] | None = None,
+    ambient: Mapping[str, str] | None = None,
     raw_harbor_config: Mapping[str, Any] | None = None,
 ) -> dict[str, str]:
     """Least-privilege model env for the job's provider only.
@@ -123,6 +154,12 @@ def scoped_model_env(
     just that provider's key env — never the full blanket key set. Unknown
     providers return ``{}`` so the caller's dual-read falls back to the blanket
     secret rather than shipping an empty credential.
+
+    ``ambient`` is the caller's own environment. The monitor launcher passes it
+    (it runs in the worker) for agents that authenticate from ambient names with
+    no settings field, so the sandbox, which has no ambient environment, gets
+    the same names the worker path found in place. The worker path never passes
+    it and is unchanged.
 
     ``raw_harbor_config`` is the trial's stored Harbor config: a row that
     carries no model still names one in its ``agent_config``, and the bundle
@@ -140,9 +177,19 @@ def scoped_model_env(
     provider = (settings.get_provider_for_trial(agent, model) or "").lower()
 
     if provider in _OPENAI_FAMILY:
-        return {
-            k: v for k, v in settings.get_openai_agent_env(model=model).items() if v
-        }
+        env = {k: v for k, v in settings.get_openai_agent_env(model=model).items() if v}
+        if ambient is not None:
+            # The monitor sandbox has no worker Settings, and its driver
+            # re-resolves this route from two of them (runner, agent_config).
+            # Seal those under the names Settings reads, so it resolves the
+            # provider and deployment the worker did.
+            openai_provider = getattr(settings, "openai_provider", None)
+            deployments = getattr(settings, "azure_openai_deployments", None)
+            if openai_provider:
+                env["ODDISH_OPENAI_PROVIDER"] = openai_provider
+            if deployments:
+                env["ODDISH_AZURE_OPENAI_DEPLOYMENTS"] = json.dumps(deployments)
+        return env
     if provider in ("anthropic", "claude"):
         key = getattr(settings, "anthropic_api_key", None)
         return {"ANTHROPIC_API_KEY": key} if key else {}
@@ -173,9 +220,18 @@ def scoped_model_env(
             key = getattr(settings, "anthropic_api_key", None)
             return {"ANTHROPIC_API_KEY": key} if key else {}
         # SingleLLMAgent invokes Bedrock with AWS credentials, not a single API
-        # key; scoping those needs STS (a future enhancement). Carry only the
-        # routing flag; dual-read keeps ambient AWS credentials.
-        return {"CLAUDE_CODE_USE_BEDROCK": "1"}
+        # key; scoping those needs STS (a future enhancement). Carry the
+        # routing flag; on the worker the AWS chain is ambient (dual-read), and
+        # for the monitor sandbox the same names are selected from the caller's
+        # environment so the route authenticates exactly as it did.
+        return {
+            "CLAUDE_CODE_USE_BEDROCK": "1",
+            **{
+                name: value
+                for name in _BEDROCK_AUTH_ENV
+                if (value := (ambient or {}).get(name))
+            },
+        }
     if provider == "gemini":
         key = getattr(settings, "gemini_api_key", None)
         # Publish the one platform Google key under BOTH names the agents read.
@@ -206,6 +262,23 @@ def scoped_model_env(
         if config.project_id:
             env["VERTEXAI_PROJECT"] = config.project_id
             env["GOOGLE_CLOUD_PROJECT"] = config.project_id
+        if ambient is not None:
+            # The monitor sandbox has no worker Settings. Seal the names its
+            # driver resolves this same config from (vertex_ai_config), so it
+            # writes and uploads the same key file, or makes the same key
+            # ambient, exactly as the worker's driver does.
+            env.update(
+                {
+                    name: value
+                    for name, value in (
+                        ("VERTEX_AI_CREDENTIALS_JSON", config.credentials_json),
+                        ("VERTEX_AI_API_KEY", config.api_key),
+                        ("VERTEX_AI_PROJECT_ID", config.project_id),
+                        ("VERTEX_AI_LOCATION", config.location),
+                    )
+                    if value
+                }
+            )
         return env
     if provider == "meta":
         key = getattr(settings, "meta_api_key", None)
@@ -223,7 +296,36 @@ def scoped_model_env(
     if provider == "xai-public":
         key = os.environ.get("XAI_PUBLIC_API_KEY")
         return {"XAI_PUBLIC_API_KEY": key} if key else {}
+    if provider == "xai":
+        # grok-build has no settings field: on the worker it read XAI_API_KEY,
+        # or the XAI_API_KEYS pool, from the ambient environment
+        # (workers/agents/grok_build.py). Select those two names from the
+        # caller's environment for the monitor sandbox, which has none.
+        return {
+            name: value
+            for name in _XAI_AUTH_ENV
+            if (value := (ambient or {}).get(name))
+        }
+    if provider in _AMBIENT_PROVIDER_KEYS:
+        # Same as xai: select this provider's own name(s) from the caller's
+        # environment for the monitor sandbox, which has none.
+        return {
+            name: value
+            for name in _AMBIENT_PROVIDER_KEYS[provider]
+            if (value := (ambient or {}).get(name))
+        }
     return {}
+
+
+def agent_ambient_env(
+    agent: str | None, ambient: Mapping[str, str] | None
+) -> dict[str, str]:
+    """Credentials an agent harness reads from the host by name, whatever model
+    provider it fronts. Only cursor-cli today. Empty without ``ambient``, so the
+    worker path is unchanged."""
+    if not ambient or "cursor-cli" not in (agent or "").strip().lower():
+        return {}
+    return {name: value for name in _CURSOR_AUTH_ENV if (value := ambient.get(name))}
 
 
 def merge_agent_env(

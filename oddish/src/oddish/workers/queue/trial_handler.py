@@ -99,11 +99,11 @@ from oddish.workers.harbor.judge_costs import (
 )
 from oddish.workers.harbor.quota_control import QuotaPauseControlError
 from oddish.workers.harbor.runner import (
-    FallbackEnvironmentCompatibilityError,
     HarborOutcome,
     capture_live_sandbox_resources,
     capture_sandbox_resources,
     capture_verifier_resources,
+    is_retryable_execution_error,
     run_harbor_trial_async,
 )
 from oddish.workers.harbor import live_tail
@@ -1840,9 +1840,7 @@ async def _execute_trial(
         raise
     except Exception as e:
         execution_error = f"{type(e).__name__}: {e}"
-        retryable = not isinstance(
-            e, (QuotaPauseControlError, FallbackEnvironmentCompatibilityError)
-        )
+        retryable = is_retryable_execution_error(e)
         console.print(f"[red]Trial {trial_id} execution error: {execution_error}[/red]")
         outcome = None
     finally:
