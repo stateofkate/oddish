@@ -29,6 +29,7 @@ export default defineConfig({
     command: `node node_modules/next/dist/bin/next dev e2e/delivery-app --webpack -p ${port}`,
     url: `http://localhost:${port}/effort`,
     reuseExistingServer: false,
-    timeout: 120000,
+    // A cold CI compile of /effort once took the full 120 s (run 35903440573).
+    timeout: 240000,
   },
 });

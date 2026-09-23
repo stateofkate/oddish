@@ -21,6 +21,7 @@ export default defineConfig({
     "ui-duplication.spec.ts",
     "public-experiment-tasks.spec.ts",
     "public-share-qa.spec.ts",
+    "trajectory-rendering.spec.ts",
   ],
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
