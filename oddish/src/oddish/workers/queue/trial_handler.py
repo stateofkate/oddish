@@ -1172,11 +1172,23 @@ async def _store_trial_results(
                         f"[yellow]Trial {trial_id} agent timeout -> reward=0[/yellow]"
                     )
 
+            # Any other kind keeps its verdict when its files were not saved (a
+            # full re-run to recover logs is not worth it), but says so.
+            lost_artifacts = (
+                f"Trial finished but its files were not saved: {artifact_upload_error}"
+                if artifact_upload_error and not analysis_artifact_error
+                else None
+            )
+
             trial.reward = derived_reward
             if analysis_artifact_error:
                 trial.error_message = analysis_artifact_error
             elif outcome.error:
-                trial.error_message = outcome.error
+                trial.error_message = "\n".join(
+                    filter(None, [outcome.error, lost_artifacts])
+                )
+            elif lost_artifacts:
+                trial.error_message = lost_artifacts
             elif derived_reward is not None:
                 trial.error_message = None
             trial.harbor_result_path = (
@@ -2541,8 +2553,7 @@ async def run_trial_job(
                 )
                 message = f"{action}: {type(e).__name__}: {e}"
                 console.print(f"[yellow]{message}[/yellow]")
-                if is_analysis_kind(trial_kind):
-                    artifact_upload_error = qa_validation_error or message
+                artifact_upload_error = qa_validation_error or message
         if qa_validation_error is not None and artifact_upload_error is None:
             artifact_upload_error = qa_validation_error
         if (

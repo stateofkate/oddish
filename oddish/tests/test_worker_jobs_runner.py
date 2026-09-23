@@ -1333,6 +1333,8 @@ def test_claimed_worker_job_fields_match_schema_expectations():
         "queue_slot",
         "modal_function_call_id",
         "claimed_at",
+        "capacity_provider",
+        "capacity_slot",
     }
 
 

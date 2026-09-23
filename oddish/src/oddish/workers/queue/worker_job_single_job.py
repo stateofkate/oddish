@@ -15,8 +15,8 @@ touches ``worker_jobs``.
 from __future__ import annotations
 
 import asyncio
-import logging
 import json
+import logging
 import random
 import re
 import time
@@ -56,15 +56,14 @@ from oddish.workers.jobs.registry import (
     NoHandlerRegisteredError,
     get_handler,
 )
-from oddish.workers.queue.shared import console
+from oddish.workers.queue.resource_rollout import COHORT_SQL, load_rollout
 from oddish.workers.queue.sandbox_capacity import SANDBOX_CAPACITY_LEASE_SECONDS
+from oddish.workers.queue.shared import console
 from oddish.workers.queue.thunder_fallback import (
     ThunderHandoff,
     emit_thunder_handoff_event,
     thunder_handoff_for_reason,
 )
-
-from oddish.workers.queue.resource_rollout import COHORT_SQL, load_rollout
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +73,16 @@ logger = logging.getLogger(__name__)
 # GitHub notifications (trial / analysis / verdict) without pushing
 # backend-specific concerns into this module.
 PostSuccessHooks = dict[WorkerJobKind, Callable[[str], Awaitable[None]]]
+
+
+# Workers whose claimed job was handed to the in-sandbox monitor. Such a worker
+# must stop draining and must NOT release its queue slot or capacity lease: the
+# job is still RUNNING under its worker id, and settlement releases them.
+_handed_off_workers: set[str] = set()
+
+
+def worker_handed_off(worker_id: str) -> bool:
+    return worker_id in _handed_off_workers
 
 
 class JobAccessDenied(Exception):
@@ -143,8 +152,8 @@ def _ensure_handlers_registered() -> None:
 __all__ = [
     "ClaimedWorkerJob",
     "claim_single_worker_job",
-    "run_single_worker_job",
     "drain_worker_jobs",
+    "run_single_worker_job",
 ]
 
 
@@ -278,7 +287,26 @@ claimed AS (
            modal_function_call_id = $4,
            started_at = COALESCE(started_at, NOW()),
            finished_at = NULL,
-           next_retry_at = NULL
+           next_retry_at = NULL,
+           -- The row is reused across attempts: a new attempt owns none of the
+           -- previous monitor's credential, check-in, result or strikes.
+           monitor_token_hash = NULL,
+           monitor_token_expires_at = NULL,
+           monitor_token_revoked_at = NULL,
+           monitor_acked_at = NULL,
+           monitor_result = NULL,
+           monitor_result_accepted_at = NULL,
+           monitor_status_check_count = NULL,
+           monitor_status_checked_at = NULL,
+           -- The launcher's own payload keys (cost state, resolved image,
+           -- capacity lease) are per attempt too: a retry must not inherit the
+           -- previous sandbox's.
+           payload = COALESCE(payload, jsonb_build_object())
+                     - 'monitor_cost' - 'monitor_docker_image' - 'monitor_capacity',
+           -- ...nor the previous sandbox's handle: the reconciler must never
+           -- probe or stop a sandbox this attempt did not create.
+           provider = NULL,
+           external_id = NULL
     WHERE id = (SELECT id FROM candidate)
     RETURNING id, kind::text AS kind, subject_table, subject_id, payload,
               attempts, max_attempts, queue_key, org_id, parent_job_id,
@@ -349,6 +377,9 @@ class ClaimedWorkerJob:
     queue_slot: int | None = None
     modal_function_call_id: str | None = None
     claimed_at: datetime | None = None
+    # The sandbox capacity lease the claim bound to this job, if any.
+    capacity_provider: str | None = None
+    capacity_slot: int | None = None
 
 
 async def _open_connection() -> asyncpg.Connection:
@@ -561,6 +592,8 @@ async def claim_single_worker_job(
         queue_slot=queue_slot,
         modal_function_call_id=modal_function_call_id,
         claimed_at=row.get("claimed_at"),
+        capacity_provider=capacity_provider,
+        capacity_slot=capacity_slot,
     )
 
 
@@ -1080,6 +1113,23 @@ async def _record_outcome(
 ) -> WorkerJobStatus | None:
     connection = await _open_connection()
     try:
+        if outcome.handoff is not None:
+            # Launch succeeded is not trial finished: nothing is written. The
+            # row must still be RUNNING under this worker for the handoff to hold.
+            still_owned = await connection.fetchval(
+                """
+                SELECT 1 FROM worker_jobs
+                WHERE  id = $1
+                  AND  status::text = 'RUNNING'
+                  AND  current_worker_id = $2
+                """,
+                job_id,
+                worker_id,
+            )
+            if not still_owned:
+                return None
+            _handed_off_workers.add(worker_id)
+            return WorkerJobStatus.RUNNING
         if outcome.reroute is not None:
             return await _record_reroute_or_fallback(
                 connection,
@@ -1497,7 +1547,12 @@ async def run_single_worker_job(
 
         disposition_count = sum(
             value is not None
-            for value in (outcome.success, outcome.failure, outcome.reroute)
+            for value in (
+                outcome.success,
+                outcome.failure,
+                outcome.reroute,
+                outcome.handoff,
+            )
         )
         if disposition_count != 1:
             # A handler can mutate the dataclass after construction. Keep an invalid
@@ -1635,6 +1690,10 @@ async def drain_worker_jobs(
             )
         job_found = await run_job(queue_key, **run_kwargs)
         if not job_found:
+            break
+        if worker_handed_off(worker_id):
+            # The slot now belongs to the handed-off job; claim nothing more on it.
+            processed += 1
             break
         processed += 1
         if _now() >= deadline:

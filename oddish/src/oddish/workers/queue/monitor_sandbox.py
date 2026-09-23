@@ -6,7 +6,7 @@ provider: the launcher routes by the trial's environment, and the reconciler
 and settlement look the starter up from the provider stored on the job row.
 
 To add a provider: one file with a class that has ``provider``, ``start``,
-``stop``, ``status`` and ``probe``, and one line in ``_STARTERS``.
+``stop`` and ``status``, and one line in ``_STARTERS``.
 """
 
 from __future__ import annotations
@@ -29,14 +29,6 @@ class MonitorSandboxError(RuntimeError):
 class MonitorSandboxGone(MonitorSandboxError):
     """The provider says the sandbox has ended. Before the monitor's first
     check-in that is a failed start, not a slow one."""
-
-
-class SandboxLiveness(StrEnum):
-    """What the provider alone says about a sandbox. A provider that cannot
-    be asked raises instead: that is no verdict."""
-
-    RUNNING = "running"
-    GONE = "gone"
 
 
 class SandboxProvider(StrEnum):
@@ -173,13 +165,6 @@ class MonitorSandboxStarter(Protocol):
 
     async def status(self, external_id: str) -> StatusReply:
         """Run ``oddish-mon status`` inside the sandbox."""
-
-    async def probe(self, external_id: str) -> SandboxLiveness:
-        """Ask only the provider whether the sandbox still exists and runs.
-
-        Never runs anything inside it: before the monitor's first check-in
-        there is no status file, and a missing one would read as dead. Raises
-        ``MonitorSandboxError`` when the provider cannot be asked."""
 
 
 # The most each step of a warm-up (the pull, then the snapshot) may take.

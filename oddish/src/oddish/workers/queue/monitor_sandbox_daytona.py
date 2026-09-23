@@ -22,7 +22,6 @@ from oddish.mon.spec import WarmRequest
 from oddish.workers.queue.monitor_sandbox import (
     WARM_UP_SECONDS,
     MonitorSandboxError,
-    SandboxLiveness,
     SandboxProvider,
     SandboxSize,
     StatusReply,
@@ -269,18 +268,6 @@ class DaytonaStarter:
             # Anything else (an outage, a bad key) raises: the caller must not
             # believe a sandbox is gone when nobody could look.
             await client.delete(sandbox)
-
-    async def probe(self, external_id: str) -> SandboxLiveness:
-        async with _client() as client:
-            try:
-                sandbox = await client.get(external_id)
-            except _not_found_errors():
-                return SandboxLiveness.GONE
-            except Exception as exc:
-                raise MonitorSandboxError(f"daytona unreachable: {exc}") from exc
-            if _state_of(sandbox) in _RUNNING_STATES:
-                return SandboxLiveness.RUNNING
-            return SandboxLiveness.GONE
 
     async def status(self, external_id: str) -> StatusReply:
         async with _client() as client:

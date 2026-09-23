@@ -4743,10 +4743,49 @@ def test_agent_non_retryable_failure_ignores_analysis_artifact_error(monkeypatch
     )
 
     assert trial.status == trial_handler.TrialStatus.FAILED
-    assert trial.error_message == "No reward file found"
+    # The failure reason first; the lost files are still reported.
+    assert trial.error_message == (
+        "No reward file found\n"
+        "Trial finished but its files were not saved: "
+        "Failed to upload trial results to S3"
+    )
     assert trial.attempts == 1
     assert terminal is True
     assert completed is True
+
+
+def test_agent_trial_with_a_failed_upload_keeps_success_and_says_so(monkeypatch):
+    """A re-run to recover an agent trial's files is not worth a full trial:
+    it keeps SUCCESS and its reward, and the loss lands in error_message."""
+    trial = _make_retry_decision_trial(attempts=1, max_attempts=6)
+    _install_retry_decision_session_fakes(monkeypatch, trial)
+    outcome = harbor_runner.HarborOutcome(
+        reward=1.0,
+        error=None,
+        exit_code=0,
+        duration_sec=5.0,
+        job_result_path=Path("/tmp/result.json"),
+        job_dir=Path("/tmp/job"),
+    )
+    upload_error = "Failed to upload trial results to S3: TimeoutError: timed out"
+
+    asyncio.run(
+        trial_handler._store_trial_results(
+            trial_id=trial.id,
+            outcome=outcome,
+            trial_s3_key=None,
+            execution_error=None,
+            artifact_upload_error=upload_error,
+            trial_attempt=trial.attempts,
+        )
+    )
+
+    assert trial.status == trial_handler.TrialStatus.SUCCESS
+    assert trial.reward == 1.0
+    assert trial.trial_s3_key is None
+    assert trial.error_message == (
+        f"Trial finished but its files were not saved: {upload_error}"
+    )
 
 
 def test_store_trial_results_retries_when_exception_type_is_missing(monkeypatch):

@@ -1868,6 +1868,13 @@ class Settings(BaseSettings):
     # monitor image from this Dockerfile and caches it.
     monitor_image: str = "/oddish/mon.Dockerfile"
     monitor_ack_timeout_seconds: int = 900
+    # Bound on the whole launch, claim to check-in, owned by the reconciler
+    # regardless of the launcher's heartbeat (a launcher stuck in image
+    # preparation or provider create beats forever otherwise). Derived from
+    # the bounds the launch already has: Daytona create timeout (1200 s) +
+    # check-in wait (900 s) + 600 s for image resolution and task facts.
+    # Applied only while monitor_execution_enabled is on.
+    monitor_launch_deadline_seconds: int = 2700
     # Memory added to the OUTER monitor sandbox only, on top of the task's own
     # size, for the monitor and Docker daemons that share it. The task
     # container is unchanged. Priced in the sandbox cost span. On the worker

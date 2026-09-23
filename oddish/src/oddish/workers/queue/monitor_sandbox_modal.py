@@ -9,7 +9,6 @@ from oddish.workers.queue.monitor_sandbox import (
     WARM_IMAGE_TTL_SECONDS,
     WARM_UP_SECONDS,
     MonitorSandboxError,
-    SandboxLiveness,
     SandboxProvider,
     SandboxSize,
     StatusReply,
@@ -137,18 +136,6 @@ class ModalStarter:
             await sandbox.terminate.aio()
         except modal.exception.NotFoundError:
             return  # already gone, as Daytona's stop treats it
-
-    async def probe(self, external_id: str) -> SandboxLiveness:
-        import modal
-
-        try:
-            sandbox = await modal.Sandbox.from_id.aio(external_id)
-            finished = await sandbox.poll.aio() is not None
-        except modal.exception.NotFoundError:
-            return SandboxLiveness.GONE
-        except Exception as exc:
-            raise MonitorSandboxError(f"modal unreachable: {exc}") from exc
-        return SandboxLiveness.GONE if finished else SandboxLiveness.RUNNING
 
     async def status(self, external_id: str) -> StatusReply:
         import modal

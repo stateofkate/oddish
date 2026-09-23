@@ -60,6 +60,11 @@ class JobReroute:
     error_message: str | None = None
 
 
+@dataclass(frozen=True)
+class JobHandoff:
+    """Marker: the attempt was handed to the in-sandbox monitor."""
+
+
 @dataclass
 class JobOutcome:
     """The only thing a ``JobHandler.run`` is allowed to return.
@@ -73,15 +78,26 @@ class JobOutcome:
     success: JobSuccess | None = None
     failure: JobFailure | None = None
     reroute: JobReroute | None = None
+    # Launch succeeded, the attempt is still running elsewhere (the in-sandbox
+    # monitor). The job stays RUNNING and keeps its slot; settlement ends it.
+    handoff: JobHandoff | None = None
 
     def __post_init__(self) -> None:
-        if sum(
-            value is not None for value in (self.success, self.failure, self.reroute)
-        ) != 1:
-            raise ValueError(
-                "JobOutcome requires exactly one of success / failure / reroute "
-                "to be set"
+        if (
+            sum(
+                value is not None
+                for value in (self.success, self.failure, self.reroute, self.handoff)
             )
+            != 1
+        ):
+            raise ValueError(
+                "JobOutcome requires exactly one of success / failure / reroute / "
+                "handoff to be set"
+            )
+
+    @classmethod
+    def handed_off(cls) -> "JobOutcome":
+        return cls(handoff=JobHandoff())
 
     @classmethod
     def ok(cls, result_summary: dict[str, Any] | None = None) -> "JobOutcome":
