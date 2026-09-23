@@ -147,7 +147,10 @@ async def test_completed_qa_with_baseline_rejection_counts_as_checked(session):
         None, must_fix_ids=[], baseline_evidence=baseline_evidence
     )
     assert rejection is not None and not rejection.is_good
-    task.verdict = {**build_verdict_payload(rejection, []), "_graded_by": qa.id}
+    task.verdict = {
+        **build_verdict_payload(rejection, [], task_version_id=version.id),
+        "_graded_by": qa.id,
+    }
     await session.flush()
     session.expunge_all()
 

@@ -1551,15 +1551,18 @@ async def start_qa_for_task(
         pre_trial_item_ids,
     )
 
+    # The version whose evidence this pass reads; the published verdict
+    # carries it so no reader has to infer ownership later.
+    evaluated_version_id = task.current_version_id
     eligible = await qa_eligible_trial_ids(
-        session, task.id, task_version_id=task.current_version_id
+        session, task.id, task_version_id=evaluated_version_id
     )
     if not eligible:
         version = (
             await session.get(
-                TaskVersionModel, task.current_version_id, with_for_update=True
+                TaskVersionModel, evaluated_version_id, with_for_update=True
             )
-            if task.current_version_id
+            if evaluated_version_id
             else None
         )
         must_fix_ids = []
@@ -1568,21 +1571,24 @@ async def start_qa_for_task(
         rows = await session.scalars(
             select(TrialModel).where(
                 TrialModel.task_id == task.id,
-                TrialModel.task_version_id == task.current_version_id,
+                TrialModel.task_version_id == evaluated_version_id,
                 TrialModel.kind == AGENT_TRIAL_KIND,
                 TrialModel.superseded_by_trial_id.is_(None),
             )
         )
-        baselines = [
-            qa_trial_evidence(row) for row in rows if is_nop_oracle_agent(row.agent)
-        ]
+        baseline_rows = [row for row in rows if is_nop_oracle_agent(row.agent)]
         verdict = apply_deterministic_verdict_rules(
-            None, must_fix_ids=must_fix_ids, baseline_evidence=baselines
+            None,
+            must_fix_ids=must_fix_ids,
+            baseline_evidence=[qa_trial_evidence(row) for row in baseline_rows],
+            baseline_errors={row.id: row.error_message for row in baseline_rows},
         )
         task.status = TaskStatus.COMPLETED
         task.finished_at = task.finished_at or utcnow()
         if verdict is not None:
-            payload = build_verdict_payload(verdict, [])
+            payload = build_verdict_payload(
+                verdict, [], task_version_id=evaluated_version_id
+            )
             complete_verdict(task, payload=payload, now=utcnow())
         else:
             fail_verdict(task, error=INSUFFICIENT_EVIDENCE_ERROR, now=utcnow())

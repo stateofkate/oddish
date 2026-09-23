@@ -14,15 +14,14 @@ _EFFORT_SQL = str(
 
 # Shared by bounded task reads. A stored verdict is task-scoped, so source
 # provenance must be checked before presenting it on a selected version.
-VERDICT_VERSION_SQL = """(
+# Verdicts record the version they evaluated. Older ones are owned only by
+# the exact QA run that produced them; anything else has no owner (NULL), since
+# an unrelated QA run cannot vouch for a verdict written without one.
+VERDICT_VERSION_SQL = """COALESCE({verdict}->>'_task_version_id', (
     SELECT q.task_version_id FROM trials q
-    WHERE q.task_id = {task_id} AND q.kind = 'qa' AND q.status = 'SUCCESS'
-      AND q.deleted_at IS NULL
-      AND (CASE WHEN {verdict}->>'_graded_by' IS NOT NULL
-        THEN q.id = {verdict}->>'_graded_by'
-        ELSE COALESCE(q.harbor_config->'analysis_payload'->>'with_verdict', 'true') <> 'false' END)
-    ORDER BY COALESCE(q.finished_at, q.created_at) DESC, q.id DESC LIMIT 1
-)"""
+    WHERE q.id = {verdict}->>'_graded_by' AND q.task_id = {task_id}
+      AND q.kind = 'qa' AND q.status = 'SUCCESS' AND q.deleted_at IS NULL
+))"""
 
 IDENTITY_SQL = text(f"""
     WITH identity AS (

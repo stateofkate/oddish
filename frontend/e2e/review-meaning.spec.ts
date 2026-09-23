@@ -295,6 +295,19 @@ test.describe("real components with local fixture API", () => {
     ).toBeVisible();
   });
 
+  test("rows label the version their trials ran, not the task default", async ({
+    page,
+  }) => {
+    await page.goto("/experiments/review-demo?scenario=older-trials");
+    const row = page.getByRole("row").filter({
+      has: page.getByRole("button", { name: "Task A", exact: true }),
+    });
+    await expect(row.getByText("v4", { exact: true })).toBeVisible();
+    await expect(row.getByText("v5", { exact: true })).toHaveCount(0);
+    if (process.env.SCREENSHOT_PATH)
+      await row.screenshot({ path: process.env.SCREENSHOT_PATH });
+  });
+
   test("background updates retain scores, selection, and scroll position", async ({
     page,
   }) => {

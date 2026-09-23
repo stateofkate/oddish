@@ -1301,6 +1301,12 @@ async def _import_qa_result(
             classifications.append(parsed)
         if contract_drift is None:
             reports = await preserve_task_findings(session, graded_version_id)
+            baseline_errors = {}
+            for item in expected.get("baseline_evidence") or []:
+                baseline = await session.get(TrialModel, item["trial_id"])
+                baseline_errors[item["trial_id"]] = getattr(
+                    baseline, "error_message", None
+                )
             await session.commit()
         else:
             # get_session commits on clean context exit; the rows written
@@ -1367,6 +1373,7 @@ async def _import_qa_result(
         must_fix_ids=list(expected.get("pre_trial_must_fix_ids") or []),
         task_defect_count=len(reports),
         baseline_evidence=list(expected.get("baseline_evidence") or []),
+        baseline_errors=baseline_errors,
     )
     if verdict is None:
         await complete_task_without_verdict(
@@ -1391,7 +1398,9 @@ async def _import_qa_result(
             error=HARNESS_ONLY_EVIDENCE_ERROR,
         )
         return
-    payload = build_verdict_payload(verdict, classifications)
+    payload = build_verdict_payload(
+        verdict, classifications, task_version_id=graded_version_id
+    )
     payload["_graded_by"] = trial.id
     await sync_verdict_to_task(
         task_id,

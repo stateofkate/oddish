@@ -2607,8 +2607,11 @@ export function ExperimentTrialsTable({
                               )}
 
                               {(() => {
+                                // The version these trials ran, as the drawer shows.
+                                const taskVersion =
+                                  resolveExperimentTaskVersion(task);
                                 const showVersion =
-                                  showAnalysis && task.current_version != null;
+                                  showAnalysis && taskVersion != null;
                                 const cost = sumTaskTrialCost(orderedTrials);
                                 const showCost =
                                   !readOnly &&
@@ -2629,7 +2632,7 @@ export function ExperimentTrialsTable({
                                   <div className="ml-auto flex shrink-0 items-center gap-1.5 leading-none">
                                     {showVersion && (
                                       <span className="inline-flex items-center rounded-[3px] bg-[color:var(--paper-bg-2)] px-1 py-px font-mono text-[9.5px] leading-none font-medium text-[color:var(--paper-ink-3)]">
-                                        v{task.current_version}
+                                        v{taskVersion}
                                       </span>
                                     )}
                                     {showCost && (

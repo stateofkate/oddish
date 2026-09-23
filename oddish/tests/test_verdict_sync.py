@@ -35,9 +35,10 @@ def test_payload_shape_and_counts():
         _c(Classification.GOOD_SUCCESS),
         _c(Classification.HARNESS_ERROR),
     ]
-    payload = build_verdict_payload(_Verdict(), classifications)
+    payload = build_verdict_payload(_Verdict(), classifications, task_version_id="v1")
 
     assert payload == {
+        "_task_version_id": "v1",
         "verdict": "reject",
         "is_good": False,
         "confidence": "high",
@@ -55,7 +56,7 @@ def test_harness_error_leak_counts_as_task_problem():
     """A hidden_file_leak voids the run, but the exposure is a task defect.
     It must appear in both counts, like BAD_SUCCESS does for successes."""
     classifications = [_c(Classification.HARNESS_ERROR, subtype="hidden_file_leak")]
-    payload = build_verdict_payload(_Verdict(), classifications)
+    payload = build_verdict_payload(_Verdict(), classifications, task_version_id="v1")
     assert payload["task_problem_count"] == 1
     assert payload["harness_error_count"] == 1
 
@@ -66,7 +67,9 @@ def test_counts_ignore_model_supplied_values():
     class _Lying(_Verdict):
         task_problem_count = 99
 
-    payload = build_verdict_payload(_Lying(), [_c(Classification.GOOD_SUCCESS)])
+    payload = build_verdict_payload(
+        _Lying(), [_c(Classification.GOOD_SUCCESS)], task_version_id="v1"
+    )
     assert payload["task_problem_count"] == 0
 
 

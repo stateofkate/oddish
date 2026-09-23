@@ -41,6 +41,23 @@ export function FixtureExperiment() {
           },
         },
       ];
+    // The task's default moved to v5 after this experiment ran v4.
+    if (scenario === "older-trials" && task.id === "task-a")
+      return [
+        {
+          ...task,
+          current_version: 5,
+          current_version_id: "task-a-v5",
+          trial_version: 4,
+          trial_version_id: "task-a-v4",
+          trials:
+            task.trials?.map((trial) => ({
+              ...trial,
+              task_version: 4,
+              task_version_id: "task-a-v4",
+            })) ?? null,
+        },
+      ];
     return [task];
   });
   const [expandedRows, setExpandedRows] = useState(false);

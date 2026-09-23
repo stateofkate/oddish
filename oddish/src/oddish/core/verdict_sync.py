@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Mapping
 
 from sqlalchemy import select
 
@@ -26,21 +26,76 @@ from oddish.db import (
 logger = logging.getLogger(__name__)
 
 
+def _baseline_gate(evidence: list[dict]) -> GateOutcome:
+    outcome, _ = evaluate_baseline_gate(
+        (item.get("agent"), item.get("reward")) for item in evidence
+    )
+    return outcome
+
+
+def _baseline_completed(item: dict) -> bool:
+    return item.get("status", "success") == "success" and item.get("reward") is not None
+
+
+def incomplete_baseline_rejection(
+    baseline_evidence: list[dict], errors: Mapping[str, str | None]
+) -> TaskVerdictModel | None:
+    """Reject without blaming the task when baselines failed only by not finishing.
+
+    The gate counts an errored run against the task, so the task still cannot
+    be accepted. But no completed nop/oracle run scored wrong, so nothing shows
+    that the verifier or solution is broken: say which runs did not finish.
+    """
+    completed = [item for item in baseline_evidence if _baseline_completed(item)]
+    if _baseline_gate(baseline_evidence) is not GateOutcome.FAULTY or (
+        completed and _baseline_gate(completed) is GateOutcome.FAULTY
+    ):
+        return None
+    runs = "; ".join(
+        f"{item.get('agent')} trial {item.get('trial_id')} "
+        f"({item.get('status')}): "
+        f"{(errors.get(item.get('trial_id') or '') or 'no reward recorded')[:200]}"
+        for item in baseline_evidence
+        if not _baseline_completed(item)
+    )
+    return TaskVerdictModel(
+        verdict="reject",
+        confidence="low",
+        primary_issue=f"Baseline validation could not complete. {runs}",
+        recommendations=[
+            "Re-run the nop/oracle baselines. These runs did not finish, so they "
+            "do not show that the verifier or solution is broken."
+        ],
+        reasoning=(
+            "An oracle must pass and a nop agent must fail on runs that finish. "
+            "At least one baseline run ended without a scored result, and no "
+            "finished baseline run scored wrong."
+        ),
+    )
+
+
 def apply_deterministic_verdict_rules(
     verdict: TaskVerdictModel | None,
     *,
     must_fix_ids: list[str],
     baseline_evidence: list[dict],
     task_defect_count: int = 0,
+    baseline_errors: Mapping[str, str | None] | None = None,
 ) -> TaskVerdictModel | None:
-    """Apply decisive server-owned evidence without asking the model to count."""
+    """Apply decisive server-owned evidence without asking the model to count.
+
+    ``baseline_errors`` maps a baseline trial id to its ``error_message`` so a
+    baseline that did not finish is reported as such, not as a bad verifier.
+    """
     if verdict is not None and not verdict.is_good:
         return verdict
     if baseline_evidence:
-        outcome, _ = evaluate_baseline_gate(
-            (item.get("agent"), item.get("reward")) for item in baseline_evidence
+        incomplete = incomplete_baseline_rejection(
+            baseline_evidence, baseline_errors or {}
         )
-        if outcome is GateOutcome.FAULTY:
+        if incomplete is not None:
+            return incomplete
+        if _baseline_gate(baseline_evidence) is GateOutcome.FAULTY:
             return TaskVerdictModel(
                 verdict="reject",
                 confidence="high",
@@ -74,13 +129,19 @@ def apply_deterministic_verdict_rules(
 def build_verdict_payload(
     verdict: Any,
     classifications: list[TrialClassification],
+    *,
+    task_version_id: str | None,
 ) -> dict:
     """Render the dict stored on ``tasks.verdict``.
 
     ``verdict`` supplies only the model's judgment; the four counts are always
     recomputed from ``classifications`` so no model output can inflate them.
+    ``task_version_id`` is the version whose evidence was evaluated, captured
+    when that evidence was selected; readers use it to decide which version
+    the verdict describes (task_open_queries.VERDICT_VERSION_SQL).
     """
     return {
+        "_task_version_id": task_version_id,
         "verdict": "accept" if verdict.is_good else "reject",
         # Old rows and the SQL readers use is_good; keep it next to the label.
         "is_good": verdict.is_good,
