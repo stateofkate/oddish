@@ -114,6 +114,7 @@ from .outcome import (
     _extract_outcome_from_job_result,
 )
 from .patches import apply_harbor_patches
+from .quota_control import QuotaSeams
 from .storage import (
     _MIN_REQUIRED_FREE_GB,
     _MIN_REQUIRED_FREE_INODES,
@@ -1912,12 +1913,16 @@ async def run_harbor_trial_async(
     trial_kind: str = "agent",
     fallback_from_environment: str | None = None,
     staged_skills_root: Path | None = None,
+    quota_seams: QuotaSeams | None = None,
 ) -> HarborOutcome:
     """
     Execute a Harbor trial using Harbor's Python API with lifecycle hooks.
 
     ``extra_agent_env`` is merged into the built AgentConfig env (probe trials
     use this for the minted read-only oddish CLI creds). It is never persisted.
+
+    ``quota_seams`` is how the quota pause loop asks and records state; the
+    database pair (``quota_db.DATABASE_SEAMS``) when not given.
 
     Returns a HarborOutcome with reward, error, tokens, cost, timing,
     trajectory presence, and artifact paths.
@@ -1959,6 +1964,7 @@ async def run_harbor_trial_async(
             trial_kind=trial_kind,
             fallback_from_environment=fallback_from_environment,
             staged_skills_root=staged_skills_root,
+            quota_seams=quota_seams,
             raw=raw,
             hc=hc,
             backend=backend,
@@ -2006,6 +2012,7 @@ async def _run_harbor_trial_async_impl(
     trial_kind: str,
     fallback_from_environment: str | None,
     staged_skills_root: Path | None = None,
+    quota_seams: QuotaSeams | None = None,
 ) -> HarborOutcome:
     from oddish.workers.analysis_trials import is_analysis_kind
 
@@ -2593,8 +2600,6 @@ async def _run_harbor_trial_async_impl(
                 trial_id if restricted_compose_kind == "dynamic" and trial_id else None
             )
             if redaction_trial_id:
-                # Import lazily: live_tail imports the queue package, whose
-                # trial handler imports this runner.
                 from . import live_tail as harbor_live_tail
 
                 harbor_live_tail.configure_runtime_redactions(
@@ -2625,11 +2630,15 @@ async def _run_harbor_trial_async_impl(
                 if trial_id is not None and org_id is not None:
                     from .quota_control import run_job_with_quota_control
 
+                    if quota_seams is None:
+                        from .quota_db import DATABASE_SEAMS as quota_seams
+
                     run_job = run_job_with_quota_control(
                         job,
                         trial_id=trial_id,
                         org_id=org_id,
                         billed_user_id=billed_user_id,
+                        seams=quota_seams,
                     )
                 else:
                     run_job = job.run()

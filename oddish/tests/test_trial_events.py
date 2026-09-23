@@ -9,7 +9,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from live_tail_fakes import FakeEnv, b64, make_tailer, patch_db, update_params
 from oddish.transcript_safety import sanitize_transcript_value
-from oddish.workers.harbor import live_tail
+from oddish.workers.harbor import live_tail, live_tail_db
 from oddish.workers.harbor.live_tail import ClaudeUsageFold, UsageTotals
 from oddish.workers.queue import cleanup
 
@@ -397,6 +397,7 @@ async def test_start_attempt_bump_replaces_and_reseeds(monkeypatch):
         attempt=0,
         agent="claude-code",
         model=None,
+        persist=live_tail_db.persist_tick_to_database,
     )
     live_tail.start(**kwargs)
     old_tailer, old_task = live_tail._tailers["t1"]
@@ -440,6 +441,7 @@ async def test_same_attempt_replacement_inherits_read_state(monkeypatch):
         attempt=2,
         agent="claude-code",
         model=None,
+        persist=live_tail_db.persist_tick_to_database,
     )
     live_tail.start(**kwargs)
     old_tailer, old_task = live_tail._tailers["t1"]
@@ -475,6 +477,7 @@ async def test_shutdown_after_task_completion_returns_attempt(monkeypatch):
         attempt=3,
         agent="claude-code",
         model=None,
+        persist=live_tail_db.persist_tick_to_database,
     )
     tailer, task = live_tail._tailers["t1"]
     tailer.request_stop()
@@ -487,7 +490,7 @@ async def test_shutdown_after_task_completion_returns_attempt(monkeypatch):
 @pytest.mark.asyncio
 async def test_purge_events_deletes_rows_bounded_by_attempt(monkeypatch):
     session = patch_db(monkeypatch)
-    await live_tail.purge_events("t1", 2)
+    await live_tail_db.purge_events("t1", 2)
     [stmt] = session.stmts
     compiled = stmt.compile(dialect=postgresql.dialect())
     assert "DELETE FROM trial_events" in str(compiled)
@@ -498,7 +501,7 @@ async def test_purge_events_deletes_rows_bounded_by_attempt(monkeypatch):
 @pytest.mark.asyncio
 async def test_purge_events_skips_without_attempt(monkeypatch):
     session = patch_db(monkeypatch)
-    await live_tail.purge_events("t1", None)
+    await live_tail_db.purge_events("t1", None)
     assert session.stmts == []
 
 
@@ -509,8 +512,8 @@ async def test_purge_events_swallows_errors(monkeypatch):
         raise RuntimeError("db down")
         yield
 
-    monkeypatch.setattr(live_tail, "get_session", broken)
-    await live_tail.purge_events("t1", 0)
+    monkeypatch.setattr(live_tail_db, "get_session", broken)
+    await live_tail_db.purge_events("t1", 0)
 
 
 @pytest.mark.asyncio

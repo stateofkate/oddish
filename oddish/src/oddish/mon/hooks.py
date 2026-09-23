@@ -69,8 +69,13 @@ class LifecycleReporter:
 
 
 def make_hook_callback(
-    client: MonitorClient, spec: AttemptSpec, reporter: LifecycleReporter | None = None
+    client: MonitorClient,
+    spec: AttemptSpec,
+    reporter: LifecycleReporter | None = None,
+    *,
+    persist: live_tail.PersistTick,
 ):
+    """``persist`` is where the live tail sends each tick (``seams.build``)."""
     reporter = reporter or LifecycleReporter(client)
 
     async def on_event(hook_event: Any) -> None:
@@ -102,6 +107,7 @@ def make_hook_callback(
                 model=spec.model,
                 org_id=spec.org_id,
                 billed_user_id=spec.billed_user_id,
+                persist=persist,
             )
         elif event in _TAIL_STOPS:
             live_tail.request_stop(spec.trial_id)

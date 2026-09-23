@@ -3,7 +3,7 @@ import contextlib
 
 from sqlalchemy.dialects.postgresql import Insert as PGInsert
 
-from oddish.workers.harbor import live_tail
+from oddish.workers.harbor import live_tail, live_tail_db
 
 
 class FakeResult:
@@ -38,6 +38,7 @@ def make_tailer(env, agent="claude-code", model=None, trial_id="t1", attempt=0):
         log_path=adapter.log_path,
         fold=adapter.make_fold(model),
         snapshot=adapter.snapshot,
+        persist=live_tail_db.persist_tick_to_database,
     )
 
 
@@ -68,7 +69,7 @@ class FakeSession:
         return FakeExecuteResult(self.rowcount)
 
 
-def patch_db(monkeypatch, module=live_tail, price=None, **kwargs):
+def patch_db(monkeypatch, module=live_tail_db, price=None, **kwargs):
     session = FakeSession(**kwargs)
 
     @contextlib.asynccontextmanager
@@ -83,7 +84,7 @@ def patch_db(monkeypatch, module=live_tail, price=None, **kwargs):
                 raise RuntimeError("commit failed")
 
     monkeypatch.setattr(module, "get_session", fake_get_session)
-    if module is live_tail:
+    if module is live_tail_db:
         monkeypatch.setattr(live_tail, "estimate_cost_usd", lambda *_a, **_k: price)
     return session
 

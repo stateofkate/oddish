@@ -180,3 +180,52 @@ async def test_candidate_drain_retains_policy_and_resources_for_every_claim():
         for k in seen
     )
     assert all(k["org_id"] == "org-a" and k["priority_class"] is False for k in seen)
+
+
+@pytest.mark.asyncio
+async def test_drain_ends_at_a_handoff_and_reports_it_through_the_record():
+    """The handed-off job keeps the slot: no further claim on it, and the
+    caller learns of the handoff from the record it passed in."""
+    from oddish.workers.queue.worker_job_single_job import WorkerHandoff
+
+    seen = []
+
+    async def run_job(queue_key, *, handoff, **kwargs):
+        seen.append(handoff)
+        handoff.job_id = "job-1"
+        return True
+
+    handoff = WorkerHandoff()
+    processed = await drain_worker_jobs(
+        "trial-key",
+        worker_id="worker-1",
+        queue_slot=2,
+        budget_seconds=1000.0,
+        handoff=handoff,
+        _run_job=run_job,
+        _now=lambda: 0.0,
+    )
+
+    assert processed == 1
+    assert seen == [handoff] and handoff.job_id == "job-1"
+
+
+@pytest.mark.asyncio
+async def test_drain_without_a_record_does_not_pass_one():
+    """Callers that cannot be handed off (no monitor) keep their signature."""
+    calls = {"n": 0}
+
+    async def run_job(queue_key, *, worker_id, queue_slot, **kwargs):
+        assert "handoff" not in kwargs
+        calls["n"] += 1
+        return calls["n"] < 2
+
+    await drain_worker_jobs(
+        "analysis-key",
+        worker_id="worker-1",
+        queue_slot=2,
+        budget_seconds=1000.0,
+        _run_job=run_job,
+        _now=lambda: 0.0,
+    )
+    assert calls["n"] == 2

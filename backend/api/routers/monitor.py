@@ -16,7 +16,7 @@ from oddish.db.storage import StorageClient, get_storage_client
 from oddish.mon.contract import MAX_EVENTS_PER_POST, AttemptSpec, ResultPayload
 from oddish.schemas import SkillFile
 from oddish.worker.probe_staging import load_org_skills
-from oddish.workers.harbor import live_tail
+from oddish.workers.harbor import live_tail_db
 from oddish.workers.launcher import attempt as monitor_attempt
 from oddish.workers.launcher import heartbeat as monitor_heartbeat
 from oddish.workers.launcher import hook_events as monitor_lifecycle
@@ -28,13 +28,6 @@ from org_access import require_execution_org
 from pydantic import BaseModel, Field
 
 router = APIRouter(prefix="/monitor", tags=["Trial monitor"])
-
-# The API settles results inline, outside the worker process that normally
-# registers this hook, so it registers the same one here. One mechanism.
-from oddish.workers.launcher.settle import set_post_success_hook  # noqa: E402
-from worker.github import notify_github_trial  # noqa: E402
-
-set_post_success_hook(notify_github_trial)
 
 
 async def authorize_monitor(request: Request) -> MonitorAttempt:
@@ -165,7 +158,7 @@ async def events(attempt: Attempt, body: EventsRequest) -> EventsResponse:
         raise HTTPException(409, "This attempt does not drive a trial")
     async with get_read_session() as session:
         trial = await session.get(TrialModel, attempt.trial_id)
-    result = await live_tail.persist_tick_to_database(
+    result = await live_tail_db.persist_tick_to_database(
         trial_id=attempt.trial_id,
         attempt=body.trial_attempt,
         events=[event.model_dump() for event in body.events],

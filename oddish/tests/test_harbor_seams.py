@@ -1,0 +1,104 @@
+"""The Harbor-side helpers take their database touchpoints as arguments.
+
+``live_tail`` and ``quota_control`` run on the worker and inside the sandbox
+monitor; the worker passes the ``*_db`` defaults, the monitor its own.
+"""
+
+from __future__ import annotations
+
+import ast
+from contextlib import asynccontextmanager
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+from harbor.trial.hooks import TrialEvent
+
+from oddish.workers import console as console_module
+from oddish.workers.harbor import live_tail, live_tail_db, quota_control, quota_db
+from oddish.workers.queue import shared, trial_handler
+
+_FORBIDDEN = ("oddish.db", "sqlalchemy", "asyncpg", "oddish.workers.queue")
+
+
+def _imports(module) -> list[str]:
+    names = []
+    for node in ast.walk(ast.parse(Path(module.__file__).read_text())):
+        if isinstance(node, ast.Import):
+            names += [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            names.append(node.module)
+    return names
+
+
+@pytest.mark.parametrize("module", [live_tail, quota_control, console_module])
+def test_sandbox_side_modules_import_no_database_and_no_queue(module):
+    offenders = [n for n in _imports(module) if n.startswith(_FORBIDDEN)]
+    assert offenders == [], offenders
+    assert not hasattr(module, "get_session")
+
+
+def test_the_worker_console_is_shared_not_owned_by_the_queue():
+    assert shared.console is console_module.console is live_tail.console
+
+
+def test_the_database_quota_seams_are_the_two_db_functions():
+    seams = quota_db.DATABASE_SEAMS
+    assert isinstance(seams, quota_control.QuotaSeams)
+    assert seams.refresh_requested is quota_db.refresh_pause_requested
+    assert seams.record_state is quota_db.record_pause_state
+
+
+def test_the_tailer_needs_an_explicit_persist():
+    with pytest.raises(TypeError):
+        live_tail.LiveTailer(  # type: ignore[call-arg]
+            trial_id="t", environment=None, attempt=1, log_path="/x", fold=None
+        )
+    with pytest.raises(TypeError):
+        live_tail.start(  # type: ignore[call-arg]
+            trial_id="t", environment=None, attempt=1, agent="claude-code", model=None
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_worker_hook_starts_the_tail_with_the_database_persist(monkeypatch):
+    """The worker path's default: the trial handler hands the tailer the
+    database persist; nothing is looked up from a module global."""
+    started = []
+
+    class _Trial:
+        attempts, agent, model = 2, "claude-code", "m"
+        org_id, billed_user_id = "org-1", "user-1"
+
+        def __getattr__(self, name):  # every other column the handler stamps
+            return None
+
+        def __setattr__(self, name, value):
+            pass
+
+    trial = _Trial()
+
+    @asynccontextmanager
+    async def trial_session(*args, **kwargs):
+        yield SimpleNamespace(), trial
+
+    monkeypatch.setattr(trial_handler, "_trial_session", trial_session)
+    monkeypatch.setattr(
+        trial_handler.live_tail, "start", lambda **kw: started.append(kw)
+    )
+    monkeypatch.setattr(trial_handler.console, "print", lambda *a, **k: None)
+
+    await trial_handler._handle_harbor_event(
+        SimpleNamespace(
+            event=TrialEvent.AGENT_START,
+            environment=object(),
+            environment_provider=None,
+            environment_external_id=None,
+            result=None,
+        ),
+        trial_id="trial-1",
+    )
+
+    (call,) = started
+    assert call["persist"] is live_tail_db.persist_tick_to_database
+    assert (call["attempt"], call["org_id"]) == (2, "org-1")

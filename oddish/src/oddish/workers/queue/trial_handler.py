@@ -106,7 +106,7 @@ from oddish.workers.harbor.runner import (
     is_retryable_execution_error,
     run_harbor_trial_async,
 )
-from oddish.workers.harbor import live_tail
+from oddish.workers.harbor import live_tail, live_tail_db
 from oddish.workers.queue.db_helpers import _trial_session
 from oddish.workers.queue.shared import console
 from oddish.workers.queue.trial_failures import (
@@ -1780,6 +1780,7 @@ async def _handle_harbor_event(
                 model=live_tail_spawn[2],
                 org_id=live_tail_spawn[3],
                 billed_user_id=live_tail_spawn[4],
+                persist=live_tail_db.persist_tick_to_database,
             )
         elif event in (TrialEvent.AGENT_END, TrialEvent.END, TrialEvent.CANCEL):
             live_tail.request_stop(trial_id)
@@ -2626,7 +2627,7 @@ async def run_trial_job(
         # are covered by the terminal purge (attempt <= tailed_attempt) and the
         # 24h TTL sweeper.
         if execution is not None and trial_terminal:
-            await live_tail.purge_events(trial_id, execution.tailed_attempt)
+            await live_tail_db.purge_events(trial_id, execution.tailed_attempt)
         # Backstop for the non-happy paths (harness exception, worker
         # cancel, S3 upload failure, or Harbor dying before producing a
         # job_dir). On Modal, ``process_single_job`` containers are warm

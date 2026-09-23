@@ -30,7 +30,7 @@ from oddish.db.models import (
     TrialStatus,
     utcnow,
 )
-from oddish.workers.harbor.live_tail import persist_tick_to_database
+from oddish.workers.harbor.live_tail_db import persist_tick_to_database
 from sqlalchemy import func, select
 
 

@@ -74,7 +74,7 @@ async def run() -> int:
         )
         write_status(trial_id=spec.trial_id, phase="starting")
         state = seams.ControlState()
-        seams.install(client, state)
+        driver_seams = seams.build(client, state)
 
         workdir = Path(tempfile.mkdtemp(prefix="oddish-mon-"))
         # Named as the worker names it (storage.resolve_task_directory), so
@@ -119,7 +119,9 @@ async def run() -> int:
                 jobs_dir=workdir / "jobs",
                 model=spec.model,
                 environment=EnvironmentType.DOCKER,
-                hook_callback=hooks.make_hook_callback(client, spec, reporter),
+                hook_callback=hooks.make_hook_callback(
+                    client, spec, reporter, persist=driver_seams.persist
+                ),
                 trial_id=spec.trial_id,
                 worker_job_id=spec.worker_job_id,
                 harbor_config=harbor_config,
@@ -128,6 +130,7 @@ async def run() -> int:
                 extra_agent_env=monitor_env.agent_env or None,
                 trial_kind=spec.trial_kind,
                 staged_skills_root=staged_skills_root,
+                quota_seams=driver_seams.quota,
             )
         )
         stats = loops.LoopStats()

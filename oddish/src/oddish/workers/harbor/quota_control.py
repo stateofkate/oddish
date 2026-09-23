@@ -8,8 +8,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from oddish.config import settings
-from oddish.core.quota_pause import quota_pause_requested
-from oddish.db import TrialModel, TrialStatus, get_session
 
 logger = logging.getLogger(__name__)
 
@@ -29,51 +27,23 @@ class QuotaPauseControlError(RuntimeError):
     pass
 
 
-# Seams for running the control loop where the database is not reachable.
-# Both default to the database-backed functions below.
+# The control loop never touches the database itself: it asks and records
+# through this pair. The worker passes ``quota_db.DATABASE_SEAMS``; the
+# in-sandbox monitor passes seams that answer from the control plane.
 RefreshPauseRequested = Callable[[str | None, str | None], Awaitable[bool]]
 RecordPauseState = Callable[[str, bool], Awaitable[None]]
 
-# Process-wide override, set once by a host that cannot reach the database
-# (the in-sandbox monitor). Explicit arguments still win.
-_default_refresh: RefreshPauseRequested | None = None
-_default_record: RecordPauseState | None = None
 
-
-def set_default_seams(
-    refresh_requested: RefreshPauseRequested | None,
-    record_state: RecordPauseState | None,
-) -> None:
-    global _default_refresh, _default_record
-    _default_refresh, _default_record = refresh_requested, record_state
+@dataclass(frozen=True)
+class QuotaSeams:
+    refresh_requested: RefreshPauseRequested
+    record_state: RecordPauseState
 
 
 def set_quota_pause_requested(trial_id: str, requested: bool) -> None:
     controller = _controllers.get(trial_id)
     if controller is not None:
         controller.requested = requested
-
-
-async def _record_pause_state(trial_id: str, paused: bool) -> None:
-    async with get_session() as session:
-        trial = await session.get(TrialModel, trial_id, with_for_update=True)
-        if trial is None:
-            return
-        if paused and trial.status == TrialStatus.RUNNING:
-            trial.status = TrialStatus.PAUSED
-        elif not paused and trial.status == TrialStatus.PAUSED:
-            trial.status = TrialStatus.RUNNING
-
-
-async def _refresh_pause_requested(
-    org_id: str | None, billed_user_id: str | None
-) -> bool:
-    async with get_session() as session:
-        return await quota_pause_requested(
-            session,
-            org_id=org_id,
-            billed_user_id=billed_user_id,
-        )
 
 
 async def control_job_quota_pause(
@@ -84,11 +54,9 @@ async def control_job_quota_pause(
     billed_user_id: str | None,
     stop: asyncio.Event,
     controller: QuotaPauseController,
-    refresh_requested: RefreshPauseRequested | None = None,
-    record_state: RecordPauseState | None = None,
+    seams: QuotaSeams,
 ) -> None:
-    refresh = refresh_requested or _default_refresh or _refresh_pause_requested
-    record = record_state or _default_record or _record_pause_state
+    refresh, record = seams.refresh_requested, seams.record_state
     last_refresh = 0.0
     while not stop.is_set():
         now = time.monotonic()
@@ -169,10 +137,9 @@ async def run_job_with_quota_control(
     trial_id: str,
     org_id: str,
     billed_user_id: str | None,
-    refresh_requested: RefreshPauseRequested | None = None,
-    record_state: RecordPauseState | None = None,
+    seams: QuotaSeams,
 ) -> Any:
-    record = record_state or _default_record or _record_pause_state
+    record = seams.record_state
     controller = QuotaPauseController()
     _controllers[trial_id] = controller
     stop = asyncio.Event()
@@ -185,8 +152,7 @@ async def run_job_with_quota_control(
             billed_user_id=billed_user_id,
             stop=stop,
             controller=controller,
-            refresh_requested=refresh_requested,
-            record_state=record_state,
+            seams=seams,
         )
     )
     try:

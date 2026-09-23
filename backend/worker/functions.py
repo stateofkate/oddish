@@ -133,9 +133,9 @@ from oddish.workers.queue.worker_job_dispatcher import (
 )
 from oddish.workers.queue.worker_job_single_job import (
     PostSuccessHooks,
+    WorkerHandoff,
     drain_worker_jobs,
     run_single_worker_job,
-    worker_handed_off,
 )
 
 from .github import notify_github_qa, notify_github_trial
@@ -231,8 +231,9 @@ register_qa_imported_hook(notify_github_qa)
 _POST_SUCCESS_HOOKS: PostSuccessHooks = {
     WorkerJobKind.TRIAL: notify_github_trial,
 }
-# Monitor-driven trials settle outside run_single_worker_job (in the
-# reconciler here, or inline in the API): same hook, registered once.
+# Monitor-driven trials settle outside run_single_worker_job, in the reaper
+# here (cleanup_orphaned_queue_state) and inline in the API: the same hook,
+# registered once per process at its startup (the API's is in api/app.py).
 set_monitor_post_success_hook(notify_github_trial)
 
 
@@ -325,6 +326,7 @@ async def _run_one_job(
     lock_slot: int | None = None
     capacity_slot: int | None = None
     release_capacity_lease = True
+    handoff = WorkerHandoff()
 
     job_span.__enter__()
     try:
@@ -410,6 +412,7 @@ async def _run_one_job(
                     candidate_configuration=WORKER_CANDIDATE_CONFIGURATION,
                     priority_class=priority_class,
                     org_id=org_id,
+                    handoff=handoff,
                 )
             )
             release_capacity_lease = True
@@ -429,6 +432,7 @@ async def _run_one_job(
                 candidate_configuration=WORKER_CANDIDATE_CONFIGURATION,
                 priority_class=priority_class,
                 org_id=org_id,
+                handoff=handoff,
             )
         if jobs_processed == 0:
             console.print(
@@ -449,7 +453,7 @@ async def _run_one_job(
     finally:
         try:
             try:
-                if worker_handed_off(worker_id):
+                if handoff:
                     # Launch succeeded is not trial finished: the job is still
                     # RUNNING in the sandbox and keeps its slot and lease.
                     # Settlement (or the reaper) releases them.

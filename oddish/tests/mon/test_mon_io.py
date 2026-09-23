@@ -178,7 +178,7 @@ async def test_selected_skills_come_from_the_control_plane(
     the sandbox cannot reach, and ran without them."""
     import tempfile
 
-    from oddish.mon import builder, runner, seams, task_image
+    from oddish.mon import builder, runner, task_image
     from oddish.workers.harbor import runner as driver
 
     spec = {**SPEC, "harbor_config": {"skill_ids": skill_ids} if skill_ids else None}
@@ -218,7 +218,6 @@ async def test_selected_skills_come_from_the_control_plane(
         functools.partial(MonitorClient, transport=httpx.MockTransport(api)),
     )
     monkeypatch.setattr(runner, "write_status", lambda **kwargs: None)
-    monkeypatch.setattr(seams, "install", lambda client, state: None)
     monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
     monkeypatch.setattr(task_fetch, "fetch_task", fetch)
     monkeypatch.setattr(builder, "env_for", lambda task: {})
@@ -423,7 +422,7 @@ def _stage_monitor(
     import asyncio
     import tempfile
 
-    from oddish.mon import builder, runner, seams, task_image
+    from oddish.mon import builder, runner, task_image
     from oddish.workers.harbor import runner as driver
 
     spec = {**SPEC, "harbor_config": {"skill_ids": ["skill-1"]}}
@@ -472,7 +471,6 @@ def _stage_monitor(
     )
     monkeypatch.setattr(runner, "write_status", lambda **kw: phases.append(kw["phase"]))
     monkeypatch.setattr(runner, "_finish_live_tail", no_tail)
-    monkeypatch.setattr(seams, "install", lambda client, state: None)
     monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
     monkeypatch.setenv("ODDISH_MON_LOG_PATH", str(tmp_path / "no-log"))
     monkeypatch.setattr(task_fetch, "fetch_task", fetch)

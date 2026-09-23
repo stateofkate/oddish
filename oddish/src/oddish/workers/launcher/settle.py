@@ -37,7 +37,7 @@ from oddish.workers.jobs.registry import get_handler
 from oddish.workers.launcher import costs as monitor_costs
 from oddish.workers.launcher import token as monitor_token
 from oddish.workers.queue.sandbox_capacity import release_sandbox_capacity_lease
-from oddish.workers.queue.shared import console
+from oddish.workers.console import console
 from oddish.workers.queue.slots import release_queue_slot
 from oddish.workers.queue.trial_handler import (
     PreparedTrialRun,

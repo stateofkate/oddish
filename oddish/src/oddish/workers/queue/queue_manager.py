@@ -22,8 +22,8 @@ from oddish.runtime.sandbox_lifecycle import (
 from oddish.workers.queue.slots import acquire_queue_slot, release_queue_slot
 from oddish.workers.queue.worker_job_dispatcher import stamp_dispatch_stage
 from oddish.workers.queue.worker_job_single_job import (
+    WorkerHandoff,
     drain_worker_jobs,
-    worker_handed_off,
 )
 
 POLL_INTERVAL_SECONDS = 2.0
@@ -131,6 +131,7 @@ async def run_assigned_queue_worker(
             )
             return 0
 
+        handoff = WorkerHandoff()
         try:
             if capacity_slot is not None:
                 release_capacity_lease = False
@@ -143,11 +144,12 @@ async def run_assigned_queue_worker(
                 execution_lane=execution_lane,
                 capacity_provider=capacity_provider,
                 capacity_slot=capacity_slot,
+                handoff=handoff,
             )
             release_capacity_lease = True
             return jobs_processed
         finally:
-            if worker_handed_off(worker_id):
+            if handoff:
                 # Launch succeeded is not trial finished: the handed-off job is
                 # still RUNNING in its sandbox and keeps this slot and the
                 # capacity lease. Settlement (or the reaper) releases them.

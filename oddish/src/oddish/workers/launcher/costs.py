@@ -22,7 +22,7 @@ from oddish.costs.modal_cost import SpanResources
 from oddish.costs.recorder import transition_agent_sandbox
 from oddish.db import WorkerJobModel, WorkerJobStatus, get_session
 from oddish.db.models import utcnow
-from oddish.workers.queue.shared import console
+from oddish.workers.console import console
 from oddish.workers.queue.trial_handler import PreparedTrialRun, SandboxCostState
 
 PAYLOAD_KEY = "monitor_cost"

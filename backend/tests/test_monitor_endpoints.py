@@ -156,7 +156,7 @@ async def test_events_run_the_tailers_persist_tick_for_the_credentials_trial(
 
     async def persist(**kwargs):
         calls.append(kwargs)
-        return monitor.live_tail.PersistResult(
+        return monitor.live_tail_db.PersistResult(
             flushed=1, checkpoint_written=True, pause_requested=True
         )
 
@@ -167,7 +167,7 @@ async def test_events_run_the_tailers_persist_tick_for_the_credentials_trial(
 
         yield SimpleNamespace(get=get)
 
-    monkeypatch.setattr(monitor.live_tail, "persist_tick_to_database", persist)
+    monkeypatch.setattr(monitor.live_tail_db, "persist_tick_to_database", persist)
     monkeypatch.setattr(monitor, "get_read_session", read_session)
 
     response = await http.post(
@@ -394,7 +394,6 @@ async def test_inline_settle_is_fenced_to_its_attempt_and_notifies_github(
     client, monkeypatch
 ):
     from oddish.workers.launcher import settle as monitor_settle
-    from worker.github import notify_github_trial
 
     http, _ = client
     settled = []
@@ -412,7 +411,20 @@ async def test_inline_settle_is_fenced_to_its_attempt_and_notifies_github(
     ok = await http.post("/monitor/result", headers=_auth(), json=body)
     assert ok.status_code == 200
     assert settled == [(ATTEMPT.worker_job_id, ATTEMPT.attempt)]
-    # The API process registered the worker's own hook for settlement to fire.
+
+
+def test_the_api_registers_the_settlement_hook_at_startup_not_on_import(
+    monkeypatch,
+):
+    """Inline settlement fires the worker's post-success hook, so the API
+    process registers it once when the app is created; importing the router
+    does not."""
+    from api.app import create_app
+    from oddish.workers.launcher import settle as monitor_settle
+    from worker.github import notify_github_trial
+
+    monkeypatch.setattr(monitor_settle, "_post_success_hook", None)
+    create_app()
     assert monitor_settle._post_success_hook is notify_github_trial
 
 
@@ -469,3 +481,23 @@ async def test_skills_are_the_trials_selected_ones_read_as_the_worker_reads_them
     assert listed == ["org-1"]  # nothing selected, nothing read
     stale = await http.get("/monitor/skills", headers=_auth("job-1.1.old"))
     assert stale.status_code == 410
+
+
+def test_the_router_has_no_import_time_hook_registration():
+    import ast
+
+    tree = ast.parse(open(monitor.__file__).read())
+    calls = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)
+    ]
+    assert [ast.unparse(c) for c in calls] == []
+
+
+def test_the_worker_registers_the_same_hook_at_its_startup():
+    from oddish.workers.launcher import settle as monitor_settle
+    from worker import functions  # noqa: F401 - registration is at import
+    from worker.github import notify_github_trial
+
+    assert monitor_settle._post_success_hook is notify_github_trial

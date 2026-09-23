@@ -12,12 +12,7 @@ from oddish.config import QuotaMode, settings
 from oddish.core import quota_admission, quota_pause
 from oddish.core.quota_admission import QuotaPaused
 from oddish.core.quotas import quota_pause_limit_usd
-from oddish.workers.harbor import quota_control
-
-
-@asynccontextmanager
-async def _empty_session():
-    yield object()
+from oddish.workers.harbor import quota_control, quota_db
 
 
 def test_pause_limit_uses_five_percent_remaining(monkeypatch):
@@ -89,7 +84,7 @@ async def test_admission_closes_at_pause_limit(monkeypatch):
 @pytest.mark.asyncio
 async def test_record_pause_state_preserves_worker_ownership(monkeypatch):
     trial = SimpleNamespace(
-        status=quota_control.TrialStatus.RUNNING,
+        status=quota_db.TrialStatus.RUNNING,
         current_worker_id="worker-1",
         current_queue_slot=3,
         heartbeat_at="heartbeat",
@@ -100,19 +95,19 @@ async def test_record_pause_state_preserves_worker_ownership(monkeypatch):
     async def fake_get_session():
         yield session
 
-    monkeypatch.setattr(quota_control, "get_session", fake_get_session)
+    monkeypatch.setattr(quota_db, "get_session", fake_get_session)
 
-    await quota_control._record_pause_state("trial-1", True)
-    assert trial.status == quota_control.TrialStatus.PAUSED
+    await quota_db.record_pause_state("trial-1", True)
+    assert trial.status == quota_db.TrialStatus.PAUSED
 
-    await quota_control._record_pause_state("trial-1", False)
-    assert trial.status == quota_control.TrialStatus.RUNNING
+    await quota_db.record_pause_state("trial-1", False)
+    assert trial.status == quota_db.TrialStatus.RUNNING
     assert trial.current_worker_id == "worker-1"
     assert trial.current_queue_slot == 3
     assert trial.heartbeat_at == "heartbeat"
     assert session.get.await_args_list == [
-        call(quota_control.TrialModel, "trial-1", with_for_update=True),
-        call(quota_control.TrialModel, "trial-1", with_for_update=True),
+        call(quota_db.TrialModel, "trial-1", with_for_update=True),
+        call(quota_db.TrialModel, "trial-1", with_for_update=True),
     ]
 
 
@@ -123,12 +118,10 @@ async def test_quota_control_pauses_and_resumes(monkeypatch):
     job = SimpleNamespace(pause=AsyncMock(), resume=AsyncMock())
     monkeypatch.setattr(settings, "quota_pause_poll_seconds", 0.001)
     monkeypatch.setattr(settings, "quota_pause_refresh_seconds", 1000)
-    monkeypatch.setattr(quota_control, "get_session", _empty_session)
-    monkeypatch.setattr(
-        quota_control, "quota_pause_requested", AsyncMock(return_value=True)
-    )
     record_pause_state = AsyncMock()
-    monkeypatch.setattr(quota_control, "_record_pause_state", record_pause_state)
+    seams = quota_control.QuotaSeams(
+        refresh_requested=AsyncMock(return_value=True), record_state=record_pause_state
+    )
 
     async def finish_after_resume():
         while not job.pause.await_count:
@@ -146,6 +139,7 @@ async def test_quota_control_pauses_and_resumes(monkeypatch):
             billed_user_id="user-1",
             stop=stop,
             controller=controller,
+            seams=seams,
         ),
         finish_after_resume(),
     )
@@ -165,10 +159,10 @@ async def test_quota_control_polls_while_running(monkeypatch):
     job = SimpleNamespace(pause=AsyncMock(), resume=AsyncMock())
     monkeypatch.setattr(settings, "quota_pause_poll_seconds", 0.001)
     monkeypatch.setattr(settings, "quota_pause_refresh_seconds", 0.001)
-    monkeypatch.setattr(quota_control, "get_session", _empty_session)
     refresh = AsyncMock(return_value=True)
-    monkeypatch.setattr(quota_control, "quota_pause_requested", refresh)
-    monkeypatch.setattr(quota_control, "_record_pause_state", AsyncMock())
+    seams = quota_control.QuotaSeams(
+        refresh_requested=refresh, record_state=AsyncMock()
+    )
 
     async def stop_after_pause():
         while not job.pause.await_count:
@@ -183,6 +177,7 @@ async def test_quota_control_polls_while_running(monkeypatch):
             billed_user_id="user-1",
             stop=stop,
             controller=controller,
+            seams=seams,
         ),
         stop_after_pause(),
     )
@@ -207,9 +202,8 @@ async def test_quota_control_failure_cancels_job(monkeypatch):
         resume=AsyncMock(),
     )
     monkeypatch.setattr(settings, "quota_pause_poll_seconds", 0.001)
-    monkeypatch.setattr(quota_control, "get_session", _empty_session)
-    monkeypatch.setattr(
-        quota_control, "quota_pause_requested", AsyncMock(return_value=True)
+    seams = quota_control.QuotaSeams(
+        refresh_requested=AsyncMock(return_value=True), record_state=AsyncMock()
     )
 
     with pytest.raises(quota_control.QuotaPauseControlError, match="snapshot failed"):
@@ -218,6 +212,7 @@ async def test_quota_control_failure_cancels_job(monkeypatch):
             trial_id="trial-1",
             org_id="org-1",
             billed_user_id="user-1",
+            seams=seams,
         )
 
     assert run_cancelled.is_set()
@@ -246,9 +241,8 @@ async def test_quota_control_failure_does_not_wait_forever_for_job(monkeypatch):
     )
     monkeypatch.setattr(settings, "quota_pause_poll_seconds", 0.001)
     monkeypatch.setattr(settings, "quota_pause_cancel_timeout_seconds", 0.001)
-    monkeypatch.setattr(quota_control, "get_session", _empty_session)
-    monkeypatch.setattr(
-        quota_control, "quota_pause_requested", AsyncMock(return_value=True)
+    seams = quota_control.QuotaSeams(
+        refresh_requested=AsyncMock(return_value=True), record_state=AsyncMock()
     )
 
     with pytest.raises(quota_control.QuotaPauseControlError, match="snapshot failed"):
@@ -257,6 +251,7 @@ async def test_quota_control_failure_does_not_wait_forever_for_job(monkeypatch):
             trial_id="trial-1",
             org_id="org-1",
             billed_user_id="user-1",
+            seams=seams,
         )
 
     assert run_cancelled.is_set()
@@ -272,7 +267,7 @@ async def test_quota_control_runs_on_injected_seams_without_database(monkeypatch
     def no_database():
         raise AssertionError("database reached with injected seams")
 
-    monkeypatch.setattr(quota_control, "get_session", no_database)
+    monkeypatch.setattr(quota_db, "get_session", no_database)
     monkeypatch.setattr(settings, "quota_pause_refresh_seconds", 0)
     monkeypatch.setattr(settings, "quota_pause_poll_seconds", 0.01)
 
@@ -302,8 +297,7 @@ async def test_quota_control_runs_on_injected_seams_without_database(monkeypatch
         trial_id="trial-1",
         org_id="org-1",
         billed_user_id="user-1",
-        refresh_requested=refresh,
-        record_state=record,
+        seams=quota_control.QuotaSeams(refresh_requested=refresh, record_state=record),
     )
 
     assert result == "done"

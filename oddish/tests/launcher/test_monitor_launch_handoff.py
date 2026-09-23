@@ -280,10 +280,9 @@ async def test_resolve_image_is_one_write_fenced_on_this_attempt(
         return "registry/img:1"
 
     monkeypatch.setattr(ml, "get_session", _session)
-    monkeypatch.setattr(ml, "_image_resolver", _resolver)
     job = SimpleNamespace(id="job-1", attempts=3, worker_id="w-1")
 
-    assert await ml._resolve_image(job, "task-1", 1) is None
+    assert await ml._resolve_image(job, "task-1", 1, _resolver) is None
 
     assert len(statements) == 1
     compiled = _compiled(statements[0])
@@ -395,3 +394,25 @@ async def test_the_cancel_teardown_closes_the_span_the_payload_records(monkeypat
     )  # fmt: skip
 
     assert settled == [("job-1", 1, None)]
+
+
+@pytest.mark.asyncio
+async def test_the_image_resolver_is_the_callers_not_a_global(monkeypatch):
+    """The prebuilt-image lookup is passed in by the caller; without one the
+    sandbox builds the task image itself."""
+    starter = _Starter()
+    _stub_launch(monkeypatch, starter)
+    resolved = []
+
+    async def _resolve_image(job, task_id, version, resolver):
+        resolved.append(resolver)
+
+    monkeypatch.setattr(ml, "_resolve_image", _resolve_image)
+
+    async def _resolver(task_id, version):
+        return "registry/img:1"
+
+    assert (await ml.launch_monitor_attempt(_job(), image_resolver=_resolver)).handoff
+    assert (await ml.launch_monitor_attempt(_job())).handoff
+    assert resolved == [_resolver, None]
+    assert not hasattr(ml, "_image_resolver")

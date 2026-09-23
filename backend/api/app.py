@@ -246,6 +246,17 @@ async def lifespan(_api: FastAPI):
             pass
 
 
+def _register_settlement_hook() -> None:
+    """Monitor-driven trials can settle inline in this process
+    (``monitor_settle_inline``), outside the worker that normally registers
+    the post-success hook. Same hook, registered once here at startup; the
+    worker registers it at its own startup (``worker/functions.py``)."""
+    from oddish.workers.launcher.settle import set_post_success_hook
+    from worker.github import notify_github_trial
+
+    set_post_success_hook(notify_github_trial)
+
+
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application with all routers.
 
@@ -261,6 +272,7 @@ def create_app() -> FastAPI:
         version="0.3.0",
         lifespan=lifespan,
     )
+    _register_settlement_hook()
 
     instrument_fastapi(api)
 

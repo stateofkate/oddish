@@ -8,16 +8,11 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol, cast
 
-from sqlalchemy import delete, update
-from sqlalchemy.dialects.postgresql import insert as pg_insert
-
 from oddish.config import settings
-from oddish.db import TrialEventModel, TrialModel
-from oddish.db.connection import get_session
 from oddish.model_pricing import estimate_cost_usd
 from oddish.transcript_safety import sanitize_transcript_text, sanitize_transcript_value
 from oddish.workers.harbor.redaction import redact_exact_bytes, redact_exact_value
-from oddish.workers.queue.shared import console
+from oddish.workers.console import console
 
 # Keep the same ~51 KiB/s drain capacity as the original 256 KiB / 5s
 # cadence while making six times fewer sandbox exec calls.
@@ -990,66 +985,11 @@ class PersistResult:
     pause_requested: bool | None = None
 
 
-# Seam for running the tailer where the database is not reachable. Events are
-# already redacted when this is called. Defaults to the database path below.
+# The tailer never touches the database itself: each tick goes through this
+# callback. The worker passes ``live_tail_db.persist_tick_to_database``; the
+# in-sandbox monitor passes one that posts to the control plane. Events are
+# already redacted when it is called.
 PersistTick = Callable[..., Awaitable[PersistResult]]
-
-# Process-wide override, set once by a host that cannot reach the database
-# (the in-sandbox monitor). A tailer's own ``persist`` argument still wins.
-_default_persist: PersistTick | None = None
-
-
-def set_default_persist(persist: PersistTick | None) -> None:
-    global _default_persist
-    _default_persist = persist
-
-
-async def persist_tick_to_database(
-    *,
-    trial_id: str,
-    attempt: int,
-    events: list[dict[str, Any]],
-    checkpoint_values: dict[str, Any] | None,
-    org_id: str | None,
-    billed_user_id: str | None,
-) -> PersistResult:
-    """Insert live rows, write the usage checkpoint, then enforce quotas."""
-    flushed = 0
-    checkpoint_written = False
-    async with get_session() as session:
-        if events:
-            rows = [{"trial_id": trial_id, "attempt": attempt, **e} for e in events]
-            await session.execute(
-                pg_insert(TrialEventModel).values(rows).on_conflict_do_nothing()
-            )
-            flushed = len(rows)
-        if checkpoint_values is not None:
-            result = await session.execute(
-                update(TrialModel)
-                .where(TrialModel.id == trial_id, TrialModel.finished_at.is_(None))
-                .values(**checkpoint_values)
-            )
-            if getattr(result, "rowcount", None) == 0:
-                return PersistResult(flushed=flushed, trial_finished=True)
-            checkpoint_written = True
-    if not checkpoint_written or org_id is None:
-        return PersistResult(flushed=flushed, checkpoint_written=checkpoint_written)
-
-    from oddish.core.quota_enforcement import enforce_trial_quotas
-
-    pause_requests: list[bool] = []
-    cancelled = await enforce_trial_quotas(
-        org_id=org_id,
-        billed_user_id=billed_user_id,
-        caller_trial_id=trial_id,
-        quota_pause_callback=pause_requests.append,
-    )
-    return PersistResult(
-        flushed=flushed,
-        checkpoint_written=True,
-        quota_checked=cancelled is not None,
-        pause_requested=pause_requests[-1] if pause_requests else None,
-    )
 
 
 class LiveTailer:
@@ -1065,7 +1005,7 @@ class LiveTailer:
         runtime_redactions: dict[str, str] | None = None,
         org_id: str | None = None,
         billed_user_id: str | None = None,
-        persist: PersistTick | None = None,
+        persist: PersistTick,
     ):
         self._persist = persist
         self.trial_id = trial_id
@@ -1242,8 +1182,7 @@ class LiveTailer:
             if self.replaced
             else [self._sanitize_event(event) for event in self.pending_events]
         )
-        persist = self._persist or _default_persist or persist_tick_to_database
-        result = await persist(
+        result = await self._persist(
             trial_id=self.trial_id,
             attempt=self.attempt,
             events=events,
@@ -1322,6 +1261,7 @@ def start(
     model: str | None,
     org_id: str | None = None,
     billed_user_id: str | None = None,
+    persist: PersistTick,
 ) -> None:
     if not settings.live_tail_enabled:
         return
@@ -1338,6 +1278,7 @@ def start(
         runtime_redactions=_runtime_redactions.get(trial_id),
         org_id=org_id,
         billed_user_id=billed_user_id,
+        persist=persist,
     )
     old = _tailers.pop(trial_id, None)
     if old:
@@ -1379,18 +1320,3 @@ async def shutdown(trial_id: str, timeout_sec: float = 15.0) -> int | None:
     except Exception:
         pass
     return tailer.attempt
-
-
-async def purge_events(trial_id: str, attempt: int | None) -> None:
-    if attempt is None:
-        return
-    try:
-        async with get_session() as session:
-            await session.execute(
-                delete(TrialEventModel).where(
-                    TrialEventModel.trial_id == trial_id,
-                    TrialEventModel.attempt <= attempt,
-                )
-            )
-    except Exception as exc:
-        console.print(f"[dim]Trial {trial_id} event purge failed: {exc}[/dim]")

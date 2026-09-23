@@ -115,7 +115,11 @@ async def test_hook_reports_each_event_and_survives_a_control_plane_blip(
     monkeypatch.setattr(live_tail, "start", lambda **kwargs: started.append(kwargs))
     monkeypatch.setattr(live_tail, "request_stop", stopped.append)
     client = _Client(lifecycle=[ControlPlaneUnavailable("blip"), None, None])
-    on_event = hooks.make_hook_callback(client, SPEC)
+
+    async def persist(**kwargs):
+        raise AssertionError("not reached: live_tail.start is stubbed")
+
+    on_event = hooks.make_hook_callback(client, SPEC, persist=persist)
 
     environment = object()
     await on_event(
@@ -129,6 +133,8 @@ async def test_hook_reports_each_event_and_survives_a_control_plane_blip(
     assert [p["event"] for _, p in client.calls] == ["agent-start", "agent-start", "end"]
     assert started[0]["environment"] is environment
     assert started[0]["attempt"] == SPEC.trial_attempt
+    # The tail persists through the callback the runner built, not a global.
+    assert started[0]["persist"] is persist
     assert stopped == ["trial-1"]
 
 
@@ -137,7 +143,9 @@ async def test_hook_reports_each_event_and_survives_a_control_plane_blip(
 async def test_hook_lets_a_dead_attempt_stop_the_trial(monkeypatch, verdict):
     monkeypatch.setattr(hooks, "write_status", lambda **kwargs: None)
     reporter = hooks.LifecycleReporter(_Client(lifecycle=verdict))
-    on_event = hooks.make_hook_callback(reporter._client, SPEC, reporter)
+    on_event = hooks.make_hook_callback(
+        reporter._client, SPEC, reporter, persist=_no_persist
+    )
     with pytest.raises(type(verdict)):
         await on_event(
             SimpleNamespace(event=TrialEvent.START, environment=None, result=None)
@@ -146,6 +154,10 @@ async def test_hook_lets_a_dead_attempt_stop_the_trial(monkeypatch, verdict):
     # Harbor swallows the hook's exception.
     with pytest.raises(loops.StopTrial):
         await asyncio.wait_for(reporter.stopped(), timeout=1)
+
+
+async def _no_persist(**kwargs):
+    raise AssertionError("no tick expected")
 
 
 @pytest.mark.asyncio
@@ -161,23 +173,22 @@ async def test_seams_send_the_tails_tick_to_the_events_route():
     )
     state = seams.ControlState()
     state.pause_requested = True
-    try:
-        seams.install(client, state)
-        result = await live_tail._default_persist(
-            trial_id="trial-1",
-            attempt=1,
-            events=[{"seq": 1, "kind": "text", "payload": {}}],
-            checkpoint_values={"cost_usd": 0.1},
-            org_id="org-1",
-            billed_user_id=None,
-        )
-        assert result == live_tail.PersistResult(flushed=2, checkpoint_written=True)
-        (_, sent) = client.calls[0]
-        assert sent["trial_attempt"] == 1 and sent["checkpoint"] == {"cost_usd": 0.1}
-        assert await quota_control._default_refresh("org-1", None) is True
-    finally:
-        live_tail.set_default_persist(None)
-        quota_control.set_default_seams(None, None)
+    driver = seams.build(client, state)
+    result = await driver.persist(
+        trial_id="trial-1",
+        attempt=1,
+        events=[{"seq": 1, "kind": "text", "payload": {}}],
+        checkpoint_values={"cost_usd": 0.1},
+        org_id="org-1",
+        billed_user_id=None,
+    )
+    assert result == live_tail.PersistResult(flushed=2, checkpoint_written=True)
+    (_, sent) = client.calls[0]
+    assert sent["trial_attempt"] == 1 and sent["checkpoint"] == {"cost_usd": 0.1}
+    assert isinstance(driver.quota, quota_control.QuotaSeams)
+    assert await driver.quota.refresh_requested("org-1", None) is True
+    # Nothing was installed anywhere: a second build is independent.
+    assert seams.build(client, seams.ControlState()).persist is not driver.persist
 
 
 @pytest.mark.asyncio
@@ -208,25 +219,21 @@ async def test_a_large_tick_is_posted_in_batches_the_events_route_accepts():
     client = _Client(
         events=[reply(1000), reply(1000), reply(500, checkpoint_written=True)]
     )
-    try:
-        seams.install(client, seams.ControlState())
-        result = await live_tail._default_persist(**tick)
-        assert result == live_tail.PersistResult(flushed=2500, checkpoint_written=True)
-        sent = [payload for _, payload in client.calls]
-        assert [len(p["events"]) for p in sent] == [1000, 1000, 500]
-        assert [p["events"][0]["seq"] for p in sent] == [1, 1001, 2001]
-        assert [p["checkpoint"] for p in sent] == [None, None, {"cost_usd": 0.1}]
-        assert MAX_EVENTS_PER_POST == 1000
+    persist = seams.build(client, seams.ControlState()).persist
+    result = await persist(**tick)
+    assert result == live_tail.PersistResult(flushed=2500, checkpoint_written=True)
+    sent = [payload for _, payload in client.calls]
+    assert [len(p["events"]) for p in sent] == [1000, 1000, 500]
+    assert [p["events"][0]["seq"] for p in sent] == [1, 1001, 2001]
+    assert [p["checkpoint"] for p in sent] == [None, None, {"cost_usd": 0.1}]
+    assert MAX_EVENTS_PER_POST == 1000
 
-        # The second batch fails: the first counts, the rest stays pending.
-        client = _Client(events=[reply(1000), ControlPlaneUnavailable("HTTP 503")])
-        seams.install(client, seams.ControlState())
-        result = await live_tail._default_persist(**tick)
-        assert result == live_tail.PersistResult(flushed=1000)
-        assert len(client.calls) == 2
-    finally:
-        live_tail.set_default_persist(None)
-        quota_control.set_default_seams(None, None)
+    # The second batch fails: the first counts, the rest stays pending.
+    client = _Client(events=[reply(1000), ControlPlaneUnavailable("HTTP 503")])
+    persist = seams.build(client, seams.ControlState()).persist
+    result = await persist(**tick)
+    assert result == live_tail.PersistResult(flushed=1000)
+    assert len(client.calls) == 2
 
 
 def test_status_command_exit_code_says_whether_the_monitor_is_alive(

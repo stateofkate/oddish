@@ -14,7 +14,7 @@ from live_tail_fakes import (
     patch_db,
     update_params,
 )
-from oddish.workers.harbor import live_tail
+from oddish.workers.harbor import live_tail, live_tail_db
 from oddish.workers.harbor.live_tail import (
     ClaudeUsageFold,
     CodexUsageFold,
@@ -1735,7 +1735,7 @@ async def test_persist_tick_uses_an_injected_persist_without_the_database(monkey
     def no_database():
         raise AssertionError("database reached with an injected persist")
 
-    monkeypatch.setattr(live_tail, "get_session", no_database)
+    monkeypatch.setattr(live_tail_db, "get_session", no_database)
     calls = []
 
     async def persist(**kwargs):

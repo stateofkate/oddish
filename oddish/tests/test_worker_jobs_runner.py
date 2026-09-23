@@ -1731,3 +1731,50 @@ async def test_handoff_declines_missing_ledger_when_job_still_holds_a_handle(
         "execution_lane =" not in updates[0][0].split("SET", 1)[1].split("WHERE", 1)[0]
     )
     assert not any("environment = $2" in sql for sql, _ in updates)
+
+
+def _record_handoff_as(status):
+    async def fake_record(*, outcome, **kwargs):
+        assert outcome.handoff is not None
+        return status
+
+    return fake_record
+
+
+@pytest.mark.asyncio
+async def test_run_single_worker_job_marks_the_callers_handoff_record(monkeypatch):
+    """A recorded handoff is reported through the record the caller owns,
+    not a process-wide marker: the caller's cleanup keeps the slot."""
+    job = _make_claimed(kind=WorkerJobKind.TRIAL)
+    register(_FakeHandler(job.kind, outcome=JobOutcome.handed_off()))
+    _install_fake_claim(monkeypatch, job)
+    monkeypatch.setattr(
+        worker_job_single_job,
+        "_record_outcome",
+        _record_handoff_as(WorkerJobStatus.RUNNING),
+    )
+    handoff = worker_job_single_job.WorkerHandoff()
+    assert not handoff
+
+    assert await worker_job_single_job.run_single_worker_job(
+        "default", worker_id="w-1", queue_slot=0, handoff=handoff
+    )
+    assert handoff and handoff.job_id == "wj-1"
+
+
+@pytest.mark.asyncio
+async def test_a_handoff_that_lost_the_row_is_not_marked(monkeypatch):
+    """Ownership lost while launching (rowcount 0): nothing was handed off, so
+    the caller releases its slot as usual."""
+    job = _make_claimed(kind=WorkerJobKind.TRIAL)
+    register(_FakeHandler(job.kind, outcome=JobOutcome.handed_off()))
+    _install_fake_claim(monkeypatch, job)
+    monkeypatch.setattr(
+        worker_job_single_job, "_record_outcome", _record_handoff_as(None)
+    )
+    handoff = worker_job_single_job.WorkerHandoff()
+
+    await worker_job_single_job.run_single_worker_job(
+        "default", worker_id="w-1", queue_slot=0, handoff=handoff
+    )
+    assert not handoff

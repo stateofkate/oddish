@@ -1,12 +1,14 @@
-"""Point the driver's two database touchpoints at the control plane.
+"""The driver's two database touchpoints, answered by the control plane.
 
 The driver (``run_harbor_trial_async``) is used whole and unchanged. Its live
-tail and quota loop take process-wide overrides; these are those overrides.
+tail and quota loop take their persist / refresh / record callbacks as
+arguments; ``build`` makes the monitor's.
 """
 
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 from oddish.mon.client import (
@@ -26,7 +28,13 @@ class ControlState:
     pause_requested: bool = False
 
 
-def install(client: MonitorClient, state: ControlState) -> None:
+@dataclass(frozen=True)
+class DriverSeams:
+    persist: live_tail.PersistTick
+    quota: quota_control.QuotaSeams
+
+
+def build(client: MonitorClient, state: ControlState) -> DriverSeams:
     async def persist(
         *,
         attempt: int,
@@ -73,5 +81,9 @@ def install(client: MonitorClient, state: ControlState) -> None:
             "quota pause state not recorded: trial_id=%s paused=%s", trial_id, paused
         )
 
-    live_tail.set_default_persist(persist)
-    quota_control.set_default_seams(refresh_requested, record_state)
+    return DriverSeams(
+        persist=persist,
+        quota=quota_control.QuotaSeams(
+            refresh_requested=refresh_requested, record_state=record_state
+        ),
+    )

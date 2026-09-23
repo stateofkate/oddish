@@ -32,7 +32,7 @@ from oddish.db import get_session
 from oddish.workers.launcher.providers import base as monitor_sandbox
 from oddish.workers.launcher import token as monitor_token
 from oddish.workers.launcher.settle import settle_monitor_result
-from oddish.workers.queue.shared import console
+from oddish.workers.console import console
 
 logger = logging.getLogger(__name__)
 

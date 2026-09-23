@@ -1,3 +1,3 @@
-from rich.console import Console
+from oddish.workers.console import console
 
-console = Console()
+__all__ = ["console"]

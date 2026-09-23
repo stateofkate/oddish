@@ -288,11 +288,10 @@ async def _main() -> int:
     async def _image(task_id, version):
         return "registry/task:1"
 
-    monitor_launch.set_image_resolver(_image)
     job = await _seed()
     async with get_session() as s:
         (await s.get(WorkerJobModel, job.id)).payload = {"keep": 1}
-    await monitor_launch._resolve_image(job, "task", 1)
+    await monitor_launch._resolve_image(job, "task", 1, _image)
     row, _ = await _rows(job)
     checks["E_image_merged_into_an_owned_row"] = row.payload == {
         "keep": 1,
@@ -300,10 +299,9 @@ async def _main() -> int:
     }
     job = await _seed()
     await _reclaim(job.id)
-    await monitor_launch._resolve_image(job, "task", 1)
+    await monitor_launch._resolve_image(job, "task", 1, _image)
     row, _ = await _rows(job)
     checks["E_image_not_written_to_a_reclaimed_row"] = row.payload == {}
-    monitor_launch.set_image_resolver(None)
     async with get_session() as s:
         (await s.get(WorkerJobModel, row.id)).status = WorkerJobStatus.FAILED
 

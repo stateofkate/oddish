@@ -75,14 +75,22 @@ logger = logging.getLogger(__name__)
 PostSuccessHooks = dict[WorkerJobKind, Callable[[str], Awaitable[None]]]
 
 
-# Workers whose claimed job was handed to the in-sandbox monitor. Such a worker
-# must stop draining and must NOT release its queue slot or capacity lease: the
-# job is still RUNNING under its worker id, and settlement releases them.
-_handed_off_workers: set[str] = set()
+@dataclass
+class WorkerHandoff:
+    """Whether a claimed job was handed to the in-sandbox monitor.
 
+    The caller owns one per worker, passes it to ``drain_worker_jobs`` /
+    ``run_single_worker_job`` and reads it in its own cleanup: a handed-off
+    job is still RUNNING under this worker id, so the worker stops draining
+    and must NOT release its queue slot or capacity lease. Settlement (or the
+    reaper) releases them. It is a record, not a return value, so the
+    cleanup sees it even when the run raises after the launch.
+    """
 
-def worker_handed_off(worker_id: str) -> bool:
-    return worker_id in _handed_off_workers
+    job_id: str | None = None
+
+    def __bool__(self) -> bool:
+        return self.job_id is not None
 
 
 class JobAccessDenied(Exception):
@@ -152,6 +160,7 @@ def _ensure_handlers_registered() -> None:
 __all__ = [
     "ClaimedWorkerJob",
     "claim_single_worker_job",
+    "WorkerHandoff",
     "drain_worker_jobs",
     "run_single_worker_job",
 ]
@@ -1128,7 +1137,6 @@ async def _record_outcome(
             )
             if not still_owned:
                 return None
-            _handed_off_workers.add(worker_id)
             return WorkerJobStatus.RUNNING
         if outcome.reroute is not None:
             return await _record_reroute_or_fallback(
@@ -1422,6 +1430,7 @@ async def run_single_worker_job(
     resource_candidate: bool | None = None,
     candidate_configuration: str | None = None,
     worker_billing_spec: WorkerBillingSpec | None = None,
+    handoff: WorkerHandoff | None = None,
 ) -> bool:
     """Claim and execute at most one `worker_jobs` row.
 
@@ -1435,6 +1444,9 @@ async def run_single_worker_job(
     recorded on the ``worker_jobs`` row. Hook exceptions are logged but
     do not fail the job -- they're operator notifications, not
     correctness-critical.
+
+    ``handoff``, when given, is marked once a handoff outcome is durably
+    recorded (the row is still RUNNING under this worker in its sandbox).
     """
     _ensure_handlers_registered()
 
@@ -1585,6 +1597,8 @@ async def run_single_worker_job(
         )
         attempt_duration_seconds = time.monotonic() - attempt_started_monotonic
         outcome_recorded = bool(persisted_status)
+        if outcome.handoff is not None and outcome_recorded and handoff is not None:
+            handoff.job_id = job.id
         if isinstance(persisted_status, WorkerJobStatus):
             console.print(
                 f"[dim]worker_job {job.id} -> {persisted_status.value} "
@@ -1639,6 +1653,7 @@ async def drain_worker_jobs(
     resource_candidate: bool | None = None,
     candidate_configuration: str | None = None,
     worker_billing_spec: WorkerBillingSpec | None = None,
+    handoff: WorkerHandoff | None = None,
     _run_job: Callable[..., Awaitable[bool]] | None = None,
     _now: Callable[[], float] = time.monotonic,
 ) -> int:
@@ -1660,6 +1675,8 @@ async def drain_worker_jobs(
     so must stay well under the slot lease window.
 
     Returns the number of jobs processed (0 if the queue was already empty).
+    A job handed to the in-sandbox monitor ends the drain and is reported
+    through ``handoff``: the slot now belongs to that job.
     """
     run_job = _run_job or run_single_worker_job
     deadline = _now() + budget_seconds
@@ -1675,6 +1692,8 @@ async def drain_worker_jobs(
         }
         if authorize_job is not None:
             run_kwargs["authorize_job"] = authorize_job
+        if handoff is not None:
+            run_kwargs["handoff"] = handoff
         if execution_lane != "default" or capacity_provider is not None:
             run_kwargs.update(
                 execution_lane=execution_lane,
@@ -1691,7 +1710,7 @@ async def drain_worker_jobs(
         job_found = await run_job(queue_key, **run_kwargs)
         if not job_found:
             break
-        if worker_handed_off(worker_id):
+        if handoff:
             # The slot now belongs to the handed-off job; claim nothing more on it.
             processed += 1
             break

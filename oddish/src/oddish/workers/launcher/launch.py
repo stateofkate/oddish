@@ -42,7 +42,7 @@ from oddish.workers.queue import byok, job_tokens
 from oddish.workers.queue import judge_keys as verifier_secrets
 from oddish.workers.launcher.heartbeat import record_monitor_heartbeat
 from oddish.workers.launcher.settle import CAPACITY_PAYLOAD_KEY
-from oddish.workers.queue.shared import console
+from oddish.workers.console import console
 from oddish.workers.queue.trial_handler import (
     TrialExecutionResult,
     _begin_judge_costs_if_enabled,
@@ -55,25 +55,22 @@ from oddish.workers.queue.worker_job_single_job import ClaimedWorkerJob
 
 logger = logging.getLogger(__name__)
 
-# Optional hook, set by the hosted backend: (task_id, task_version) -> image URL
-# built once outside the sandbox (or None). Without it the sandbox builds the
-# task image itself, as compose tasks do today.
+# Optional, passed by the caller: (task_id, task_version) -> image URL built
+# once outside the sandbox (or None). Without it the sandbox builds the task
+# image itself, as compose tasks do today.
 ImageResolver = Callable[[str, int], Awaitable[str | None]]
-_image_resolver: ImageResolver | None = None
-
-
-def set_image_resolver(resolver: ImageResolver | None) -> None:
-    global _image_resolver
-    _image_resolver = resolver
 
 
 async def _resolve_image(
-    job: ClaimedWorkerJob, task_id: str, version: int | None
+    job: ClaimedWorkerJob,
+    task_id: str,
+    version: int | None,
+    resolver: ImageResolver | None,
 ) -> None:
     """Record the prebuilt image on the job row; the attempt spec hands it over."""
-    if _image_resolver is None or version is None:
+    if resolver is None or version is None:
         return
-    image = await _image_resolver(task_id, version)
+    image = await resolver(task_id, version)
     if not image:
         return
     # One fenced statement: a reaped or re-claimed row is left alone (rowcount
@@ -362,7 +359,10 @@ async def _after_cancelled_launch(
 
 
 async def launch_monitor_attempt(
-    job: ClaimedWorkerJob, registry_credentials: list | None = None
+    job: ClaimedWorkerJob,
+    registry_credentials: list | None = None,
+    *,
+    image_resolver: ImageResolver | None = None,
 ) -> JobOutcome | None:
     """Returns a handoff, or ``None`` when the trial settled here instead
     (nothing to run, or the launch failed and was settled as a failed attempt)."""
@@ -439,7 +439,9 @@ async def launch_monitor_attempt(
 
     launch_heartbeat = asyncio.create_task(_heartbeat_during_launch())
     try:
-        await _resolve_image(job, prepared.task_id, prepared.task_version)
+        await _resolve_image(
+            job, prepared.task_id, prepared.task_version, image_resolver
+        )
         # The user's own model key, and which key funds this attempt.
         owned, byok_env = await _claim_funding_key(
             trial_id=trial_id, prepared_trial=prepared, worker_id=job.worker_id

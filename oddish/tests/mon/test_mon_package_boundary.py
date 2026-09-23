@@ -86,22 +86,9 @@ def test_hook_summaries_come_from_the_shared_spec_not_the_queue():
 # exist so a paid-down one is removed from here. The mon image keeps the
 # server extra until this list is empty.
 _DB_EDGE_DEBT = {
-    # live_tail persists ticks to Postgres itself; the seam split moves that
-    # to live_tail_db and passes persist in.
-    ("oddish.workers.harbor.live_tail", "oddish.db"),
-    ("oddish.workers.harbor.live_tail", "oddish.db.connection"),
-    ("oddish.workers.harbor.live_tail", "sqlalchemy"),
-    ("oddish.workers.harbor.live_tail", "sqlalchemy.dialects"),
-    ("oddish.workers.harbor.live_tail", "sqlalchemy.dialects.postgresql"),
-    # live_tail takes its rich.Console from workers.queue.shared, whose
-    # package loads the whole queue. Moves to a neutral module in the seam PR.
-    ("oddish.workers.harbor.live_tail", "oddish.workers.queue"),
-    ("oddish.workers.harbor.live_tail", "oddish.workers.queue.shared"),
-    # quota_control's default refresh/record read and write TrialModel; the
-    # seam split moves them to quota_db.
-    ("oddish.workers.harbor.quota_control", "oddish.db"),
-    ("oddish.workers.harbor.quota_control", "oddish.core.quota_pause"),
-    # The driver itself. Removing these is separate, larger work.
+    # live_tail and quota_control no longer reach the database: persist and the
+    # quota seams are passed in (live_tail_db, quota_db hold the DB defaults).
+    # What remains is the driver itself. Removing these is separate, larger work.
     ("oddish.workers.harbor.runner", "oddish.costs"),
     ("oddish.workers.harbor.runner", "oddish.costs.modal_cost"),
     ("oddish.workers.harbor.runner", "oddish.runtime.sandbox_lifecycle"),

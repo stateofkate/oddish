@@ -160,10 +160,14 @@ class InProcessDispatcher:
             try:
                 # Image-agnostic workers still claim the exact dispatch tuple;
                 # they simply do not require a variant-specific container image.
+                from oddish.workers.queue.worker_job_single_job import WorkerHandoff
+
+                handoff = WorkerHandoff()
                 run_kwargs: dict[str, Any] = {
                     "worker_id": worker_id,
                     "queue_slot": slot,
                     "harbor_variant_id": harbor_variant_id,
+                    "handoff": handoff,
                 }
                 if capacity_provider is not None:
                     run_kwargs.update(
@@ -175,9 +179,7 @@ class InProcessDispatcher:
                 await self._run_job(queue_key, **run_kwargs)
                 release_capacity_lease = True
             finally:
-                from oddish.workers.queue.worker_job_single_job import worker_handed_off
-
-                if worker_handed_off(worker_id):
+                if handoff:
                     # The job was handed to the in-sandbox monitor: it keeps
                     # this slot and the capacity lease until settlement.
                     release_capacity_lease = False
