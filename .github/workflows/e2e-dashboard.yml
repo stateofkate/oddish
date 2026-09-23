@@ -325,7 +325,7 @@ jobs:
           sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
           pnpm exec playwright install chromium --with-deps
 
-      - name: Run file, review, duplication, and account layout fixture tests
+      - name: Run file, review, public-page, member, and layout fixture tests
         working-directory: frontend
         env:
           E2E_REVIEW_FIXTURES: "1"

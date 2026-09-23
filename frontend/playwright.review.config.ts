@@ -8,6 +8,7 @@ export default defineConfig({
     "qa-rejection-state.spec.ts",
     "user-ui-layout.spec.ts",
     "public-experiment-tasks.spec.ts",
+    "public-share-qa.spec.ts",
   ],
   workers: 1,
   reporter: "list",

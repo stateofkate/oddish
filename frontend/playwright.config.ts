@@ -19,6 +19,8 @@ export default defineConfig({
     "reasoning-effort.spec.ts",
     "user-ui-layout.spec.ts",
     "ui-duplication.spec.ts",
+    "public-experiment-tasks.spec.ts",
+    "public-share-qa.spec.ts",
   ],
   fullyParallel: true,
   forbidOnly: !!process.env.CI,

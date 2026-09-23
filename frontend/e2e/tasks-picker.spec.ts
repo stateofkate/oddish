@@ -455,21 +455,24 @@ test("tags load only when their filter is revealed and reuse the result on reope
   expect(tagRequests).toBe(1);
 });
 
-for (const initialSearch of ["", "old search"]) {
+for (const searchParam of [null, "q", "query"]) {
   for (const source of ["toolbar", "empty results"]) {
-    test(`${source} clear cancels pending search with ${initialSearch ? "committed" : "empty"} URL search`, async ({ page }) => {
+    test(`${source} clear cancels pending search with ${searchParam ?? "empty"} URL search`, async ({ page }) => {
       const params = new URLSearchParams({
         delivery: "existing",
         qa_outcomes: "rejected",
         sort: "total_trials_desc",
         mine: "off",
       });
-      if (initialSearch) params.set("q", initialSearch);
+      if (searchParam) params.set(searchParam, "old search");
+      // Install before navigation so the initial search debounce uses the same
+      // clock as later edits and clearTimeout. Installing after mount leaves a
+      // real timer alive that can restore the old search after Clear filters.
+      await page.clock.install({ time: new Date("2026-09-22T12:00:00Z") });
+      await page.clock.pauseAt(new Date("2026-09-22T12:01:00Z"));
       await page.goto(`/picker?${params}`);
       await expect(page.getByRole("heading", { name: "Add tasks to Existing" })).toBeVisible();
       await expect(page.getByText("No tasks match the current filters.")).toBeVisible();
-      await page.clock.install();
-      await page.clock.pauseAt(new Date());
       const search = page.getByRole("textbox", { name: "Search tasks", exact: true });
       await search.fill("pending search");
       const clears = page.getByRole("button", { name: "Clear filters", exact: true });
@@ -564,6 +567,8 @@ for (const view of ["table", "cards"]) {
 }
 
 test("QA search suggestion cancels pending text and keeps step filters", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-09-22T12:00:00Z") });
+  await page.clock.pauseAt(new Date("2026-09-22T12:01:00Z"));
   await page.goto("/picker?steps_p50_min=100");
   const search = page.getByRole("textbox", { name: "Search tasks", exact: true });
   await search.fill("needs work");
@@ -572,8 +577,7 @@ test("QA search suggestion cancels pending text and keeps step filters", async (
   await expect
     .poll(() => new URL(page.url()).searchParams.get("qa_outcomes"))
     .toBe("rejected");
-  await page.clock.install();
-  await page.clock.fastForward(1000);
+  await page.clock.runFor(1000);
   expect(new URL(page.url()).searchParams.has("q")).toBe(false);
   expect(new URL(page.url()).searchParams.get("steps_p50_min")).toBe("100");
 });
@@ -675,12 +679,12 @@ test("presentation changes preserve the page without refetching", async ({ page 
 });
 
 test("copy view includes pending search and omits the delivery destination", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-09-22T12:00:00Z") });
+  await page.clock.pauseAt(new Date("2026-09-22T12:01:00Z"));
   await page.goto("/picker?delivery=existing&lab=Mapped+Lab");
   await page.evaluate(() => {
     Object.defineProperty(navigator, "clipboard", { value: { writeText: async (text: string) => { Object.assign(window, { copiedView: text }); } } });
   });
-  await page.clock.install();
-  await page.clock.pauseAt(new Date());
   await page.getByRole("textbox", { name: "Search tasks", exact: true }).fill("pending terms");
   await page.getByRole("button", { name: "Copy view link", exact: true }).click();
   const copied = new URL(await page.evaluate(() => (window as unknown as { copiedView: string }).copiedView));

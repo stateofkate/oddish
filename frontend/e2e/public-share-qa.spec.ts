@@ -2,9 +2,8 @@ import { expect as baseExpect, test, type Page } from "@playwright/test";
 
 import type { PreTrialFinding, Task, Trial } from "../src/lib/types";
 
-// These browser tests use only local fixtures. Start the frontend and set
-// E2E_BASE_URL to run them; the default test run needs no running app.
-test.skip(!process.env.E2E_BASE_URL, "needs a frontend server at E2E_BASE_URL");
+// The files/review configs start the isolated app. They do not need a running
+// authenticated frontend or Clerk credentials.
 test.setTimeout(60_000);
 const expect = baseExpect.configure({ timeout: 15_000 });
 
