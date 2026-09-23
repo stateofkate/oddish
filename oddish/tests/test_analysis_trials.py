@@ -3128,17 +3128,10 @@ def test_the_view_definition_cannot_drift_between_fresh_and_migrated_dbs():
     assert normalize(match.group(1)) == normalize(ANALYSIS_SPEND_VIEW_SQL)
 
 
-@pytest.mark.parametrize("verdict", [None, "accept", "reject"])
-@pytest.mark.parametrize("defect", ["oracle_copying", None])
-@pytest.mark.asyncio
-async def test_qa_import_replaces_old_acceptance_with_only_the_current_verdict(
-    monkeypatch, verdict, defect
-):
-    """The base64 rerun: 14 runs, two agents, an old accept, and three leaks.
-
-    Run the real importer, verdict writer, and state transitions. Only storage
-    and the database connection are replaced with in-memory records.
-    """
+async def _import_qa_in_memory(monkeypatch, entries, evidence, verdict):
+    """Run the real importer, verdict writer, and state transitions on one QA
+    result. Only storage and the database connection are replaced with
+    in-memory records. Returns the task and the graded trial rows."""
     from contextlib import asynccontextmanager
     from unittest.mock import AsyncMock
 
@@ -3167,32 +3160,17 @@ async def test_qa_import_replaces_old_acceptance_with_only_the_current_verdict(
         pre_trial={"items": []}, pre_trial_status=VerdictStatus.SUCCESS
     )
     sources = {
-        f"trial-{i}": SimpleNamespace(
-            id=f"trial-{i}", task_id=task.id, reward=1.0, analysis=None
+        item["trial_id"]: SimpleNamespace(
+            id=item["trial_id"], task_id=task.id, reward=item["reward"], analysis=None
         )
-        for i in range(14)
+        for item in evidence
     }
-    entries = []
-    for i, trial_id in enumerate(sources):
-        entry = _good_qa_entry(trial_id)
-        entry["analysis"].update(
-            classification="GOOD_SUCCESS", subtype="legitimate_solution", reward=1.0
-        )
-        if i < 3 and defect == "oracle_copying":
-            # Trial findings must be stored independently of the overall verdict.
-            entry["analysis"].update(
-                classification="BAD_SUCCESS",
-                subtype="oracle_copying",
-                evidence="The agent copied the protected oracle (trajectory step 30).",
-                recommendation="Prevent the agent from reading the oracle bytes.",
-            )
-        entries.append(entry)
     candidate = (
         TaskVerdictModel(verdict=verdict, confidence="high").model_dump()
         if with_verdict
         else None
     )
-    artifact = {"trials": entries, "verdict": candidate if with_verdict else None}
+    artifact = {"trials": entries, "verdict": candidate}
     qa = SimpleNamespace(
         id="qa-new",
         superseded_by_trial_id=None,
@@ -3205,16 +3183,7 @@ async def test_qa_import_replaces_old_acceptance_with_only_the_current_verdict(
             "analysis_payload": {
                 "trial_ids": list(sources),
                 "with_verdict": with_verdict,
-                "trial_evidence": [
-                    {
-                        "trial_id": trial_id,
-                        "status": "success",
-                        "reward": 1.0,
-                        "has_trajectory": True,
-                        "agent": "grok-build" if i < 8 else "mini-swe-agent",
-                    }
-                    for i, trial_id in enumerate(sources)
-                ],
+                "trial_evidence": evidence,
             }
         },
     )
@@ -3260,17 +3229,111 @@ async def test_qa_import_replaces_old_acceptance_with_only_the_current_verdict(
         "oddish.core.task_findings.preserve_task_findings", AsyncMock(return_value=[])
     )
     await analysis_trials._import_qa_result(qa)
+    return task, sources
+
+
+@pytest.mark.parametrize("verdict", [None, "accept", "reject"])
+@pytest.mark.parametrize("defect", ["oracle_copying", None])
+@pytest.mark.asyncio
+async def test_qa_import_replaces_old_acceptance_with_only_the_current_verdict(
+    monkeypatch, verdict, defect
+):
+    """The base64 rerun: 14 runs, two agents, an old accept, and three leaks."""
+    from oddish.db import TaskStatus, VerdictStatus
+
+    entries = []
+    evidence = []
+    for i in range(14):
+        trial_id = f"trial-{i}"
+        entry = _good_qa_entry(trial_id)
+        entry["analysis"].update(
+            classification="GOOD_SUCCESS", subtype="legitimate_solution", reward=1.0
+        )
+        if i < 3 and defect == "oracle_copying":
+            # Trial findings must be stored independently of the overall verdict.
+            entry["analysis"].update(
+                classification="BAD_SUCCESS",
+                subtype="oracle_copying",
+                evidence="The agent copied the protected oracle (trajectory step 30).",
+                recommendation="Prevent the agent from reading the oracle bytes.",
+            )
+        entries.append(entry)
+        evidence.append(
+            {
+                "trial_id": trial_id,
+                "status": "success",
+                "reward": 1.0,
+                "has_trajectory": True,
+                "agent": "grok-build" if i < 8 else "mini-swe-agent",
+            }
+        )
+
+    task, sources = await _import_qa_in_memory(monkeypatch, entries, evidence, verdict)
 
     assert task.status == TaskStatus.COMPLETED
     assert task.verdict_status == VerdictStatus.SUCCESS
     assert task.verdict_error is None
-    assert all(row.analysis["_graded_by"] == qa.id for row in sources.values())
+    assert all(row.analysis["_graded_by"] == "qa-new" for row in sources.values())
     assert sum(
         row.analysis["classification"] == "BAD_SUCCESS" for row in sources.values()
     ) == (3 if defect else 0)
-    if with_verdict:
+    if verdict is not None:
         assert task.verdict["verdict"] == verdict
         assert task.verdict["is_good"] is (verdict == "accept")
-        assert task.verdict["_graded_by"] == qa.id
+        assert task.verdict["_graded_by"] == "qa-new"
     else:
         assert task.verdict is None
+
+
+@pytest.mark.parametrize(
+    ("labels", "verdict", "stored"),
+    [
+        (["HARNESS_ERROR"], "accept", None),
+        (["HARNESS_ERROR", "HARNESS_ERROR"], "accept", None),
+        (["HARNESS_ERROR", "GOOD_FAILURE"], "accept", "accept"),
+        (["HARNESS_ERROR"], "reject", "reject"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_an_accept_needs_an_agent_trial_that_ran(
+    monkeypatch, labels, verdict, stored
+):
+    """blocks-code v4: the only agent trial failed installing Codex, and QA
+    accepted on the baselines alone. No accept without a real run."""
+    from oddish.core.verdict_state import (
+        HARNESS_ONLY_EVIDENCE_ERROR,
+        is_insufficient_evidence,
+    )
+    from oddish.db import TaskStatus, VerdictStatus
+
+    entries = []
+    evidence = []
+    for i, label in enumerate(labels):
+        trial_id = f"trial-{i}"
+        reward = None if label == "HARNESS_ERROR" else 0.0
+        entry = _good_qa_entry(trial_id)
+        entry["analysis"].update(classification=label, reward=reward)
+        entries.append(entry)
+        evidence.append(
+            {
+                "trial_id": trial_id,
+                "status": "failed" if reward is None else "success",
+                "reward": reward,
+                "has_trajectory": True,
+                "agent": "codex",
+            }
+        )
+
+    task, sources = await _import_qa_in_memory(monkeypatch, entries, evidence, verdict)
+
+    assert task.status == TaskStatus.COMPLETED
+    # Per-trial classifications are stored either way.
+    assert all(row.analysis["_graded_by"] == "qa-new" for row in sources.values())
+    if stored is None:
+        assert task.verdict is None
+        assert task.verdict_status == VerdictStatus.FAILED
+        assert task.verdict_error == HARNESS_ONLY_EVIDENCE_ERROR
+        assert is_insufficient_evidence(task.verdict_error)
+    else:
+        assert task.verdict_status == VerdictStatus.SUCCESS
+        assert task.verdict["verdict"] == stored

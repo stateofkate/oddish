@@ -39,7 +39,7 @@ The decision: reject if most trials show the same task problem, with clear evide
 
 * An immediate rejection is high confidence. One exception: if the only evidence is a single trial claiming weak tests, and the static quality check has no matching `must_fix` `verifier` finding, use medium.
 * A rejection because most trials show the same problem is high confidence.
-* An accept is high confidence when the trials agree, and low when they disagree or every trial is a harness error.
+* An accept is high confidence when the trials agree, and low when they disagree.
 
 ## VERDICT FIELDS
 

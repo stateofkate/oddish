@@ -64,6 +64,7 @@ from oddish.core.trial_artifacts import (
     TrialArtifactMode,
     resolve_trial_artifact_layout,
 )
+from oddish.core.verdict_state import HARNESS_ONLY_EVIDENCE_ERROR
 from oddish.core.verdict_sync import (
     aggregate_exploited_into_pre_trial,
     apply_deterministic_verdict_rules,
@@ -1373,6 +1374,21 @@ async def _import_qa_result(
             should_store=lambda s: _qa_import_still_current(
                 s, task_id, graded_version_id, expected=expected, trial_id=trial.id
             ),
+        )
+        return
+    # A harness error never exercised the task, so an accept backed only by
+    # harness errors rests on the baselines alone. Rejects stand: they come
+    # from audit, baseline, or leak evidence that needs no solver run.
+    if verdict.is_good and all(
+        c.classification is Classification.HARNESS_ERROR for c in classifications
+    ):
+        await sync_verdict_to_task(
+            task_id,
+            payload=None,
+            should_store=lambda s: _qa_import_still_current(
+                s, task_id, graded_version_id, expected=expected, trial_id=trial.id
+            ),
+            error=HARNESS_ONLY_EVIDENCE_ERROR,
         )
         return
     payload = build_verdict_payload(verdict, classifications)

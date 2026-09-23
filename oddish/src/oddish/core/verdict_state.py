@@ -30,6 +30,10 @@ INSUFFICIENT_EVIDENCE_PREFIX = "Insufficient evidence"
 INSUFFICIENT_EVIDENCE_ERROR = (
     f"{INSUFFICIENT_EVIDENCE_PREFIX}: no eligible agent trials for the current task version."
 )
+HARNESS_ONLY_EVIDENCE_ERROR = (
+    f"{INSUFFICIENT_EVIDENCE_PREFIX}: every agent trial for the current task "
+    "version was a harness error."
+)
 
 
 def is_insufficient_evidence(error: str | None) -> bool:
