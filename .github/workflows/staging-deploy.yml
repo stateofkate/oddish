@@ -53,10 +53,9 @@ jobs:
       # only (pr-preview.yml keeps it on). Set to "1" to route CPU trials to
       # Numinous first, then Daytona, then Modal.
       ODDISH_NUMINOUS_ENABLED: "0"
-      # oddish-mon sampled rollout drill: half of the eligible trials on the
-      # monitor, half on the worker, fallback to the worker after two monitor
-      # attempts. Back to the code default (100) once the drill is read.
-      ODDISH_MONITOR_EXECUTION_SAMPLE_PERCENT: "50"
+      # oddish-mon: staging runs every eligible trial on the monitor (code
+      # defaults: flag on, sample 100). The 50/50 drill of 23 Sep is in
+      # buildtest/staging-sampling-20260923.
       # Thunder has no secret in the staging Modal environment; keep it off.
       ODDISH_THUNDER_ENABLED: "false"
       # Numinous GPU lane (#1412). Disabled here too (preview-only). Separate
