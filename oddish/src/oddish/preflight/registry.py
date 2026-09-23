@@ -5,6 +5,7 @@ from oddish.preflight.checks import (
     closed_internet,
     provenance,
     solution_format,
+    solution_in_instruction,
     task_metadata,
 )
 from oddish.preflight.models import Check
@@ -30,6 +31,11 @@ CHECKS: list[Check] = [
         id=solution_format.CHECK_ID,
         description="Solutions are readable source, not patches",
         fn=solution_format.check,
+    ),
+    Check(
+        id=solution_in_instruction.CHECK_ID,
+        description="The instruction does not contain the reference solution",
+        fn=solution_in_instruction.check,
     ),
     Check(
         id=anti_cheat_soundness.CHECK_ID,

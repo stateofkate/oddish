@@ -132,7 +132,7 @@ Use a BAD_FAILURE subtype only when the task defect changed this trial's outcome
 * `minimal_compliance` — technically passes; does not solve the problem
 * `permissive_tests` — tests do not verify the requirement; trivial implementations pass
 * `task_pre_solved` — the repo already contained working code
-* `solution_leaked_in_instruction` — the fix was written out in the task text
+* `solution_leaked_in_instruction` — the fix was written out in the task text, even when the instruction calls that text a spec, a definition, or an example
 
 Use only a subtype listed under the selected classification.
 

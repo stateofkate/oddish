@@ -115,8 +115,8 @@ own internet baseline, including per-step environments. Optional `gpu_types`
 entries must be nonblank; no provider-specific hardware list is imposed.
 It also checks that open internet is justified, the
 agent image does not fetch a repository or expose `.git`, solutions are source
-rather than patch files, and anti-cheat checks do not depend on brittle source
-scanning.
+rather than patch files, `instruction.md` does not contain a solution file's
+text, and anti-cheat checks do not depend on brittle source scanning.
 
 ## JSON output
 

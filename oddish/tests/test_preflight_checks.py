@@ -245,6 +245,77 @@ def test_solution_format_ignores_a_patch_mention_in_a_trailing_comment(make_task
     assert solution_format.check(task_dir, _config(task_dir)) == []
 
 
+from oddish.preflight.checks import solution_in_instruction
+
+_SPEC_INSTRUCTION = """\
+Write code that meets this fixed spec.
+
+```fstar
+let blocks x m = (x - 1) / m + 1
+
+let candidate (x:size_pos) (m:size_pos) = YOUR_EXPRESSION
+```
+"""
+
+
+def test_solution_in_instruction_flags_an_answer_shown_in_the_instruction(make_task):
+    # blocks-code-a9e6930c: the "fixed spec" body was the graded answer, and an
+    # agent passed by copying it. Spacing differs on purpose.
+    task_dir = make_task(
+        extra_files={
+            "instruction.md": _SPEC_INSTRUCTION,
+            "solution/answer.fst": "(x-1)/m+1\n",
+        },
+    )
+    findings = solution_in_instruction.check(task_dir, _config(task_dir))
+    assert len(findings) == 1
+    assert findings[0].severity is Severity.ERROR
+    assert findings[0].path == task_dir / "solution" / "answer.fst"
+    assert "solution/answer.fst" in findings[0].message
+
+
+def test_solution_in_instruction_matches_across_reflowed_lines(make_task):
+    task_dir = make_task(
+        extra_files={
+            "instruction.md": "Example:\n\n    if len <= 32\n    then len\n    else 32\n",
+            "solution/answer.fst": "if len <= 32 then len else 32\n",
+        },
+    )
+    assert len(solution_in_instruction.check(task_dir, _config(task_dir))) == 1
+
+
+def test_solution_in_instruction_passes_when_the_answer_is_not_shown(make_task):
+    task_dir = make_task(
+        extra_files={
+            "instruction.md": "Return the smallest number of m-byte blocks that hold x bytes.\n",
+            "solution/answer.fst": "(x - 1) / m + 1\n",
+        },
+    )
+    assert solution_in_instruction.check(task_dir, _config(task_dir)) == []
+
+
+def test_solution_in_instruction_ignores_a_very_short_solution(make_task):
+    task_dir = make_task(
+        extra_files={
+            "instruction.md": "Return true when the input is valid.\n",
+            "solution/answer.txt": "true\n",
+        },
+    )
+    assert solution_in_instruction.check(task_dir, _config(task_dir)) == []
+
+
+def test_solution_in_instruction_skips_binary_solution_files(make_task):
+    task_dir = make_task(extra_files={"instruction.md": "Build the tool.\n"})
+    (task_dir / "solution").mkdir()
+    (task_dir / "solution" / "tool.bin").write_bytes(b"\xff\xfe\x00binary")
+    assert solution_in_instruction.check(task_dir, _config(task_dir)) == []
+
+
+def test_solution_in_instruction_is_silent_without_a_solution_dir(make_task):
+    task_dir = make_task()
+    assert solution_in_instruction.check(task_dir, _config(task_dir)) == []
+
+
 from oddish.preflight.checks import anti_cheat_soundness
 
 

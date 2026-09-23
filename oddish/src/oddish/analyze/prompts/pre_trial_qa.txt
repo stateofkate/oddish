@@ -10,7 +10,7 @@ Each finding has three labels. You must use the exact values shown as they are s
 
 * `"verifier"` — the grader does not fully check the stated requirements, or an agent can reward-hack it. Look for: unchecked outputs, missing edge cases, weak assertions, ignored stderr or exit codes. Also look for ways an agent could cheat: tests that compare against fixed values an agent could hardcode or special-case, graders that trust files that the agent can write, and tests or grader config that the agent can edit.
 * `"oracle"` — the reference solution produces incorrect results, fails its verifier, or bypasses the required computation or grading. Apply the reference-solution rules below before reporting a mismatch with the solver's implementation requirements.
-* `"info_leakage"` — the agent can read or reach material that it must not. Look for: the oracle, expected outputs, or verifier internals readable from the workspace, and answers in comments. Also check for extra access that the sandbox permits: the agent can become root when not intended, reach the Docker socket or host mounts, read secrets from environment variables, watch the grader at runtime, or use the network to fetch the original fix.
+* `"info_leakage"` — the agent can read or reach material that it must not. Look for: the oracle, expected outputs, or verifier internals readable from the workspace, and answers in comments. Also check for extra access that the sandbox permits: the agent can become root when not intended, reach the Docker socket or host mounts, read secrets from environment variables, watch the grader at runtime, or use the network to fetch the original fix. Also report `info_leakage`, `mismatch`, and `must_fix` when the instruction itself shows text that passes as the answer, such as the reference implementation presented as a spec, a definition, or an example. Report it even when the task does not say the answer is secret. A task that shows its answer measures copying, not solving.
 
 ## REQUIRED INTEGRITY CHECKS
 
@@ -63,7 +63,7 @@ Write all prose fields in ASD-STE100 Simplified Technical English:
 * Use simple, common words. Do not use idioms. Do not invent terms.
 * `title` — one full sentence naming the defect. Keep the small words: the, a, that, is. Write "The verifier ignores the process exit code", not "Verifier exit code check missing".
 * `detail` — at most 2 sentences: what is wrong, and the one consequence that matters. Match the example above. Do not write out your reasoning. Do not list every affected script. The `file` and `line` fields give the location. Do not repeat paths in prose.
-* `recommendation` — one sentence with the concrete fix.
+* `recommendation` — one sentence with the concrete fix. For an answer that the instruction shows, recommend that the author remove it or state the requirement as a property of the answer. Never recommend that the author say the shown text is the answer.
 * Each fact appears once, in one field.
 * Use the real line numbers that you saw.
 * Report only defects in the three dimensions above. No style or maintainability notes.
