@@ -13,9 +13,9 @@ on:
       - "backend/pyproject.toml"
       - "oddish/scripts/sync_harbor_pin.py"
       - ".github/workflows/harbor-pin-guard.yml"
+  # No main: it only fast-forwards to staging commits that already ran this.
   push:
     branches:
-      - main
       - staging
     paths:
       - "oddish/src/oddish/harbor-pin.toml"
@@ -26,6 +26,11 @@ on:
 
 jobs:
   check:
+    # The staging push already tests this exact commit; promotion is fast-forward.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.base_ref != 'main' || github.head_ref != 'staging' ||
+      github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     defaults:
       run:

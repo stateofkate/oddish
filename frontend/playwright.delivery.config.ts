@@ -2,7 +2,25 @@ import { defineConfig, devices } from "@playwright/test";
 const port = process.env.DELIVERY_TEST_PORT ?? "3109";
 export default defineConfig({
   testDir: "e2e",
-  testMatch: ["delivery-refresh.spec.ts", "tasks-picker.spec.ts"],
+  projects: [
+    {
+      name: "delivery",
+      testMatch: ["delivery-refresh.spec.ts", "tasks-picker.spec.ts"],
+    },
+    {
+      name: "effort",
+      testMatch: [
+        "member-picker.spec.ts",
+        "task-run-coverage.spec.ts",
+        "reasoning-effort.spec.ts",
+        "experiment-agent-grouping.spec.ts",
+        "ec2-rerun-command.spec.ts",
+      ],
+      timeout: 90_000,
+      retries: process.env.CI ? 1 : 0,
+      use: { navigationTimeout: 60_000 },
+    },
+  ],
   workers: 1,
   reporter: "list",
   use: {

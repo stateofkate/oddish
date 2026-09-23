@@ -1,0 +1,142 @@
+name: "E2E: Frontend fixtures"
+
+# Playwright suites that serve isolated Next.js fixture apps under
+# frontend/e2e/*-app. Each app's app/api/[...path]/route.ts answers every API
+# call with canned data, so these suites never reach backend or oddish code and
+# need no Clerk secrets or Postgres. They run only when frontend/ changes; the
+# signed-in suite in e2e-dashboard.yml covers backend changes.
+#
+# `delivery` runs the delivery and effort projects against one production build
+# of e2e/delivery-app. `files` builds and serves e2e/review-app.
+#
+# Pushes to main are not tested here: main only fast-forwards to a staging
+# commit whose push already ran these suites.
+
+on:
+  pull_request:
+    paths:
+      - "frontend/**"
+      - ".github/workflows/e2e-fixtures.yml"
+  push:
+    branches:
+      - staging
+    paths:
+      - "frontend/**"
+      - ".github/workflows/e2e-fixtures.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: e2e-fixtures-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  files:
+    # The staging push already tests this exact commit; promotion is fast-forward.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.base_ref != 'main' || github.head_ref != 'staging' ||
+      github.event.pull_request.head.repo.full_name != github.repository
+    name: "file and review fixtures"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.0.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browser
+        working-directory: frontend
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
+          pnpm exec playwright install chromium --with-deps
+
+      - name: Run file, review, public-page, member, and layout fixture tests
+        working-directory: frontend
+        env:
+          E2E_REVIEW_FIXTURES: "1"
+        run: pnpm exec playwright test --config playwright.files.config.ts --output fixture-test-results
+
+      - name: Upload Playwright artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-files
+          path: |
+            frontend/playwright-report/
+            frontend/fixture-test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  delivery:
+    # The staging push already tests this exact commit; promotion is fast-forward.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.base_ref != 'main' || github.head_ref != 'staging' ||
+      github.event.pull_request.head.repo.full_name != github.repository
+    name: "delivery and effort fixtures"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.0.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22" # Native TypeScript execution for delivery URL tests.
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browser
+        working-directory: frontend
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
+          pnpm exec playwright install chromium --with-deps
+
+      - name: Run delivery, effort, and URL fixture tests
+        working-directory: frontend
+        run: |
+          node --experimental-strip-types --test tests/delivery-view.test.ts tests/delivery-qa.test.ts
+          pnpm exec playwright test --config playwright.delivery.config.ts --output delivery-test-results
+
+      - name: Upload Playwright artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-delivery
+          path: |
+            frontend/playwright-report/
+            frontend/delivery-test-results/
+          retention-days: 7
+          if-no-files-found: ignore

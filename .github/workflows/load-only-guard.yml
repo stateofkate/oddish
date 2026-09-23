@@ -22,9 +22,9 @@ on:
       - "oddish/scripts/load_only_guard.py"
       - "oddish/tests/test_load_only_guard.py"
       - ".github/workflows/load-only-guard.yml"
+  # No main: it only fast-forwards to staging commits that already ran this.
   push:
     branches:
-      - main
       - staging
     paths:
       - "oddish/src/oddish/**.py"
@@ -38,6 +38,11 @@ concurrency:
 
 jobs:
   guard:
+    # The staging push already tests this exact commit; promotion is fast-forward.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.base_ref != 'main' || github.head_ref != 'staging' ||
+      github.event.pull_request.head.repo.full_name != github.repository
     name: Check compact /tasks load_only coverage
     runs-on: ubuntu-latest
     timeout-minutes: 5

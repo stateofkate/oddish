@@ -40,6 +40,9 @@ Read `CONTRIBUTING.md` first; it is the process guide. Summary:
 | Promotion PR (`staging` -> `main`) | `main` | `/promote` comment. Never the merge button |
 
 If your branch is not literally `staging`, you are opening a feature PR.
+E2E jobs skip same-repository promotion PRs and pushes to `main`; review the
+staging push's results for the pinned commit instead. `/promote` checks Staging
+Deploy, not E2E results (see `CONTRIBUTING.md`).
 
 Never directly commit or push to `main` or `staging`. Check out a feature
 branch, commit there, push that branch, and open a PR into `staging` (the

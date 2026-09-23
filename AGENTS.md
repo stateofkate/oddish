@@ -3096,14 +3096,14 @@ unset to avoid contradictory overrides. These are runner presets, not a live
 provider capability catalog; a provider still validates its selected model.
 
 Run effort UI regression tests with `pnpm exec playwright test -c
-playwright.effort.config.ts` from `frontend/`. They use the production components
-inside the isolated local test app and intercept submission requests. The effort
-suite always starts this checkout’s server; set `EFFORT_TEST_PORT` when running
-multiple worktrees (default `3117`). It refuses to reuse an occupied port. The
-Dashboard CI workflow runs this config in a separate step and stores its
-artifacts in `frontend/effort-test-results/`; the default dashboard config
-excludes the local-only effort spec. Effort cases wait for the client-rendered
-chart before interacting with server-rendered controls.
+playwright.delivery.config.ts --project effort` from `frontend/`. Delivery and
+effort tests share one production build/server of the isolated delivery test
+app; each test still gets its own browser context and intercepted responses.
+Set `DELIVERY_TEST_PORT` when running multiple worktrees (default `3109`); the
+suite refuses to reuse an occupied port. The `E2E: Frontend fixtures` workflow
+(`.github/workflows/e2e-fixtures.yml`) runs both projects in one job and stores artifacts in `frontend/delivery-test-results/`. Use
+`--project delivery` to run only the delivery cases. Effort cases retain their
+90-second timeout and one CI retry; delivery cases retain their existing limits.
 
 Finding attribution in a task overview opens trials through the host drawer,
 including trials from other experiments. Source-file clicks select the file and

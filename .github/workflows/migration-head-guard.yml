@@ -27,7 +27,7 @@ concurrency:
 
 jobs:
   guard:
-    name: Single alembic head (${{ matrix.tree }})
+    name: Single alembic head (oddish and backend)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -40,38 +40,40 @@ jobs:
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - tree: oddish
-            venv: /opt/venvs/oddish
-            sync: uv sync --frozen --extra server
-          - tree: backend
-            venv: /opt/venvs/backend
-            sync: uv sync --frozen
-    env:
-      UV_PROJECT_ENVIRONMENT: ${{ matrix.venv }}
-    defaults:
-      run:
-        working-directory: ${{ matrix.tree }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: Sync dependencies
-        run: ${{ matrix.sync }}
+      - name: Sync oddish dependencies
+        working-directory: oddish
+        env:
+          UV_PROJECT_ENVIRONMENT: /opt/venvs/oddish
+        run: uv sync --frozen --extra server
 
-      - name: Assert exactly one alembic head
+      - name: Sync backend dependencies
+        working-directory: backend
+        env:
+          UV_PROJECT_ENVIRONMENT: /opt/venvs/backend
+        run: uv sync --frozen
+
+      - name: Assert exactly one head in each migration tree
+        shell: bash
         run: |
-          heads="$(uv run alembic heads)"
-          count="$(printf '%s\n' "$heads" | grep -c '(head)' || true)"
-          echo "Heads in ${{ matrix.tree }} tree:"
-          echo "$heads"
-          if [ "$count" -ne 1 ]; then
-            echo "::error::${{ matrix.tree }} alembic tree has $count heads after merging with main (expected 1)."
-            echo "Your migration is parented on a down_revision that is no longer the head."
-            echo "Fix: re-point down_revision to the current head, or run:"
-            echo "  cd ${{ matrix.tree }} && uv run alembic merge -m 'merge heads' <head1> <head2>"
-            exit 1
-          fi
+          set -euo pipefail
+          failed=0
+          for tree in oddish backend; do
+            if ! heads="$(cd "$tree" && UV_PROJECT_ENVIRONMENT="/opt/venvs/$tree" uv run alembic heads)"; then
+              echo "::error::Could not read $tree migration heads."
+              failed=1
+              continue
+            fi
+            count="$(printf '%s\n' "$heads" | grep -c '(head)' || true)"
+            echo "Heads in $tree tree:"
+            echo "$heads"
+            if [ "$count" -ne 1 ]; then
+              echo "::error::$tree alembic tree has $count heads after merging with the PR base (expected 1)."
+              echo "Fix the migration parent or run: cd $tree && uv run alembic merge -m 'merge heads' <head1> <head2>"
+              failed=1
+            fi
+          done
+          exit "$failed"

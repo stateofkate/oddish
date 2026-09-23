@@ -31,9 +31,9 @@ on:
       - "oddish/pyproject.toml"
       - "oddish/uv.lock"
       - ".github/workflows/e2e-cli.yml"
+  # No main: it only fast-forwards to staging commits that already ran this.
   push:
     branches:
-      - main
       - staging
     paths:
       - "backend/**"
@@ -51,6 +51,11 @@ concurrency:
 
 jobs:
   e2e:
+    # The staging push already tests this exact commit; promotion is fast-forward.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.base_ref != 'main' || github.head_ref != 'staging' ||
+      github.event.pull_request.head.repo.full_name != github.repository
     name: "oddish run → queued trial"
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -100,6 +105,11 @@ jobs:
         run: uv run pytest tests/e2e -v
 
   delivery:
+    # The staging push already tests this exact commit; promotion is fast-forward.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.base_ref != 'main' || github.head_ref != 'staging' ||
+      github.event.pull_request.head.repo.full_name != github.repository
     name: "delivery pages and approval rules"
     runs-on: ubuntu-latest
     timeout-minutes: 15

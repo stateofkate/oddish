@@ -26,30 +26,8 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
-      packages: read
-    container:
-      image: ghcr.io/abundant-ai/oddish-ci-base-private:latest
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-    # NOTE: the Postgres service starts on every PR, even when the diff step
-    # skips the real work — services can't be gated on a step output. It's a
-    # lightweight container; if the startup cost on no-op PRs matters, split
-    # detection into a cheap always-run job and gate this whole job on it.
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: postgres
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s --health-timeout 5s --health-retries 10
     env:
-      # Host is the service name "postgres", not localhost: the job runs inside
-      # a container on the same user-defined network as the service container.
-      ODDISH_DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/postgres
+      ODDISH_DATABASE_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/postgres
     steps:
       - uses: actions/checkout@v5
         with:
@@ -66,54 +44,67 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Run steps in this container job see the workspace owned by the
-          # host runner's UID, not this step's user, and git refuses such a
-          # repo ("detected dubious ownership", exit 128). actions/checkout
-          # marks the path safe for its own git calls, but that does not
-          # reach container run steps. This exact 128 is what the old
-          # pipeline swallowed into a green skip; this PR's first CI run
-          # reproduced it loudly.
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           base='${{ github.event.pull_request.base.sha }}'
           git cat-file -e "${base}^{commit}" 2>/dev/null \
             || git fetch --no-tags origin "$base"
           changed="$(git diff --name-only "$base" HEAD)"
-          if grep -qE '^(oddish|backend)/alembic/' <<<"$changed"; then
+          if grep -qE '^(oddish|backend)/alembic/|^\.github/workflows/migration-upgrade-check\.yml$' <<<"$changed"; then
             echo "run=true" >> "$GITHUB_OUTPUT"
-            echo "Migration files changed — running upgrade."
+            echo "Migration files or upgrade workflow changed — running upgrade."
           else
             echo "run=false" >> "$GITHUB_OUTPUT"
             echo "No migration changes — skipping upgrade (reports green)."
           fi
+
+      - name: Set up Python and uv
+        if: steps.changes.outputs.run == 'true'
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: "3.13"
+          cache-dependency-glob: |
+            oddish/uv.lock
+            backend/uv.lock
+
+      # A service container would start before change detection on every PR.
+      - name: Start migration database
+        if: steps.changes.outputs.run == 'true'
+        run: |
+          docker run --detach --name migration-postgres \
+            --publish 127.0.0.1:5432:5432 \
+            --env POSTGRES_USER=postgres \
+            --env POSTGRES_PASSWORD=postgres \
+            --env POSTGRES_DB=postgres postgres:16
+          for _ in $(seq 1 50); do
+            if docker exec migration-postgres pg_isready -h 127.0.0.1 -U postgres; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs migration-postgres
+          echo "::error::Migration database did not become ready within 50s."
+          exit 1
 
       # Same order as prod: oddish migrations first (alembic_version), then
       # backend (alembic_version_backend), both against the one DB.
       - name: Sync oddish dependencies
         if: steps.changes.outputs.run == 'true'
         working-directory: oddish
-        env:
-          UV_PROJECT_ENVIRONMENT: /opt/venvs/oddish
         run: uv sync --frozen --extra server
 
       - name: Run oddish migrations
         if: steps.changes.outputs.run == 'true'
         working-directory: oddish
-        env:
-          UV_PROJECT_ENVIRONMENT: /opt/venvs/oddish
         run: uv run alembic upgrade head
 
       - name: Sync backend dependencies
         if: steps.changes.outputs.run == 'true'
         working-directory: backend
-        env:
-          UV_PROJECT_ENVIRONMENT: /opt/venvs/backend
         run: uv sync --frozen
 
       - name: Run backend migrations
         if: steps.changes.outputs.run == 'true'
         working-directory: backend
-        env:
-          UV_PROJECT_ENVIRONMENT: /opt/venvs/backend
         run: uv run alembic upgrade head
 
       - name: Summarize migration run
@@ -123,10 +114,16 @@ jobs:
             echo "## Migration upgrade check"
             echo
             if [ "${{ steps.changes.outputs.run }}" = "true" ]; then
-              echo "- Ran \`alembic upgrade head\` against an ephemeral Postgres"
+              echo "- Requested \`alembic upgrade head\` against an ephemeral Postgres; see step results"
               echo "- Core migrations: \`oddish/alembic\` · Cloud: \`backend/alembic\`"
-            else
+            elif [ "${{ steps.changes.outputs.run }}" = "false" ]; then
               echo "- Skipped: no migration changes in this PR"
+            else
+              echo "- Change detection failed; migration coverage is unknown"
             fi
             echo "- Commit: \`${{ github.sha }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Stop migration database
+        if: ${{ always() && steps.changes.outputs.run == 'true' }}
+        run: docker rm --force migration-postgres || true

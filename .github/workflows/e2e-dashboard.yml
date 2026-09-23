@@ -1,16 +1,10 @@
 name: "E2E: Dashboard"
 
-# Parallel jobs for independent Playwright suites.
-#
 # `dashboard` boots the full stack (postgres + backend + frontend) and drives
-# the authenticated dashboard Playwright spec. It alone needs Clerk
+# the authenticated dashboard Playwright spec. It needs Clerk
 # development-instance secrets; when any secret is absent the job no-ops green
-# (forks / unconfigured repos).
-#
-# `effort`, `files`, and `delivery` each own a self-contained Playwright
-# config with its own `webServer`. They never talk to the Clerk stack or the
-# shared postgres service, so they run in parallel with each other and with
-# `dashboard` instead of waiting behind it.
+# (forks / unconfigured repos). The credential-free fixture suites live in
+# e2e-fixtures.yml and run only on frontend changes.
 #
 # Why a Clerk DEVELOPMENT instance (never production): the signed-in spec uses
 # `@clerk/testing` — a Testing Token, `clerk.signIn`, and a `+clerk_test`
@@ -33,9 +27,9 @@ on:
       - "oddish/pyproject.toml"
       - "oddish/uv.lock"
       - ".github/workflows/e2e-dashboard.yml"
+  # No main: it only fast-forwards to staging commits that already ran this.
   push:
     branches:
-      - main
       - staging
     paths:
       - "frontend/**"
@@ -55,6 +49,11 @@ permissions:
 
 jobs:
   dashboard:
+    # The staging push already tests this exact commit; promotion is fast-forward.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.base_ref != 'main' || github.head_ref != 'staging' ||
+      github.event.pull_request.head.repo.full_name != github.repository
     name: "signed-in task view"
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -245,148 +244,3 @@ jobs:
         run: |
           if [ -n "$BACKEND_PID" ]; then kill "$BACKEND_PID" 2>/dev/null || true; fi
           if [ -n "$FRONTEND_PID" ]; then kill "$FRONTEND_PID" 2>/dev/null || true; fi
-
-  effort:
-    name: "effort selector fixtures"
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10.0.0
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: pnpm
-          cache-dependency-path: frontend/pnpm-lock.yaml
-
-      - name: Install frontend dependencies
-        working-directory: frontend
-        run: pnpm install --frozen-lockfile
-
-      - name: Install Playwright browser
-        working-directory: frontend
-        run: |
-          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
-          pnpm exec playwright install chromium --with-deps
-
-      - name: Run effort selector fixture tests
-        working-directory: frontend
-        run: pnpm exec playwright test --config playwright.effort.config.ts --output effort-test-results
-
-      - name: Upload Playwright artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-report-effort
-          path: |
-            frontend/playwright-report/
-            frontend/effort-test-results/
-          retention-days: 7
-          if-no-files-found: ignore
-
-  files:
-    name: "file and review fixtures"
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10.0.0
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: pnpm
-          cache-dependency-path: frontend/pnpm-lock.yaml
-
-      - name: Install frontend dependencies
-        working-directory: frontend
-        run: pnpm install --frozen-lockfile
-
-      - name: Install Playwright browser
-        working-directory: frontend
-        run: |
-          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
-          pnpm exec playwright install chromium --with-deps
-
-      - name: Run file, review, public-page, member, and layout fixture tests
-        working-directory: frontend
-        env:
-          E2E_REVIEW_FIXTURES: "1"
-        run: pnpm exec playwright test --config playwright.files.config.ts --output fixture-test-results
-
-      - name: Upload Playwright artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-report-files
-          path: |
-            frontend/playwright-report/
-            frontend/fixture-test-results/
-          retention-days: 7
-          if-no-files-found: ignore
-
-  delivery:
-    name: "delivery fixtures"
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10.0.0
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22" # Native TypeScript execution for delivery URL tests.
-          cache: pnpm
-          cache-dependency-path: frontend/pnpm-lock.yaml
-
-      - name: Install frontend dependencies
-        working-directory: frontend
-        run: pnpm install --frozen-lockfile
-
-      - name: Install Playwright browser
-        working-directory: frontend
-        run: |
-          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
-          pnpm exec playwright install chromium --with-deps
-
-      - name: Run delivery page and URL fixture tests
-        working-directory: frontend
-        run: |
-          node --experimental-strip-types --test tests/delivery-view.test.ts tests/delivery-qa.test.ts
-          pnpm exec playwright test --config playwright.delivery.config.ts --output delivery-test-results
-
-      - name: Upload Playwright artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-report-delivery
-          path: |
-            frontend/playwright-report/
-            frontend/delivery-test-results/
-          retention-days: 7
-          if-no-files-found: ignore
