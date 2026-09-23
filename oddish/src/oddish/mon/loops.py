@@ -37,6 +37,13 @@ class StopTrial(Exception):
     """The control plane ended this attempt: stop driving and do not report."""
 
 
+async def state_stopped(state: ControlState) -> None:
+    """Wait until a call outside the loops (the live tail's persist tick) got
+    our API's 410/401, then raise StopTrial, as the loops do for their own."""
+    await state.ended.wait()
+    raise StopTrial(str(state.verdict)) from state.verdict
+
+
 async def heartbeat_loop(
     client: MonitorClient,
     *,
@@ -59,7 +66,11 @@ async def heartbeat_loop(
                 # mid-verifier leaves no phase event, but it leaves this.
                 from oddish.mon import memstat
 
-                logger.info("%s at beat %d", memstat.snapshot(with_containers=False), stats.heartbeats_sent)
+                logger.info(
+                    "%s at beat %d",
+                    memstat.snapshot(with_containers=False),
+                    stats.heartbeats_sent,
+                )
         except AttemptGone as exc:
             raise StopTrial(str(exc)) from exc
         except MonitorRejected as exc:

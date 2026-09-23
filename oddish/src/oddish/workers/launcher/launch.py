@@ -26,6 +26,7 @@ from oddish.config import api_base_url_for_modal_app, settings
 from oddish.db import WorkerJobModel, WorkerJobStatus, get_session
 from oddish.db.models import utcnow
 from oddish.db.storage import resolve_task_directory
+from oddish.workers.console import console
 from oddish.workers.harbor.runner import (
     capture_sandbox_resources,
     capture_verifier_resources,
@@ -36,11 +37,10 @@ from oddish.workers.launcher import image_cache as monitor_image_cache
 from oddish.workers.launcher import launch_env
 from oddish.workers.launcher import token as monitor_token
 from oddish.workers.launcher.attempt import warm_source_for_trial
-from oddish.workers.launcher.providers import base as monitor_sandbox
-from oddish.workers.queue import judge_keys as verifier_secrets
 from oddish.workers.launcher.heartbeat import record_monitor_heartbeat
+from oddish.workers.launcher.providers import base as monitor_sandbox
 from oddish.workers.launcher.settle import CAPACITY_PAYLOAD_KEY
-from oddish.workers.console import console
+from oddish.workers.queue import judge_keys as verifier_secrets
 from oddish.workers.queue.trial_handler import (
     TrialExecutionResult,
     begin_judge_costs_if_enabled,
@@ -169,6 +169,21 @@ async def _persist_handle(
     return result.rowcount == 1
 
 
+async def _hand_off(job: ClaimedWorkerJob) -> bool:
+    """The hand-off itself, fenced like every other write of this launch: the
+    row is stamped handed off only while it is still this attempt's RUNNING
+    job. ``False`` means the job was lost (reaped or re-claimed) after the
+    handle was recorded; the newer claim cleared the handle, so nothing but
+    this launch knows the sandbox."""
+    async with get_session() as session:
+        result = await session.execute(
+            update(WorkerJobModel)
+            .where(*_owned_by(job))
+            .values(monitor_handed_off_at=utcnow())
+        )
+    return result.rowcount == 1
+
+
 def control_plane_url() -> str:
     """Same resolution probe sandboxes use, with the monitor's own override first."""
     return (
@@ -176,6 +191,28 @@ def control_plane_url() -> str:
         or os.environ.get("ODDISH_PUBLIC_API_BASE_URL")
         or api_base_url_for_modal_app()
     )
+
+
+async def _start_from_cache(
+    starter, job: ClaimedWorkerJob, image: str, cache_key: str | None, env: dict, size
+) -> str:
+    """Start from the resolved image. When that image is a cached snapshot the
+    provider no longer has (expired, deleted), drop the entry and start cold,
+    exactly as without a cache. Any other failure is the launch's own failure:
+    the snapshot stays for the launches still booting from it."""
+    try:
+        return await _start(starter, job, image, env, size)
+    except Exception as exc:
+        if cache_key is None:
+            raise
+        unusable = isinstance(exc, monitor_sandbox.WarmImageUnusable)
+        if not unusable and not await monitor_image_cache.image_is_gone(starter, image):
+            raise
+        logger.info(
+            "cached image %s is gone on %s; starting cold", image, starter.provider
+        )
+        await monitor_image_cache.forget(starter, cache_key)
+        return await _start(starter, job, settings.monitor_image, env, size)
 
 
 async def _start(
@@ -479,15 +516,7 @@ async def launch_monitor_attempt(
             )
         if beat_error is not None:
             raise beat_error
-        try:
-            external_id = await _start(starter, job, image, env, size)
-        except Exception:
-            if cache_key is None:
-                raise
-            # The provider refused the snapshot (expired or deleted): drop it
-            # and start cold, exactly as without a cache.
-            await monitor_image_cache.forget(starter.provider, cache_key)
-            external_id = await _start(starter, job, settings.monitor_image, env, size)
+        external_id = await _start_from_cache(starter, job, image, cache_key, env, size)
         if not await _persist_handle(job, starter.provider, external_id):
             # Lost between the pre-start check and create: no row names this
             # sandbox, so the failure path stops it; no span was opened.
@@ -506,9 +535,15 @@ async def launch_monitor_attempt(
             verifier_resources=verifier_resources,
         )
         span_opened = True
-        # The sandbox exists: hand off. The beater stops below, so from here
-        # the monitor's own heartbeat keeps the row fresh; one that never
-        # checks in goes stale and the reconciler asks the provider.
+        # The sandbox exists: hand off, fenced. A re-claim since the handle
+        # was recorded means no row names our sandbox: the failure path stops
+        # it and closes the span. The beater stops below, so from here the
+        # monitor's own heartbeat keeps the row fresh; one that never checks
+        # in goes stale and the reconciler asks the provider.
+        if not await _hand_off(job):
+            raise MonitorLaunchOwnershipLost(
+                f"job {job.id} attempt {job.attempts} lost the run at hand-off"
+            )
         console.print(
             "metric=monitor_launch outcome=handed_off "
             f"job_id={job.id} trial_id={trial_id} attempt={job.attempts} "

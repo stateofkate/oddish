@@ -24,15 +24,17 @@ from dataclasses import fields
 from pathlib import Path
 from typing import Literal
 
+from oddish.core.trial_artifacts import validate_uploaded_analysis_artifacts
 from oddish.db import TrialModel, WorkerJobModel, WorkerJobStatus, get_session
 from oddish.db.storage import get_storage_client
+from oddish.workers.analysis_trials import ANALYSIS_ARTIFACTS, is_analysis_kind
+from oddish.workers.console import console
 from oddish.workers.harbor.outcome import HarborOutcome
 from oddish.workers.jobs import ensure_builtin_handlers_registered
 from oddish.workers.jobs.registry import get_handler
 from oddish.workers.launcher import costs as monitor_costs
 from oddish.workers.launcher import token as monitor_token
 from oddish.workers.queue.sandbox_capacity import release_sandbox_capacity_lease
-from oddish.workers.console import console
 from oddish.workers.queue.slots import release_queue_slot
 from oddish.workers.queue.trial_handler import (
     TrialExecutionResult,
@@ -139,9 +141,7 @@ def set_post_success_hook(hook: PostSuccessHook | None) -> None:
     _post_success_hook = hook
 
 
-async def settle_monitor_result(
-    worker_job_id: str, *, attempt: int
-) -> SettleOutcome:
+async def settle_monitor_result(worker_job_id: str, *, attempt: int) -> SettleOutcome:
     """Settle the result of ``attempt``, the attempt the caller observed. A
     newer attempt owning the row means this result is history: do nothing."""
     async with get_session() as session:
@@ -199,17 +199,34 @@ async def settle_monitor_result(
         if result.get("archive_key"):
             try:
                 job_dir = await _unpack_archive(result["archive_key"], Path(tmp))
-                trial_s3_key = await get_storage_client().upload_trial_results(
+                storage = get_storage_client()
+                trial_s3_key = await storage.upload_trial_results(
                     trial_id,
                     job_dir,
                     subprefix=artifact_subprefix(
                         prepared.trial_kind, prepared.trial_attempt
                     ),
                 )
+                # As the worker path does right after its upload: an analysis
+                # trial's artifacts must be readable before settlement
+                # publishes them. The key stays; the error records why.
+                if result.get("outcome") is not None and is_analysis_kind(
+                    prepared.trial_kind
+                ):
+                    await validate_uploaded_analysis_artifacts(
+                        trial_id=trial_id,
+                        trial_s3_key=trial_s3_key,
+                        required_artifact=ANALYSIS_ARTIFACTS[prepared.trial_kind],
+                        has_trajectory=bool(result["outcome"].get("has_trajectory")),
+                        storage=storage,
+                    )
             except Exception as exc:
-                upload_error = (
-                    f"Failed to upload trial results to S3: {type(exc).__name__}: {exc}"
+                action = (
+                    "Uploaded trial artifacts failed validation"
+                    if trial_s3_key is not None
+                    else "Failed to upload trial results to S3"
                 )
+                upload_error = f"{action}: {type(exc).__name__}: {exc}"
                 logger.exception("monitor artifact unpack/upload failed")
         else:
             # The monitor's own upload was refused (or it had nothing to

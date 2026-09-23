@@ -2159,6 +2159,11 @@ class WorkerJobModel(TimestampedMixin, Base):
     monitor_acked_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Set by the launcher's fenced hand-off, once the sandbox exists and the
+    # row still belongs to this attempt; the reconciler owns the job from here.
+    monitor_handed_off_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     monitor_status_check_count: Mapped[int | None] = mapped_column(
         Integer, nullable=True
     )

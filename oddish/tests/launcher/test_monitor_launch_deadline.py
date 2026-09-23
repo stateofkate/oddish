@@ -46,11 +46,15 @@ def _fake_sessions(monkeypatch, calls, reread=(False, False)):
     async def _no_revoke():
         return None
 
-    monkeypatch.setattr(check.monitor_token, "revoke_credentials_of_finished_jobs", _no_revoke)
+    monkeypatch.setattr(
+        check.monitor_token, "revoke_credentials_of_finished_jobs", _no_revoke
+    )
 
 
 @pytest.mark.anyio
-async def test_the_launch_deadline_is_bound_only_while_the_monitor_path_is_on(monkeypatch):
+async def test_the_launch_deadline_is_bound_only_while_the_monitor_path_is_on(
+    monkeypatch,
+):
     calls: list = []
     _fake_sessions(monkeypatch, calls)
     monkeypatch.setattr(settings, "monitor_launch_deadline_seconds", 2700)
@@ -160,3 +164,31 @@ async def test_a_check_in_after_the_select_is_probed_not_stopped(monkeypatch):
     )
     assert verdict == "alive"
     assert calls[-1][1]["verdict"] == "alive"
+
+
+def test_the_default_launch_deadline_outlasts_a_warm_up_and_a_create(monkeypatch):
+    """Seen in review: a fixed 2700 s deadline was shorter than one in-launch
+    warm-up (1800 s per step) plus a Daytona create (1200 s), so the reconciler
+    could reap a launch that was legitimately still warming."""
+    monkeypatch.setattr(settings, "monitor_daytona_create_timeout_seconds", 1200)
+    derived = monitor_sandbox.launch_deadline_default_seconds()
+    assert derived == (
+        monitor_sandbox.warm_up_lifetime_seconds()
+        + 1200
+        + monitor_sandbox.LAUNCH_MARGIN_SECONDS
+    )
+    assert derived > monitor_sandbox.WARM_UP_SECONDS + 1200
+    # It follows the create timeout it is derived from.
+    monkeypatch.setattr(settings, "monitor_daytona_create_timeout_seconds", 1800)
+    assert monitor_sandbox.launch_deadline_default_seconds() == derived + 2 * 600
+
+
+def test_the_launch_deadline_setting_overrides_the_derived_default(monkeypatch):
+    monkeypatch.setattr(settings, "monitor_execution_enabled", True)
+    monkeypatch.setattr(settings, "monitor_launch_deadline_seconds", None)
+    assert (
+        check.launch_deadline_seconds()
+        == monitor_sandbox.launch_deadline_default_seconds()
+    )
+    monkeypatch.setattr(settings, "monitor_launch_deadline_seconds", 4321)
+    assert check.launch_deadline_seconds() == 4321

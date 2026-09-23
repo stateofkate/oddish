@@ -60,12 +60,20 @@ class _Starter:
 
 
 def _stub_launch(
-    monkeypatch, starter, *, beat=None, resolve=None, persists=True, owns=True
+    monkeypatch,
+    starter,
+    *,
+    beat=None,
+    resolve=None,
+    persists=True,
+    owns=True,
+    hands_off=True,
 ):
     """Stub every collaborator of ``launch_monitor_attempt``; returns the calls."""
     calls = SimpleNamespace(
-        settled=[], revoked=[], persisted=[], spans=[], ownership_reads=0
-    )
+        settled=[], revoked=[], persisted=[], spans=[], handed_off=[],
+        spans_closed=[], ownership_reads=0,
+    )  # fmt: skip
 
     async def _beat(attempt):
         return True
@@ -98,6 +106,13 @@ def _stub_launch(
     async def _span(**k):
         calls.spans.append(k["external_id"])
 
+    async def _hand_off(job):
+        calls.handed_off.append(job.id)
+        return hands_off
+
+    async def _close_span(job, trial_id, prepared):
+        calls.spans_closed.append(job.id)
+
     @asynccontextmanager
     async def _no_reads():
         raise AssertionError("the launcher reads nothing after create")
@@ -112,7 +127,9 @@ def _stub_launch(
     monkeypatch.setattr(ml, "control_plane_url", lambda: "https://api.test")
     monkeypatch.setattr(ml, "record_monitor_heartbeat", beat or _beat)
     monkeypatch.setattr(ml, "prepare_trial_run", lambda **k: _val(prepared))
-    monkeypatch.setattr(ml.monitor_sandbox, "provider_for_environment", lambda e: "modal")
+    monkeypatch.setattr(
+        ml.monitor_sandbox, "provider_for_environment", lambda e: "modal"
+    )
     monkeypatch.setattr(ml.monitor_sandbox, "get_starter", lambda p: starter)
     monkeypatch.setattr(
         ml.monitor_sandbox.SandboxSize,
@@ -122,7 +139,9 @@ def _stub_launch(
     monkeypatch.setattr(ml, "_resolve_image", _noop)
     monkeypatch.setattr(ml, "claim_funding_key", lambda **k: _val((True, {})))
     monkeypatch.setattr(ml, "_task_facts", lambda *a, **k: _val((None, None, {})))
-    monkeypatch.setattr(ml.monitor_token, "mint_monitor_credential", lambda *a: _val("tok"))
+    monkeypatch.setattr(
+        ml.monitor_token, "mint_monitor_credential", lambda *a: _val("tok")
+    )
     monkeypatch.setattr(ml.monitor_token, "revoke_monitor_credential", _revoke)
     monkeypatch.setattr(job_tokens, "scoped_model_env", lambda **k: {})
     monkeypatch.setattr(byok, "merge_byok_env", lambda *a: {})
@@ -132,6 +151,8 @@ def _stub_launch(
     monkeypatch.setattr(ml, "_persist_handle", _persist)
     monkeypatch.setattr(ml, "_still_owns", _still_owns)
     monkeypatch.setattr(ml.monitor_costs, "open_sandbox_span", _span)
+    monkeypatch.setattr(ml, "_hand_off", _hand_off)
+    monkeypatch.setattr(ml, "_close_sandbox_span_after_failed_launch", _close_span)
     monkeypatch.setattr(ml, "settle_trial_attempt", _settle)
     # Any row read after create (a check-in poll) fails the test.
     monkeypatch.setattr(ml, "get_session", _no_reads)
@@ -148,8 +169,58 @@ async def test_a_created_sandbox_is_handed_off_without_a_check_in_read(monkeypat
     assert outcome is not None and outcome.handoff is not None
     assert starter.started == ["img"]
     assert calls.persisted == ["ext-1"] and calls.spans == ["ext-1"]
+    # The hand-off is the last fenced write, after the span is open.
+    assert calls.handed_off == ["job-1"]
     # Nothing torn down, nothing settled or revoked: the reconciler owns it now.
     assert starter.stopped == [] and calls.settled == [] and calls.revoked == []
+
+
+@pytest.mark.asyncio
+async def test_a_reclaim_after_the_handle_stops_our_sandbox_at_the_hand_off(
+    monkeypatch,
+):
+    """Seen in review: after the handle was recorded the launch opened the
+    span and returned handed off with no further ownership check. A re-claim
+    in that gap clears provider/external_id, so nothing would ever stop the
+    sandbox. The hand-off is now a fenced write: no row, no hand-off."""
+    starter = _Starter()
+    calls = _stub_launch(monkeypatch, starter, hands_off=False)
+
+    outcome = await ml.launch_monitor_attempt(_job())
+
+    assert outcome is None
+    assert calls.persisted == ["ext-1"] and calls.handed_off == ["job-1"]
+    # Our sandbox is stopped and its span closed; the token and the trial
+    # belong to the newer attempt, so nothing is settled or revoked.
+    assert starter.stopped == ["ext-1"] and calls.spans_closed == ["job-1"]
+    assert calls.settled == [] and calls.revoked == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("rowcount", [1, 0])
+async def test_the_hand_off_is_one_write_fenced_on_this_attempt(monkeypatch, rowcount):
+    statements: list = []
+
+    @asynccontextmanager
+    async def _session():
+        async def _execute(stmt):
+            statements.append(stmt)
+            return SimpleNamespace(rowcount=rowcount)
+
+        yield SimpleNamespace(execute=_execute)
+
+    monkeypatch.setattr(ml, "get_session", _session)
+
+    assert await ml._hand_off(_job()) is (rowcount == 1)
+
+    assert len(statements) == 1
+    compiled = _compiled(statements[0])
+    sql = str(compiled)
+    assert sql.startswith("UPDATE worker_jobs SET monitor_handed_off_at=")
+    for fence in ("id", "status", "attempts", "current_worker_id"):
+        assert f"worker_jobs.{fence} = " in sql, sql
+    values = list(compiled.params.values())
+    assert "job-1" in values and 1 in values and "w-1" in values
 
 
 @pytest.mark.asyncio
@@ -258,9 +329,7 @@ def _compiled(stmt):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("rowcount", [1, 0])
-async def test_resolve_image_is_one_write_fenced_on_this_attempt(
-    monkeypatch, rowcount
-):
+async def test_resolve_image_is_one_write_fenced_on_this_attempt(monkeypatch, rowcount):
     """The image lands with one UPDATE fenced on status, attempt and worker and
     merged into the payload; a row that is no longer ours (rowcount 0) is
     skipped without an error."""

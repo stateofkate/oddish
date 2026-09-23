@@ -130,7 +130,11 @@ async def test_hook_reports_each_event_and_survives_a_control_plane_blip(
     await on_event(SimpleNamespace(event=TrialEvent.END, environment=None, result=None))
 
     # The event lost to the blip is sent again, before the newer one.
-    assert [p["event"] for _, p in client.calls] == ["agent-start", "agent-start", "end"]
+    assert [p["event"] for _, p in client.calls] == [
+        "agent-start",
+        "agent-start",
+        "end",
+    ]
     assert started[0]["environment"] is environment
     assert started[0]["attempt"] == SPEC.trial_attempt
     # The tail persists through the callback the runner built, not a global.
@@ -236,6 +240,53 @@ async def test_a_large_tick_is_posted_in_batches_the_events_route_accepts():
     assert len(client.calls) == 2
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("verdict", [AttemptGone("gone"), MonitorRejected("refused")])
+async def test_a_verdict_on_the_persist_tick_ends_the_attempt(verdict):
+    """Seen in review: the client wrote "stopped" on a 410/401 from POST
+    /events, but the tailer swallowed the exception and the driver kept
+    running. The tick now records the verdict for the runner's watcher."""
+    client = _Client(events=verdict)
+    state = seams.ControlState()
+    persist = seams.build(client, state).persist
+    tick = {"trial_id": "trial-1", "attempt": 1, "events": [], "checkpoint_values": {"cost_usd": 0.1}}  # fmt: skip
+
+    with pytest.raises(type(verdict)):
+        await persist(**tick)
+    assert state.ended.is_set() and state.verdict is verdict
+    with pytest.raises(loops.StopTrial, match=str(verdict)):
+        await asyncio.wait_for(loops.state_stopped(state), timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_a_refused_events_batch_is_dropped_not_retried(caplog):
+    """Seen in review: a non-auth 4xx on POST /events was left pending and
+    posted again every tick, blocking the live tail for good. It is dropped
+    with an ERROR line, as a refused lifecycle event is."""
+    import logging
+
+    from oddish.mon.client import ControlPlaneRefused
+
+    events = [{"seq": n, "kind": "text", "payload": {}} for n in range(1, 4)]
+    tick = {"trial_id": "trial-1", "attempt": 1, "events": events, "checkpoint_values": None}  # fmt: skip
+    client = _Client(events=ControlPlaneRefused("POST /events: HTTP 422"))
+    state = seams.ControlState()
+    persist = seams.build(client, state).persist
+
+    with caplog.at_level(logging.ERROR, logger=seams.__name__):
+        result = await persist(**tick)
+
+    assert result == live_tail.PersistResult(flushed=3)  # the tailer drops them
+    assert not state.ended.is_set()  # a refusal is not a verdict
+    (record,) = [r for r in caplog.records if "dropped" in r.message]
+    assert record.levelno == logging.ERROR and "HTTP 422" in record.message
+
+    # A later tick posts again: the tail is not blocked.
+    client.answers["events"] = {"flushed": 1, "checkpoint_written": False, "trial_finished": False, "quota_checked": True, "pause_requested": None}  # fmt: skip
+    assert (await persist(**{**tick, "events": events[:1]})).flushed == 1
+    assert len(client.calls) == 2
+
+
 def test_status_command_exit_code_says_whether_the_monitor_is_alive(
     monkeypatch, capsys
 ):
@@ -319,7 +370,10 @@ async def test_loops_count_what_they_delivered():
     assert stats.heartbeats_sent >= 2 and stats.control_checks >= 2
     assert stats.summary().startswith("heartbeats_sent=")
     assert set(stats.as_dict()) == {
-        "heartbeats_sent", "heartbeats_failed", "control_checks", "control_failed",
+        "heartbeats_sent",
+        "heartbeats_failed",
+        "control_checks",
+        "control_failed",
     }
 
 
@@ -372,10 +426,15 @@ async def test_the_loops_outlive_anything_but_a_verdict_from_our_api():
                 raise self.errors.pop(0)
 
     # An outage, a surprise and a bug in between do not stop the trial.
-    stats, client = loops.LoopStats(), _Client([ControlPlaneUnavailable("404"), RuntimeError("surprise")])
+    stats, client = (
+        loops.LoopStats(),
+        _Client([ControlPlaneUnavailable("404"), RuntimeError("surprise")]),
+    )
     beat = asyncio.create_task(loops.heartbeat_loop(client, interval=0.01, stats=stats))
     await asyncio.sleep(0.06)
-    assert not beat.done() and stats.heartbeats_failed == 2 and stats.heartbeats_sent >= 1
+    assert (
+        not beat.done() and stats.heartbeats_failed == 2 and stats.heartbeats_sent >= 1
+    )
     beat.cancel()
     await asyncio.gather(beat, return_exceptions=True)
 
@@ -426,6 +485,36 @@ def test_without_a_trial_folder_the_log_stays_at_the_job_root(monkeypatch, tmp_p
     runner._attach_monitor_log(SimpleNamespace(job_dir=job_dir))
 
     assert (job_dir / "oddish-mon.log").is_file()
+
+
+def test_a_log_copy_that_fails_is_a_warning_not_a_failed_start(
+    monkeypatch, tmp_path, caplog
+):
+    """Seen in review: with no job folder the fallback copy had no error
+    handling, so a full disk after the driver finished raised before
+    POST /result and turned a finished trial into a failed start."""
+    import logging
+    import shutil
+    from types import SimpleNamespace
+
+    from oddish.mon import runner
+
+    _log_env(monkeypatch, tmp_path)
+
+    def _no_space(src, dst):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(shutil, "copyfile", _no_space)
+    with caplog.at_level(logging.WARNING, logger=runner.__name__):
+        assert runner._attach_monitor_log(None) is None  # no job folder
+        job_dir = tmp_path / "job"
+        job_dir.mkdir()
+        assert runner._attach_monitor_log(SimpleNamespace(job_dir=job_dir)) is None
+    warnings = [
+        r for r in caplog.records if "could not attach the monitor log" in r.message
+    ]
+    assert len(warnings) == 2 and all(r.levelno == logging.WARNING for r in warnings)
+    assert "No space left" in warnings[0].message
 
 
 def test_sealed_vertex_settings_reach_the_driver_not_the_agent(monkeypatch, tmp_path):
@@ -486,7 +575,9 @@ def test_sealed_oddish_settings_names_stay_out_of_the_agent_env():
 
 
 @pytest.mark.asyncio
-async def test_the_tail_is_flushed_and_stopped_before_the_result_is_reported(monkeypatch):
+async def test_the_tail_is_flushed_and_stopped_before_the_result_is_reported(
+    monkeypatch,
+):
     from oddish.mon import runner
     from oddish.workers.harbor import live_tail
 

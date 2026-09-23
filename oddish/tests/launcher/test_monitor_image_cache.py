@@ -103,6 +103,21 @@ class _Starter:
         return self.image
 
 
+class _DeletingStarter(_Starter):
+    """A provider that keeps snapshots until told otherwise (Daytona)."""
+
+    provider = SandboxProvider.DAYTONA
+
+    def __init__(self, *args, delete_error=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.deleted, self.delete_error = [], delete_error
+
+    async def delete_warm_image(self, image):
+        if self.delete_error:
+            raise self.delete_error
+        self.deleted.append(image)
+
+
 @pytest.fixture
 def store(monkeypatch):
     entries: dict[tuple[str, str], dict] = {}
@@ -124,7 +139,11 @@ _SOURCE = WarmSource(
 
 
 async def _resolve(starter, **overrides):
-    args = dict(monitor_image="/oddish/mon.Dockerfile", warm_source=_SOURCE, has_registry_login=False)
+    args = dict(
+        monitor_image="/oddish/mon.Dockerfile",
+        warm_source=_SOURCE,
+        has_registry_login=False,
+    )
     return await cache.resolve(starter, **{**args, **overrides})
 
 
@@ -138,13 +157,20 @@ async def test_first_launch_warms_and_the_next_one_hits(store):
     assert len(starter.calls) == 1  # warmed once
     # The warm-up gets where the task is, never the cache identity or a secret.
     assert starter.calls[0][1] == _SOURCE.request
-    assert set(WarmRequest.model_fields) == {"task_archive_url", "task_files", "docker_image"}
+    assert set(WarmRequest.model_fields) == {
+        "task_archive_url",
+        "task_files",
+        "docker_image",
+    }
 
 
 @pytest.mark.asyncio
 async def test_a_private_registry_login_is_never_cached(store):
     starter = _Starter()
-    assert await _resolve(starter, has_registry_login=True) == ("/oddish/mon.Dockerfile", None)
+    assert await _resolve(starter, has_registry_login=True) == (
+        "/oddish/mon.Dockerfile",
+        None,
+    )
     assert starter.calls == [] and store == {}
 
 
@@ -154,7 +180,10 @@ async def test_concurrent_launches_do_not_all_warm(store):
     key = cache.cache_key("modal", "/oddish/mon.Dockerfile", _SOURCE.identity)
     store[("modal", key)] = cache.CacheEntry(state=cache.CacheState.WARMING)
 
-    assert await _resolve(starter) == ("/oddish/mon.Dockerfile", None)  # cold, this once
+    assert await _resolve(starter) == (
+        "/oddish/mon.Dockerfile",
+        None,
+    )  # cold, this once
     assert starter.calls == []
 
 
@@ -196,10 +225,51 @@ async def test_a_provider_without_snapshots_runs_cold(store):
 async def test_a_refused_snapshot_is_forgotten(store):
     starter = _Starter()
     _, key = await _resolve(starter)
-    await cache.forget("modal", key)
+    await cache.forget(starter, key)
     assert store[("modal", key)].state is cache.CacheState.INVALID
     assert (await _resolve(starter))[0] == "im-warm"  # warmed again
     assert len(starter.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_dropped_or_replaced_snapshot_is_deleted_where_the_provider_keeps_it(
+    store,
+):
+    """Seen in review: Daytona snapshots were never deleted. After the serving
+    window the cache warmed again beside the old one, and ``forget`` left it."""
+    starter = _DeletingStarter(image="snapshot:one")
+    _, key = await _resolve(starter)
+    await cache.forget(starter, key)
+    assert starter.deleted == ["snapshot:one"]
+    assert store[("daytona", key)].state is cache.CacheState.INVALID
+    await cache.forget(starter, key)  # nothing left to delete
+    assert starter.deleted == ["snapshot:one"]
+
+    starter.image = "snapshot:two"
+    assert await _resolve(starter) == ("snapshot:two", key)
+    store[("daytona", key)].at -= cache.WARM_IMAGE_READY_SECONDS + 1  # past serving
+    starter.image = "snapshot:three"
+    assert await _resolve(starter) == ("snapshot:three", key)  # refreshed
+    assert starter.deleted == ["snapshot:one", "snapshot:two"]
+
+    # A failed warm-up forgets a WARMING entry: no image, nothing to delete.
+    store[("daytona", key)].at -= cache.WARM_IMAGE_READY_SECONDS + 1
+    starter.error = RuntimeError("provider down")
+    assert await _resolve(starter) == ("/oddish/mon.Dockerfile", None)
+    assert starter.deleted == ["snapshot:one", "snapshot:two", "snapshot:three"]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_snapshot_delete_never_fails_the_launch(store):
+    starter = _DeletingStarter(image="snapshot:one", delete_error=RuntimeError("api"))
+    _, key = await _resolve(starter)
+    await cache.forget(starter, key)  # logged, not raised
+    assert store[("daytona", key)].state is cache.CacheState.INVALID
+    # Modal keeps no capability: its snapshots expire on their own TTL.
+    plain = _Starter()
+    _, key = await _resolve(plain)
+    await cache.forget(plain, key)
+    assert not hasattr(plain, "delete_warm_image")
 
 
 def test_a_cache_entry_survives_storage_and_rejects_an_unknown_state():
@@ -221,3 +291,26 @@ async def test_a_different_size_is_a_different_snapshot(store):
 
     assert key_small != key_big
     assert starter.sizes == [small, big]  # the warm-up runs at the task's size
+
+
+class _KnowsSnapshots:
+    provider = "daytona"
+
+    def __init__(self, answer):
+        self.answer = answer
+
+    async def warm_image_exists(self, image):
+        return self.answer
+
+
+@pytest.mark.asyncio
+async def test_a_cached_image_is_gone_only_when_the_provider_says_so():
+    assert await cache.image_is_gone(_KnowsSnapshots(False), "snapshot:x") is True
+    assert await cache.image_is_gone(_KnowsSnapshots(True), "snapshot:x") is False
+    # Cannot say: keep the entry rather than delete a snapshot others boot from.
+    assert await cache.image_is_gone(_KnowsSnapshots(None), "snapshot:x") is False
+
+    class _Plain:
+        provider = "modal"
+
+    assert await cache.image_is_gone(_Plain(), "im-abc") is False

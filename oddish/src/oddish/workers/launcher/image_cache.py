@@ -108,9 +108,39 @@ async def _write(provider: str, key: str, entry: CacheEntry) -> None:
     )
 
 
-async def forget(provider: str, key: str) -> None:
-    """Drop an entry whose snapshot the provider no longer accepts."""
-    await _write(provider, key, CacheEntry(state=CacheState.INVALID))
+async def _delete_previous(starter: MonitorSandboxStarter, image: str) -> None:
+    """Delete a snapshot the cache will never serve again, on a provider that
+    keeps snapshots until told otherwise (Modal's carry a TTL and have no
+    ``delete_warm_image``). Best effort: an undeleted snapshot costs storage,
+    never a launch."""
+    if not hasattr(starter, "delete_warm_image"):
+        return
+    try:
+        await starter.delete_warm_image(image)  # type: ignore[attr-defined]
+        logger.info("metric=monitor_image_cache outcome=deleted image=%s", image)
+    except Exception:
+        logger.exception(
+            "metric=monitor_image_cache outcome=delete_failed image=%s", image
+        )
+
+
+async def image_is_gone(starter: MonitorSandboxStarter, image: str) -> bool:
+    """True only when the provider says the cached image no longer exists.
+    A provider that cannot say keeps the entry: deleting a snapshot other
+    launches are booting from is worse than one cold start."""
+    probe = getattr(starter, "warm_image_exists", None)
+    if probe is None:
+        return False
+    return await probe(image) is False
+
+
+async def forget(starter: MonitorSandboxStarter, key: str) -> None:
+    """Drop an entry whose snapshot the provider no longer accepts, and the
+    snapshot with it."""
+    entry = await _read(starter.provider, key)
+    if entry and entry.image:
+        await _delete_previous(starter, entry.image)
+    await _write(starter.provider, key, CacheEntry(state=CacheState.INVALID))
 
 
 async def resolve(
@@ -154,6 +184,10 @@ async def resolve(
                 "metric=monitor_image_cache outcome=warming_elsewhere key=%s", key
             )
             return monitor_image, None  # someone else is warming: run cold this once
+        if entry and entry.image:
+            # A READY entry past its serving window: its snapshot is never
+            # booted again, so it goes before the replacement is warmed.
+            await _delete_previous(starter, entry.image)
         await _write(starter.provider, key, CacheEntry(state=CacheState.WARMING))
         try:
             image = await starter.build_warm_image(  # type: ignore[attr-defined]
@@ -161,7 +195,7 @@ async def resolve(
             )
         except Exception:
             # Not EMPTY and not left WARMING: the next trial warms again.
-            await forget(starter.provider, key)
+            await forget(starter, key)
             raise
         done = CacheState.READY if image else CacheState.EMPTY
         await _write(starter.provider, key, CacheEntry(state=done, image=image))

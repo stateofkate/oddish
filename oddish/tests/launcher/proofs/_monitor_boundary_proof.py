@@ -188,7 +188,7 @@ async def _main() -> int:
         and count == monitor_status_check.REAPABLE
         and STARTER.stopped[-1:] == [row.external_id]
     )
-    settings.monitor_launch_deadline_seconds = 2700
+    settings.monitor_launch_deadline_seconds = None  # back to the derived default
     async with get_session() as s:  # reaped: out of the later sweeps
         (await s.get(WorkerJobModel, row.id)).status = WorkerJobStatus.FAILED
 

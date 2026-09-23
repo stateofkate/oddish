@@ -6,6 +6,7 @@ Each route calls the function the long-running worker calls today.
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
@@ -28,6 +29,7 @@ from org_access import require_execution_org
 from pydantic import BaseModel, Field
 
 router = APIRouter(prefix="/monitor", tags=["Trial monitor"])
+logger = logging.getLogger(__name__)
 
 
 async def authorize_monitor(request: Request) -> MonitorAttempt:
@@ -203,14 +205,25 @@ async def artifact_upload(attempt: Attempt) -> ArtifactUploadResponse:
 async def result(
     attempt: Attempt, body: ResultPayload, background: BackgroundTasks
 ) -> ResultResponse:
-    """Accept the outcome once its artifact archive is really in storage."""
+    """Accept the outcome. The verdict is what the monitor has and the
+    sandbox is about to go: an archive it says it uploaded but that storage
+    does not show is recorded as not uploaded (settlement keeps the verdict
+    and records the lost files), never refused. A refusal would have the
+    monitor exit failed and the finished trial re-run."""
     archive_key: str | None = None
     if body.archive_uploaded:
         archive_key = StorageClient._monitor_archive_key(
             _require_trial(attempt), attempt.worker_job_id, attempt.attempt
         )
         if not await get_storage_client().object_exists(archive_key):
-            raise HTTPException(409, "Artifact archive is not in storage yet")
+            logger.warning(
+                "metric=monitor_result outcome=archive_missing job_id=%s attempt=%s "
+                "key=%s: accepting the result without artifacts",
+                attempt.worker_job_id,
+                attempt.attempt,
+                archive_key,
+            )
+            archive_key = None
     try:
         accepted = await monitor_result.accept_monitor_result(
             attempt,
@@ -249,13 +262,15 @@ async def lifecycle(attempt: Attempt, body: LifecycleRequest) -> HeartbeatRespon
 @router.get("/attempt")
 async def attempt_spec(attempt: Attempt) -> AttemptSpec:
     """What this attempt has to run. No secrets: those arrive in the environment."""
+    # Fetching the spec with the monitor's own credential is its check-in,
+    # recorded before the spec is built: listing and presigning the task's
+    # objects takes long enough for a reconciler pass at the launch deadline
+    # to find no check-in and mark the attempt gone.
+    await monitor_attempt.acknowledge_monitor(attempt)
     try:
-        spec = await monitor_attempt.build_attempt_spec(attempt)
+        return await monitor_attempt.build_attempt_spec(attempt)
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
-    # Fetching the spec with the monitor's own credential is its check-in.
-    await monitor_attempt.acknowledge_monitor(attempt)
-    return spec
 
 
 @router.get("/skills")

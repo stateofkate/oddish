@@ -172,3 +172,119 @@ async def test_unstored_artifacts_settle_as_the_worker_settles_a_failed_upload(
     assert via_settle.error_message.replace(
         args["artifact_upload_error"], "<upload error>"
     ) == via_worker.error_message.replace(WORKER_UPLOAD_ERROR, "<upload error>")
+
+
+class _StoringStorage(_Storage):
+    """An upload that succeeds; validation is what is under test."""
+
+    async def upload_trial_results(self, trial_id, job_dir, *, subprefix):
+        return f"tasks/task-1/trials/{trial_id}/{subprefix}"
+
+    async def delete_object(self, key):
+        return None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kind", "validated", "error"),
+    [
+        ("summarize", True, None),
+        ("summarize", True, "no result"),
+        ("agent", False, None),
+    ],
+)
+async def test_an_analysis_upload_is_validated_as_the_worker_validates_it(
+    monkeypatch, kind, validated, error
+):
+    """Seen in review: settle uploaded an analysis trial's artifacts without the
+    worker path's ``validate_uploaded_analysis_artifacts``. Same call, same
+    point (right after the upload), same outcome: a failed validation keeps
+    the key and settles with the worker's "failed validation" error."""
+    from oddish.core.trial_artifacts import AnalysisArtifactLayoutError
+    from oddish.workers.analysis_trials import ANALYSIS_ARTIFACTS
+
+    calls: list[dict] = []
+    storage = _StoringStorage()
+
+    async def validate(**kwargs):
+        calls.append(kwargs)
+        if error:
+            raise AnalysisArtifactLayoutError(error)
+
+    monkeypatch.setattr(
+        monitor_settle, "validate_uploaded_analysis_artifacts", validate
+    )
+    monkeypatch.setattr(monitor_settle, "get_storage_client", lambda: storage)
+    outcome = {**OUTCOME, "has_trajectory": True}
+    monkeypatch.setattr(
+        monitor_settle, "_unpack_archive", lambda key, dest: _job_dir(dest)
+    )
+    captured = await _settle_with(
+        monkeypatch, kind=kind, outcome=outcome, storage=storage
+    )
+
+    if not validated:
+        assert calls == []
+        assert captured["artifact_upload_error"] is None
+        return
+    (call,) = calls
+    assert call["trial_id"] == "task-1-0"
+    assert call["trial_s3_key"] == captured["trial_s3_key"] is not None
+    assert call["required_artifact"] == ANALYSIS_ARTIFACTS[kind]
+    assert call["has_trajectory"] is True and call["storage"] is storage
+    if error:
+        assert captured["artifact_upload_error"] == (
+            f"Uploaded trial artifacts failed validation: AnalysisArtifactLayoutError: {error}"
+        )
+    else:
+        assert captured["artifact_upload_error"] is None
+
+
+async def _job_dir(dest):
+    job_dir = Path(dest) / "job"
+    job_dir.mkdir()
+    return job_dir
+
+
+async def _settle_with(monkeypatch, *, kind, outcome, storage):
+    job = SimpleNamespace(
+        id="job-1", kind="trial", queue_key="q", status=WorkerJobStatus.RUNNING,
+        attempts=2, max_attempts=6, subject_table="trials", subject_id="task-1-0",
+        payload={}, org_id="org-1", parent_job_id=None, current_worker_id="w-1",
+        current_queue_slot=None, provider=None, external_id=None,
+        monitor_result_accepted_at="accepted",
+        monitor_result={"attempt": 2, "outcome": outcome, "archive_key": ARCHIVE_KEY},
+    )  # fmt: skip
+    rows = {WorkerJobModel: job, TrialModel: _trial(kind, 1)}
+    captured: dict = {}
+
+    @asynccontextmanager
+    async def get_session():
+        async def get(model, _id):
+            return rows.get(model)
+
+        yield SimpleNamespace(get=get)
+
+    async def noop(*_args, **_kwargs):
+        return None
+
+    async def capture(**kwargs):
+        captured.update(kwargs)
+
+    async def outcome_for_settled_trial(_claimed, _outcome):
+        return SimpleNamespace(success=None)
+
+    handler = SimpleNamespace(outcome_for_settled_trial=outcome_for_settled_trial)
+    monkeypatch.setattr(monitor_settle, "get_session", get_session)
+    monkeypatch.setattr(monitor_settle, "mirror_to_sauron", noop)
+    monkeypatch.setattr(monitor_settle, "settle_trial_attempt", capture)
+    monkeypatch.setattr(
+        monitor_settle, "ensure_builtin_handlers_registered", lambda: None
+    )
+    monkeypatch.setattr(monitor_settle, "get_handler", lambda _kind: handler)
+    monkeypatch.setattr(monitor_settle, "record_outcome", noop)
+    monkeypatch.setattr(monitor_settle.monitor_token, "revoke_monitor_credential", noop)
+    monkeypatch.setattr(monitor_settle, "_post_success_hook", None)
+
+    assert await monitor_settle.settle_monitor_result("job-1", attempt=2) == "settled"
+    return captured

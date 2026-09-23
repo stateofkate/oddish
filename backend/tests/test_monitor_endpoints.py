@@ -273,9 +273,15 @@ async def test_each_attempt_of_a_trial_gets_its_own_archive_key(client, monkeypa
 
 
 @pytest.mark.asyncio
-async def test_result_is_accepted_only_when_the_archive_is_in_storage(
-    client, monkeypatch
+async def test_a_result_whose_archive_is_not_in_storage_is_accepted_without_it(
+    client, monkeypatch, caplog
 ):
+    """Seen in review: a 409 here is a refusal to the monitor (any 4xx but
+    401/410), which exits failed, and the finished trial was re-run instead
+    of accepted. The verdict is kept; the archive is recorded as not
+    uploaded, which settlement already reports as lost files."""
+    import logging
+
     http, _ = client
     accepted = []
 
@@ -287,17 +293,19 @@ async def test_result_is_accepted_only_when_the_archive_is_in_storage(
     monkeypatch.setattr(monitor.settings, "monitor_settle_inline", False)
     monkeypatch.setattr(monitor, "get_storage_client", lambda: _Storage(exists=False))
     body = {"outcome": {"reward": 1.0, "exit_code": 0}, "archive_uploaded": True}
-    missing = await http.post("/monitor/result", headers=_auth(), json=body)
-    assert missing.status_code == 409
-    assert accepted == []
+    with caplog.at_level(logging.WARNING, logger=monitor.__name__):
+        missing = await http.post("/monitor/result", headers=_auth(), json=body)
+    assert missing.status_code == 200
+    assert missing.json() == {"accepted": True, "duplicate": False}
+    ((attempt, outcome, archive_key),) = accepted
+    assert attempt == ATTEMPT and outcome["reward"] == 1.0
+    assert archive_key is None  # settlement: no artifacts, verdict kept
+    assert any("archive_missing" in r.message for r in caplog.records)
 
     monkeypatch.setattr(monitor, "get_storage_client", lambda: _Storage(exists=True))
     ok = await http.post("/monitor/result", headers=_auth(), json=body)
     assert ok.status_code == 200
-    assert ok.json() == {"accepted": True, "duplicate": False}
-    ((attempt, outcome, archive_key),) = accepted
-    assert attempt == ATTEMPT and outcome["reward"] == 1.0
-    assert "trial-1" in archive_key
+    assert "trial-1" in accepted[-1][2]
 
 
 @pytest.mark.asyncio
@@ -372,18 +380,23 @@ async def test_attempt_spec_is_served_to_the_owning_attempt_only(client, monkeyp
             task_archive_url="https://s3.test/task.tar.gz?signed",
         )
 
-    acked = []
+    order = []
 
     async def ack(attempt):
-        acked.append(attempt)
+        order.append(("acked", attempt))
 
-    monkeypatch.setattr(monitor.monitor_attempt, "build_attempt_spec", build)
+    async def build_after_ack(attempt):
+        order.append(("built", attempt))
+        return await build(attempt)
+
+    monkeypatch.setattr(monitor.monitor_attempt, "build_attempt_spec", build_after_ack)
     monkeypatch.setattr(monitor.monitor_attempt, "acknowledge_monitor", ack)
     ok = await http.get("/monitor/attempt", headers=_auth())
     assert ok.status_code == 200
     assert ok.json()["agent"] == "oracle"
-    # Fetching the spec is the monitor's check-in.
-    assert acked == [ATTEMPT]
+    # Fetching the spec is the monitor's check-in, recorded before the spec
+    # is built (listing and presigning the task can outlast a reconciler pass).
+    assert order == [("acked", ATTEMPT), ("built", ATTEMPT)]
     assert (await http.get("/monitor/attempt")).status_code == 401
     stale = await http.get("/monitor/attempt", headers=_auth("job-1.1.old"))
     assert stale.status_code == 410

@@ -26,9 +26,11 @@ class MonitorSandboxError(RuntimeError):
     pass
 
 
-class MonitorSandboxGone(MonitorSandboxError):
-    """The provider says the sandbox has ended. Before the monitor's first
-    check-in that is a failed start, not a slow one."""
+class WarmImageUnusable(MonitorSandboxError):
+    """The cached snapshot exists but cannot serve this task (it booted at the
+    wrong size, its layout no longer matches). The launcher drops the cache
+    entry and starts cold; a snapshot that is merely gone is reported by
+    ``warm_image_exists`` instead."""
 
 
 class SandboxProvider(StrEnum):
@@ -185,6 +187,23 @@ def warm_up_lifetime_seconds() -> int:
     return settings.monitor_daytona_create_timeout_seconds + 2 * WARM_UP_SECONDS + 300
 
 
+# Image resolution, task facts and the monitor's own boot up to its check-in.
+LAUNCH_MARGIN_SECONDS = 600
+
+
+def launch_deadline_default_seconds() -> int:
+    """The longest a legitimate launch runs from claim to check-in: a warm-up
+    (its own create, the pull and the snapshot), then the sandbox's create,
+    plus a margin. The reconciler's launch deadline must not fire inside it."""
+    from oddish.config import settings
+
+    return (
+        warm_up_lifetime_seconds()
+        + settings.monitor_daytona_create_timeout_seconds
+        + LAUNCH_MARGIN_SECONDS
+    )
+
+
 class WarmImageBuilder(Protocol):
     """Optional capability. A provider without it never uses the warm-image cache."""
 
@@ -194,6 +213,18 @@ class WarmImageBuilder(Protocol):
         """Pull the task's images in a secret-free sandbox, snapshot its disk and
         return a reference ``start`` can boot from. ``None``: the task names no
         image to pull. Raises when the warm-up failed, so it is tried again."""
+
+    async def delete_warm_image(self, image: str) -> None:
+        """Optional. Delete a snapshot the cache has dropped or replaced, on a
+        provider that keeps snapshots until told otherwise (Modal's carry a
+        TTL and leave this out). A snapshot already gone is not an error."""
+
+    async def warm_image_exists(self, image: str) -> bool | None:
+        """Optional. Whether the snapshot behind a cached image still exists on
+        the provider: ``False`` when it is gone (expired, deleted), ``True``
+        when it is there, ``None`` when the provider cannot say. The launcher
+        drops a cache entry only on ``False``: a start that failed for another
+        reason must not delete a snapshot other launches are booting from."""
 
 
 # Provider name (the Harbor environment name) -> "module:Class", imported on

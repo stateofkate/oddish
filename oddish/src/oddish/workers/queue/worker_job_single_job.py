@@ -303,6 +303,7 @@ claimed AS (
            monitor_token_expires_at = NULL,
            monitor_token_revoked_at = NULL,
            monitor_acked_at = NULL,
+           monitor_handed_off_at = NULL,
            monitor_result = NULL,
            monitor_result_accepted_at = NULL,
            monitor_status_check_count = NULL,

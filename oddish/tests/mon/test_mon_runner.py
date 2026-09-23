@@ -270,6 +270,32 @@ async def test_a_watcher_ending_first_cancels_the_driver_and_stops_the_trial(
 
 
 @pytest.mark.asyncio
+async def test_a_verdict_on_the_persist_tick_stops_the_driver(monkeypatch, tmp_path):
+    """The live tail swallows what its persist tick raises; the runner's
+    watcher on the control state stops the driver instead."""
+    flushed = _quiet_watchers(monkeypatch)
+    task = _task(tmp_path)
+    cancelled: list[bool] = []
+
+    async def drive(**kwargs):
+        await asyncio.sleep(0.01)
+        task.state.end(AttemptGone("410 on POST /events"))  # what the tick does
+        try:
+            await asyncio.Event().wait()  # the tailer swallowed it; still driving
+        except asyncio.CancelledError:
+            cancelled.append(True)
+            raise
+
+    monkeypatch.setattr(harbor_runner, "run_harbor_trial_async", drive)
+
+    with pytest.raises(loops.StopTrial, match="410 on POST /events"):
+        await runner.drive_with_watchers(_Client(), task, MONITOR_ENV)
+
+    assert cancelled == [True]
+    assert flushed == ["trial-1"]
+
+
+@pytest.mark.asyncio
 async def test_a_control_plane_verdict_from_the_driver_propagates(
     monkeypatch, tmp_path
 ):

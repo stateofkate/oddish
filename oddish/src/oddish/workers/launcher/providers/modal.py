@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from oddish.mon.contract import NOTHING_TO_WARM, WARM_VAR, WarmRequest
@@ -14,6 +15,8 @@ from oddish.workers.launcher.providers.base import (
     StatusReply,
     warm_up_lifetime_seconds,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # Harbor's ``modal_exact_gpu_type`` names: Modal must not upgrade H100 to H200
@@ -84,6 +87,20 @@ class ModalStarter:
                 str(dockerfile), context_dir=str(dockerfile.parent)
             ).entrypoint([])
         return modal.Image.from_registry(image).entrypoint([])
+
+    async def warm_image_exists(self, image: str) -> bool | None:
+        import modal
+
+        if not image.startswith("im-"):
+            return None
+        try:
+            await modal.Image.from_id(image).hydrate.aio()
+        except modal.exception.NotFoundError:
+            return False
+        except Exception as exc:  # noqa: BLE001 -- the answer is "cannot say"
+            logger.warning("modal image %s: existence unknown: %s", image, exc)
+            return None
+        return True
 
     def provisioned(self, size: SandboxSize) -> SandboxSize:
         # Modal allocates fractional CPU and MiB as asked.

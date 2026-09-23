@@ -72,6 +72,7 @@ async def test_launch_forwards_the_stored_harbor_config(monkeypatch):
     monkeypatch.setattr(ml, "warm_source_for_trial", _noop)
     monkeypatch.setattr(ml, "_start", lambda *a, **k: _val("ext-1"))
     monkeypatch.setattr(ml, "_persist_handle", lambda *a, **k: _val(True))
+    monkeypatch.setattr(ml, "_hand_off", lambda *a, **k: _val(True))
     monkeypatch.setattr(ml.monitor_costs, "open_sandbox_span", _noop)
 
     outcome = await ml.launch_monitor_attempt(_job())

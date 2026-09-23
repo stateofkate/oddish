@@ -29,10 +29,10 @@ from sqlalchemy import text
 
 from oddish.config import settings
 from oddish.db import get_session
-from oddish.workers.launcher.providers import base as monitor_sandbox
-from oddish.workers.launcher import token as monitor_token
-from oddish.workers.launcher.settle import settle_monitor_result
 from oddish.workers.console import console
+from oddish.workers.launcher import token as monitor_token
+from oddish.workers.launcher.providers import base as monitor_sandbox
+from oddish.workers.launcher.settle import settle_monitor_result
 
 logger = logging.getLogger(__name__)
 
@@ -81,10 +81,14 @@ async def observe(provider: str | None, external_id: str | None) -> Verdict:
 
 
 def launch_deadline_seconds() -> int | None:
-    """The claim-to-check-in bound, or None while the monitor path is off."""
+    """The claim-to-check-in bound, or None while the monitor path is off.
+    Unset in settings, it is derived from the launch's own bounds."""
     if not settings.monitor_execution_enabled:
         return None
-    return settings.monitor_launch_deadline_seconds
+    return (
+        settings.monitor_launch_deadline_seconds
+        or monitor_sandbox.launch_deadline_default_seconds()
+    )
 
 
 async def check_stale_monitor_jobs(*, stale_after_minutes: int) -> dict[str, int]:

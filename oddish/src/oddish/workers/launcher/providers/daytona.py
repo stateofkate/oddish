@@ -25,6 +25,7 @@ from oddish.workers.launcher.providers.base import (
     SandboxProvider,
     SandboxSize,
     StatusReply,
+    WarmImageUnusable,
     warm_up_lifetime_seconds,
 )
 
@@ -179,7 +180,7 @@ def _check_size(sandbox, image: str, size: SandboxSize | None) -> None:
         size.gpu_type.upper() if typed and size.gpu_type else None,
     )
     if got != want:
-        raise MonitorSandboxError(f"snapshot sandbox is {got}, the task needs {want}")
+        raise WarmImageUnusable(f"snapshot sandbox is {got}, the task needs {want}")
 
 
 class DaytonaStarter:
@@ -257,6 +258,34 @@ class DaytonaStarter:
             finally:
                 await client.delete(sandbox)  # only the sandbox created above
 
+    async def delete_warm_image(self, image: str) -> None:
+        """Delete the snapshot behind a cached ``snapshot:<name>``; Daytona keeps
+        snapshots until told otherwise, so the cache deletes what it drops."""
+        if not image.startswith(SNAPSHOT_PREFIX):
+            return
+        name = image.removeprefix(SNAPSHOT_PREFIX)
+        async with _client() as client:
+            try:
+                snapshot = await client.snapshot.get(name)
+            except _not_found_errors():
+                logger.info("daytona snapshot %s is already gone", name)
+                return
+            await client.snapshot.delete(snapshot)
+
+    async def warm_image_exists(self, image: str) -> bool | None:
+        if not image.startswith(SNAPSHOT_PREFIX):
+            return None
+        name = image.removeprefix(SNAPSHOT_PREFIX)
+        try:
+            async with _client() as client:
+                await client.snapshot.get(name)
+        except _not_found_errors():
+            return False
+        except Exception as exc:  # noqa: BLE001 -- the answer is "cannot say"
+            logger.warning("daytona snapshot %s: existence unknown: %s", name, exc)
+            return None
+        return True
+
     async def stop(self, external_id: str) -> None:
         async with _client() as client:
             try:
@@ -269,16 +298,19 @@ class DaytonaStarter:
             await client.delete(sandbox)
 
     async def status(self, external_id: str) -> StatusReply:
-        async with _client() as client:
-            try:
-                sandbox = await client.get(external_id)
-            except _not_found_errors():
-                return StatusReply.gone()
-            except Exception as exc:
-                raise MonitorSandboxError(f"daytona unreachable: {exc}") from exc
-            if _state_of(sandbox) not in _RUNNING_STATES:
-                return StatusReply.gone()
-            result = await sandbox.process.exec(f"{PYTHON} -m oddish.mon status")
-            return StatusReply(
-                exit_code=int(result.exit_code), output=str(result.result or "")
-            )
+        # Every failure to ask (the client, the lookup, the exec) is one
+        # error, as on Modal: the reaper reads it as no verdict, never as gone.
+        try:
+            async with _client() as client:
+                try:
+                    sandbox = await client.get(external_id)
+                except _not_found_errors():
+                    return StatusReply.gone()
+                if _state_of(sandbox) not in _RUNNING_STATES:
+                    return StatusReply.gone()
+                result = await sandbox.process.exec(f"{PYTHON} -m oddish.mon status")
+        except Exception as exc:
+            raise MonitorSandboxError(f"daytona unreachable: {exc}") from exc
+        return StatusReply(
+            exit_code=int(result.exit_code), output=str(result.result or "")
+        )

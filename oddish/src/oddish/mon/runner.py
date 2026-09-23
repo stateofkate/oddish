@@ -181,6 +181,8 @@ async def drive_with_watchers(
         # A 410/401 on a lifecycle post stops the driver like the loops do,
         # whether or not Harbor lets the hook's exception through.
         asyncio.create_task(task.reporter.stopped()),
+        # And one on the live tail's persist tick, which the tailer swallows.
+        asyncio.create_task(loops.state_stopped(task.state)),
     ]
     try:
         done, _ = await asyncio.wait(
@@ -323,25 +325,31 @@ def _attach_monitor_log(outcome) -> Path | None:
     no trial folder (a failure before Harbor created one) the job root is all
     there is. With no job folder at all (the driver raised before Harbor made
     one) the log goes into a folder of its own, which is returned so it can be
-    uploaded in the job folder's place."""
+    uploaded in the job folder's place.
+
+    The log is best effort: a copy that fails is a warning, and the result is
+    reported without it (with no log at all, a finished trial must not turn
+    into a failed start)."""
     import shutil
 
     job_dir = getattr(outcome, "job_dir", None)
     log_path = Path(os.environ.get("ODDISH_MON_LOG_PATH", "/var/log/oddish-mon.log"))
     if not log_path.is_file():
         return None
-    if job_dir is None or not Path(job_dir).is_dir():
-        import tempfile
-
-        fallback = Path(tempfile.mkdtemp(prefix="oddish-mon-log-"))
-        shutil.copyfile(log_path, fallback / "oddish-mon.log")
-        return fallback
-    trial_dirs = [d for d in Path(job_dir).iterdir() if (d / "result.json").is_file()]
-    target = trial_dirs[0] if len(trial_dirs) == 1 else Path(job_dir)
     try:
+        if job_dir is None or not Path(job_dir).is_dir():
+            import tempfile
+
+            fallback = Path(tempfile.mkdtemp(prefix="oddish-mon-log-"))
+            shutil.copyfile(log_path, fallback / "oddish-mon.log")
+            return fallback
+        trial_dirs = [
+            d for d in Path(job_dir).iterdir() if (d / "result.json").is_file()
+        ]
+        target = trial_dirs[0] if len(trial_dirs) == 1 else Path(job_dir)
         shutil.copyfile(log_path, target / "oddish-mon.log")
-    except OSError:
-        logger.warning("could not attach the monitor log to the artifacts")
+    except OSError as exc:
+        logger.warning("could not attach the monitor log to the artifacts: %s", exc)
     return None
 
 

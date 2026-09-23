@@ -109,9 +109,24 @@ class _Sandbox:
         self.snapshots.append(name)
 
 
+class _Snapshots:
+    def __init__(self):
+        self.names, self.deleted = set(), []
+
+    async def get(self, name):
+        if name not in self.names:
+            raise LookupError("no such snapshot")
+        return SimpleNamespace(name=name)
+
+    async def delete(self, snapshot):
+        self.names.discard(snapshot.name)
+        self.deleted.append(snapshot.name)
+
+
 class _FakeDaytona:
     def __init__(self):
         self.created, self.deleted, self.sandbox = [], [], None
+        self.snapshot = _Snapshots()
 
     boot_size = (0, 0)
 
@@ -199,6 +214,45 @@ async def test_status_asks_the_monitor_and_reports_a_gone_sandbox(fake_daytona):
     fake_daytona.sandbox.state = "stopped"
     assert await starter.status("dt-123") == monitor_sandbox.StatusReply.gone()
     assert not (await starter.status("dt-missing")).alive
+
+
+@pytest.mark.asyncio
+async def test_status_reports_an_exec_failure_as_no_verdict(fake_daytona, monkeypatch):
+    """Seen in review: only the lookup was wrapped; an exec error left the
+    sandbox reached raw, unlike Modal's status. The reaper must read either as
+    UNKNOWN, never as gone."""
+    from oddish.workers.launcher import reaper
+
+    starter = daytona_starter.DaytonaStarter()
+    await starter.start(name="n", image="img", env={})
+
+    async def _exec_refused(self, command, timeout=None):
+        raise RuntimeError("exec refused")
+
+    monkeypatch.setattr(_Process, "exec", _exec_refused)
+    with pytest.raises(monitor_sandbox.MonitorSandboxError, match="exec refused"):
+        await starter.status("dt-123")
+    monkeypatch.setattr(monitor_sandbox, "get_starter", lambda provider: starter)
+    assert await reaper.observe("daytona", "dt-123") is reaper.Verdict.UNKNOWN
+
+    async def _lookup_failed(external_id):
+        raise ConnectionError("daytona down")
+
+    monkeypatch.setattr(fake_daytona, "get", _lookup_failed)
+    with pytest.raises(monitor_sandbox.MonitorSandboxError, match="daytona down"):
+        await starter.status("dt-123")
+    assert await reaper.observe("daytona", "dt-123") is reaper.Verdict.UNKNOWN
+
+
+@pytest.mark.asyncio
+async def test_a_dropped_warm_snapshot_is_deleted_by_name(fake_daytona):
+    starter = daytona_starter.DaytonaStarter()
+    fake_daytona.snapshot.names.add("oddish-mon-warm-abc")
+
+    await starter.delete_warm_image("snapshot:oddish-mon-warm-abc")
+    await starter.delete_warm_image("snapshot:oddish-mon-warm-abc")  # already gone
+    await starter.delete_warm_image("/oddish/mon.Dockerfile")  # not a snapshot
+    assert fake_daytona.snapshot.deleted == ["oddish-mon-warm-abc"]
 
 
 @pytest.mark.asyncio
@@ -439,3 +493,21 @@ def _fake_modal(monkeypatch, *, poll=None, not_found=False, error=None):
     sdk.Sandbox = SimpleNamespace(from_id=SimpleNamespace(aio=_from_id))
     sdk.exception = SimpleNamespace(NotFoundError=NotFoundError)
     monkeypatch.setitem(sys.modules, "modal", sdk)
+
+
+@pytest.mark.asyncio
+async def test_daytona_says_whether_a_warm_snapshot_still_exists(
+    fake_daytona, monkeypatch
+):
+    starter = daytona_starter.DaytonaStarter()
+    fake_daytona.snapshot.names.add("oddish-mon-warm-abc")
+
+    assert await starter.warm_image_exists("snapshot:oddish-mon-warm-abc") is True
+    assert await starter.warm_image_exists("snapshot:oddish-mon-warm-gone") is False
+    assert await starter.warm_image_exists("/oddish/mon.Dockerfile") is None
+
+    async def _down(name):
+        raise ConnectionError("daytona down")
+
+    monkeypatch.setattr(fake_daytona.snapshot, "get", _down)
+    assert await starter.warm_image_exists("snapshot:oddish-mon-warm-abc") is None
