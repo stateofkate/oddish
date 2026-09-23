@@ -20,6 +20,7 @@ from oddish.mon.spec import WarmRequest
 logger = logging.getLogger(__name__)
 
 WARM_VAR = "ODDISH_MON_WARM"  # a WarmRequest as JSON
+NOTHING_TO_WARM = 3  # exit code: the task names no image, unlike a failed pull
 _FROM = re.compile(r"^\s*FROM\s+(?:--platform=\S+\s+)?(\S+)(?:\s+AS\s+(\S+))?", re.IGNORECASE | re.MULTILINE)
 _COMPOSE_IMAGE = re.compile(r"^\s*image:\s*[\"']?([^\s\"'#]+)", re.MULTILINE)
 
@@ -62,13 +63,16 @@ async def _pull(ref: str) -> bool:
 
 
 async def run() -> int:
-    """0 when an image was built or pulled (worth a snapshot), 1 otherwise."""
+    """0 when an image was built or pulled (worth a snapshot),
+    ``NOTHING_TO_WARM`` when the task names no image, 1 when pulls failed."""
     request = WarmRequest.model_validate_json(os.environ.pop(WARM_VAR, "") or "{}")
     with tempfile.TemporaryDirectory(prefix="oddish-mon-warm-") as tmp:
         task_dir = await task_fetch.fetch_task(request, Path(tmp) / "task")
         if not request.docker_image and await task_image.build(task_dir):
             return 0
         refs = image_refs(task_dir, request.docker_image)
+    if not refs:
+        return NOTHING_TO_WARM
     pulled = [ref for ref in refs if await _pull(ref)]
     logger.info("warm-up pulled %d of %d image(s): %s", len(pulled), len(refs), ", ".join(pulled))
     return 0 if pulled else 1

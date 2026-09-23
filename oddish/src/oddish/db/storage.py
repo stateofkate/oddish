@@ -762,6 +762,19 @@ class StorageClient:
         prefix = cls.trial_write_prefix(trial_id)
         return f"{prefix}{cls._TRIAL_IMPORT_ARCHIVE_OBJECT_NAME}"
 
+    @classmethod
+    def _monitor_archive_key(
+        cls, trial_id: str, worker_job_id: str, attempt: int
+    ) -> str:
+        """Staging tarball of one monitor attempt. Per attempt, so a superseded
+        attempt's late upload or cleanup cannot reach a newer attempt's archive.
+        Keeps the import file name, which ``copy_prefix`` skips."""
+        prefix = cls.trial_write_prefix(trial_id)
+        return (
+            f"{prefix}.oddish-monitor/{worker_job_id}-{attempt}/"
+            f"{cls._TRIAL_IMPORT_ARCHIVE_OBJECT_NAME}"
+        )
+
     async def extract_trial_import_archive(self, trial_id: str) -> int:
         """Extract a previously-uploaded trial import tarball into the trial prefix.
 
@@ -826,6 +839,11 @@ class StorageClient:
             Bucket=settings.s3_bucket,
             Key=self._trial_import_archive_key(trial_id),
         )
+
+    async def delete_object(self, s3_key: str) -> None:
+        """Delete one object by key."""
+        await self._ensure_client()
+        await self._s3.delete_object(Bucket=settings.s3_bucket, Key=s3_key)
 
     async def _upload_directory(
         self,
