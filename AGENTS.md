@@ -1594,6 +1594,16 @@ Keep these routing rules in sync with `oddish/src/oddish/config.py` and
   a bare `glm-5.3` keeps routing to z.ai and selecting Geometric takes an
   explicit `geometric/glm-5.3` (or the `gm/` alias) — the same opt-in rule
   Fireworks uses to take over GLM/MiniMax/Kimi ids.
+- The CLI sends `-m` as typed; model routing is a pure function of agent and
+  model string on the server and never reads provider credentials. Fireworks
+  and DeepSeek ids are **curated**: `curated_model_error` (`config.py`) checks
+  them against `_FIREWORKS_SHORT_MODEL_IDS` / `_DEEPSEEK_MODEL_ALIASES`, and
+  `validate_sweep_submission` returns 422 only when a config sends
+  `allow_unknown_model: false`. Current CLIs always send the flag
+  (`--allow-unknown-model` sets it true); older CLIs and the dashboard omit it
+  and keep the unchecked pass-through, so a released client never starts
+  failing on an id it could submit before. Bare `deepseek-*` stays on
+  DeepSeek's own API; Fireworks requires an explicit `fireworks/` prefix.
 - Geometric is also the one provider with a **served-model allowlist**
   (`_GEOMETRIC_SERVED_MODELS`), because a vLLM process serves exactly one
   `--served-model-name`, and because `geometric/<foreign-id>` would otherwise

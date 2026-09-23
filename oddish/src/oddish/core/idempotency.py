@@ -104,6 +104,10 @@ def compute_request_hash(submission: Any) -> str:
     # same as the original (linkage idempotency guard).
     if payload.get("github_id") is None:
         payload.pop("github_id", None)
+    # Older clients never send allow_unknown_model; keep their stored hashes.
+    for config in payload.get("configs") or []:
+        if isinstance(config, dict) and config.get("allow_unknown_model") is None:
+            config.pop("allow_unknown_model", None)
     # Fingerprint registry creds so equivalent secrets replay instead of leaking
     # raw tokens into the request hash.
     if hasattr(submission, "registry_auth"):

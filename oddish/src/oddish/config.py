@@ -494,8 +494,12 @@ def to_moonshot_model_id(model: str | None) -> str | None:
 DEEPSEEK_PROVIDER = "deepseek"
 DEEPSEEK_DEFAULT_BASE_URL = "https://api.deepseek.com"
 _DEEPSEEK_PROVIDER_PREFIXES: frozenset[str] = frozenset({"deepseek", "ds"})
+# Spelling -> canonical DeepSeek id. Identity entries mark ids DeepSeek serves;
+# ``curated_model_error`` rejects anything else for submissions that opt in.
 _DEEPSEEK_MODEL_ALIASES: dict[str, str] = {
+    "deepseek-v4-pro": "deepseek-v4-pro",
     "deepseek-v4-pro-0813": "deepseek-v4-pro",
+    "deepseek-v4-flash": "deepseek-v4-flash",
 }
 
 
@@ -565,6 +569,9 @@ _FIREWORKS_SHORT_MODEL_IDS: dict[str, str] = {
     "kimi-k2.7-code": "kimi-k2p7-code",
     "kimi-k2p7": "kimi-k2p7-code",
     "kimi-k2p7-code": "kimi-k2p7-code",
+    # Serverless id. Plain ``deepseek-v4-flash`` is on-demand only on Fireworks,
+    # so it is deliberately absent and the curated check suggests this one.
+    "deepseek-v4-flash-0731": "deepseek-v4-flash-0731",
 }
 
 
@@ -635,6 +642,35 @@ def to_fireworks_model_id(model: str | None) -> str | None:
     low = bare.strip().lower()
     canonical = _FIREWORKS_SHORT_MODEL_IDS.get(low, low)
     return f"{FIREWORKS_PROVIDER}/{canonical}"
+
+
+def curated_model_error(model: str | None) -> str | None:
+    """Return why a Fireworks/DeepSeek id is not in the curated catalog, else None.
+
+    Depends only on the model string and the alias tables above, never on which
+    provider credentials this process holds. Full ``accounts/...`` Fireworks
+    paths and every other provider are accepted.
+    """
+    cleaned = normalize_model_id(model)
+    if not cleaned:
+        return None
+    if is_fireworks_model(cleaned):
+        provider, known = FIREWORKS_PROVIDER, _FIREWORKS_SHORT_MODEL_IDS
+        bare = fireworks_bare_model_id(cleaned).lower()
+        if "/" in bare:
+            return None
+    elif is_deepseek_model(cleaned):
+        provider, known = DEEPSEEK_PROVIDER, _DEEPSEEK_MODEL_ALIASES
+        bare = deepseek_bare_model_id(cleaned).lower()
+    else:
+        return None
+    if bare in known:
+        return None
+    listed = ", ".join(sorted({f"{provider}/{c}" for c in known.values()}))
+    return (
+        f"Unknown {provider} model {model!r}. Known: {listed}. "
+        "Pass --allow-unknown-model (allow_unknown_model: true) to send it anyway."
+    )
 
 
 # xAI / Grok Build routing. Grok Build is a first-party Harbor installed agent,

@@ -139,7 +139,8 @@ Options
 - `--use-default-version` - When appending to an existing task, pin new trials to the task's current default version instead of the version the target experiment is already running (no effect when the run uploads task files)
 - `--config`, `-c PATH` - YAML or JSON config for multi-agent sweeps
 - `--agent`, `-a TEXT` - Agent name for simple single-agent runs (defaults to `claude-code`)
-- `--model`, `-m TEXT` - Model override for the selected agent
+- `--model`, `-m TEXT` - Model override for the selected agent. The CLI sends it as typed; the server resolves the provider and rejects a Fireworks or DeepSeek id that is not in its curated catalog, naming the known ids (for example `fireworks/deepseek-v4-flash` is rejected in favor of `fireworks/deepseek-v4-flash-0731`)
+- `--allow-unknown-model` - Submit a Fireworks or DeepSeek model id that is not in the curated catalog (per agent in a sweep config: `allow_unknown_model: true`)
 - `--harbor TEXT` - Override the Harbor source/ref for this run (`main`, a tag/SHA, `org/repo@ref`, or a git URL@ref); defaults to the locked fork commit (env: `ODDISH_HARBOR`)
 - `--n-trials INTEGER` - Number of trials per task
 - `--max-trial-attempts INTEGER` - Override the maximum Oddish attempts per trial, including the initial run

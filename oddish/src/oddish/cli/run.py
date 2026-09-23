@@ -322,6 +322,16 @@ def run(
             help="Model to use (optional)",
         ),
     ] = None,
+    allow_unknown_model: Annotated[
+        bool,
+        typer.Option(
+            "--allow-unknown-model",
+            help=(
+                "Submit a Fireworks/DeepSeek model id that is not in the "
+                "server's curated catalog."
+            ),
+        ),
+    ] = False,
     harbor: Annotated[
         Optional[str],
         typer.Option(
@@ -900,6 +910,11 @@ def run(
             }
         ]
         harbor_config = None
+
+    # The model id is sent as typed; the server canonicalizes it and checks the
+    # curated catalog. Sending the flag explicitly opts into that check.
+    for agent_model_config in configs:
+        agent_model_config.setdefault("allow_unknown_model", allow_unknown_model)
 
     # Resolve the Harbor source/ref override (CLI --harbor / env ODDISH_HARBOR)
     # with layer-atomic precedence and merge it into the harbor passthrough.

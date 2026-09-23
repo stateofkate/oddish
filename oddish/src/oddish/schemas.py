@@ -179,6 +179,14 @@ class AgentModelPair(TrialSpec):
         ge=1,
         description="(Deprecated) Max parallel trials for this agent",
     )
+    allow_unknown_model: bool | None = Field(
+        None,
+        description=(
+            "False rejects a Fireworks/DeepSeek model id missing from the "
+            "curated catalog; true sends it anyway. Omitted (older clients) "
+            "skips the check."
+        ),
+    )
 
 
 class RegistryAuth(BaseModel):

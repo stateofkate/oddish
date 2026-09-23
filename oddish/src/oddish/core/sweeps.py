@@ -6,7 +6,9 @@ from fastapi import HTTPException
 from harbor.models.environment_type import EnvironmentType
 
 from oddish.config import (
+    curated_model_error,
     is_geometric_model,
+    is_nop_oracle_agent,
     require_geometric_served_model_id,
     settings,
 )
@@ -17,6 +19,14 @@ from oddish.schemas import TaskSubmission, TaskSweepSubmission, TrialSpec
 def validate_sweep_submission(submission: TaskSweepSubmission) -> None:
     if not submission.configs:
         raise HTTPException(status_code=400, detail="Must specify 'configs'")
+    # Only clients that send allow_unknown_model=false opt into the catalog
+    # check; released CLIs omit the field and keep today's pass-through.
+    for config in submission.configs:
+        if config.allow_unknown_model is not False or is_nop_oracle_agent(config.agent):
+            continue
+        error = curated_model_error(config.model)
+        if error:
+            raise HTTPException(status_code=422, detail=error)
 
 
 def _validate_allowed_environment(

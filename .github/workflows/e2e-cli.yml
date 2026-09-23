@@ -90,7 +90,8 @@ jobs:
         run: >-
           uv run pytest
           ../oddish/tests/startup
-          ../oddish/tests/test_config_queue_keys.py -v
+          ../oddish/tests/test_config_queue_keys.py
+          ../oddish/tests/test_curated_model_submit.py -v
 
       - name: Run e2e CLI suite
         env:
