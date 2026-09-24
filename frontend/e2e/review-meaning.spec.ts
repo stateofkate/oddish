@@ -303,9 +303,82 @@ test.describe("real components with local fixture API", () => {
       has: page.getByRole("button", { name: "Task A", exact: true }),
     });
     await expect(row.getByText("v4", { exact: true })).toBeVisible();
-    await expect(row.getByText("v5", { exact: true })).toHaveCount(0);
+    await expect(row.getByText("v7", { exact: true })).toHaveCount(0);
+    await expect(
+      row.getByRole("link", {
+        name: "New task version available · v4 of v7",
+        exact: true,
+      })
+    ).toHaveAttribute(
+      "href",
+      "/tasks/task-a?version=task-a-v7&from=new-version"
+    );
+    await expect(
+      row.getByText("Verdict pending: none recorded", { exact: true })
+    ).toBeVisible();
     if (process.env.SCREENSHOT_PATH)
       await row.screenshot({ path: process.env.SCREENSHOT_PATH });
+  });
+
+  test("the new-version badge lands on the default version and flashes it once", async ({
+    page,
+  }) => {
+    await page.goto("/experiments/review-demo?scenario=older-trials");
+    await page
+      .getByRole("link", {
+        name: "New task version available · v4 of v7",
+        exact: true,
+      })
+      .first()
+      .click();
+    await expect(page).toHaveURL(/\/tasks\/task-a\?version=task-a-v7$/);
+    const switcher = page.getByRole("button", { name: /^v7 · default/ });
+    await expect(switcher).toHaveClass(/version-arrival-flash/);
+    await page.reload();
+    await expect(switcher).toBeVisible();
+    await expect(switcher).not.toHaveClass(/version-arrival-flash/);
+  });
+
+  test("an older-version drawer offers no action on the default version", async ({
+    page,
+  }) => {
+    // As on storage-multilog-commit-code: v4's audit is clean and the stored
+    // verdict evaluated v7.
+    await page.route(/\/api\/tasks\/task-a\/panel(?:\?|$)/, async (route) => {
+      const panel = await (await route.fetch()).json();
+      panel.task.review_version_matches = false;
+      panel.version.pre_trial_findings = [];
+      panel.version.retained_findings = [];
+      await route.fulfill({ json: panel });
+    });
+    await page.setViewportSize({ width: 1600, height: 900 });
+    await page.goto("/experiments/review-demo?scenario=older-trials&task=task-a");
+    const drawer = page.locator("[data-slot=resizable-drawer]");
+    const qa = drawer.getByRole("button", {
+      name: "Generate QA verdict for v4",
+      exact: true,
+    });
+    await expect(qa).toBeDisabled();
+    await expect(qa.locator("..")).toHaveAttribute(
+      "title",
+      "This experiment ran v4. Add v7 trials to it to run this."
+    );
+    await expect(
+      drawer.getByRole("button", { name: "Run pre-trial audit v4", exact: true })
+    ).toBeDisabled();
+    await expect(
+      drawer.getByRole("link", {
+        name: "New task version available · v4 of v7",
+        exact: true,
+      })
+    ).toBeVisible();
+    await expect(
+      drawer.getByText("Verdict pending: none recorded", { exact: true })
+    ).toBeVisible();
+    await expect(drawer.getByText(/(for|audit) v7/)).toHaveCount(0);
+    await expect(drawer.getByText("View QA run")).toHaveCount(0);
+    if (process.env.DRAWER_SCREENSHOT_PATH)
+      await drawer.screenshot({ path: process.env.DRAWER_SCREENSHOT_PATH });
   });
 
   test("background updates retain scores, selection, and scroll position", async ({

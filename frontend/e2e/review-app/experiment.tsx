@@ -46,10 +46,18 @@ export function FixtureExperiment() {
       return [
         {
           ...task,
-          current_version: 5,
-          current_version_id: "task-a-v5",
+          current_version: 7,
+          current_version_id: "task-a-v7",
           trial_version: 4,
           trial_version_id: "task-a-v4",
+          // v7's rejection, which says nothing about these v4 trials.
+          verdict: {
+            is_good: false,
+            confidence: "low",
+            primary_issue: "Baseline validation could not complete.",
+          },
+          review_version_matches: false,
+          must_fix_count: 0,
           trials:
             task.trials?.map((trial) => ({
               ...trial,

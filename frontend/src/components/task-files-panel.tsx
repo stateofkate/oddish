@@ -70,7 +70,9 @@ import type {
   Trial,
 } from "@/lib/types";
 import { isAgentTrial } from "@/lib/types";
+import { NewTaskVersionBadge } from "@/components/new-task-version-badge";
 import { TaskOverviewPanel } from "@/components/task-overview-panel";
+import { defaultVersionElsewhere } from "@/lib/experiment-task-version";
 import {
   getCancelActionLabel,
   isActivePipelineStatus,
@@ -917,7 +919,25 @@ export function TaskFilesPanel({
   const previewIdentity = unstable_serialize(previewRequestKey);
   const loadingFullFile = loadingFullFiles.has(previewIdentity);
 
-  const verdictSource = panel?.task ?? task;
+  const panelTask = panel?.task ?? task;
+  // An experiment pane shows the version its trials ran; the panel's task
+  // fields describe the default, so they carry the shown version along.
+  const verdictSource =
+    panelTask && cancelExperimentId && taskVersion != null
+      ? {
+          ...panelTask,
+          experiment_id: cancelExperimentId,
+          trial_version: taskVersion,
+        }
+      : panelTask;
+  const newerDefaultVersion = verdictSource
+    ? defaultVersionElsewhere(verdictSource)
+    : null;
+  // QA and audits run on the default version, never on this experiment's.
+  const versionActionHint =
+    newerDefaultVersion != null
+      ? `This experiment ran v${currentVersion}. Add v${newerDefaultVersion} trials to it to run this.`
+      : null;
   // Trial files and eager file-only callers retain their recursive/streaming
   // contract. Task directory batches are owned by useTaskFileTree.
   const buildRecursiveListingUrl = useCallback(() => {
@@ -994,6 +1014,7 @@ export function TaskFilesPanel({
   const canRunQA =
     actionsReady &&
     allowRetry &&
+    versionActionHint == null &&
     (cancelExperimentId
       ? Boolean(task) &&
         allTrialsTerminal &&
@@ -1001,7 +1022,12 @@ export function TaskFilesPanel({
         !verdictInFlight &&
         !panel?.qa_active
       : panel?.can_run_qa);
-  const qaActionLabel = `Generate QA verdict${verdictSource?.current_version != null ? ` for v${verdictSource.current_version}` : ""}`;
+  // Name the version the run would evaluate; a disabled button names the
+  // version on screen instead of one the experiment never ran.
+  const qaVersion = versionActionHint
+    ? currentVersion
+    : verdictSource?.current_version;
+  const qaActionLabel = `Generate QA verdict${qaVersion != null ? ` for v${qaVersion}` : ""}`;
 
   const navigateTo = useCallback(
     (nextIndex: number) => {
@@ -1900,6 +1926,24 @@ export function TaskFilesPanel({
     </div>
   );
 
+  const qaButton = (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      onClick={handleRunQA}
+      disabled={!canRunQA || isRunningQA}
+      className="h-7 px-2 text-[10px] font-semibold tracking-wide uppercase"
+    >
+      {isRunningQA ? (
+        <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+      ) : (
+        <Microscope className="mr-1 h-3.5 w-3.5" />
+      )}
+      {isRunningQA ? "Queueing..." : qaActionLabel}
+    </Button>
+  );
+
   const fileTreeContent = (
     <div className="@container/file-browser flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       {isListingLoading && !taskPaneExists && !selectedFile ? (
@@ -2164,11 +2208,12 @@ export function TaskFilesPanel({
                   checksStatus={sourceChecks?.pre_trial_status}
                   checksError={sourceChecks?.pre_trial_error}
                   onRerunChecks={readOnly ? undefined : handleRerunChecks}
+                  checksDisabledReason={versionActionHint}
                   checksRerunning={checksRerunning}
                   checksQueueError={checksQueueError}
                   checksLoading={checksLoading}
                   checksLoadError={checksLoadFailure}
-                  qaActive={taskQaActive}
+                  qaActive={taskQaActive && versionActionHint == null}
                   onOpenTrial={onOpenTrial}
                   onOpenSource={(item) => {
                     if (!item.file) return;
@@ -2194,23 +2239,14 @@ export function TaskFilesPanel({
                   executionReviewAction={
                     !readOnly &&
                     showAnalysis &&
-                    task && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={handleRunQA}
-                        disabled={!canRunQA || isRunningQA}
-                        className="h-7 px-2 text-[10px] font-semibold tracking-wide uppercase"
-                      >
-                        {isRunningQA ? (
-                          <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <Microscope className="mr-1 h-3.5 w-3.5" />
-                        )}
-                        {isRunningQA ? "Queueing..." : qaActionLabel}
-                      </Button>
-                    )
+                    task &&
+                    // A disabled button gets no hover events, so a wrapper
+                    // carries the reason.
+                    (versionActionHint ? (
+                      <span title={versionActionHint}>{qaButton}</span>
+                    ) : (
+                      qaButton
+                    ))
                   }
                   executionReviewError={qaActionError}
                 />
@@ -2244,6 +2280,9 @@ export function TaskFilesPanel({
                 <span className="border-border bg-muted/50 text-muted-foreground inline-flex shrink-0 items-center rounded-md border px-1.5 py-0.5 font-mono text-[11px] font-medium">
                   v{currentVersion}
                 </span>
+              )}
+              {showAnalysis !== false && verdictSource && (
+                <NewTaskVersionBadge task={verdictSource} linked={!readOnly} />
               )}
             </DrawerTitle>
             <div className="mt-1 min-h-3 text-[10px] text-emerald-600">

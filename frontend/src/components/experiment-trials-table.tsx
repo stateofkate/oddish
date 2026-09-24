@@ -35,6 +35,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { NewTaskVersionBadge } from "@/components/new-task-version-badge";
 import { TagPicker } from "@/components/tag-picker-lazy";
 import { TrialGridSkeleton } from "@/components/trial-grid-skeleton";
 import {
@@ -67,7 +68,10 @@ import type { Task, Trial, AnalysisClassification } from "@/lib/types";
 import { isAgentTrial } from "@/lib/types";
 import { preloadTrial } from "@/lib/use-trial";
 import { usePrefetchTaskFiles } from "@/lib/use-task-file-tree";
-import { resolveExperimentTaskVersion } from "@/lib/experiment-task-version";
+import {
+  defaultVersionElsewhere,
+  resolveExperimentTaskVersion,
+} from "@/lib/experiment-task-version";
 import {
   costEstimateMarks,
   formatCostUsd,
@@ -1155,7 +1159,13 @@ export function ExperimentTrialsTable({
           isActivePipelineStatus(trial.analysis_status)
         );
         const verdictInFlight = isActivePipelineStatus(task.verdict_status);
-        return allTrialsTerminal && !hasAnalysisInFlight && !verdictInFlight;
+        // QA would evaluate the default version, not these trials' version.
+        return (
+          allTrialsTerminal &&
+          !hasAnalysisInFlight &&
+          !verdictInFlight &&
+          defaultVersionElsewhere(task) == null
+        );
       }),
     [selectedTaskList]
   );
@@ -2605,6 +2615,10 @@ export function ExperimentTrialsTable({
                                   onPrefetch={() => prefetchTask(task)}
                                 />
                               )}
+                              <NewTaskVersionBadge
+                                task={task}
+                                linked={!readOnly}
+                              />
 
                               {(() => {
                                 // The version these trials ran, as the drawer shows.

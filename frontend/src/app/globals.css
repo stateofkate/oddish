@@ -518,3 +518,23 @@
     opacity: 1;
   }
 }
+
+/* One soft amber pulse on the task page's version switcher after a
+ * "New task version available" badge click. */
+.version-arrival-flash {
+  animation: version-arrival-flash 700ms ease-out;
+}
+
+@keyframes version-arrival-flash {
+  0%,
+  30% {
+    background-color: rgb(245 158 11 / 0.18);
+    border-color: rgb(245 158 11 / 0.45);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .version-arrival-flash {
+    animation: none;
+  }
+}

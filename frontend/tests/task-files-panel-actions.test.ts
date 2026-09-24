@@ -16,11 +16,13 @@ function renderPanel({
   allowRetry = true,
   experiment = true,
   loading = true,
+  taskVersion = undefined as number | undefined,
+  currentVersion = 1,
 } = {}) {
   const task = {
     id: "task-1",
     name: "Test task",
-    current_version: 1,
+    current_version: currentVersion,
     trials: statuses.map((status, i) => ({
       id: `trial-${i}`,
       kind: "agent",
@@ -67,6 +69,7 @@ function renderPanel({
       DrawerTitle: box,
     },
     "@/components/ui/skeleton": { Skeleton: box },
+    "@/components/new-task-version-badge": { NewTaskVersionBadge: () => null },
     "@/components/ui/tabs": { Tabs: box, TabsList: box, TabsTrigger: box },
     "@/components/renderers/file-renderer": {
       FileRenderer: box,
@@ -135,6 +138,16 @@ function renderPanel({
       cancelExperimentId: experiment ? "experiment-1" : undefined,
       overviewTrialsLoading: loading,
       allowRetry,
+      taskVersion,
+    })
+  );
+}
+
+function buttons(html: string) {
+  return [...html.matchAll(/<button(.*?)>(.*?)<\/button>/g)].map(
+    ([, attributes, label]) => ({
+      disabled: attributes.includes("disabled"),
+      label: label.replace(/<!--.*?-->/g, ""),
     })
   );
 }
@@ -190,5 +203,32 @@ test("task-wide actions use panel availability instead of experiment rows", () =
     !enabledButtons(
       renderPanel({ experiment: false, statuses: ["running", "success"] })
     ).some((label) => /Cancel|Rerun trials|Run execution review/.test(label))
+  );
+});
+
+test("an experiment on an older version cannot generate a verdict for the default", () => {
+  const html = renderPanel({
+    loading: false,
+    taskVersion: 4,
+    currentVersion: 5,
+  });
+  const qa = buttons(html).find(({ label }) =>
+    label.startsWith("Generate QA verdict")
+  );
+  assert.deepEqual(qa, { disabled: true, label: "Generate QA verdict for v4" });
+  assert.ok(
+    html.includes(
+      'title="This experiment ran v4. Add v5 trials to it to run this."'
+    ),
+    html
+  );
+  assert.ok(enabledButtons(html).includes("Rerun trials"));
+  assert.ok(
+    buttons(
+      renderPanel({ loading: false, taskVersion: 5, currentVersion: 5 })
+    ).some(
+      ({ disabled, label }) =>
+        !disabled && label === "Generate QA verdict for v5"
+    )
   );
 });

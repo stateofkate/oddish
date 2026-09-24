@@ -615,3 +615,127 @@ test("selected version without findings does not reuse another version's count",
   );
   assert.equal(presented.title, review.VERDICT_LABELS.outdated);
 });
+
+test("an experiment on an older version shows only a verdict stamped for that version", () => {
+  const older = {
+    ...task,
+    experiment_id: "exp-1",
+    trial_version: 4,
+    current_version: 5,
+    verdict: { verdict: "reject", is_good: false, confidence: null },
+  } as Task;
+  // The stored verdict evaluated v5, and any QA run acts on v5.
+  for (const override of [
+    { review_version_matches: false },
+    { review_version_matches: null },
+    { review_version_matches: false, verdict_status: "running" },
+    { review_version_matches: false, verdict_status: "failed" },
+  ] as const) {
+    const status = review.taskReviewStatus({ ...older, ...override });
+    assert.equal(status, "missing");
+    assert.equal(
+      review.VERDICT_LABELS[status],
+      "Verdict pending: none recorded"
+    );
+  }
+  assert.equal(review.taskReviewStatus(older), "needs_fixes");
+  assert.equal(
+    review.taskReviewStatus({ ...older, trial_version: 5 }),
+    "needs_fixes"
+  );
+  assert.equal(
+    review.taskReviewStatus({
+      ...older,
+      trial_version: 5,
+      review_version_matches: false,
+    }),
+    "outdated"
+  );
+  // The task page sets trial_version to the picked version but has no
+  // experiment: its QA status and mismatched verdict still show.
+  const taskPage = { ...older, experiment_id: "" };
+  assert.equal(
+    review.taskReviewStatus({ ...taskPage, review_version_matches: false }),
+    "outdated"
+  );
+  assert.equal(
+    review.taskReviewStatus({ ...taskPage, verdict_status: "running" }),
+    "running"
+  );
+});
+
+test("the new version badge names both versions and links to the default", () => {
+  const exports: {
+    NewTaskVersionBadge?: React.ComponentType<{
+      task: Task;
+      linked?: boolean;
+    }>;
+  } = {};
+  runInNewContext(
+    ts.transpileModule(
+      readFileSync(
+        new URL(
+          "../src/components/new-task-version-badge.tsx",
+          import.meta.url
+        ),
+        "utf8"
+      ),
+      {
+        compilerOptions: {
+          module: ts.ModuleKind.CommonJS,
+          jsx: ts.JsxEmit.ReactJSX,
+        },
+      }
+    ).outputText,
+    {
+      exports,
+      require: (name: string) =>
+        name === "react/jsx-runtime"
+          ? jsx
+          : name === "next/link"
+            ? {
+                __esModule: true,
+                default: (props: {
+                  href: string;
+                  children?: React.ReactNode;
+                }) =>
+                  React.createElement(
+                    "a",
+                    { href: props.href },
+                    props.children
+                  ),
+              }
+            : { ArrowUpRight: box },
+    }
+  );
+  const Badge = exports.NewTaskVersionBadge!;
+  const older = {
+    ...task,
+    trial_version: 4,
+    current_version: 6,
+    current_version_id: "task-1-v6",
+  } as Task;
+  const html = renderToStaticMarkup(
+    React.createElement(Badge, { task: older })
+  );
+  assert.ok(html.includes("New task version available · v4 of v6"), html);
+  assert.ok(
+    html.includes('href="/tasks/task-1?version=task-1-v6&amp;from=new-version"'),
+    html
+  );
+  assert.ok(
+    !renderToStaticMarkup(
+      React.createElement(Badge, { task: older, linked: false })
+    ).includes("href")
+  );
+  for (const current of [older.trial_version, 3, null]) {
+    assert.equal(
+      renderToStaticMarkup(
+        React.createElement(Badge, {
+          task: { ...older, current_version: current },
+        })
+      ),
+      ""
+    );
+  }
+});

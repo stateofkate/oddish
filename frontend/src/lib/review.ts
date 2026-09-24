@@ -7,6 +7,7 @@ import type {
 import { formatLineRange } from "@/lib/line-range";
 import { taskHasActiveVerdict, taskHasActiveAnalysis } from "@/lib/job-status";
 import { isBaselineAgentName } from "@/lib/experiment-agent-grouping";
+import { defaultVersionElsewhere } from "@/lib/experiment-task-version";
 
 export const EXECUTION_LABELS: Record<AnalysisClassification, string> = {
   GOOD_SUCCESS: "Good success",
@@ -99,6 +100,13 @@ export function taskReviewStatus(task: Task): keyof typeof REVIEW_LABELS {
       : task.verdict?.is_good === false
         ? "reject"
         : null);
+  // The verdict fields and any QA run belong to the default version. An
+  // experiment on another version shows only a verdict stamped for its own.
+  if (defaultVersionElsewhere(task) != null) {
+    if (task.review_version_matches !== true) return "missing";
+    if (verdict === "reject") return "needs_fixes";
+    return verdict === "accept" ? "accepted" : "missing";
+  }
   if (
     taskHasActiveVerdict(task) ||
     (task.verdict_status !== "failed" &&

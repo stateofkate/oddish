@@ -25,6 +25,7 @@ import {
 } from "@/components/qa-report/types";
 import { FALLBACK_TOKEN, VERDICT_TOKENS } from "@/components/qa-report/tokens";
 import { TaskVerdictBadge } from "@/components/task-verdict-badge";
+import { defaultVersionElsewhere } from "@/lib/experiment-task-version";
 import { isActivePipelineStatus } from "@/lib/job-status";
 import type {
   AnalysisClassification,
@@ -111,6 +112,7 @@ export function TaskOverviewPanel({
   checksStatus,
   checksError,
   onRerunChecks,
+  checksDisabledReason,
   checksRerunning,
   checksQueueError,
   checksLoading,
@@ -149,6 +151,8 @@ export function TaskOverviewPanel({
   checksStatus?: string | null;
   checksError?: string | null;
   onRerunChecks?: () => void;
+  /** Why the audit rerun is unavailable for the shown version. */
+  checksDisabledReason?: string | null;
   checksRerunning: boolean;
   checksQueueError?: string | null;
   /** The checks state is still being fetched: an absent status must not
@@ -424,6 +428,11 @@ export function TaskOverviewPanel({
   // re-queueable: re-queue is the backend's recovery path for queued jobs
   // that never got picked up.
   const auditRunning = (checksStatus ?? "").toLowerCase() === "running";
+  // Audits run on the default version; a disabled button names the version
+  // on screen instead of one this view never ran.
+  const auditVersion = checksDisabledReason
+    ? version
+    : verdictTask?.current_version;
 
   // Votes persist through the hosted API only; a public share pane has no
   // feedback route, so it renders no controls.
@@ -642,6 +651,24 @@ export function TaskOverviewPanel({
     );
   };
 
+  const auditButton = (
+    <button
+      type="button"
+      disabled={
+        checksRerunning ||
+        auditRunning ||
+        checksStateUnknown ||
+        checksDisabledReason != null
+      }
+      onClick={onRerunChecks}
+      className="text-muted-foreground hover:text-foreground border-border rounded border px-2 py-0.5 font-mono text-[10px] font-medium disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      {checksRerunning
+        ? "Queuing…"
+        : `Run pre-trial audit${auditVersion != null ? ` v${auditVersion}` : ""}`}
+    </button>
+  );
+
   return (
     <div className={cn("flex flex-col", className)}>
       {verdictTask ? (
@@ -654,7 +681,10 @@ export function TaskOverviewPanel({
             action={readOnly ? undefined : executionReviewAction}
             error={executionReviewError}
           />
-          {analysisTrialLink(verdictTask.verdict?._graded_by, "View QA run")}
+          {verdictTask.review_version_matches === true ||
+          defaultVersionElsewhere(verdictTask) == null
+            ? analysisTrialLink(verdictTask.verdict?._graded_by, "View QA run")
+            : null}
         </div>
       ) : null}
 
@@ -689,16 +719,13 @@ export function TaskOverviewPanel({
               />
             ) : null}
             {!readOnly && onRerunChecks ? (
-              <button
-                type="button"
-                disabled={checksRerunning || auditRunning || checksStateUnknown}
-                onClick={onRerunChecks}
-                className="text-muted-foreground hover:text-foreground border-border rounded border px-2 py-0.5 font-mono text-[10px] font-medium disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {checksRerunning
-                  ? "Queuing…"
-                  : `Run pre-trial audit${verdictTask?.current_version != null ? ` v${verdictTask.current_version}` : ""}`}
-              </button>
+              // A disabled button gets no hover events, so a wrapper carries
+              // the reason.
+              checksDisabledReason ? (
+                <span title={checksDisabledReason}>{auditButton}</span>
+              ) : (
+                auditButton
+              )
             ) : null}
           </div>
         </div>

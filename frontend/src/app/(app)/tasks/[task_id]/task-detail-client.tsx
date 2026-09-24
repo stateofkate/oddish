@@ -62,6 +62,7 @@ import { taskReviewStatus } from "@/lib/review";
 import { useOpenLatencySpan } from "@/lib/use-open-latency-span";
 import { preloadTrial, useTrial } from "@/lib/use-trial";
 import {
+  cn,
   formatRelativeTime,
   prBadge,
   taskPrUrl,
@@ -382,11 +383,14 @@ function VersionSwitcher({
   selectedVersionId,
   onSelect,
   onOpen,
+  flash = false,
 }: {
   versions: TaskOpenVersionRef[];
   selectedVersionId: string | null;
   onSelect: (id: string) => void;
   onOpen: () => void;
+  /** Briefly highlight the trigger, e.g. on arrival from a version badge. */
+  flash?: boolean;
 }) {
   if (versions.length === 0) return null;
   const selected = versions.find((v) => v.id === selectedVersionId);
@@ -400,7 +404,10 @@ function VersionSwitcher({
         <Button
           type="button"
           variant="ghost"
-          className="h-8 w-[220px] justify-between rounded-[7px] border border-[color:var(--paper-line)] bg-[color:var(--paper-surface)] px-3 font-mono text-[12px] text-[color:var(--paper-ink)] hover:bg-[color:var(--paper-surface-2)]"
+          className={cn(
+            "h-8 w-[220px] justify-between rounded-[7px] border border-[color:var(--paper-line)] bg-[color:var(--paper-surface)] px-3 font-mono text-[12px] text-[color:var(--paper-ink)] hover:bg-[color:var(--paper-surface-2)]",
+            flash && "version-arrival-flash"
+          )}
         >
           <span className="truncate">{triggerLabel}</span>
           <ChevronDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-60" />
@@ -771,6 +778,22 @@ export function TaskDetailClient({
     () => drawerTrialGroups.flatMap((group) => group.trials),
     [drawerTrialGroups]
   );
+
+  // Arriving from an experiment's "New task version available" badge flashes
+  // the version switcher once. The marker then leaves the URL so a reload does
+  // not flash again; useState keeps the first read so the flash plays out.
+  // Null state, like the other URL writes here: Next ignores a replaceState
+  // carrying its own history state, so useSearchParams would keep the marker.
+  const arrivalSearchParams = useSearchParams();
+  const [arrivedFromNewVersionBadge] = useState(
+    () => arrivalSearchParams.get("from") === "new-version"
+  );
+  useEffect(() => {
+    if (!arrivedFromNewVersionBadge) return;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("from");
+    window.history.replaceState(null, "", url.toString());
+  }, [arrivedFromNewVersionBadge]);
 
   const [deepLinkTrialParam] = useState<string | null>(() => {
     if (typeof window === "undefined") return null;
@@ -1296,6 +1319,7 @@ export function TaskDetailClient({
                 handleTaskPaneLinesChange(null);
               }}
               onOpen={() => setLoadVersionHistory(true)}
+              flash={arrivedFromNewVersionBadge}
             />
             {versions.length > 1 ? (
               <DefaultVersionControl
