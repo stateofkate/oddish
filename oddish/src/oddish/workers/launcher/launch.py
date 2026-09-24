@@ -2,7 +2,8 @@
 
 Launch succeeded is not trial finished. This claims the trial exactly as the
 worker does, starts a sandbox whose entrypoint is the monitor, and returns a
-handoff as soon as that sandbox exists. The job stays RUNNING under this
+handoff once that sandbox exists and has not ended within a short grace
+period (``_watch_start``). The job stays RUNNING under this
 worker's id and keeps its slot and capacity lease; settlement releases them.
 From the hand-off the reconciler owns the attempt: a monitor that never checks
 in goes stale and is asked for (``monitor_status_check``), and the launch
@@ -194,6 +195,66 @@ async def _hand_off(job: ClaimedWorkerJob) -> bool:
             .values(monitor_handed_off_at=utcnow())
         )
     return result.rowcount == 1
+
+
+async def _monitor_acked(job: ClaimedWorkerJob) -> bool:
+    """One read: has this attempt's monitor checked in? A failed read is "not
+    yet", so a database blip never fails a launch."""
+    try:
+        async with get_session() as session:
+            acked = (
+                await session.execute(
+                    select(WorkerJobModel.monitor_acked_at).where(
+                        WorkerJobModel.id == job.id,
+                        WorkerJobModel.attempts == job.attempts,
+                    )
+                )
+            ).scalar_one_or_none()
+    except _TRANSIENT_DB_ERRORS:
+        return False
+    return acked is not None
+
+
+async def _watch_start(
+    starter, job: ClaimedWorkerJob, external_id: str, *, lost: Callable[[], bool]
+) -> None:
+    """Watch a new sandbox for ``monitor_start_grace_seconds`` before the
+    hand-off, asking the provider every ``monitor_start_poll_seconds``.
+
+    Raises ``SandboxDiedAtStart`` when the provider reports it gone. Returns
+    early once the monitor has checked in or the beater has lost the run
+    (``lost``), at once when the provider cannot be asked (a status error
+    never fails a healthy launch), else when the grace ends."""
+    grace = settings.monitor_start_grace_seconds
+    if grace <= 0:
+        return
+    watching = monotonic()
+    deadline = watching + grace
+    while not lost():
+        try:
+            state = await asyncio.wait_for(
+                starter.sandbox_state(external_id),
+                timeout=max(deadline - monotonic(), 0.01),
+            )
+        except Exception as exc:  # noqa: BLE001 - unknown is not gone
+            logger.warning(
+                "sandbox %s state unknown at start, handing off: %s: %s",
+                external_id,
+                type(exc).__name__,
+                exc,
+            )
+            return
+        if state.gone:
+            raise monitor_sandbox.SandboxDiedAtStart(
+                f"sandbox {external_id} gone {monotonic() - watching:.1f}s "
+                f"after create: {state.detail or 'no exit information'}"
+            )
+        if await _monitor_acked(job):
+            return
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            return
+        await asyncio.sleep(min(settings.monitor_start_poll_seconds, remaining))
 
 
 def control_plane_url() -> str:
@@ -617,6 +678,15 @@ async def launch_monitor_attempt(
             verifier_resources=verifier_resources,
         )
         span_opened = True
+        # A sandbox the provider ends at once (a VM refused at boot) fails
+        # here, not 15-18 min later at the reaper. The beater keeps beating.
+        await _watch_start(
+            starter,
+            job,
+            external_id,
+            lost=lambda: ownership_lost or beat_error is not None,
+        )
+        _raise_if_lost()
         # The sandbox exists: hand off, fenced. A re-claim since the handle
         # was recorded means no row names our sandbox: the failure path stops
         # it and closes the span. The beater stops below, so from here the

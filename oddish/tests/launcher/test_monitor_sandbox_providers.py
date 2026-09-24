@@ -53,7 +53,10 @@ def test_every_registered_provider_loads_and_names_itself():
         assert starter.provider is provider
         # The job row stores the plain value; looking it up by that works too.
         assert monitor_sandbox.get_starter(provider.value).provider is provider
-        assert all(hasattr(starter, method) for method in ("start", "stop", "status"))
+        assert all(
+            hasattr(starter, method)
+            for method in ("start", "stop", "status", "sandbox_state")
+        )
 
 
 def test_an_unknown_provider_is_refused():
@@ -606,3 +609,72 @@ async def test_modal_starts_without_a_bundle_as_before(fake_modal):
         args == (monitor_sandbox.ENTRYPOINT,) == ("/usr/local/bin/mon-entrypoint.sh",)
     )
     assert fake_modal.secrets == [{"A": "1"}]
+
+
+# --- sandbox_state: has the sandbox itself ended? ----------------------------
+
+
+@pytest.mark.asyncio
+async def test_daytona_sandbox_state_needs_no_monitor_and_reads_an_end_as_gone(
+    fake_daytona,
+):
+    starter = daytona_starter.DaytonaStarter()
+    await starter.start(name="n", image="img", env={})
+    execs = list(fake_daytona.sandbox.commands)
+
+    assert not (await starter.sandbox_state("dt-123")).gone
+    assert fake_daytona.sandbox.commands == execs  # no exec inside the sandbox
+    for state in ("stopped", "error", "destroyed", "build_failed"):
+        fake_daytona.sandbox.state = state
+        fake_daytona.sandbox.error_reason = "boot refused"
+        reply = await starter.sandbox_state("dt-123")
+        assert reply.gone and state in reply.detail and "boot refused" in reply.detail
+    # A state that is not an end is not read as one.
+    fake_daytona.sandbox.state = "unknown"
+    assert not (await starter.sandbox_state("dt-123")).gone
+    assert (await starter.sandbox_state("dt-missing")).gone
+
+
+@pytest.mark.asyncio
+async def test_daytona_sandbox_state_that_cannot_be_asked_raises(
+    fake_daytona, monkeypatch
+):
+    starter = daytona_starter.DaytonaStarter()
+
+    async def _lookup_failed(external_id):
+        raise ConnectionError("daytona down")
+
+    monkeypatch.setattr(fake_daytona, "get", _lookup_failed)
+    with pytest.raises(monitor_sandbox.MonitorSandboxError, match="daytona down"):
+        await starter.sandbox_state("dt-123")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("poll", "not_found", "gone", "detail"),
+    [
+        (None, False, False, ""),
+        (-1, False, True, "exit code -1"),
+        (None, True, True, "not found"),
+    ],
+)
+async def test_modal_sandbox_state_polls_without_an_exec(
+    monkeypatch, poll, not_found, gone, detail
+):
+    from oddish.workers.launcher.providers.modal import ModalStarter
+
+    _fake_modal(monkeypatch, poll=poll, not_found=not_found)
+
+    reply = await ModalStarter().sandbox_state("sb-1")
+
+    assert reply.gone is gone and detail in reply.detail
+
+
+@pytest.mark.asyncio
+async def test_modal_sandbox_state_that_cannot_be_asked_raises(monkeypatch):
+    from oddish.workers.launcher.providers.modal import ModalStarter
+
+    _fake_modal(monkeypatch, error=ConnectionError("modal down"))
+
+    with pytest.raises(monitor_sandbox.MonitorSandboxError, match="modal down"):
+        await ModalStarter().sandbox_state("sb-1")

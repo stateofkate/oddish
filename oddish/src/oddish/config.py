@@ -1862,6 +1862,16 @@ class Settings(BaseSettings):
     # so it cannot fire during a legitimate warm-up. Set: that many seconds.
     # Applied only while monitor_execution_enabled is on.
     monitor_launch_deadline_seconds: int | None = None
+    # After create, the launcher watches the sandbox this long before it hands
+    # off, asking the provider every monitor_start_poll_seconds whether it has
+    # ended (``sandbox_state``), and hands off early once the monitor checks
+    # in. A sandbox gone in that window fails the attempt at launch
+    # (SandboxDiedAtStart) instead of waiting 15-18 min for the reaper (prod
+    # 24 Sep: a Modal VM sandbox killed ~1 s after create). 20 s covers
+    # failures at boot with a wide margin and bounds what a healthy launch
+    # pays; a provider that cannot answer hands off at once. 0: off.
+    monitor_start_grace_seconds: float = Field(20.0, ge=0)
+    monitor_start_poll_seconds: float = Field(2.0, gt=0)
     # Memory added to the OUTER monitor sandbox only, on top of the task's own
     # size, for the monitor and Docker daemons that share it. The task
     # container is unchanged. Priced in the sandbox cost span. On the worker

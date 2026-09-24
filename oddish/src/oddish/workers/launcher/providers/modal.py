@@ -15,6 +15,7 @@ from oddish.workers.launcher.providers.base import (
     MonitorSandboxError,
     SandboxProvider,
     SandboxSize,
+    SandboxState,
     StatusReply,
     monitor_start,
     warm_up_lifetime_seconds,
@@ -190,3 +191,17 @@ class ModalStarter:
             # The provider could not be asked: no verdict, as on Daytona.
             raise MonitorSandboxError(f"modal unreachable: {exc}") from exc
         return StatusReply(exit_code=exit_code, output=output)
+
+    async def sandbox_state(self, external_id: str) -> SandboxState:
+        import modal
+
+        try:
+            sandbox = await modal.Sandbox.from_id.aio(external_id)
+            code = await sandbox.poll.aio()
+        except modal.exception.NotFoundError:
+            return SandboxState(gone=True, detail="not found")
+        except Exception as exc:
+            raise MonitorSandboxError(f"modal unreachable: {exc}") from exc
+        if code is None:
+            return SandboxState(gone=False)
+        return SandboxState(gone=True, detail=f"exit code {code}")

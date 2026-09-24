@@ -27,6 +27,7 @@ from oddish.workers.launcher.providers.base import (
     MonitorSandboxError,
     SandboxProvider,
     SandboxSize,
+    SandboxState,
     StatusReply,
     WarmImageUnusable,
     monitor_start,
@@ -37,6 +38,12 @@ logger = logging.getLogger(__name__)
 
 PYTHON = "/opt/oddish/.venv/bin/python"
 _RUNNING_STATES = {"started", "starting"}
+# States a sandbox does not come back from by itself. Any other state
+# (creating, restoring, unknown, ...) is not read as an end.
+_ENDED_STATES = {
+    "stopping", "stopped", "destroying", "destroyed", "error", "build_failed",
+    "archiving", "archived",
+}  # fmt: skip
 
 
 def _state_of(sandbox) -> str:
@@ -320,3 +327,17 @@ class DaytonaStarter:
         return StatusReply(
             exit_code=int(result.exit_code), output=str(result.result or "")
         )
+
+    async def sandbox_state(self, external_id: str) -> SandboxState:
+        try:
+            async with _client() as client:
+                try:
+                    sandbox = await client.get(external_id)
+                except _not_found_errors():
+                    return SandboxState(gone=True, detail="not found")
+        except Exception as exc:
+            raise MonitorSandboxError(f"daytona unreachable: {exc}") from exc
+        state = _state_of(sandbox)
+        reason = getattr(sandbox, "error_reason", None)
+        detail = f"state {state}" + (f": {reason}" if reason else "")
+        return SandboxState(gone=state in _ENDED_STATES, detail=detail)

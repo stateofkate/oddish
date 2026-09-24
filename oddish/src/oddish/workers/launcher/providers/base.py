@@ -6,7 +6,7 @@ provider: the launcher routes by the trial's environment, and the reconciler
 and settlement look the starter up from the provider stored on the job row.
 
 To add a provider: one file with a class that has ``provider``, ``start``,
-``stop`` and ``status``, and one line in ``_STARTERS``.
+``stop``, ``status`` and ``sandbox_state``, and one line in ``_STARTERS``.
 """
 
 from __future__ import annotations
@@ -35,6 +35,12 @@ class WarmImageUnusable(MonitorSandboxError):
     wrong size, its layout no longer matches). The launcher drops the cache
     entry and warms it again; a snapshot that is merely gone is reported by
     ``warm_image_exists`` instead."""
+
+
+class SandboxDiedAtStart(MonitorSandboxError):
+    """The provider reports the new sandbox gone within the launcher's grace
+    period (``monitor_start_grace_seconds``): the attempt fails at launch
+    instead of being handed off."""
 
 
 class SandboxProvider(StrEnum):
@@ -174,6 +180,15 @@ class StatusReply(BaseModel, frozen=True):
         return cls(exit_code=1)
 
 
+class SandboxState(BaseModel, frozen=True):
+    """Whether the sandbox itself has ended, asked of the provider without an
+    exec inside it: unlike ``status`` it does not need the monitor to have
+    written anything yet. ``detail`` is the provider's exit information."""
+
+    gone: bool
+    detail: str = ""
+
+
 class MonitorSandboxStarter(Protocol):
     provider: SandboxProvider
 
@@ -201,6 +216,11 @@ class MonitorSandboxStarter(Protocol):
 
     async def status(self, external_id: str) -> StatusReply:
         """Run ``oddish-mon status`` inside the sandbox."""
+
+    async def sandbox_state(self, external_id: str) -> SandboxState:
+        """Whether the sandbox has ended (``gone``: exited, stopped, errored or
+        not found). Raises ``MonitorSandboxError`` when the provider cannot be
+        asked: the caller must never read that as gone."""
 
 
 # The most each step of a warm-up (the pull, then the snapshot) may take.

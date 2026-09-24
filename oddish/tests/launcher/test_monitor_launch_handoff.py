@@ -1,6 +1,7 @@
 """The launcher hands off as soon as the sandbox exists.
 
-It never reads the monitor's check-in: from the hand-off the reconciler owns
+Apart from the start grace (``test_monitor_launch_start_grace``) it never
+reads the monitor's check-in: from the hand-off the reconciler owns
 the attempt (stale heartbeat, provider probe, launch deadline). What the
 launcher still owns is everything before and at create.
 """
