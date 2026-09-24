@@ -98,7 +98,6 @@ def _trial(
     reward: float | None = 1.0,
     cost_usd: float | None = None,
     idempotency_key: str | None = None,
-    is_probe: bool = False,
     superseded_by_trial_id: str | None = None,
     age_seconds: int = 0,
 ) -> TrialModel:
@@ -118,7 +117,6 @@ def _trial(
         reward=reward if status == TrialStatus.SUCCESS else None,
         cost_usd=cost_usd,
         idempotency_key=idempotency_key,
-        is_probe=is_probe,
         superseded_by_trial_id=superseded_by_trial_id,
         created_at=utcnow() - timedelta(seconds=age_seconds),
     )
@@ -287,8 +285,7 @@ async def test_open_summary_and_trial_page_follow_the_effective_version(session)
         task, experiment, task_version_id=v1, status=TrialStatus.RUNNING, age_seconds=3
     )
     on_v2 = _trial(task, experiment, task_version_id=v2, reward=1.0, age_seconds=4)
-    probe = _trial(task, experiment, task_version_id=v1, is_probe=True, age_seconds=5)
-    session.add_all([newest, older, oldest, on_v2, probe])
+    session.add_all([newest, older, oldest, on_v2])
     await session.flush()
     superseded = _trial(
         task,

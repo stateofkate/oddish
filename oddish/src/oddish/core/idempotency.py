@@ -83,8 +83,23 @@ def hash_idempotency_key(raw_key: str) -> str:
     return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
 
 
+# Sweep fields removed with operator probes, at their former defaults. Stored
+# hashes (Sherpa external_request_id replays last years) include them.
+_REMOVED_SWEEP_FIELD_DEFAULTS = {
+    "extra_instructions": None,
+    "skill_ids": None,
+    "probe_name": None,
+    "result_focus": None,
+    "probe_scope": "task",
+    "evaluation_metric": None,
+    "run_probe": False,
+}
+
+
 def compute_request_hash(submission: Any) -> str:
     payload = submission.model_dump(mode="json")
+    if "configs" in payload:  # sweep submissions only
+        payload = {**_REMOVED_SWEEP_FIELD_DEFAULTS, **payload}
     # Existing declarative requests must keep their pre-add_trials hash across
     # deployment; only the explicit additive operation changes request identity.
     if not payload.get("add_trials"):

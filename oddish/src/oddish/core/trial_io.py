@@ -24,12 +24,7 @@ from oddish.core.trial_artifacts import (
     trial_name_from_manifest,
 )
 from oddish.db import TrialModel, get_storage_client
-from oddish.db.storage import (
-    StorageClient,
-    _cleanup_temp_directory,
-    is_missing_object,
-    resolve_trial_directory,
-)
+from oddish.db.storage import StorageClient, is_missing_object
 from oddish.timing import current_request_timing, timed_phase
 from oddish.workers.agents.claude_code import (
     convert_claude_code_stream_text_to_trajectory,
@@ -42,10 +37,8 @@ _CACHE_TTL_SECONDS = 120.0
 _CACHE_MAX_ENTRIES = 128
 _STRUCTURED_LOGS_CACHE: dict[tuple[str, int, str | None, bool], tuple[float, dict]] = {}
 _TRAJECTORY_CACHE: dict[tuple[str, int, str | None], tuple[float, dict | None]] = {}
-_PROBE_ARTIFACTS_CACHE: dict[tuple[str, int, str | None], tuple[float, dict]] = {}
 _STRUCTURED_LOGS_LOCKS: dict[tuple[str, int, str | None, bool], asyncio.Lock] = {}
 _TRAJECTORY_LOCKS: dict[tuple[str, int, str | None], asyncio.Lock] = {}
-_PROBE_ARTIFACTS_LOCKS: dict[tuple[str, int, str | None], asyncio.Lock] = {}
 _ARTIFACT_FALLBACK_ERRORS = (
     BotoCoreError,
     ClientError,
@@ -65,13 +58,6 @@ _VERIFIER_STDERR_RELATIVE_PATHS = (
 _VERIFIER_STDOUT_SUFFIXES = ("/test-stdout.txt", "/verifier/stdout.txt")
 _VERIFIER_STDERR_SUFFIXES = ("/test-stderr.txt", "/verifier/stderr.txt")
 logger = logging.getLogger(__name__)
-
-_EMPTY_PROBE_ARTIFACTS: dict = {
-    "trajectory": None,
-    "verifier_stdout": None,
-    "agent_messages": [],
-    "watchdog_log": None,
-}
 
 
 def _cache_get[K: Hashable, T](
@@ -558,72 +544,6 @@ async def read_trial_logs_structured(
         )
         if _should_cache_trial(trial):
             _cache_set(_STRUCTURED_LOGS_CACHE, cache_key, result)
-        return result
-
-
-async def _read_trial_probe_artifacts_uncached(trial: TrialModel) -> dict:
-    """Resolve the probe `_artifacts` blob (agent transcript, verifier stdout,
-    trajectory, watchdog log) that the probe result page renders.
-
-    The local runner inlines this into ``trial.result["_artifacts"]``; cloud
-    trials leave ``trial.result`` empty and keep the artifacts only in object
-    storage. This downloads the trial directory on demand and extracts the same
-    shape, so the UI shows the agent output for cloud trials too.
-    """
-    if isinstance(trial.result, dict):
-        inlined = trial.result.get("_artifacts")
-        if isinstance(inlined, dict):
-            return inlined
-
-    # Imported here (not at module load) to avoid pulling the worker analysis
-    # stack into every API import.
-    from oddish.worker.probe_analysis import extract_probe_artifacts
-
-    storage = get_storage_client()
-    layout = await resolve_trial_artifact_layout(trial, storage)
-    if layout.mode is TrialArtifactMode.UNAVAILABLE:
-        return _EMPTY_PROBE_ARTIFACTS
-    assert layout.artifact_prefix is not None
-    try:
-        trial_dir, temp_dir, _ = await resolve_trial_directory(
-            trial_id=trial.id,
-            trial_s3_key=layout.artifact_prefix,
-            trial_result_path=(
-                trial.harbor_result_path
-                if layout.mode is TrialArtifactMode.LEGACY
-                else None
-            ),
-        )
-    except (OSError, RuntimeError, ValueError) as exc:
-        logger.warning(
-            "Could not resolve trial dir for probe artifacts %s: %s", trial.id, exc
-        )
-        return _EMPTY_PROBE_ARTIFACTS
-
-    try:
-        return extract_probe_artifacts(trial_dir)
-    finally:
-        if temp_dir is not None:
-            _cleanup_temp_directory(temp_dir)
-
-
-async def read_trial_probe_artifacts(trial: TrialModel) -> dict:
-    cache_key = (trial.id, trial.attempts, trial.trial_s3_key)
-    if _should_cache_trial(trial):
-        cached = _cache_get(_PROBE_ARTIFACTS_CACHE, cache_key)
-        if cached is not None:
-            return cached  # type: ignore[return-value]
-
-    lock = _get_lock(_PROBE_ARTIFACTS_LOCKS, cache_key)
-    async with lock:
-        if _should_cache_trial(trial):
-            cached = _cache_get(_PROBE_ARTIFACTS_CACHE, cache_key)
-            if cached is not None:
-                return cached  # type: ignore[return-value]
-
-        result = await _read_trial_probe_artifacts_uncached(trial)
-        if _should_cache_trial(trial):
-            _cache_set(_PROBE_ARTIFACTS_CACHE, cache_key, result)
         return result
 
 

@@ -23,7 +23,7 @@ Directly-attributed rows are UNIONed in, so a row carrying both ``trial_id``
 and ``task_id`` (possible after the attribution fix) is charged once.
 
 Filter parity with ``experiment_cost`` is deliberate: ``include_deleted=True``,
-and no version / superseded / probe filtering. Deleting a trial removes it from
+and no version / superseded filtering. Deleting a trial removes it from
 the view; it does not refund it. Soft-deleted ``analysis_costs`` rows ARE
 excluded -- those are voided charges, not hidden ones. ``analysis_costs`` is
 not registered with the soft-delete auto-filter, so that exclusion is spelled
@@ -183,7 +183,7 @@ async def get_task_qa_costs(
 
     ``trial_scope_pairs`` narrows the per-trial branch to a given set of
     ``(task_id, task_version_id)`` pairs and applies the same
-    current-version / non-probe / non-superseded / non-combine-copy / live
+    current-version / non-superseded / non-combine-copy / live
     filters the task-browse card uses for its agent-cost figure -- so the two
     numbers on one card describe the same trials. Task-level (``task_id``)
     rows are untouched: they are not version-scoped. When ``None`` (task
@@ -224,7 +224,6 @@ async def get_task_qa_costs(
     if scoped:
         via_trials = via_trials.where(
             TrialModel.superseded_by_trial_id.is_(None),
-            TrialModel.is_probe.isnot(True),
             not_combine_copy_filter(),
             tuple_(TrialModel.task_id, TrialModel.task_version_id).in_(
                 list(trial_scope_pairs)

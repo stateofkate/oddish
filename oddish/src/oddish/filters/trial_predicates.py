@@ -18,7 +18,6 @@ class EligibleTrialScope:
     """Membership clauses supplied by the surface using the filter."""
 
     membership: Sequence[Any]
-    include_probes: bool = False
     include_superseded: bool = False
     include_deleted: bool = False
     # Platform analysis runs (``trials.kind != 'agent'``) are excluded by
@@ -30,8 +29,6 @@ class EligibleTrialScope:
         clauses = list(self.membership)
         if not self.include_non_agent_kinds:
             clauses.append(TrialModel.kind == "agent")
-        if not self.include_probes:
-            clauses.append(TrialModel.is_probe.isnot(True))
         if not self.include_superseded:
             clauses.append(TrialModel.superseded_by_trial_id.is_(None))
         if not self.include_deleted:

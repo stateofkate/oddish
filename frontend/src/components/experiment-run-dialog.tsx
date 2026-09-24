@@ -56,10 +56,7 @@ export function ExperimentRunDialog({
   const solverTrials = tasks
     .flatMap((task) => task.trials ?? [])
     .filter(
-      (trial) =>
-        isAgentTrial(trial) &&
-        !trial.is_probe &&
-        !isBaselineAgentName(trial.agent)
+      (trial) => isAgentTrial(trial) && !isBaselineAgentName(trial.agent)
     );
   const agents = [
     ...new Set([

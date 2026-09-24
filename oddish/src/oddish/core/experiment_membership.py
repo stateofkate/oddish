@@ -103,7 +103,6 @@ def visible_experiment_trial_predicates(experiment_id: str) -> tuple[Any, ...]:
         trial_in_experiment(experiment_id),
         TrialModel.deleted_at.is_(None),
         TrialModel.kind == AGENT_TRIAL_KIND,
-        TrialModel.is_probe.is_(False),
         TrialModel.superseded_by_trial_id.is_(None),
     )
 
@@ -162,7 +161,6 @@ class ExperimentTrialScope:
             *self.member_predicates(),
             trials.deleted_at.is_(None),
             trials.kind == AGENT_TRIAL_KIND,
-            trials.is_probe.is_(False),
             trials.superseded_by_trial_id.is_(None),
         )
 

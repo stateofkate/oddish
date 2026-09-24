@@ -117,10 +117,10 @@ async def _seed(org_id: str) -> str:
             text(
                 "insert into tasks "
                 '(id,name,org_id,"user",priority,status,task_path,tags,'
-                "effective_tag_ids,current_version_tag_ids,run_analysis,run_probe,"
+                "effective_tag_ids,current_version_tag_ids,run_analysis,"
                 "created_at,updated_at) "
                 "values (:id,:name,:org,'u','LOW','COMPLETED','p','{}'::jsonb,"
-                "'{}'::text[],'{}'::text[],false,false,now(),now()) "
+                "'{}'::text[],'{}'::text[],false,now(),now()) "
                 "on conflict (id) do update set "
                 "org_id = excluded.org_id, deleted_at = null, updated_at = now()"
             ),

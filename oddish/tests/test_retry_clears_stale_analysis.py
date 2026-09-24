@@ -87,7 +87,6 @@ async def _settle(
     trial_id: str,
     *,
     attempts: int,
-    is_probe: bool = False,
     task_status: TaskStatus,
 ) -> None:
     """Put the trial in the state the settle hook sees after a re-attempt."""
@@ -103,7 +102,6 @@ async def _settle(
         trial.analysis_status = AnalysisStatus.SUCCESS
         trial.analysis_started_at = started - timedelta(hours=4)
         trial.analysis_finished_at = started - timedelta(hours=4)
-        trial.is_probe = is_probe
 
         task = await session.get(TaskModel, trial.task_id)
         task.status = task_status
@@ -147,31 +145,6 @@ async def test_stale_analysis_is_dropped_and_the_closed_task_reopens(
     assert task.status is not TaskStatus.COMPLETED
     assert task.verdict is None
     assert task.finished_at is None
-
-
-@pytest.mark.asyncio
-async def test_a_probes_own_classification_survives_settlement(cleanup_task_ids):
-    """A probe writes its analysis DURING settlement; it must not be wiped.
-
-    Keying on ``attempts > 1`` alone would destroy it on any retried probe.
-    """
-    task_id = f"stale-analysis-probe-{_RUN}"
-    cleanup_task_ids.append(task_id)
-    trial_id = await _make_task(task_id)
-    await _settle(
-        trial_id,
-        attempts=3,
-        is_probe=True,
-        task_status=TaskStatus.COMPLETED,
-    )
-
-    await trial_handler._run_post_trial_hooks(trial_id)
-
-    async with get_session() as session:
-        trial = await session.get(TrialModel, trial_id)
-
-    assert trial.analysis == _STALE
-    assert trial.analysis_status is AnalysisStatus.SUCCESS
 
 
 @pytest.mark.asyncio

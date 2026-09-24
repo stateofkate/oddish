@@ -285,10 +285,6 @@ class TaskSubmission(BaseModel):
     )
     experiment_id: str | None = Field(None, description="Optional experiment ID")
     tags: dict[str, str] = Field(default_factory=dict, description="Optional tags")
-    run_probe: bool = Field(
-        False,
-        description="If True, auto-enqueue a probe trial for this task's version on submit. Opt-in (off by default).",
-    )
     gate_baselines: bool = Field(
         True,
         description=(
@@ -318,42 +314,6 @@ class TaskSubmission(BaseModel):
     content_hash: str | None = Field(
         None,
         description="Deterministic hash of task directory contents (set by CLI during upload)",
-    )
-    extra_instructions: str | None = Field(
-        default=None,
-        description=(
-            "Operator-supplied prompt content to prepend to the task's instruction "
-            "for every trial in this submission. Used for probe / adversarial probes."
-        ),
-    )
-    skill_ids: list[str] | None = None
-    probe_name: str | None = Field(
-        default=None,
-        description=(
-            "Human-readable name for a probe run (e.g. the preset name the operator "
-            "selected). Surfaced in probe-history UIs in place of the model name."
-        ),
-    )
-    result_focus: str | None = Field(
-        default=None,
-        description=(
-            "Optional question the operator wants answered about this trial. "
-            "The analyzer answers it in its result_focus_findings field."
-        ),
-    )
-    probe_scope: Literal["task", "experiment"] = Field(
-        default="task",
-        description=(
-            "Probe artifact-visibility scope. 'task' stages same-task sibling "
-            "trials; 'experiment' stages trials across the whole experiment."
-        ),
-    )
-    evaluation_metric: str | None = Field(
-        default=None,
-        description=(
-            "How to render the trial's result. One of 'cheat_ratio', "
-            "'result_focus', 'none'. Default null = no specific metric."
-        ),
     )
     link: str | None = Field(
         None,
@@ -429,49 +389,6 @@ class TaskSweepSubmission(BaseModel):
     configs: list[AgentModelPair] = Field(
         ..., description="List of agent/model pairs with individual trial counts"
     )
-    extra_instructions: str | None = Field(
-        default=None,
-        description=(
-            "Operator-supplied prompt content to prepend to the task's instruction "
-            "for every trial in this submission. Used for probe / adversarial probes."
-        ),
-    )
-    skill_ids: list[str] | None = Field(
-        default=None,
-        description=(
-            "IDs of skills to mount into the probe agent's workspace for every "
-            "trial in this submission. Only these skills are mounted (not all "
-            "org skills)."
-        ),
-    )
-    probe_name: str | None = Field(
-        default=None,
-        description=(
-            "Human-readable name for a probe run (e.g. the preset name the operator "
-            "selected). Surfaced in probe-history UIs in place of the model name."
-        ),
-    )
-    result_focus: str | None = Field(
-        default=None,
-        description=(
-            "Optional question the operator wants answered about this trial. "
-            "The analyzer answers it in its result_focus_findings field."
-        ),
-    )
-    probe_scope: Literal["task", "experiment"] = Field(
-        default="task",
-        description=(
-            "Probe artifact-visibility scope. 'task' stages same-task sibling "
-            "trials; 'experiment' stages trials across the whole experiment."
-        ),
-    )
-    evaluation_metric: str | None = Field(
-        default=None,
-        description=(
-            "How to render the trial's result. One of 'cheat_ratio', "
-            "'result_focus', 'none'. Default null = no specific metric."
-        ),
-    )
 
     # Common fields
     user: str | None = Field(
@@ -513,10 +430,6 @@ class TaskSweepSubmission(BaseModel):
             "so the default environment choice skips a backend that would "
             "reject the task at launch. Never changes what the trial runs with."
         ),
-    )
-    run_probe: bool = Field(
-        False,
-        description="If True, auto-enqueue a probe trial for this task's version on submit. Opt-in (off by default).",
     )
     gate_baselines: bool = Field(
         True,
@@ -1073,7 +986,7 @@ class ExperimentCostTotals(BaseModel):
 
     Served separately from the trial grid because it cannot be derived from it:
     the grid is paginated, and it is filtered to each task's current version, so
-    it omits earlier versions, superseded retries, probes and deleted trials --
+    it omits earlier versions, superseded retries and deleted trials --
     all of which were still billed. Expect this to exceed the sum of the visible
     rows. Owned spend counts what the quota sum and the admin cost breakdown
     count, so the page, the admin table and the invoice agree on one number.
@@ -1344,7 +1257,7 @@ class TrialResponse(BaseModel):
         None,
         description=(
             "Harbor passthrough config (agent env/kwargs, environment "
-            "resources, probe mode marker, extra_instructions, etc.). "
+            "resources, etc.). "
             "Surfaced for clients that need to render mode-specific UI."
         ),
     )
@@ -1359,14 +1272,6 @@ class TrialResponse(BaseModel):
     kind: str = Field(
         default="agent",
         description="agent | qa | audit",
-    )
-    is_probe: bool = Field(
-        False,
-        description=(
-            "True if this trial is a probe (operator-directed instruction "
-            "overlay) rather than a real solution attempt. Indexed for "
-            "server-side filtering."
-        ),
     )
 
     # Token usage & cost
@@ -1911,7 +1816,7 @@ class AgentModelFacet(BaseModel):
 class TaskBrowseFacets(BaseModel):
     """Distinct values for populating the task-browser filter controls.
 
-    Trial-derived facets are scoped to the org's non-probe, non-superseded
+    Trial-derived facets are scoped to the org's non-superseded
     trials. Enum-valued filters (task status, priority, trial status, origin)
     are static and supplied client-side, so they are not returned here.
 
@@ -1978,7 +1883,6 @@ class TaskStatusResponse(BaseModel):
     reward_sum: float | None = None
     reward_total: int | None = None
     run_analysis: bool = False
-    run_probe: bool = False
     review_version_matches: bool | None = None
     verdict_status: VerdictStatus | None = None
     verdict: dict | None = None
@@ -2075,7 +1979,6 @@ class TaskOpenAgentModelSummary(BaseModel):
     model: str | None = None
     reasoning_effort: str | None = None
     providers: list[str] = Field(default_factory=list)
-    is_probe: bool = False
     trial_count: int = 0
     completed_count: int = 0
     failed_count: int = 0
@@ -2152,7 +2055,6 @@ class TaskOpenTrialRef(BaseModel):
     status: TrialStatus
     reward: float | None = None
     error_kind: str | None = None
-    is_probe: bool = False
     cost_usd: float | None = None
     cost_is_estimated: bool | None = None
     is_billed: bool = False
@@ -2565,99 +2467,6 @@ class ProfanityReportCreateRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Experiment probe rows — aggregated probe trial status per task.
-# ---------------------------------------------------------------------------
-
-
-class ExperimentProbeRow(BaseModel):
-    """One row per task in an experiment, summarising the most recent probe trial
-    for the task's current version.
-    """
-
-    task_id: str
-    task_name: str
-    version: int | None
-    model: str | None
-    status: str
-    probe_trial_id: str
-
-
-class OrgProbeRow(BaseModel):
-    """One row per task in the org that has at least one probe trial.
-
-    Summarises a task's probe activity for the QA "Probe Runs" listing:
-    total probe-run count plus the timestamp and status of the most recent
-    probe trial. Ordered most-recent-first by the core query.
-    """
-
-    task_id: str
-    task_name: str
-    run_count: int
-    last_run_at: datetime | None
-    last_status: str
-    probe_names: list[str] = Field(default_factory=list)
-
-
-# Skills — custom agent skill bundles.
-# ---------------------------------------------------------------------------
-class SkillFile(BaseModel):
-    """One file inside a skill bundle.
-
-    ``from_attributes`` lets ``SkillResponse`` serialize the nested
-    ``SkillFileModel`` ORM rows (not just plain dicts on the request path)."""
-
-    relative_path: str
-    content: str
-
-    model_config = {"from_attributes": True}
-
-
-class SkillCreate(BaseModel):
-    """Request body to create a custom skill from its files.
-
-    ``name``/``description`` are authoritative for the row, but must agree
-    with the SKILL.md frontmatter (enforced by ``parse_skill``)."""
-
-    name: str
-    description: str
-    files: list[SkillFile]
-    operator_prompt: str | None = None
-    result_focus: str | None = None
-    evaluation_metric: str | None = None
-
-
-class SkillUpdate(BaseModel):
-    """Request body to update a custom skill. All fields optional; only
-    provided fields are applied. Providing ``files`` replaces the whole set."""
-
-    name: str | None = None
-    description: str | None = None
-    files: list[SkillFile] | None = None
-    operator_prompt: str | None = None
-    result_focus: str | None = None
-    evaluation_metric: str | None = None
-
-
-class SkillResponse(BaseModel):
-    """A skill as returned to the client."""
-
-    id: str
-    org_id: str | None = None
-    created_by_user_id: str | None = None
-    name: str
-    description: str
-    is_seed: bool
-    files: list[SkillFile]
-    operator_prompt: str | None = None
-    result_focus: str | None = None
-    evaluation_metric: str | None = None
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = {"from_attributes": True}
-
-
-# ---------------------------------------------------------------------------
 # Experiment typeahead — shared item shape for the task browser.
 # ---------------------------------------------------------------------------
 class ExperimentOption(BaseModel):
@@ -2674,71 +2483,6 @@ class ExperimentOptionsResponse(BaseModel):
     """
 
     items: list[ExperimentOption] = Field(default_factory=list)
-
-
-# ---------------------------------------------------------------------------
-# Documents — agent doc-store.
-# ---------------------------------------------------------------------------
-class DocumentCreate(BaseModel):
-    """Request body to ingest a document.
-
-    Exactly one of ``content`` (text/paste) or ``file_b64`` (uploaded bytes)
-    must be provided. ``source_type`` selects the ingest path.
-    """
-
-    title: str | None = None  # falls back to filename / first line
-    source_type: str = "paste"  # upload|paste|link
-    source_url: str | None = None
-    content: str | None = None  # for paste/link text
-    file_b64: str | None = None  # base64 raw bytes for upload
-    raw_filename: str | None = None
-    raw_mime: str | None = None
-
-
-class DocumentUpdate(BaseModel):
-    """Edit metadata. All fields optional; only provided fields applied.
-    Set ``regenerate_digest=True`` to re-run the Claude digest step."""
-
-    title: str | None = None
-    summary: str | None = None
-    tags: list[str] | None = None
-    regenerate_digest: bool = False
-
-
-class DocumentCard(BaseModel):
-    """Cheap tier-1 list/search result — no digest/raw body."""
-
-    id: str
-    title: str
-    summary: str
-    tags: list[str]
-    source_type: str
-    source_url: str | None = None
-    created_by_user_id: str | None = None
-    updated_at: datetime
-
-    model_config = {"from_attributes": True}
-
-
-class DocumentResponse(BaseModel):
-    """Full document as returned to the client (includes the tier-2 digest,
-    excludes raw bytes — those come from the MCP ``inspect_source`` path)."""
-
-    id: str
-    org_id: str | None = None
-    created_by_user_id: str | None = None
-    title: str
-    source_type: str
-    source_url: str | None = None
-    summary: str
-    digest_text: str
-    tags: list[str]
-    raw_mime: str | None = None
-    raw_filename: str | None = None
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = {"from_attributes": True}
 
 
 FEEDBACK_BODY_MAX_CHARS = 20_000

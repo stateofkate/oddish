@@ -1,12 +1,12 @@
 """Task 7: union gathered trials into the export path and the public/share
-path for collection experiments, while keeping probes out of public views.
+path for collection experiments.
 
 Site 1 (export): ``list_experiment_trials_for_org`` must include trials
 gathered into a collection via ``experiment_trials``, not just trials whose
 home ``experiment_id`` matches.
 
 Site 2 (public/share): the bounded public resources must also admit gathered
-trials, but ``is_probe`` trials must still never appear.
+trials.
 """
 
 from __future__ import annotations
@@ -122,7 +122,6 @@ def _trial(
     home_experiment: ExperimentModel,
     *,
     org_id: str = "org1",
-    is_probe: bool = False,
     task_version_id: str | None = None,
 ) -> TrialModel:
     trial_id = generate_id()
@@ -137,7 +136,6 @@ def _trial(
         provider="openai",
         queue_key="openai/gpt-5.5",
         model="gpt-5.5",
-        is_probe=is_probe,
     )
 
 
@@ -271,7 +269,7 @@ async def test_public_trial_access_is_scoped_to_share_token(session):
         ],
     )
 
-    trial = _trial(task, exp_a, org_id=None, is_probe=False)
+    trial = _trial(task, exp_a, org_id=None)
     session.add(trial)
     await session.flush()
 
@@ -318,7 +316,7 @@ async def test_public_task_status_uses_share_experiment_context():
                 {"task_id": task.id, "experiment_id": exp.id},
             )
 
-            trial = _trial(task, exp, org_id=None, is_probe=False)
+            trial = _trial(task, exp, org_id=None)
             setup.add(trial)
             await setup.flush()
             trial_id = trial.id
@@ -347,51 +345,8 @@ async def test_public_task_status_uses_share_experiment_context():
 
 
 @pytest.mark.asyncio
-async def test_public_view_strips_gathered_probe():
-    """Site 2: a gathered probe trial must never appear in the public view,
-    even though its task is admitted via the gathered-trial union."""
-    task_ids: list[str] = []
-    experiment_ids: list[str] = []
-    try:
-        async with get_session() as setup:
-            task = _task(_unique("public-probe-task"))
-            setup.add(task)
-            await setup.flush()
-
-            home = _experiment(_unique("public-probe-home"))
-            setup.add(home)
-            await setup.flush()
-
-            probe = _trial(task, home, org_id="org1", is_probe=True)
-            setup.add(probe)
-            await setup.flush()
-
-            coll = await create_trial_collection_core(
-                setup, name=_unique("coll"), trial_ids=[probe.id], org_id="org1"
-            )
-            await setup.flush()
-
-            task_ids = [task.id]
-            experiment_ids = [home.id, coll.id]
-
-            coll_exp = (
-                await setup.execute(
-                    select(ExperimentModel).where(ExperimentModel.id == coll.id)
-                )
-            ).scalar_one()
-            await ensure_experiment_public(setup, coll_exp)
-            public_token = coll_exp.public_token
-            # get_session() commits on clean exit.
-
-        page = await get_public_experiment_trial_page(public_token)
-        assert probe.id not in {trial.id for trial in page.trials}
-    finally:
-        await _cleanup(task_ids=task_ids, experiment_ids=experiment_ids)
-
-
-@pytest.mark.asyncio
-async def test_public_view_includes_gathered_non_probe():
-    """Site 2: a gathered (non-probe) trial DOES appear in the public view,
+async def test_public_view_includes_gathered_trial():
+    """Site 2: a gathered trial DOES appear in the public view,
     even though its home experiment differs from the collection."""
     task_ids: list[str] = []
     experiment_ids: list[str] = []
@@ -405,7 +360,7 @@ async def test_public_view_includes_gathered_non_probe():
             setup.add(home)
             await setup.flush()
 
-            t1 = _trial(task, home, org_id="org1", is_probe=False)
+            t1 = _trial(task, home, org_id="org1")
             setup.add(t1)
             await setup.flush()
 
@@ -462,16 +417,13 @@ async def test_public_view_surfaces_gathered_old_version_trial():
 
             # Trial ran on the OLDER v1, homed privately.
             t1 = _trial(task, home, org_id="org1", task_version_id=v1.id)
-            probe = _trial(
-                task, home, org_id="org1", is_probe=True, task_version_id=v1.id
-            )
-            setup.add_all([t1, probe])
+            setup.add(t1)
             await setup.flush()
 
             coll = await create_trial_collection_core(
                 setup,
                 name=_unique("coll"),
-                trial_ids=[t1.id, probe.id],
+                trial_ids=[t1.id],
                 org_id="org1",
             )
             await setup.flush()
@@ -500,14 +452,12 @@ async def test_public_view_surfaces_gathered_old_version_trial():
             "gathered v1 trial was filtered out of the public view "
             "(gathered-unaware effective-version double-filter)"
         )
-        # Probe strip is independent of the version fix -- reconfirm it holds.
-        assert probe.id not in trial_ids
     finally:
         await _cleanup(task_ids=task_ids, experiment_ids=experiment_ids)
 
 
 @pytest.mark.asyncio
-async def test_get_public_trial_for_experiment_resolves_gathered_non_probe(session):
+async def test_get_public_trial_for_experiment_resolves_gathered_trial(session):
     """A token-scoped public trial lookup admits a private-home trial gathered
     into that public collection."""
     task = _task(_unique("public-trial-task"), org_id=None)
@@ -518,7 +468,7 @@ async def test_get_public_trial_for_experiment_resolves_gathered_non_probe(sessi
     session.add(home)
     await session.flush()
 
-    t1 = _trial(task, home, org_id=None, is_probe=False)
+    t1 = _trial(task, home, org_id=None)
     session.add(t1)
     await session.flush()
 
@@ -555,7 +505,7 @@ async def test_get_public_trial_for_experiment_resolves_home_public(session):
     session.add(home)
     await session.flush()
 
-    t1 = _trial(task, home, org_id=None, is_probe=False)
+    t1 = _trial(task, home, org_id=None)
     session.add(t1)
     await session.flush()
 
@@ -569,38 +519,3 @@ async def test_get_public_trial_for_experiment_resolves_home_public(session):
     resolved = await get_public_trial_for_experiment(session, public_token, t1.id)
     assert resolved is not None
     assert resolved.id == t1.id
-
-
-@pytest.mark.asyncio
-async def test_get_public_trial_for_experiment_excludes_gathered_probe(session):
-    """Anti-leak: even once gathered into a PUBLIC collection, a probe trial
-    must never resolve through token-scoped public trial access."""
-    task = _task(_unique("public-probe-trial-task"), org_id=None)
-    session.add(task)
-    await session.flush()
-
-    home = _experiment(_unique("public-probe-trial-home"), org_id=None)
-    session.add(home)
-    await session.flush()
-
-    probe = _trial(task, home, org_id=None, is_probe=True)
-    session.add(probe)
-    await session.flush()
-
-    coll = await create_trial_collection_core(
-        session, name=_unique("coll"), trial_ids=[probe.id], org_id=None
-    )
-    await session.flush()
-
-    coll_exp = (
-        await session.execute(
-            select(ExperimentModel).where(ExperimentModel.id == coll.id)
-        )
-    ).scalar_one()
-    await ensure_experiment_public(session, coll_exp)
-    await session.flush()
-    public_token = coll_exp.public_token
-    assert public_token
-
-    resolved = await get_public_trial_for_experiment(session, public_token, probe.id)
-    assert resolved is None

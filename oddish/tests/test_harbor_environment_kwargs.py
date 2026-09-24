@@ -361,9 +361,8 @@ def test_kimi_claude_code_hardcodes_vendor_defaults_for_caller_model(
     )
 
     assert agent_config.model_name == "moonshot/vendor-model[1m]"
-    assert (
-        agent_config.import_path == "oddish.workers.agents.claude_code:OddishClaudeCode"
-    )
+    assert agent_config.name == "claude-code"
+    assert agent_config.import_path is None
     assert agent_config.kwargs["version"] == "2.1.181"
     assert agent_config.kwargs["disallowed_tools"] == (
         "WebSearch WebFetch EnterPlanMode EnterWorktree "

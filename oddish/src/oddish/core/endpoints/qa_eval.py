@@ -115,11 +115,7 @@ async def create_qa_eval_core(
         reason = None
         if source is None:
             reason = "not found or inaccessible"
-        elif (
-            source.kind != "agent"
-            or source.is_probe
-            or is_nop_oracle_agent(source.agent)
-        ):
+        elif source.kind != "agent" or is_nop_oracle_agent(source.agent):
             reason = "not an ordinary solver trial"
         elif source.superseded_by_trial_id is not None:
             reason = "superseded"

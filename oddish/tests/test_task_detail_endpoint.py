@@ -548,17 +548,13 @@ def test_aggregate_task_detail_rollups_skips_orphan_version_ids():
 # ---------------------------------------------------------------------------
 
 
-def _exp_trial(*, version_id, experiment_id, is_probe=False):
-    return SimpleNamespace(
-        task_version_id=version_id,
-        experiment_id=experiment_id,
-        is_probe=is_probe,
-    )
+def _exp_trial(*, version_id, experiment_id):
+    return SimpleNamespace(task_version_id=version_id, experiment_id=experiment_id)
 
 
 def test_experiments_by_version_scopes_and_sorts():
-    """Each version lists only the experiments whose non-probe trials ran
-    against it, named from the id->name map, sorted by name."""
+    """Each version lists only the experiments whose trials ran against it,
+    named from the id->name map, sorted by name."""
     exp_name_by_id = {"exp-b": "Beta", "exp-a": "Alpha", "exp-c": "Gamma"}
     trials = [
         # v1: two distinct experiments (one linked twice -> deduped).
@@ -567,8 +563,7 @@ def test_experiments_by_version_scopes_and_sorts():
         _exp_trial(version_id="v1", experiment_id="exp-a"),
         # v2: a single experiment.
         _exp_trial(version_id="v2", experiment_id="exp-c"),
-        # ignored: probe trial, no experiment link, no version, unknown exp.
-        _exp_trial(version_id="v2", experiment_id="exp-a", is_probe=True),
+        # ignored: no experiment link, no version, unknown exp.
         _exp_trial(version_id="v1", experiment_id=None),
         _exp_trial(version_id=None, experiment_id="exp-a"),
         _exp_trial(version_id="v1", experiment_id="exp-gone"),
@@ -576,10 +571,10 @@ def test_experiments_by_version_scopes_and_sorts():
 
     by_version = _task_detail._experiments_by_version(trials, exp_name_by_id)
 
-    # v1: sorted by name (Alpha before Beta), deduped, probe/unknown excluded.
+    # v1: sorted by name (Alpha before Beta), deduped, unknown excluded.
     assert [(e.id, e.name) for e in by_version["v1"]] == [
         ("exp-a", "Alpha"),
         ("exp-b", "Beta"),
     ]
-    # v2: the probe-linked exp-a is excluded, only exp-c remains.
+    # v2: only exp-c ran against it.
     assert [(e.id, e.name) for e in by_version["v2"]] == [("exp-c", "Gamma")]

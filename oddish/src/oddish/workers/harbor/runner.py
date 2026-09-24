@@ -63,7 +63,6 @@ from oddish.runtime.ports import accelerator_family
 from oddish.runtime.registry import get_backend
 from oddish.schemas import HarborConfig
 from oddish.task_timeouts import validate_task_timeout_config
-from oddish.worker.probe_staging import stage_org_skills
 from oddish.workers.agents.network import normalize_domain_or_url
 from .agent_config import (
     _build_agent_config,
@@ -1605,28 +1604,6 @@ def _antigravity_environment_hosts(agent_config: HarborAgentConfig) -> list[str]
     ]
 
 
-def _read_query_cli_text() -> str:
-    """Thin wrapper so tests can monkeypatch without reaching into probe_staging."""
-    from oddish.worker.probe_staging import read_query_cli_text
-
-    return read_query_cli_text()
-
-
-def _probe_modal_kwargs(is_probe: bool, environment: EnvironmentType) -> dict[str, Any]:
-    """Return extra env_config.kwargs to inject when running a probe on Modal.
-
-    Passes the oddish-query CLI source to the Modal image so the harbor fork
-    can bake it in at instantiation. Returns empty dict for non-probe or
-    non-Modal trials so the caller can unconditionally merge.
-    """
-    if not is_probe or environment != EnvironmentType.MODAL:
-        return {}
-    return {
-        "probe_cli_content": _read_query_cli_text(),
-        "probe_cli_path": "/probe-harness/oddish-query",
-    }
-
-
 def _check_local_storage_preflight(
     jobs_dir: Path,
     *,
@@ -1829,7 +1806,6 @@ def _resolve_provider_environment_config(
     hc: HarborConfig,
     environment: EnvironmentType,
     backend: Any,
-    is_probe: bool,
     trial_id: str | None,
     worker_job_id: str | None,
     sandbox_launch: SandboxLaunchContext | None,
@@ -1851,12 +1827,6 @@ def _resolve_provider_environment_config(
         environment_config.kwargs = backend.harbor_env_kwargs(
             dict(environment_config.kwargs)
         )
-    probe_modal = _probe_modal_kwargs(is_probe, environment)
-    if probe_modal:
-        environment_config.kwargs = {
-            **probe_modal,
-            **environment_config.kwargs,
-        }
     if environment == EnvironmentType.EC2:
         if sandbox_launch is None:
             raise RuntimeError("EC2 trial is missing its durable sandbox run")
@@ -1912,15 +1882,13 @@ async def run_harbor_trial_async(
     billed_user_id: str | None = None,
     extra_agent_env: dict[str, str] | None = None,
     sandbox_launch: SandboxLaunchContext | None = None,
-    trial_kind: str = "agent",
     fallback_from_environment: str | None = None,
-    staged_skills_root: Path | None = None,
     quota_seams: QuotaSeams | None = None,
 ) -> HarborOutcome:
     """
     Execute a Harbor trial using Harbor's Python API with lifecycle hooks.
 
-    ``extra_agent_env`` is merged into the built AgentConfig env (probe trials
+    ``extra_agent_env`` is merged into the built AgentConfig env (analysis trials
     use this for the minted read-only oddish CLI creds). It is never persisted.
 
     ``quota_seams`` is how the quota pause loop asks and records state; the
@@ -1963,33 +1931,12 @@ async def run_harbor_trial_async(
             billed_user_id=billed_user_id,
             extra_agent_env=extra_agent_env,
             sandbox_launch=sandbox_launch,
-            trial_kind=trial_kind,
             fallback_from_environment=fallback_from_environment,
-            staged_skills_root=staged_skills_root,
             quota_seams=quota_seams,
             raw=raw,
             hc=hc,
             backend=backend,
         )
-
-
-def uses_probe_routing(*, harbor_config: dict | None, trial_kind: str | None) -> bool:
-    """Whether a trial uses the routing rules shared with operator probes.
-
-    Operator probes (``harbor_config.mode == "probe"``) and analysis kinds
-    ``qa``, ``qa_eval``, and ``audit`` share these rules; ``summarize`` does not
-    unless explicitly configured as an operator probe. Sharing routing does
-    not change a trial's kind or its stored ``is_probe`` flag. The canonical
-    model chooses Claude's transport for every trial kind.
-    """
-    # Imported here for the same reason the caller below does: the analysis
-    # module imports back into the worker package.
-    from oddish.workers.analysis_trials import is_analysis_kind
-
-    raw = harbor_config or {}
-    if raw.get("mode") == "probe":
-        return True
-    return is_analysis_kind(trial_kind) and trial_kind != "summarize"
 
 
 async def _run_harbor_trial_async_impl(
@@ -2009,13 +1956,9 @@ async def _run_harbor_trial_async_impl(
     hc: HarborConfig,
     backend: Any,
     sandbox_launch: SandboxLaunchContext | None,
-    trial_kind: str,
     fallback_from_environment: str | None,
-    staged_skills_root: Path | None = None,
     quota_seams: QuotaSeams | None = None,
 ) -> HarborOutcome:
-    from oddish.workers.analysis_trials import is_analysis_kind
-
     normalized_fallback_source = (fallback_from_environment or "").strip().lower()
     is_provider_fallback = bool(
         normalized_fallback_source and normalized_fallback_source != environment.value
@@ -2061,10 +2004,6 @@ async def _run_harbor_trial_async_impl(
         getattr(hc.environment, "override_tpu", None),
     )
 
-    is_operator_probe = raw.get("mode") == "probe"
-    is_analysis_trial = is_analysis_kind(trial_kind)
-    probe_routing = uses_probe_routing(harbor_config=raw, trial_kind=trial_kind)
-    skip_task_validation = is_operator_probe or is_analysis_trial
     dispatch_env_config = hc.environment.model_copy()
     dispatch_env_config.type = environment
     try:
@@ -2090,7 +2029,6 @@ async def _run_harbor_trial_async_impl(
         hc=hc,
         environment=environment,
         backend=backend,
-        is_probe=probe_routing,
         trial_id=trial_id,
         worker_job_id=worker_job_id,
         sandbox_launch=sandbox_launch,
@@ -2166,18 +2104,12 @@ async def _run_harbor_trial_async_impl(
                 harbor_config=harbor_config,
                 extra_agent_env=extra_agent_env,
                 environment_build_timeout_multiplier=env_build_multiplier,
-                is_probe=probe_routing,
-                skip_task_validation=skip_task_validation,
             )
         finally:
             if fallback_tmpdir is not None:
                 fallback_tmpdir.cleanup()
 
-    # Probes and analysis trials attach to an existing task and inherit its
-    # task.toml, which may predate the timeout requirement. Rather than
-    # hard-fail, skip strict validation and cap the agent timeout below.
-    if not skip_task_validation:
-        validate_task_timeout_config(task_path)
+    validate_task_timeout_config(task_path)
 
     needs_task_patch = bool(hc.docker_image or hc.mcp_servers or is_provider_fallback)
     preflight_error = _check_local_storage_preflight(
@@ -2289,7 +2221,6 @@ async def _run_harbor_trial_async_impl(
                 agent=agent,
                 model=model,
                 raw_harbor_config=raw,
-                is_probe=probe_routing,
                 probe_oddish_env=extra_agent_env,
             )
             # Early no-serialized-routes checkpoint, symmetric with the
@@ -2506,23 +2437,6 @@ async def _run_harbor_trial_async_impl(
                 *env_config.extra_allowed_hosts,
                 *[h for h in hosts if h not in env_config.extra_allowed_hosts],
             ]
-
-        # Stage the org's shared skills (+ global seeds) into a root under the
-        # job dir and hand it to Harbor via ``AgentConfig.skills``. Best-effort;
-        # failure never blocks a trial run.
-        if staged_skills_root is not None:
-            # Passed only by the monitor, which has no database: it staged the
-            # selected skills from the control plane (no directory: none found).
-            if Path(staged_skills_root).is_dir():
-                agent_config.skills = [*agent_config.skills, Path(staged_skills_root)]
-        elif org_id is not None:
-            skills_root = unique_parent / "agent_skills"
-            skill_ids = raw.get("skill_ids")
-            n_skills = await stage_org_skills(
-                skills_root, org_id=org_id, skill_ids=skill_ids
-            )
-            if n_skills:
-                agent_config.skills = [*agent_config.skills, skills_root]
 
         from .trusted_trajectory import configure_trusted_trajectory
 

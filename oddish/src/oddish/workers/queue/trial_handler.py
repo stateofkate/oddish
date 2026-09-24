@@ -42,7 +42,6 @@ from oddish.costs.recorder import (
 )
 from oddish.costs.verifier_cost import record_verifier_llm_costs
 from oddish.db import (
-    AnalysisStatus,
     TaskModel,
     TaskStatus,
     TrialModel,
@@ -68,19 +67,13 @@ from oddish.runtime.sandbox_lifecycle import (
     mark_environment_provisioned,
     terminate_sandbox_run,
 )
-from oddish.worker.probe_analysis import (
-    extract_probe_artifacts,
-    run_probe_analyzer,
-)
-from oddish.worker.local_offline_policy import enable_local_internet
 from oddish.worker.probe_creds import (
     mint_probe_creds,
     revoke_probe_creds,
 )
-from oddish.worker.probe_overlay import PROBE_HARNESS_DIR
 from oddish.worker.probe_staging import (
+    PROBE_HARNESS_DIR,
     apply_analysis_overlay,
-    apply_probe_overlay,
     stage_cli_mount,
 )
 from oddish.workers.analysis_trials import ANALYSIS_ARTIFACTS, is_analysis_kind
@@ -133,7 +126,6 @@ async def _issue_job_credentials(
     agent: str,
     model: str | None,
     trial_id: str,
-    is_probe: bool = False,
     byok_env: Mapping[str, str] | None = None,
     raw_harbor_config: Mapping[str, object] | None = None,
 ) -> job_tokens.JobCredentialBundle | None:
@@ -157,7 +149,6 @@ async def _issue_job_credentials(
             trial_id=trial_id,
             settings=settings,
             now=utcnow(),
-            is_probe=is_probe,
             byok_env=byok_env,
             raw_harbor_config=raw_harbor_config,
         )
@@ -204,20 +195,6 @@ async def _revoke_job_credentials(
         )
 
 
-def _prepared_trial_uses_probe_routing(prepared_trial: PreparedTrialRun) -> bool:
-    """Whether the prepared run shares operator-probe routing rules.
-
-    Credential scoping must agree with the transport the agent is routed to, so
-    this defers to ``harbor.runner.uses_probe_routing`` rather than restating it.
-    """
-    from oddish.workers.harbor.runner import uses_probe_routing
-
-    return uses_probe_routing(
-        harbor_config=prepared_trial.trial_harbor_config,
-        trial_kind=prepared_trial.trial_kind,
-    )
-
-
 @dataclass(slots=True)
 class TrialExecutionResult:
     outcome: HarborOutcome | None
@@ -231,7 +208,6 @@ class PreparedTrialTask:
     task_path: Path
     temp_task_dir: Path | None
     resolved_task_s3_key: str | None
-    probe_extra_instructions: str | None
     probe_agent_env: dict[str, str] | None
     probe_key_id: str | None
 
@@ -530,65 +506,6 @@ async def _heartbeat_trial_execution(
             )
 
 
-def should_generate_inline_probe_summary(
-    trial_kind: str, extra_instructions: str | None
-) -> bool:
-    """Only probe trials get the inline probe-summary call. QA/audit trials
-    also carry ``extra_instructions`` (their brief), but their analysis IS the
-    trial itself: running the direct probe analyzer for them would burn a
-    second, unintended LLM call per analysis run and stamp probe-style
-    analysis fields onto the qa/audit row."""
-    return bool(extra_instructions) and trial_kind == "agent"
-
-
-async def _generate_probe_summary_inline(
-    *,
-    trial_id: str,
-    job_dir: Path,
-    harbor_config: dict,
-    reward: float | None,
-) -> dict:
-    """Run the probe analyzer in-process, right after a probe trial finishes.
-
-    Probes are excluded from task-level QA, so this inline pass is the only
-    place their summary is produced: same job, same session, mirroring
-    ``worker.local_runner``, while the local Harbor artifacts still exist on
-    disk (before ``_cleanup_uploaded_job_dir`` prunes them). Returns the
-    analysis fields ``_store_trial_results`` writes onto the trial row.
-
-    Never raises: an analyzer failure is captured as ``analysis_status=FAILED``
-    so the trial result itself still persists.
-    """
-    started_at = utcnow()
-    summary: dict | None = None
-    status = AnalysisStatus.FAILED
-    error: str | None = None
-    try:
-        artifacts = extract_probe_artifacts(job_dir)
-        summary = await run_probe_analyzer(
-            extra_instructions=harbor_config.get("extra_instructions") or "",
-            agent_messages=artifacts["agent_messages"],
-            verifier_stdout=artifacts["verifier_stdout"] or "",
-            reward=reward,
-            result_focus=harbor_config.get("result_focus") or "",
-            model=settings.probe_analyzer_model,
-        )
-        status = AnalysisStatus.SUCCESS
-        console.print(
-            f"[green]Probe analysis complete:[/green] {summary.get('headline', '')}"
-        )
-    except Exception as exc:
-        error = f"{type(exc).__name__}: {exc}"
-        console.print(f"[red]Probe analysis failed for {trial_id}: {error}[/red]")
-    return {
-        "analysis": summary,
-        "analysis_status": status,
-        "analysis_error": error,
-        "analysis_started_at": started_at,
-        "analysis_finished_at": utcnow(),
-    }
-
-
 async def _worker_still_owns_trial(
     session,
     trial,
@@ -736,7 +653,6 @@ async def _store_trial_results(
     execution_error: str | None,
     artifact_upload_error: str | None = None,
     execution_retryable: bool = True,
-    probe_analysis: dict | None = None,
     worker_id: str | None = None,
     worker_job_id: str | None = None,
     trial_attempt: int,
@@ -1002,14 +918,6 @@ async def _store_trial_results(
         trial.current_queue_slot = None
         trial.heartbeat_at = utcnow()
 
-        if probe_analysis is not None:
-            if probe_analysis["analysis"] is not None:
-                trial.analysis = probe_analysis["analysis"]
-            trial.analysis_status = probe_analysis["analysis_status"]
-            trial.analysis_error = probe_analysis["analysis_error"]
-            trial.analysis_started_at = probe_analysis["analysis_started_at"]
-            trial.analysis_finished_at = probe_analysis["analysis_finished_at"]
-
         await refresh_task_browse_summaries(
             session, [getattr(trial, "task_version_id", None)]
         )
@@ -1061,10 +969,8 @@ async def _run_post_trial_hooks(trial_id: str) -> None:
                 # No timestamp comparison would be safe: a label an in-flight QA
                 # trial wrote mid-attempt -- off the row ``prepare_trial_run``
                 # had already wiped -- carries a NEWER stamp than this attempt's
-                # own start, yet is exactly the kind that must go. Probes are the
-                # one exception; ``_store_trial_results`` writes their
-                # classification during settlement, above.
-                if trial.attempts > 1 and not trial.is_probe and trial.analysis_status:
+                # own start, yet is exactly the kind that must go.
+                if trial.attempts > 1 and trial.analysis_status:
                     from oddish.core.task_findings import preserve_task_findings
 
                     await preserve_task_findings(session, trial.task_version_id)
@@ -1139,8 +1045,7 @@ async def _finish_trial_settlement(
 async def _upload_probe_assets(
     environment, probe_task_dir: Path, trial_id: str
 ) -> None:
-    """Upload probe tools; QA submission contracts fail closed, ordinary probes do not."""
-    submission_required = (probe_task_dir / "submit-analysis-result").is_file()
+    """Upload the query CLI and QA submission contract; failures fail closed."""
     harness_mount = Path(tempfile.mkdtemp(prefix=f"probe-cli-{trial_id}-"))
     try:
         stage_cli_mount(harness_mount, analysis_task_dir=probe_task_dir)
@@ -1154,10 +1059,9 @@ async def _upload_probe_assets(
         console.print(
             f"[yellow]Trial {trial_id} probe CLI upload failed: {exc}[/yellow]"
         )
-        if submission_required:
-            raise RuntimeError(
-                f"Trial {trial_id} could not stage the required QA submission contract"
-            ) from exc
+        raise RuntimeError(
+            f"Trial {trial_id} could not stage the required QA submission contract"
+        ) from exc
     finally:
         shutil.rmtree(harness_mount, ignore_errors=True)
 
@@ -1501,7 +1405,9 @@ async def _execute_trial(
                 f"{prepared_trial.trial_environment or settings.harbor_environment}"
             ) from exc
 
-        probe_routing = _prepared_trial_uses_probe_routing(prepared_trial)
+        uses_query_cli = is_analysis_kind(prepared_trial.trial_kind) and (
+            prepared_trial.trial_kind != "summarize"
+        )
         outcome = await run_harbor_trial_async(
             task_path=task_path_to_run,
             agent=prepared_trial.trial_agent,
@@ -1511,7 +1417,7 @@ async def _execute_trial(
             hook_callback=partial(
                 handle_harbor_event,
                 trial_id=trial_id,
-                probe_task_dir=task_path_to_run if probe_routing else None,
+                probe_task_dir=task_path_to_run if uses_query_cli else None,
                 worker_id=worker_id,
                 worker_job_id=worker_job_id,
                 worker_job_attempt=worker_job_attempt,
@@ -1521,7 +1427,6 @@ async def _execute_trial(
             trial_id=trial_id,
             worker_job_id=worker_job_id,
             harbor_config=prepared_trial.trial_harbor_config,
-            trial_kind=prepared_trial.trial_kind,
             org_id=prepared_trial.org_id,
             billed_user_id=prepared_trial.billed_user_id,
             extra_agent_env=extra_agent_env,
@@ -1631,7 +1536,7 @@ async def _prepare_trial_task(
     """Resolve and mutate the task copy consumed by one trial attempt.
 
     This is the single pre-execution boundary for downloaded task bytes,
-    analysis/probe overlays, and probe credentials. Callers turn any exception
+    the analysis overlay, and probe credentials. Callers turn any exception
     from this boundary into a normal ``TrialExecutionResult`` and settle it
     through the same state machine as a Harbor execution failure.
     """
@@ -1654,11 +1559,10 @@ async def _prepare_trial_task(
 
         harbor_config = prepared_trial.trial_harbor_config or {}
         probe_extra_instructions = harbor_config.get("extra_instructions")
-        probe_scope = harbor_config.get("probe_scope", "task")
         trial_kind = prepared_trial.trial_kind
         probe_agent_env: dict[str, str] | None = None
 
-        if probe_extra_instructions:
+        if is_analysis_kind(trial_kind):
             # Every overlay mutates the task, so a mounted/canonical local path
             # gets the same disposable copy as an S3-backed task.
             if temp_task_dir is None:
@@ -1668,59 +1572,42 @@ async def _prepare_trial_task(
                 shutil.copytree(task_path_to_run, probe_copy_dir, symlinks=True)
                 task_path_to_run = probe_copy_dir
 
-            if is_analysis_kind(trial_kind):
-                from oddish.workers.analysis_trials import (
-                    ANALYSIS_ARTIFACTS,
-                    analysis_check_payload,
-                    materialize_summarize_brief,
-                )
+            from oddish.workers.analysis_trials import (
+                ANALYSIS_ARTIFACTS,
+                analysis_check_payload,
+                materialize_summarize_brief,
+            )
 
-                if trial_kind == "summarize":
-                    probe_extra_instructions = await materialize_summarize_brief(
-                        harbor_config
-                    )
-                apply_analysis_overlay(
-                    task_path_to_run,
-                    brief=probe_extra_instructions,
-                    artifact=ANALYSIS_ARTIFACTS[trial_kind],
-                    check_payload=analysis_check_payload(trial_kind, harbor_config),
-                    needs_query_cli=trial_kind != "summarize",
+            if trial_kind == "summarize":
+                probe_extra_instructions = await materialize_summarize_brief(
+                    harbor_config
                 )
-            else:
-                await apply_probe_overlay(
-                    task_path_to_run,
-                    task_id=prepared_trial.task_id,
-                    trial_id=trial_id,
-                    extra_instructions=probe_extra_instructions,
-                    probe_scope=probe_scope,
-                )
+            apply_analysis_overlay(
+                task_path_to_run,
+                brief=probe_extra_instructions,
+                artifact=ANALYSIS_ARTIFACTS[trial_kind],
+                check_payload=analysis_check_payload(trial_kind, harbor_config),
+                needs_query_cli=trial_kind != "summarize",
+            )
 
             if trial_kind != "summarize":
-                # QA, audit, and operator probes use oddish-query inside the
-                # sandbox. Summarize receives its bounded input directly.
-                enable_local_internet(task_path_to_run)
+                # QA and audit use oddish-query inside the sandbox. Summarize
+                # receives its bounded input directly.
                 probe_key_id, probe_agent_env = await mint_probe_creds(
                     org_id=prepared_trial.org_id,
                     trial_id=trial_id,
-                    bound_analysis_trial_id=(
-                        trial_id if is_analysis_kind(trial_kind) else None
-                    ),
+                    bound_analysis_trial_id=trial_id,
                 )
                 probe_agent_env["ODDISH_PROBE_TASK_ID"] = prepared_trial.task_id
                 if prepared_trial.task_version is not None:
                     probe_agent_env["ODDISH_PROBE_TASK_VERSION"] = str(
                         prepared_trial.task_version
                     )
-                probe_agent_env["ODDISH_PROBE_HARBOR_REPO"] = (
-                    settings.harbor_source_repo
-                )
-                probe_agent_env["ODDISH_PROBE_HARBOR_REF"] = settings.harbor_source_ref
 
         return PreparedTrialTask(
             task_path=task_path_to_run,
             temp_task_dir=temp_task_dir,
             resolved_task_s3_key=resolved_task_s3_key,
-            probe_extra_instructions=probe_extra_instructions,
             probe_agent_env=probe_agent_env,
             probe_key_id=probe_key_id,
         )
@@ -1962,7 +1849,6 @@ async def settle_trial_attempt(
     worker_job_id: str | None,
     trial_s3_key: str | None = None,
     artifact_upload_error: str | None = None,
-    probe_analysis: dict | None = None,
 ) -> bool:
     """Persist one attempt result and run its terminal lifecycle exactly once."""
     judge_costs = extract_judge_costs(
@@ -1977,7 +1863,6 @@ async def settle_trial_attempt(
             execution_error=execution.execution_error,
             artifact_upload_error=artifact_upload_error,
             execution_retryable=execution.retryable,
-            probe_analysis=probe_analysis,
             worker_id=worker_id,
             worker_job_id=worker_job_id,
             trial_attempt=prepared_trial.trial_attempt,
@@ -2078,7 +1963,6 @@ async def run_trial_job(
     task_path_to_run = prepared_task.task_path
     temp_task_dir = prepared_task.temp_task_dir
     resolved_task_s3_key = prepared_task.resolved_task_s3_key
-    probe_extra_instructions = prepared_task.probe_extra_instructions
     probe_agent_env = prepared_task.probe_agent_env
     trial_kind = prepared_trial.trial_kind
     byok_env = prepared_attempt.byok_env
@@ -2117,7 +2001,6 @@ async def run_trial_job(
                 agent=prepared_trial.trial_agent,
                 model=prepared_trial.trial_model,
                 trial_id=trial_id,
-                is_probe=_prepared_trial_uses_probe_routing(prepared_trial),
                 byok_env=byok_env,
                 raw_harbor_config=prepared_trial.trial_harbor_config,
             )
@@ -2252,26 +2135,6 @@ async def run_trial_job(
         if execution.outcome and execution.outcome.job_dir:
             await mirror_to_sauron(prepared_trial, execution.outcome.job_dir)
 
-        # Probe trials get their summary generated inline, in this same job,
-        # while the local Harbor artifacts still exist on disk -- mirroring
-        # the local runner. Probes are excluded from task-level QA, so this
-        # is the only place their summary is produced in the cloud. Must run
-        # before the cleanup below prunes job_dir. QA/audit trials also carry
-        # extra_instructions but must never take this path (see
-        # should_generate_inline_probe_summary).
-        probe_analysis = None
-        if (
-            should_generate_inline_probe_summary(trial_kind, probe_extra_instructions)
-            and execution.outcome
-            and execution.outcome.job_dir
-        ):
-            probe_analysis = await _generate_probe_summary_inline(
-                trial_id=trial_id,
-                job_dir=execution.outcome.job_dir,
-                harbor_config=prepared_trial.trial_harbor_config or {},
-                reward=execution.outcome.reward,
-            )
-
         trial_terminal = await settle_trial_attempt(
             trial_id=trial_id,
             prepared_trial=prepared_trial,
@@ -2280,7 +2143,6 @@ async def run_trial_job(
             worker_job_id=worker_job_id,
             trial_s3_key=trial_s3_key,
             artifact_upload_error=artifact_upload_error,
-            probe_analysis=probe_analysis,
         )
         # Settlement reads verifier usage and contract errors from these files.
         # Remove them only after both uploads and result settlement complete.

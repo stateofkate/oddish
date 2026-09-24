@@ -125,7 +125,6 @@ def _group(
     agent="codex",
     model="openai/gpt-5.6",
     provider="openai",
-    is_probe=False,
     duration_sum_seconds=0.0,
     duration_trial_count=0,
 ):
@@ -134,7 +133,6 @@ def _group(
         "is_selected": selected,
         "is_current": current,
         "is_billed": billed,
-        "is_probe": is_probe,
         "agent": agent,
         "provider": provider,
         "model": model,
@@ -175,7 +173,6 @@ def _preview(index):
         "status": "success",
         "reward": 1.0,
         "error_kind": None,
-        "is_probe": False,
         "cost_usd": 0.01,
         "input_tokens": 10,
         "output_tokens": 5,
@@ -452,15 +449,8 @@ def test_task_open_historical_version_experiments_match_detail_population():
 
     detail_population = _experiments_by_version(
         [
-            SimpleNamespace(
-                task_version_id="task-1-v1", experiment_id="exp-b", is_probe=False
-            ),
-            SimpleNamespace(
-                task_version_id="task-1-v1", experiment_id="exp-a", is_probe=False
-            ),
-            SimpleNamespace(
-                task_version_id="task-1-v1", experiment_id="exp-a", is_probe=True
-            ),
+            SimpleNamespace(task_version_id="task-1-v1", experiment_id="exp-b"),
+            SimpleNamespace(task_version_id="task-1-v1", experiment_id="exp-a"),
         ],
         {"exp-a": "Alpha", "exp-b": "Beta"},
     )["task-1-v1"]
@@ -520,37 +510,6 @@ def test_task_open_legacy_status_uses_all_live_trials() -> None:
     assert len(session.calls) == 2
 
 
-def test_task_open_current_status_ignores_probe_rows_but_keeps_probe_rollups():
-    _, response = _open(
-        _identity(),
-        _aggregate(
-            [
-                _group(selected=True, current=True, total=1),
-                _group(
-                    selected=True,
-                    current=True,
-                    total=1,
-                    completed=0,
-                    agent="probe-agent",
-                    is_probe=True,
-                ),
-            ]
-        ),
-        [_preview(1)],
-    )
-
-    assert response.task.status == "completed"
-    assert response.totals.total_trials == 2
-    assert response.selected_version is not None
-    assert response.selected_version.trial_count == 2
-    probe = next(
-        group for group in response.selected_version.agent_models if group.is_probe
-    )
-    assert probe.agent == "probe"
-    assert probe.trial_count == 1
-    assert probe.pending_count == 1
-
-
 def test_task_open_queries_encode_detail_eligible_population():
     session, _ = _open(
         _identity(),
@@ -564,7 +523,6 @@ def test_task_open_queries_encode_detail_eligible_population():
         assert "deleted_at IS NULL" in sql
         assert "superseded_by_trial_id IS NULL" in sql
         assert "NOT LIKE 'combine:%'" in sql
-    assert "tr.is_probe IS NOT TRUE" in aggregate_sql
     assert "tr.task_version_id = CAST(:version_id AS text)" in aggregate_sql
     assert "JOIN experiments e ON e.id = tr.experiment_id" in aggregate_sql
     assert "SELECT tr.*" not in aggregate_sql

@@ -48,7 +48,6 @@ async def test_bulk_insert_persists_harbor_sha():
                         "variant_id": "default",
                     },
                     "harbor_sha": "d" * 40,
-                    "is_probe": False,
                     "max_attempts": 6,
                 }
             ],

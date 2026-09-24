@@ -267,7 +267,7 @@ export function useTaskOpenReader(
     () => selectedVersion?.agent_models ?? [],
     [selectedVersion]
   );
-  const { agentCards, realAgentCount, realTrialCount } = useMemo(
+  const { agentCards, agentCount, trialCount } = useMemo(
     () => buildTaskOpenAgentGroups(exactAgentModels, trialsForVersion),
     [exactAgentModels, trialsForVersion]
   );
@@ -284,6 +284,7 @@ export function useTaskOpenReader(
 
   return {
     agentCards,
+    agentCount,
     analysisTrialsForVersion,
     defaultVersionError,
     defaultVersionId,
@@ -298,14 +299,13 @@ export function useTaskOpenReader(
     loadVersionHistory,
     open,
     openResource,
-    realAgentCount,
-    realTrialCount,
     revalidateReaderResources,
     selectedVersion,
     selectedVersionId,
     setLoadVersionHistory,
     task,
     totals,
+    trialCount,
     trialsForVersion,
     versions,
   };

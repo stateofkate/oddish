@@ -166,14 +166,12 @@ def _ver_trial(
     version_id,
     *,
     status=TrialStatus.SUCCESS,
-    is_probe=False,
     superseded=None,
     org_id="org1",
 ) -> TrialModel:
     t = _trial(task, home, org_id=org_id)
     t.task_version_id = version_id
     t.status = status
-    t.is_probe = is_probe
     t.superseded_by_trial_id = superseded
     return t
 
@@ -197,11 +195,10 @@ async def test_task_mode_links_only_current_version_terminal_trials(session):
     keep_b = _ver_trial(task, home, v2.id, status=TrialStatus.FAILED)
     old = _ver_trial(task, home, v1.id, status=TrialStatus.SUCCESS)  # old version
     pending = _ver_trial(task, home, v2.id, status=TrialStatus.PENDING)  # not terminal
-    probe = _ver_trial(task, home, v2.id, is_probe=True)  # probe
     sup = _ver_trial(task, home, v2.id, superseded=keep_a.id)  # superseded
     copy = _ver_trial(task, home, v2.id)
     copy.idempotency_key = f"combine:result:{keep_a.id}"
-    session.add_all([keep_a, keep_b, old, pending, probe, sup, copy])
+    session.add_all([keep_a, keep_b, old, pending, sup, copy])
     await session.flush()
 
     resp = await create_trial_collection_core(

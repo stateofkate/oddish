@@ -76,15 +76,11 @@ test("unspecified effort stays separate and keys remain stable as more trials ar
   assert.equal(after[1].label, `claude-code/${model}/low`);
   assert.equal(first.model, model);
 });
-test("baselines, QA and probes retain their own groups", () => {
+test("baselines and QA retain their own groups", () => {
   assert.equal(getExperimentAgentKey({ ...trial(null), agent: "nop" }), "nop");
   assert.equal(
     getExperimentAgentKey({ ...trial(null), agent: "oracle" }),
     "oracle"
-  );
-  assert.equal(
-    getExperimentAgentKey({ ...trial("high"), is_probe: true }),
-    "probe"
   );
   assert.equal(getExperimentAgentKey({ ...trial("high"), kind: "qa" }), "qa");
 });
@@ -150,12 +146,10 @@ test("grouping efforts keeps different agents, models, and internal groups separ
     { ...trial("high"), agent: "nop" },
     { ...trial("high"), agent: "oracle" },
     { ...trial("high"), kind: "qa" as const },
-    { ...trial("high"), is_probe: true },
   ];
   const summaries = buildExperimentAgentSummaries([{ trials } as Task], true);
-  assert.equal(summaries.length, 7);
+  assert.equal(summaries.length, 6);
   assert.equal(getExperimentAgentKey(trials[4], true), "nop");
   assert.equal(getExperimentAgentKey(trials[5], true), "oracle");
   assert.equal(getExperimentAgentKey(trials[6], true), "qa");
-  assert.equal(getExperimentAgentKey(trials[7], true), "probe");
 });

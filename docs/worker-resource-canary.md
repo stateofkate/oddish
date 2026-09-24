@@ -105,7 +105,7 @@ the control command. Reducing a positive cap does not interrupt current jobs.
 
 The stable sample is computed from the first 32 bits of MD5(worker_job_id), below
 fraction × 2^32. It samples jobs, not launches or batch iterations. Only TRIAL
-worker jobs attached to ordinary `kind='agent'` trials, excluding probes, with
+worker jobs attached to ordinary `kind='agent'` trials with
 priority <= 0, `harbor_variant_id='default'`, and `execution_lane='default'` qualify.
 Deleted tasks/trials and delayed jobs remain unclaimable. Every candidate claim
 keeps the launch's organization and priority class. Positive-priority analysis,

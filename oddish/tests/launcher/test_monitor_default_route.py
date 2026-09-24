@@ -96,11 +96,10 @@ async def test_agent_trial_is_handed_to_the_monitor(monkeypatch):
 @pytest.mark.parametrize(
     "trial",
     [
-        SimpleNamespace(kind="agent", harbor_config={"mode": "probe"}),
         SimpleNamespace(kind="analysis", harbor_config={}),
         SimpleNamespace(kind="qa", harbor_config=None),
     ],
-    ids=["probe", "analysis", "qa"],
+    ids=["analysis", "qa"],
 )
 async def test_other_trial_kinds_stay_on_the_worker(monkeypatch, trial):
     assert await _can_drive(monkeypatch, trial) is False

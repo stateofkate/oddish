@@ -160,7 +160,7 @@ export function installNavigationIntentCapture(): void {
  *
  * Authenticated URLs carry an organization slug (`/orgs/{slug}/tasks/{id}`),
  * and the unprefixed form still exists, so both are accepted. Deeper paths
- * such as `/tasks/{id}/probe` are a different page and are not this open.
+ * under `/tasks/{id}/` are not this open.
  *
  * Pure and exported for tests.
  */

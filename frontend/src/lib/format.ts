@@ -40,7 +40,7 @@ export interface TaskTrialCost {
   hasNative: boolean;
 }
 
-// Priced, non-probe, non-superseded trials only — same scope as the experiment
+// Priced, non-superseded trials only — same scope as the experiment
 // header and /tasks rollup, so retries don't double-count. Gathered/shared-task
 // trials count too: like the experiment Cost tile, this prices the work being
 // displayed, wherever it ran.
@@ -55,7 +55,6 @@ export function sumTaskTrialCost(
   let hasEstimated = false;
   let hasNative = false;
   for (const trial of trials ?? []) {
-    if (trial.is_probe) continue;
     if (!isAgentTrial(trial)) continue;
     if (trial.superseded_by_trial_id) continue;
     // Outside the cost_usd guard below: QA can exist on a trial whose agent

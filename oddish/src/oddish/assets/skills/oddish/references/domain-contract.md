@@ -36,8 +36,8 @@ evidence.
 - `qa`: the task-wide classifier and optional verdict synthesizer.
 - `summarize`: an on-demand trajectory-summary refresh for one agent trial.
 
-Normal user-facing eligibility means `kind == "agent"`, not a probe,
-not superseded, and not soft-deleted. Some task status responses embed analysis
+Normal user-facing eligibility means `kind == "agent"`, not superseded,
+and not soft-deleted. Some task status responses embed analysis
 trials, so do not use raw `len(trials)` as the evaluation-attempt count.
 
 Trial statuses are:

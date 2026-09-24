@@ -41,7 +41,6 @@ def _trial(
     status: TrialStatus = TrialStatus.SUCCESS,
     reward: float | None = None,
     task_version_id: str | None = None,
-    is_probe: bool = False,
 ) -> TrialModel:
     trial_id = generate_id()
     return TrialModel(
@@ -57,7 +56,6 @@ def _trial(
         status=status,
         reward=reward,
         task_version_id=task_version_id,
-        is_probe=is_probe,
     )
 
 
@@ -175,38 +173,6 @@ async def test_normal_experiment_aggregate_unaffected_by_membership_union(sessio
     assert trial_row["total_trials"] == 2
     assert trial_row["completed_trials"] == 1
     assert trial_row["failed_trials"] == 1
-
-
-@pytest.mark.asyncio
-async def test_reward_aggregate_excludes_probes(session):
-    """Probes are not experiment trials -- every per-task path drops them."""
-    task = _task("dash-probe-task")
-    session.add(task)
-    await session.flush()
-
-    home = _experiment("dash-probe-home")
-    session.add(home)
-    await session.flush()
-
-    session.add_all(
-        [
-            _trial(task, home, reward=0.0),
-            _trial(task, home, reward=1.0, is_probe=True),
-        ]
-    )
-    await session.flush()
-
-    _, trial_agg, score_agg = _build_aggregates_for_experiment_ids(
-        [home.id], org_id="org1"
-    )
-
-    trial_row = await _trial_row(session, trial_agg, home.id)
-    assert trial_row["reward_total"] == 1
-    assert trial_row["reward_success"] == 0
-    assert trial_row["total_trials"] == 1
-
-    score_row = await _score_row(session, score_agg, home.id)
-    assert score_row["avg_score"] == pytest.approx(0.0)
 
 
 @pytest.mark.asyncio

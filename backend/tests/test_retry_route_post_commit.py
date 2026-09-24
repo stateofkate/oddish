@@ -127,7 +127,6 @@ async def test_retry_route_terminates_superseded_sandbox_target(monkeypatch):
                 provider="openai",
                 queue_key="openai/gpt-5",
                 model="gpt-5",
-                is_probe=False,
                 max_attempts=6,
                 attempts=1,
                 status=TrialStatus.FAILED,

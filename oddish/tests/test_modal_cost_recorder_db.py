@@ -84,7 +84,6 @@ async def _seed() -> tuple[str, str, str, str]:
                 provider="openai",
                 queue_key="openai/gpt-5",
                 model="gpt-5",
-                is_probe=False,
                 max_attempts=6,
                 attempts=2,
                 status=TrialStatus.RUNNING,

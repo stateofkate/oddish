@@ -54,7 +54,6 @@ def test_runner_forces_inventory_safe_thunder_sandbox_name() -> None:
         hc=config,
         environment=EnvironmentType.THUNDER,
         backend=ThunderBackend(),
-        is_probe=False,
         trial_id="trial-1",
         worker_job_id="worker-job-1",
         sandbox_launch=context,

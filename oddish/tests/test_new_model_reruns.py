@@ -83,7 +83,6 @@ async def _trials_for_model(session, task_id: str, model_raw: str) -> list:
             (TrialModel.task_id == task_id)
             & (TrialModel.agent == AGENT)
             & (TrialModel.model == norm)
-            & (TrialModel.is_probe.is_(False))
         )
     )
     return list(rows)
@@ -188,7 +187,6 @@ async def test_new_experiment_gets_full_n_trials(seeded_task_id):
                 TrialModel.task_id == seeded_task_id,
                 TrialModel.agent == AGENT,
                 TrialModel.model == norm,
-                TrialModel.is_probe.is_(False),
             )
         )
         rows = list(result)

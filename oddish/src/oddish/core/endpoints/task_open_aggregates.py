@@ -75,13 +75,10 @@ def _add_counts(target: Any, row: Mapping[str, Any]) -> None:
         target.last_run_at = candidate
 
 
-def _agent_key(row: Mapping[str, Any]) -> tuple[bool, str, str | None, str | None]:
-    is_probe = bool(row["is_probe"])
-    if is_probe:
-        return True, "probe", None, None
+def _agent_key(row: Mapping[str, Any]) -> tuple[str, str | None, str | None]:
     agent = str(row["agent"])
     model = settings.normalize_trial_model(agent, row.get("model"), strict=False)
-    return False, agent, model, row.get("reasoning_effort")
+    return agent, model, row.get("reasoning_effort")
 
 
 def _finalize(target: Any) -> None:
@@ -116,9 +113,7 @@ def fold_task_open_groups(
         )
 
     current_total = current_terminal = 0
-    agents: dict[
-        tuple[bool, str, str | None, str | None], TaskOpenAgentModelSummary
-    ] = {}
+    agents: dict[tuple[str, str | None, str | None], TaskOpenAgentModelSummary] = {}
     for row in rows:
         count = int(row["total"] or 0)
         totals.total_trials += count
@@ -127,7 +122,7 @@ def fold_task_open_groups(
         _add_cost(totals, row, billed=False)
         if row["is_billed"]:
             _add_cost(totals, row, billed=True)
-        if row["is_current"] and not row["is_probe"]:
+        if row["is_current"]:
             current_total += count
             current_terminal += sum(
                 int(row[field] or 0) for field in ("completed", "failed", "skipped")
@@ -144,7 +139,7 @@ def fold_task_open_groups(
         group = agents.setdefault(
             key,
             TaskOpenAgentModelSummary(
-                agent=key[1], model=key[2], reasoning_effort=key[3], is_probe=key[0]
+                agent=key[0], model=key[1], reasoning_effort=key[2]
             ),
         )
         provider = row.get("provider")
@@ -164,6 +159,6 @@ def fold_task_open_groups(
             group.providers.sort()
         selected.agent_models = sorted(
             agents.values(),
-            key=lambda item: (item.is_probe, item.agent, item.model or ""),
+            key=lambda item: (item.agent, item.model or ""),
         )
     return totals, selected, (current_total, current_terminal)

@@ -50,7 +50,6 @@ def _trial(
         attempts=1,
         max_attempts=6,
         origin=TrialOrigin.ODDISH,
-        is_probe=False,
         has_trajectory=False,
         created_at=datetime(2026, 1, 1),
     )

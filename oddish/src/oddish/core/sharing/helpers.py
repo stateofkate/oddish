@@ -171,8 +171,7 @@ async def get_public_task_for_experiment(
         [
             t
             for t in task.trials
-            if not t.is_probe
-            and t.kind == "agent"
+            if t.kind == "agent"
             and (t.experiment_id == experiment.id or t.id in gathered_ids)
         ],
     )
@@ -199,7 +198,6 @@ async def get_public_trial_for_experiment(
     result = await session.execute(
         select(TrialModel)
         .where(TrialModel.id == trial_id)
-        .where(TrialModel.is_probe.is_(False))
         .where(TrialModel.kind == "agent")
         .where(trial_in_experiment(experiment.id))
     )
@@ -242,7 +240,6 @@ async def list_task_trials_for_task(
     session: AsyncSession,
     task_id: str,
     *,
-    probe: bool | None = None,
     version: int | None = None,
     org_id: str | None = None,
 ) -> list[TrialResponse]:
@@ -258,9 +255,6 @@ async def list_task_trials_for_task(
     chain down to the live attempt -- matching what
     ``get_task_status_trials`` returns for the dashboard.
 
-    ``probe`` filters by trial kind: True -> only probe trials, False ->
-    only real attempts, None -> all.
-
     ``version`` scopes to trials of one task version. A task can carry
     trials across many versions and experiments, each row with its full
     analysis payload, so version-scoped callers (the task overview) must
@@ -273,8 +267,6 @@ async def list_task_trials_for_task(
         TrialModel.superseded_by_trial_id.is_(None),
         TrialModel.kind == "agent",
     ]
-    if probe is not None:
-        conditions.append(TrialModel.is_probe == probe)
     if org_id is not None:
         conditions.append(TaskModel.org_id == org_id)
     query = select(TrialModel, TaskModel.task_path).join(
@@ -318,7 +310,6 @@ async def list_task_trials_for_public_experiment(
         .where(
             TrialModel.task_id == task_id,
             TrialModel.superseded_by_trial_id.is_(None),
-            TrialModel.is_probe.is_(False),
             TrialModel.kind == "agent",
             trial_in_experiment(experiment.id),
         )

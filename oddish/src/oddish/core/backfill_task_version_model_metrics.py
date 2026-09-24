@@ -1,8 +1,8 @@
-"""Recompute task-browser and per-model statistics from recorded trials.
+"""Recompute task-browser statistics from recorded trials.
 
 Each batch commits separately. Resume with --after-id using the last logged
 version ID; without it, a rerun recomputes every version from the beginning.
-Versions without eligible trials produce no statistics and do not stall paging.
+Versions without eligible trials get empty statistics and do not stall paging.
 
     uv run python -m oddish.core.backfill_task_version_model_metrics --limit 500
 """
@@ -13,10 +13,10 @@ import argparse
 import asyncio
 import logging
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from oddish.core.task_browse_summary import refresh_task_browse_summaries
-from oddish.db import TaskVersionModel, TaskVersionModelMetricsModel, get_session
+from oddish.db import TaskVersionModel, get_session
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +26,7 @@ DEFAULT_BATCH = 200
 async def _next_version_ids(session, after_id: str | None, batch: int) -> list[str]:
     """Next page of task versions in id order.
 
-    Keyset, not "versions missing a row": a version whose trials are all out of
-    scope legitimately produces no rows, so a missing-row cursor would hand back
-    the same page forever.
+    Keyset, not "versions missing a row", so a rerun rebuilds every version.
     """
     query = select(TaskVersionModel.id).order_by(TaskVersionModel.id.asc())
     if after_id is not None:
@@ -54,22 +52,12 @@ async def backfill(
             if not version_ids:
                 break
             await refresh_task_browse_summaries(session, version_ids)
-            written = (
-                await session.execute(
-                    select(func.count())
-                    .select_from(TaskVersionModelMetricsModel)
-                    .where(
-                        TaskVersionModelMetricsModel.task_version_id.in_(version_ids)
-                    )
-                )
-            ).scalar_one()
             await session.commit()
         cursor = version_ids[-1]
         processed += len(version_ids)
         logger.info(
-            "%d task versions (%d metric rows); %d total; resume after %s",
+            "%d task versions; %d total; resume after %s",
             len(version_ids),
-            written,
             processed,
             cursor,
         )

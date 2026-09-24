@@ -458,7 +458,6 @@ def _build_aggregates_for_experiment_ids(
         .join(TaskVersionModel, TaskVersionModel.id == TrialModel.task_version_id)
         .where(
             TrialModel.task_version_id.is_not(None),
-            TrialModel.is_probe.isnot(True),
             TrialModel.kind == "agent",
             TrialModel.superseded_by_trial_id.is_(None),
         )
@@ -540,7 +539,6 @@ def _build_aggregates_for_experiment_ids(
         .join(TrialModel, TrialModel.id == member.c.trial_id)
         .where(
             TrialModel.superseded_by_trial_id.is_(None),
-            TrialModel.is_probe.isnot(True),
             TrialModel.kind == "agent",
         )
     )
@@ -562,7 +560,6 @@ def _build_aggregates_for_experiment_ids(
         .join(TrialModel, TrialModel.id == member.c.trial_id)
         .where(
             TrialModel.superseded_by_trial_id.is_(None),
-            TrialModel.is_probe.isnot(True),
             TrialModel.kind == "agent",
             TrialModel.reward.isnot(None),
             not_(_baseline_agent_clause()),

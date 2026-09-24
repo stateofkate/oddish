@@ -125,6 +125,7 @@ interface TreeNode {
 
 const TASK_FILE_SECTION_ICONS = {
   prompt: FileText,
+  steps: ListChecks,
   solution: Lightbulb,
   verification: Microscope,
   environment: Package,
@@ -170,7 +171,6 @@ interface TaskFilesPanelProps {
   showAnalysis?: boolean;
   /** Public viewers can read shared QA but cannot start or change runs. */
   readOnly?: boolean;
-  /** Whether the task drawer offers and may fetch the capability analysis. */
   /** The route host owns this because the drawer can mount two task panes. */
   activePane: TaskPane;
   onActivePaneChange?: (pane: TaskPane) => void;

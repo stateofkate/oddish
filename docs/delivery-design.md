@@ -45,7 +45,7 @@ delivery stores `customer_id`; display names come from the join.
 | Signal | Where it lives | Keyed by |
 |---|---|---|
 | Pre-trial audit result | `task_versions.pre_trial` / `pre_trial_status` | task version |
-| Rollouts | `trials` (`kind='agent'`, non-probe, non-superseded — `EligibleTrialScope`) | `trials.task_version_id` |
+| Rollouts | `trials` (`kind='agent'`, non-superseded — `EligibleTrialScope`) | `trials.task_version_id` |
 | Verdict | `tasks.verdict` (+ `verdict_status`), produced by the `qa`-kind trial | current version |
 | Defects (action items) | trial `analysis` / verdict action items (`tier` must_fix / optional) | trial → version |
 | QA disagreement votes | `feedback` table | verdict / action item |
@@ -66,8 +66,8 @@ deliveries
   id, org_id, name, customer_id (FK -> customers, required at creation)
   description (text, nullable)
   status: 'active' | 'finalized'        -- one-way; see Finalize
-  qa_config (jsonb, nullable)           -- optional delivery-specific QA rubric
-                                        -- (preset/skills refs); null = generic QA
+  qa_config (jsonb, nullable)           -- optional delivery-specific QA rubric;
+                                        -- null = generic QA
   check_config (jsonb)                  -- which built-in checks apply + params
                                         -- (e.g. min_trials, min_agents) and the
                                         -- list of manual check definitions
@@ -181,8 +181,8 @@ Follow the existing public-view rules exactly (AGENTS.md):
   No ID-only public routes.
 - Unpublish clears the token (old links die); republish mints a new one.
 - Field filtering at the query layer: internal notes, raw QA payloads,
-  errors, hidden tasks/items, and anything probe-related never enter the
-  public payload. Reuse #1388's filtered-payload approach.
+  errors, and hidden tasks/items never enter the public payload. Reuse
+  #1388's filtered-payload approach.
 - Evidence links stay inside the share page; never link out to authed routes.
 
 Customer sees: the checklist board (N/M ready, per-task check status), each

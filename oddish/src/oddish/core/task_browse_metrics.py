@@ -19,7 +19,6 @@ def browse_trial_scope() -> tuple[Any, ...]:
     return (
         TrialModel.deleted_at.is_(None),
         TrialModel.superseded_by_trial_id.is_(None),
-        TrialModel.is_probe.isnot(True),
         TrialModel.kind == AGENT_TRIAL_KIND,
         not_combine_copy_filter(),
     )

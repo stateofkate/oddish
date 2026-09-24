@@ -155,7 +155,7 @@ IDENTITY_SQL = text(f"""
         WHERE tr.task_id = i.task_id AND tr.task_version_id = i.selected_version_id
           AND (i.org_id IS NULL OR tr.org_id = i.org_id)
           AND tr.deleted_at IS NULL AND tr.superseded_by_trial_id IS NULL
-          AND tr.kind = 'agent' AND NOT tr.is_probe
+          AND tr.kind = 'agent'
           AND lower(tr.agent) !~ '^(nop$|nop-|agent-nop|oracle$|oracle-|agent-oracle)'
           AND tr.analysis_status = 'SUCCESS'
       ), merged AS (
@@ -176,7 +176,7 @@ AGGREGATE_SQL = text(f"""
     WITH active_qa AS (
       SELECT tr.id, tr.name, tr.experiment_id, tr.task_version_id, tr.agent,
         tr.provider, tr.model, {_EFFORT_SQL} AS reasoning_effort, tr.kind, lower(tr.status::text) AS status,
-        tr.reward, NULL::text AS error_kind, tr.is_probe, tr.cost_usd,
+        tr.reward, NULL::text AS error_kind, tr.cost_usd,
         tr.input_tokens, tr.output_tokens, tr.cache_tokens,
         tr.cache_write_tokens, tr.billed_user_id, tr.has_trajectory, tr.created_at,
         tr.started_at, tr.finished_at
@@ -209,7 +209,7 @@ AGGREGATE_SQL = text(f"""
         AND v.cost_usd IS NOT NULL
         AND (CAST(:org_id AS text) IS NULL OR v.org_id = :org_id)
     ), eligible AS (
-      SELECT tr.task_version_id, tr.billed_user_id, tr.is_probe,
+      SELECT tr.task_version_id, tr.billed_user_id,
         tr.agent, tr.provider, tr.model, {_EFFORT_SQL} AS reasoning_effort, tr.status, tr.reward,
         tr.experiment_id, tr.created_at, tr.started_at, tr.finished_at,
         tr.cost_usd, tr.input_tokens, tr.output_tokens,
@@ -227,7 +227,7 @@ AGGREGATE_SQL = text(f"""
       SELECT (tr.task_version_id = CAST(:version_id AS text)) AS is_selected,
         (CAST(:current_version_id AS text) IS NULL
          OR tr.task_version_id = CAST(:current_version_id AS text)) AS is_current,
-        (tr.billed_user_id IS NOT NULL) AS is_billed, tr.is_probe,
+        (tr.billed_user_id IS NOT NULL) AS is_billed,
         tr.agent, tr.provider, tr.model, tr.reasoning_effort, count(*) AS total,
         count(*) FILTER (WHERE tr.status = 'SUCCESS') AS completed,
         count(*) FILTER (WHERE tr.status = 'FAILED') AS failed,
@@ -264,17 +264,17 @@ AGGREGATE_SQL = text(f"""
         COALESCE(sum(GREATEST(COALESCE(tr.cache_write_tokens, 0), 0))
           FILTER (WHERE tr.has_estimatable_tokens), 0) AS estimated_cache_write
       FROM eligible tr
-      GROUP BY is_selected, is_current, is_billed, tr.is_probe,
+      GROUP BY is_selected, is_current, is_billed,
                tr.agent, tr.provider, tr.model, tr.reasoning_effort
     ), selected_experiments AS (
       SELECT DISTINCT e.id, e.name
       FROM eligible tr JOIN experiments e ON e.id = tr.experiment_id
       WHERE tr.task_version_id = CAST(:version_id AS text)
-        AND tr.is_probe IS NOT TRUE AND e.deleted_at IS NULL
+        AND e.deleted_at IS NULL
         AND (CAST(:org_id AS text) IS NULL OR e.org_id = :org_id)
     )
     SELECT COALESCE((SELECT jsonb_agg(to_jsonb(g)) FROM (
-             SELECT * FROM groups ORDER BY is_selected DESC, is_probe,
+             SELECT * FROM groups ORDER BY is_selected DESC,
                agent, model, provider, is_billed
            ) g), '[]'::jsonb) AS groups,
            COALESCE((SELECT jsonb_agg(to_jsonb(e)) FROM (
@@ -292,7 +292,7 @@ PREVIEW_SQL = text(f"""
            WHEN tr.error_message LIKE '%AgentTimeoutError%'
              OR tr.error_message LIKE '%Agent execution timed out%' THEN 'timeout'
            ELSE 'error' END AS error_kind,
-      tr.is_probe, tr.cost_usd, tr.input_tokens, tr.output_tokens,
+      tr.cost_usd, tr.input_tokens, tr.output_tokens,
       tr.cache_tokens, tr.cache_write_tokens, tr.billed_user_id,
       tr.has_trajectory, tr.created_at, tr.started_at, tr.finished_at
     FROM trials tr

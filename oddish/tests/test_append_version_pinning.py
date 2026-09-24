@@ -157,9 +157,9 @@ def test_submission_defaults_to_the_experiments_version():
 async def test_implicit_primary_experiment_keeps_the_task_default(effective_versions):
     """A submission with no ``experiment_id`` must not adopt the primary's version.
 
-    ``oddish probe`` submits with ``experiment_id=None``, and the sweep falls back
-    to the task's primary experiment for trial ownership. Pinning to that
-    experiment's version would probe older content than the task now holds.
+    With ``experiment_id=None`` the sweep falls back to the task's primary
+    experiment for trial ownership. Pinning to that experiment's version would
+    run older content than the task now holds.
     """
     effective_versions.mapping["task-a"] = "task-a-v15"
 
@@ -175,58 +175,6 @@ async def test_implicit_primary_experiment_keeps_the_task_default(effective_vers
 
 
 @pytest.mark.asyncio
-async def test_auto_probe_follows_the_pinned_version(monkeypatch):
-    """The probe must inspect the version the trials were pinned to.
-
-    Auto-probe defaults to ``task.current_version_id``. When an append pins an
-    older version, a probe on the default inspects content no trial ran, is
-    filtered out of the experiment grid, and leaves the pinned version
-    unprobed while marking the default as already probed.
-    """
-    from oddish.core.probe import auto_probe
-
-    seen: dict = {}
-
-    async def fake_already_probed(session, version_id):
-        seen["checked_version"] = version_id
-        return True  # stop before the skill lookup; the version is the assertion
-
-    monkeypatch.setattr(auto_probe, "_version_already_probed", fake_already_probed)
-
-    await auto_probe.maybe_enqueue_auto_probe(
-        None,
-        task=SimpleNamespace(id="task-a", current_version_id="task-a-v16"),
-        experiment=None,
-        org_id=None,
-        task_version_id="task-a-v15",
-    )
-
-    assert seen["checked_version"] == "task-a-v15"
-
-
-@pytest.mark.asyncio
-async def test_auto_probe_defaults_to_the_task_version(monkeypatch):
-    from oddish.core.probe import auto_probe
-
-    seen: dict = {}
-
-    async def fake_already_probed(session, version_id):
-        seen["checked_version"] = version_id
-        return True
-
-    monkeypatch.setattr(auto_probe, "_version_already_probed", fake_already_probed)
-
-    await auto_probe.maybe_enqueue_auto_probe(
-        None,
-        task=SimpleNamespace(id="task-a", current_version_id="task-a-v16"),
-        experiment=None,
-        org_id=None,
-    )
-
-    assert seen["checked_version"] == "task-a-v16"
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize("content_hash", [None, "deadbeef"])
 @pytest.mark.parametrize("experiment_id", [None, "exp-1"])
 async def test_use_default_version_is_main_behaviour(
@@ -234,8 +182,8 @@ async def test_use_default_version_is_main_behaviour(
 ):
     """With the flag set the resolved version is the task default, always.
 
-    Every downstream consumer -- the reconcile scope, the trial stamp, and the
-    auto-probe -- reads this one value, so pinning it to ``current_version_id``
+    Every downstream consumer -- the reconcile scope and the trial stamp --
+    reads this one value, so pinning it to ``current_version_id``
     across the whole input space is what makes the flag a faithful opt-out.
     """
     effective_versions.mapping["task-a"] = "task-a-v15"

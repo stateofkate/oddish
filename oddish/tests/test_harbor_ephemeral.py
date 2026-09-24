@@ -21,15 +21,11 @@ from harbor.models.environment_type import EnvironmentType
 from harbor.models.trial.config import EnvironmentConfig
 from harbor.trial.hooks import TrialEvent
 
-from oddish.core.harbor_source import (
-    harbor_git_requirement,
-    harbor_sandbox_requirement,
-)
+from oddish.core.harbor_source import harbor_git_requirement
 from oddish.runtime.backends.daytona import DaytonaBackend
 from oddish.workers.harbor import ephemeral as harbor_ephemeral
 from oddish.workers.harbor.agent_config import _build_agent_config
 from oddish.workers.harbor._entry import (
-    _ProbeClaudeCode,
     _build_job_config,
     _read_payload_and_unlink,
     _thunder_capacity_error_metadata,
@@ -48,40 +44,10 @@ _EPHEMERAL_HC = {
     "source": "https://github.com/dot-agi/harbor",
     "resolved_sha": "a" * 40,
 }
-
-
-@pytest.mark.asyncio
-async def test_ephemeral_uses_runner_derived_analysis_capabilities(
-    tmp_path, monkeypatch
-):
-    task_path = tmp_path / "analysis-task"
-    task_path.mkdir()
-
-    def unexpected_validation(_path):
-        raise AssertionError("analysis trials must skip ordinary task validation")
-
-    monkeypatch.setattr(
-        harbor_ephemeral,
-        "validate_task_timeout_config",
-        unexpected_validation,
-    )
-    monkeypatch.setattr(
-        harbor_ephemeral,
-        "_check_local_storage_preflight",
-        lambda *_args, **_kwargs: "stop after validation boundary",
-    )
-
-    outcome = await run_ephemeral_harbor_trial(
-        task_path=task_path,
-        agent="claude-code",
-        jobs_dir=tmp_path / "jobs",
-        environment_config=EnvironmentConfig(type=EnvironmentType.DOCKER),
-        harbor_config=_EPHEMERAL_HC,
-        is_probe=True,
-        skip_task_validation=True,
-    )
-
-    assert outcome.exception_type == "LocalStoragePreflightError"
+_VALID_TASK_TOML = (
+    "[agent]\ntimeout_sec = 60\n[environment]\nbuild_timeout_sec = 60\n"
+    "[verifier]\ntimeout_sec = 60\n"
+)
 
 
 def test_bridge_event_end_with_reward_and_exception():
@@ -267,7 +233,6 @@ def test_build_payload_prefers_passed_env_build_multiplier():
         model=None,
         environment_config=EnvironmentConfig(type=EnvironmentType.GKE),
         raw_harbor_config={"environment_build_timeout_multiplier": 2.0},
-        is_probe=False,
         environment_build_timeout_multiplier=99.0,
     )
     assert payload["environment_build_timeout_multiplier"] == 99.0
@@ -284,7 +249,6 @@ def test_build_payload_falls_back_to_raw_env_build_multiplier():
         model=None,
         environment_config=EnvironmentConfig(type=EnvironmentType.DOCKER),
         raw_harbor_config={"environment_build_timeout_multiplier": 2.0},
-        is_probe=False,
     )
     assert payload["environment_build_timeout_multiplier"] == 2.0
 
@@ -298,7 +262,6 @@ def test_build_payload_carries_extra_agent_env():
         model="claude-sonnet-4-5",
         environment_config=EnvironmentConfig(type=EnvironmentType.DOCKER),
         raw_harbor_config={},
-        is_probe=True,
         extra_agent_env={"ODDISH_API_KEY": "secret-mint"},
     )
     assert payload["extra_agent_env"]["ODDISH_API_KEY"] == "secret-mint"
@@ -314,7 +277,6 @@ def test_build_payload_routes_public_xai_for_stock_child(monkeypatch):
         model="xai-public/grok-4.7",
         environment_config=EnvironmentConfig(type=EnvironmentType.DOCKER),
         raw_harbor_config=dict(_EPHEMERAL_HC),
-        is_probe=False,
         extra_agent_env={"XAI_PUBLIC_API_KEY": "public-xai-key"},
     )
 
@@ -335,7 +297,6 @@ def test_build_payload_routes_ambient_public_xai_key(monkeypatch):
         model="xai-public/grok-4.7",
         environment_config=EnvironmentConfig(type=EnvironmentType.DOCKER),
         raw_harbor_config=dict(_EPHEMERAL_HC),
-        is_probe=False,
     )
 
     assert payload["model"] == "grok-4.7"
@@ -355,7 +316,6 @@ def test_build_payload_public_xai_fails_closed_without_public_key(monkeypatch):
             model="xai-public/grok-4.7",
             environment_config=EnvironmentConfig(type=EnvironmentType.DOCKER),
             raw_harbor_config=dict(_EPHEMERAL_HC),
-            is_probe=False,
         )
 
 
@@ -373,7 +333,6 @@ def test_build_payload_carries_agent_config():
         model="openrouter/tencent/hy3",
         environment=EnvironmentType.MODAL,
         raw_harbor_config={"agent_config": agent_config},
-        is_probe=False,
     )
     assert payload["agent_config"] == agent_config
 
@@ -421,7 +380,6 @@ network_mode = "no-network"
         model="openai/gpt-5.5",
         environment_config=EnvironmentConfig(type=EnvironmentType.THUNDER),
         raw_harbor_config={"agent_config": {"extra_allowed_hosts": []}},
-        is_probe=False,
     )
 
     assert payload["agent_config"]["extra_allowed_hosts"] == [
@@ -492,7 +450,6 @@ network_mode = "no-network"
         model="openai/gpt-5.5",
         environment_config=environment_config,
         raw_harbor_config={"agent_config": {"extra_allowed_hosts": ["submitted.test"]}},
-        is_probe=False,
     )
 
     assert payload["agent_config"]["extra_allowed_hosts"] == ["submitted.test"]
@@ -519,7 +476,6 @@ def _compat_payload(model, *, agent="claude-code", raw_harbor_config=None, **ove
         "model": model,
         "environment_config": EnvironmentConfig(type=EnvironmentType.DOCKER),
         "raw_harbor_config": raw_harbor_config or dict(_EPHEMERAL_HC),
-        "is_probe": False,
     }
     base.update(over)
     return _build_payload(**base)
@@ -539,7 +495,6 @@ def test_ephemeral_agent_env_matches_in_process_for_compat_providers(model):
         agent="claude-code",
         model=model,
         raw_harbor_config=dict(raw_harbor_config),
-        is_probe=False,
     )
     payload = _compat_payload(model, raw_harbor_config=raw_harbor_config)
 
@@ -554,7 +509,6 @@ def test_ephemeral_agent_kwargs_match_in_process_for_compat_providers(model):
         agent="claude-code",
         model=model,
         raw_harbor_config=dict(_EPHEMERAL_HC),
-        is_probe=False,
     )
     payload = _compat_payload(model)
 
@@ -739,6 +693,7 @@ async def test_ephemeral_unroutable_model_settles_as_a_trial_error(tmp_path):
     """
     task_path = tmp_path / "task"
     task_path.mkdir()
+    (task_path / "task.toml").write_text(_VALID_TASK_TOML)
 
     outcome = await run_ephemeral_harbor_trial(
         task_path=task_path,
@@ -747,8 +702,6 @@ async def test_ephemeral_unroutable_model_settles_as_a_trial_error(tmp_path):
         model="geometric/glm-0.0-unserved",
         environment_config=EnvironmentConfig(type=EnvironmentType.DOCKER),
         harbor_config=dict(_EPHEMERAL_HC),
-        is_probe=False,
-        skip_task_validation=True,
     )
 
     assert outcome.reward is None
@@ -769,7 +722,7 @@ async def test_ephemeral_builder_failure_still_removes_the_patched_task_copy(
     """
     task_path = tmp_path / "task"
     task_path.mkdir()
-    (task_path / "task.toml").write_text("[task]\n")
+    (task_path / "task.toml").write_text(_VALID_TASK_TOML)
     patched_copies: list[Path] = []
     # Hold the TemporaryDirectory objects alive. Without a strong reference,
     # CPython's refcounting fires their finalizer the moment this function
@@ -796,8 +749,6 @@ async def test_ephemeral_builder_failure_still_removes_the_patched_task_copy(
         model="geometric/glm-0.0-unserved",
         environment_config=EnvironmentConfig(type=EnvironmentType.DOCKER),
         harbor_config={**_EPHEMERAL_HC, "docker_image": "example.invalid/img:1"},
-        is_probe=False,
-        skip_task_validation=True,
     )
 
     assert outcome.exception_type == "ValueError"
@@ -820,75 +771,6 @@ def test_ephemeral_hdo_trial_blanks_bedrock_without_an_ambient_platform_key(
 
     assert payload["runtime_env"]["CLAUDE_CODE_USE_BEDROCK"] == ""
     assert payload["runtime_env"]["AWS_BEARER_TOKEN_BEDROCK"] == ""
-
-
-def test_ephemeral_probe_subagent_model_follows_the_child_model(tmp_path):
-    """A probe's subagent must run the same model as the probe itself.
-
-    claude-code's model id is the child's decision, so anything derived from it
-    is too. Pinning the subagent from the parent's canonical id leaves a probe
-    whose main agent and subagent are on different ids.
-    """
-    monkeypatch_task = tmp_path / "task"
-    monkeypatch_task.mkdir()
-    payload = _compat_payload("global.anthropic.claude-opus-5", is_probe=True)
-    config = _build_job_config(
-        {
-            "task_path": str(monkeypatch_task),
-            "jobs_dir": str(tmp_path / "jobs"),
-            "agent": "claude-code",
-            "model": payload["model"],
-            "environment_config": {},
-            "agent_config": payload["agent_config"],
-            "verifier": {},
-            "artifacts": [],
-            "runtime_env": payload["runtime_env"],
-            "extra_agent_env": payload["extra_agent_env"],
-            "probe_subagent_model": payload["probe_subagent_model"],
-        }
-    )
-
-    agent_config = config.agents[0]
-    assert agent_config.env["CLAUDE_CODE_SUBAGENT_MODEL"] == agent_config.model_name
-
-
-def test_ephemeral_probe_without_a_model_builds_a_payload(monkeypatch):
-    """A probe that names no model must still build a payload.
-
-    `_build_routed_agent_config` leaves `model_name` as None when neither the
-    caller nor the submitted config names a model, and the probe pin is skipped
-    for the same reason. The subagent strip must not read those two absences as
-    a match and remove a key that was never set.
-    """
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "platform-key")
-
-    payload = _compat_payload(
-        None,
-        is_probe=True,
-        raw_harbor_config={
-            **_EPHEMERAL_HC,
-            "agent_config": {"env": {"UV_HTTP_RETRIES": "8"}},
-        },
-    )
-
-    assert payload["model"] is None
-    assert payload["agent_config"]["env"]["UV_HTTP_RETRIES"] == "8"
-    assert "CLAUDE_CODE_SUBAGENT_MODEL" not in payload["agent_config"]["env"]
-
-
-def test_ephemeral_probe_keeps_an_endpoint_pinned_subagent_model(monkeypatch):
-    """Only the probe's own pin moves to the child.
-
-    An `anthropic-hdo/` trial pins every alias to the id that endpoint serves.
-    That is a routing decision, not a probe decision, and it still crosses.
-    """
-    monkeypatch.setattr(harbor_ephemeral.settings, "anthropic_hdo_api_key", None)
-    monkeypatch.setenv("ANTHROPIC_HDO_API_KEY", "hdo-secret")
-
-    payload = _compat_payload("anthropic-hdo/claude-opus-4-5", is_probe=True)
-
-    env = payload["agent_config"]["env"]
-    assert env["CLAUDE_CODE_SUBAGENT_MODEL"] == "claude-opus-4-5"
 
 
 def test_child_merges_worker_env_over_shaped_compat_env(tmp_path):
@@ -1020,71 +902,6 @@ _SOURCE = "https://github.com/dot-agi/harbor"
 _SHA = "a" * 40
 
 
-def _payload(**over):
-    base = dict(
-        task_path=Path("/tmp/task"),
-        jobs_dir=Path("/tmp/jobs"),
-        outcome_path=Path("/tmp/jobs/outcome.json"),
-        agent="claude-code",
-        model="claude-sonnet-4-5",
-        environment_config=EnvironmentConfig(type=EnvironmentType.DOCKER),
-        raw_harbor_config={"source": _SOURCE, "resolved_sha": _SHA},
-        is_probe=True,
-    )
-    base.update(over)
-    return _build_payload(**base)
-
-
-def test_payload_agent_harbor_requirement_is_override_sandbox_req_for_probe_claude_code():
-    req = _payload()["agent_harbor_requirement"]
-    assert req == harbor_sandbox_requirement(_SOURCE, _SHA)
-    # Tarball form: the probe sandbox image has no git binary to clone with.
-    assert req == f"harbor @ {_SOURCE}/archive/{_SHA}.tar.gz"
-    assert _SHA in req
-
-
-def test_payload_no_agent_harbor_requirement_for_non_probe():
-    assert _payload(is_probe=False)["agent_harbor_requirement"] is None
-
-
-def test_payload_no_agent_harbor_requirement_for_non_claude_code_agent():
-    assert _payload(agent="codex")["agent_harbor_requirement"] is None
-
-
-def test_payload_agent_harbor_requirement_is_exact_match_not_substring():
-    assert _payload(agent="claude-code-custom")["agent_harbor_requirement"] is None
-    assert _payload(agent="my-claude-code")["agent_harbor_requirement"] is None
-    assert _payload(agent="Claude-Code")["agent_harbor_requirement"] == (
-        harbor_sandbox_requirement(_SOURCE, _SHA)
-    )
-
-
-def test_child_routes_probe_agent_through_installing_subclass(tmp_path):
-    task_dir = tmp_path / "task"
-    task_dir.mkdir()
-    req = harbor_git_requirement(_SOURCE, _SHA)
-    config = _build_job_config(
-        {
-            "task_path": str(task_dir),
-            "jobs_dir": str(tmp_path / "jobs"),
-            "agent": "claude-code",
-            "model": "claude-sonnet-4-5",
-            "environment": "docker",
-            "environment_config": {},
-            "verifier": {},
-            "artifacts": [],
-            "agent_harbor_requirement": req,
-        }
-    )
-    ac = config.agents[0]
-    assert ac.name is None
-    assert ac.import_path.endswith(":_ProbeClaudeCode")
-    assert ac.kwargs["harbor_requirement"] == req
-    from harbor.utils.import_path import import_class
-
-    assert import_class(ac.import_path) is _ProbeClaudeCode
-
-
 def test_child_default_agent_not_routed_through_subclass(tmp_path):
     task_dir = tmp_path / "task"
     task_dir.mkdir()
@@ -1103,58 +920,6 @@ def test_child_default_agent_not_routed_through_subclass(tmp_path):
     ac = config.agents[0]
     assert ac.name == "claude-code"
     assert ac.import_path is None
-
-
-@pytest.mark.asyncio
-async def test_probe_claude_code_installs_override_harbor(tmp_path, monkeypatch):
-    req = harbor_git_requirement(_SOURCE, _SHA)
-    agent = _ProbeClaudeCode(
-        logs_dir=tmp_path, model_name="claude-sonnet-4-5", harbor_requirement=req
-    )
-
-    calls: list[str] = []
-
-    async def _fake_super_install(self, environment):
-        calls.append("super")
-
-    async def _fake_exec(self, environment, *, command):
-        calls.append(command)
-
-    monkeypatch.setattr(
-        "harbor.agents.installed.claude_code.ClaudeCode.install", _fake_super_install
-    )
-    monkeypatch.setattr(_ProbeClaudeCode, "exec_as_agent", _fake_exec)
-
-    await agent.install(environment=object())
-
-    assert calls[0] == "super"
-    assert "pip install --user --quiet" in calls[1]
-    assert req in calls[1]
-    assert _SHA in calls[1]
-
-
-@pytest.mark.asyncio
-async def test_probe_claude_code_install_is_best_effort_on_failure(
-    tmp_path, monkeypatch
-):
-    agent = _ProbeClaudeCode(
-        logs_dir=tmp_path,
-        model_name="claude-sonnet-4-5",
-        harbor_requirement=harbor_git_requirement(_SOURCE, _SHA),
-    )
-
-    async def _fake_super_install(self, environment):
-        pass
-
-    async def _boom_exec(self, environment, *, command):
-        raise RuntimeError("sandbox pip is down")
-
-    monkeypatch.setattr(
-        "harbor.agents.installed.claude_code.ClaudeCode.install", _fake_super_install
-    )
-    monkeypatch.setattr(_ProbeClaudeCode, "exec_as_agent", _boom_exec)
-
-    await agent.install(environment=object())
 
 
 def test_read_outcome_with_result_json_uses_extractor(tmp_path, monkeypatch):
@@ -1272,7 +1037,6 @@ def test_ephemeral_daytona_forces_ownership_labels():
         model=None,
         environment_config=resolved,
         raw_harbor_config={},
-        is_probe=False,
     )
     config = _build_job_config(payload)
     assert config.environment.kwargs["auto_labels"] is True
@@ -1308,7 +1072,6 @@ def test_payload_serializes_resolved_environment_config_without_child_merges():
         model=None,
         environment_config=resolved,
         raw_harbor_config={},
-        is_probe=False,
     )
 
     assert payload["environment_config"] == resolved.model_dump(mode="json")
@@ -1657,7 +1420,7 @@ async def test_run_ephemeral_cancel_kills_child(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_upload_probe_assets_splits_targets(tmp_path):
     from oddish.workers.queue.trial_handler import _upload_probe_assets
-    from oddish.worker.probe_overlay import PROBE_HARNESS_DIR
+    from oddish.worker.probe_staging import PROBE_HARNESS_DIR
 
     assets = tmp_path / "task"
     (assets / "solution").mkdir(parents=True)
@@ -1714,7 +1477,6 @@ def test_build_payload_normalizes_claude_model_when_bedrock_is_blanked(
         model=f"anthropic/{api_model}",
         environment=EnvironmentType.DOCKER,
         raw_harbor_config=dict(_EPHEMERAL_HC),
-        is_probe=False,
     )
 
     assert payload["runtime_env"]["CLAUDE_CODE_USE_BEDROCK"] == ""
@@ -1744,7 +1506,6 @@ def test_build_payload_keeps_bedrock_model_when_bedrock_stays_on(
         model=f"global.anthropic.{api_model}",
         environment=EnvironmentType.DOCKER,
         raw_harbor_config=dict(_EPHEMERAL_HC),
-        is_probe=False,
     )
 
     assert payload["runtime_env"]["CLAUDE_CODE_USE_BEDROCK"] == "1"
@@ -1762,7 +1523,6 @@ def test_build_payload_leaves_non_claude_agents_alone(monkeypatch):
         model="openrouter/tencent/hy3",
         environment=EnvironmentType.MODAL,
         raw_harbor_config=dict(_EPHEMERAL_HC),
-        is_probe=False,
         extra_agent_env={"ANTHROPIC_API_KEY": "test-user-key"},
     )
 
@@ -1795,7 +1555,6 @@ def test_dispatch_paths_agree_on_the_claude_model_id(monkeypatch, api_model, rou
         agent=agent,
         model=model,
         raw_harbor_config=dict(_EPHEMERAL_HC),
-        is_probe=False,
     )
     payload = _build_payload(
         task_path=Path("/tmp/task"),
@@ -1805,18 +1564,13 @@ def test_dispatch_paths_agree_on_the_claude_model_id(monkeypatch, api_model, rou
         model=model,
         environment=EnvironmentType.DOCKER,
         raw_harbor_config=dict(_EPHEMERAL_HC),
-        is_probe=False,
     )
 
     assert payload["model"] == in_process.model_name == expected
 
 
-@pytest.mark.parametrize(
-    "force_direct,is_probe", [(True, False), (False, True), (False, False)]
-)
-def test_payload_bedrock_route_ignores_trial_anthropic_key(
-    monkeypatch, force_direct, is_probe
-):
+@pytest.mark.parametrize("force_direct", [True, False])
+def test_payload_bedrock_route_ignores_trial_anthropic_key(monkeypatch, force_direct):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.setenv("CLAUDE_CODE_USE_BEDROCK", "1")
     monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "test-bedrock-token")
@@ -1836,7 +1590,6 @@ def test_payload_bedrock_route_ignores_trial_anthropic_key(
         model="global.anthropic.claude-opus-5",
         environment=EnvironmentType.DOCKER,
         raw_harbor_config=dict(_EPHEMERAL_HC),
-        is_probe=is_probe,
         extra_agent_env=agent_env,
     )
     child_agent = _build_job_config(payload).agents[0]
@@ -1892,7 +1645,6 @@ def test_payload_hdo_key_wins_over_worker_and_user_keys(
         model="anthropic-hdo/claude-opus-5",
         environment=environment,
         raw_harbor_config=dict(_EPHEMERAL_HC),
-        is_probe=False,
         extra_agent_env={"ANTHROPIC_API_KEY": "test-user-key"},
     )
     child_agent = _build_job_config(payload).agents[0]
@@ -1921,7 +1673,6 @@ def test_payload_declares_gateway_hosts_to_the_pause_proxy(monkeypatch):
         model="claude-sonnet-4-5",
         environment_config=resolved,
         raw_harbor_config={},
-        is_probe=False,
         extra_agent_env={"ANTHROPIC_BASE_URL": "https://gateway.test/anthropic"},
     )
 
@@ -1950,7 +1701,6 @@ def test_payload_declares_pause_proxy_kwargs_base_url(monkeypatch, agent, enable
         raw_harbor_config={
             "agent_config": {"kwargs": {"base_url": "https://kwargs-gateway.test/v1"}}
         },
-        is_probe=False,
     )
 
     hosts = payload["environment_config"]["kwargs"]["pause_http_proxy_hosts"]

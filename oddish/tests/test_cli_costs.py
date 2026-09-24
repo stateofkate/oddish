@@ -197,7 +197,6 @@ def test_task_splits_spend_by_type_without_double_counting_qa():
         "alpha",
         [
             _trial(cost=2.0),
-            _trial(cost=5.0, is_probe=True),
             _trial(cost=9.0, origin="imported"),
             _trial("qa", 0.3),
             _trial("audit", 0.2),

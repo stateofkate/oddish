@@ -44,7 +44,7 @@ def test_each_analysis_kind_gets_its_label():
     assert artifact_subprefix("summarize", 2) == "analysis-summarize/attempt-2"
 
 
-def test_agent_and_probe_trials_get_attempt_only_prefixes():
+def test_agent_trials_get_attempt_only_prefixes():
     assert artifact_subprefix("agent", 1) == "attempt-1"
     assert artifact_subprefix("agent", 3) == "attempt-3"
 

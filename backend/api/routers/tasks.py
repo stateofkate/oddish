@@ -65,10 +65,6 @@ from oddish.core.helpers import terminate_run_harvest
 from oddish.core.dashboard import (
     invalidate_dashboard_cache,
 )
-from oddish.core.experiments import (
-    list_experiment_probes_core,
-    list_org_probes_core,
-)
 from oddish.core.sharing.helpers import (
     ensure_experiment_public,
     get_task_file_content_s3,
@@ -149,8 +145,6 @@ from oddish.schemas import (
     ExperimentOpenResponse,
     ExperimentTrialPageResponse,
     ExperimentOptionsResponse,
-    ExperimentProbeRow,
-    OrgProbeRow,
     QARunRequest,
     TaskBrowseFacets,
     TaskBrowseCountResponse,
@@ -708,8 +702,8 @@ async def get_experiment_cost_totals_route(
     additive number (``core.endpoints.experiment_cost``). Deliberately wider
     than the grid routes above: those page their trials (so the page can't sum
     cost client-side without loading all of them) and scope each task to its
-    current version (so they omit earlier versions, superseded retries and
-    probes -- all of which were still billed). One grouped query.
+    current version (so they omit earlier versions and superseded retries --
+    both of which were still billed). One grouped query.
     """
     auth.require_scope(APIKeyScope.READ)
 
@@ -777,7 +771,6 @@ async def browse_tasks(
     verdict_statuses: str | None = Query(None, description="Task verdict status CSV"),
     has_link: bool | None = Query(None),
     run_analysis: bool | None = Query(None),
-    run_probe: bool | None = Query(None),
     created_after: datetime | None = Query(None),
     created_before: datetime | None = Query(None),
     trial_finished_after: datetime | None = Query(None),
@@ -792,7 +785,6 @@ async def browse_tasks(
     environments: str | None = Query(None, description="Trial environment CSV"),
     trial_statuses: str | None = Query(None, description="Trial status CSV"),
     origins: str | None = Query(None, description="Trial origin CSV"),
-    trial_is_probe: bool | None = Query(None),
     harbor_shas: str | None = Query(None, description="Harbor SHA CSV"),
     harbor_stages: str | None = Query(None, description="Harbor stage CSV"),
     analysis_classifications: str | None = Query(
@@ -1009,7 +1001,6 @@ async def browse_tasks(
             actor_user_id=auth.user_id,
             has_link=has_link,
             run_analysis=run_analysis,
-            run_probe=run_probe,
             created_after=created_after,
             created_before=created_before,
             trial_finished_after=trial_finished_after,
@@ -1022,7 +1013,6 @@ async def browse_tasks(
             environments=_split_tag_csv(environments),
             trial_statuses=_split_tag_csv(trial_statuses),
             origins=_split_tag_csv(origins),
-            trial_is_probe=trial_is_probe,
             harbor_shas=_split_tag_csv(harbor_shas),
             harbor_stages=_split_tag_csv(harbor_stages),
             analysis_classifications=_split_tag_csv(analysis_classifications),
@@ -1620,57 +1610,6 @@ async def set_experiment_model_rename(
         await session.commit()
 
         return ModelRenameResponse(name=experiment.name, renames=renames)
-
-
-@router.get(
-    "/experiments/{experiment_id}/probes",
-    response_model=list[ExperimentProbeRow],
-)
-async def list_experiment_probes(
-    experiment_id: str,
-    auth: Annotated[AuthContext, Depends(require_auth)],
-) -> list[ExperimentProbeRow]:
-    """List probe trials for each task in the experiment.
-
-    Returns at most one row per task — the most recent probe trial for the
-    task's current version.  Tasks with no probe trials are omitted.
-    Each row includes: ``task_id``, ``task_name``, ``version``, ``model``,
-    ``status``, ``probe_trial_id``.
-
-    Raises 404 if the experiment does not exist for the authenticated org.
-    """
-    auth.require_scope(APIKeyScope.READ)
-
-    async with get_read_session() as session:
-        result = await session.execute(
-            select(ExperimentModel).where(
-                ExperimentModel.id == experiment_id,
-                ExperimentModel.org_id == auth.org_id,
-            )
-        )
-        if result.scalar_one_or_none() is None:
-            raise HTTPException(status_code=404, detail="Experiment not found")
-
-        return await list_experiment_probes_core(
-            session,
-            experiment_id=experiment_id,
-            org_id=auth.org_id,
-        )
-
-
-@router.get("/probes", response_model=list[OrgProbeRow])
-async def list_org_probes(
-    auth: Annotated[AuthContext, Depends(require_auth)],
-) -> list[OrgProbeRow]:
-    """List the authenticated org's tasks that have probe runs.
-
-    One row per task with at least one probe trial — task id/name, total
-    probe-run count, and the timestamp + status of the most recent probe
-    trial. Ordered most-recent-first.
-    """
-    auth.require_scope(APIKeyScope.READ)
-    async with get_read_session() as session:
-        return await list_org_probes_core(session, org_id=auth.org_id)
 
 
 @router.post("/tasks/cancel")

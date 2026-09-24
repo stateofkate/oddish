@@ -62,7 +62,6 @@ async def test_ephemeral_prepare_resolves_byok_only_for_direct_route(
             task_path=tmp_path,
             temp_task_dir=None,
             resolved_task_s3_key=None,
-            probe_extra_instructions=None,
             probe_agent_env=None,
             probe_key_id=None,
         )
@@ -100,7 +99,6 @@ async def test_ephemeral_prepare_resolves_byok_only_for_direct_route(
         model=model,
         environment_config=EnvironmentConfig(type=EnvironmentType.DOCKER),
         raw_harbor_config=prepared.trial_harbor_config or {},
-        is_probe=False,
         extra_agent_env=attempt.byok_env,
     )
     child_env = _build_job_config(payload).agents[0].env
@@ -142,7 +140,6 @@ async def test_analysis_probe_env_pins_task_version(monkeypatch, tmp_path):
 
     monkeypatch.setattr(trial_handler, "resolve_task_directory", resolve_task_directory)
     monkeypatch.setattr(trial_handler, "apply_analysis_overlay", lambda *_a, **_k: None)
-    monkeypatch.setattr(trial_handler, "enable_local_internet", lambda *_a: None)
     monkeypatch.setattr(trial_handler, "mint_probe_creds", mint_probe_creds)
 
     task = await trial_handler._prepare_trial_task(
@@ -216,6 +213,7 @@ async def test_task_copy_failure_removes_owned_temp_root(monkeypatch, tmp_path):
         trial_model="anthropic/claude-sonnet-4-6",
         trial_environment="docker",
         trial_harbor_config={"extra_instructions": "prepare a writable copy"},
+        trial_kind="summarize",
         org_id="org-1",
     )
     copy_root = tmp_path / "failed-copy"
@@ -354,7 +352,6 @@ async def test_run_trial_job_keeps_successful_upload_when_analysis_validation_fa
             task_path=tmp_path / "task",
             temp_task_dir=None,
             resolved_task_s3_key=prepared.task_s3_key,
-            probe_extra_instructions=None,
             probe_agent_env=None,
             probe_key_id=None,
         ),
@@ -480,7 +477,6 @@ async def test_run_trial_job_defers_thunder_capacity_to_atomic_reroute(
         task_path=Path(tmp_path),
         temp_task_dir=None,
         resolved_task_s3_key=None,
-        probe_extra_instructions=None,
         probe_agent_env=None,
         probe_key_id=None,
     )

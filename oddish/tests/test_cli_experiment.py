@@ -98,11 +98,9 @@ class _PinnedAddClient:
                 200,
                 json=[
                     {"id": "T-16a", "task_version_id": "mytask-abc12345-v16",
-                     "status": "success", "is_probe": False,
-                     "superseded_by_trial_id": None},
+                     "status": "success", "superseded_by_trial_id": None},
                     {"id": "T-22a", "task_version_id": "mytask-abc12345-v22",
-                     "status": "success", "is_probe": False,
-                     "superseded_by_trial_id": None},
+                     "status": "success", "superseded_by_trial_id": None},
                 ],
             )
         if url.endswith("/share"):

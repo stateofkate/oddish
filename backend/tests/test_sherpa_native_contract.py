@@ -69,6 +69,36 @@ def test_new_optional_fields_preserve_legacy_request_hash():
     assert compute_request_hash(legacy) == compute_request_hash(without_new_fields)
 
 
+def test_removed_probe_fields_preserve_stored_request_hashes():
+    # Hashes recorded before the probe fields left TaskSweepSubmission.
+    native = TaskSweepSubmission(
+        task_id="task-1",
+        task_version_id="task-1-v3",
+        external_request_id="sherpa-request-1",
+        append_to_task=True,
+        add_trials=True,
+        configs=[{"agent": "codex", "model": "model-1", "n_trials": 2}],
+    )
+    declarative = TaskSweepSubmission(
+        task_id="task-1",
+        append_to_task=True,
+        configs=[
+            {
+                "agent": "claude-code",
+                "model": "anthropic/claude-sonnet-4-6",
+                "n_trials": 3,
+            }
+        ],
+    )
+
+    assert compute_request_hash(native) == (
+        "bf8fc84f78d88aa99c87e6c6c929531596a48ca241849bbf426880b8f2c9fbf8"
+    )
+    assert compute_request_hash(declarative) == (
+        "5f44206ce072bf2e6cad87ec5d95edb913c49765cc63c4bd55b7044e72737c90"
+    )
+
+
 def test_sweep_response_includes_trial_version_refs():
     response = TaskResponse(
         id="task-1",

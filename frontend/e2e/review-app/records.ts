@@ -127,7 +127,6 @@ export function versionFor(
         agent: "codex",
         model: "openai/gpt-5.6",
         providers: ["openai"],
-        is_probe: false,
         duration_sum_seconds: 0,
         duration_trial_count: 0,
       },

@@ -20,8 +20,6 @@ from oddish.mon.contract import (
     AttemptSpec,
     ResultPayload,
 )
-from oddish.schemas import SkillFile
-from oddish.worker.probe_staging import load_org_skills
 from oddish.workers.harbor import live_tail_db
 from oddish.workers.launcher import attempt as monitor_attempt
 from oddish.workers.launcher import heartbeat as monitor_heartbeat
@@ -103,15 +101,6 @@ class ControlResponse(BaseModel):
     authorized: bool
     detail: str | None = None
     pause_requested: bool = False
-
-
-class MonitorSkill(BaseModel):
-    name: str
-    files: list[SkillFile]
-
-
-class SkillsResponse(BaseModel):
-    skills: list[MonitorSkill]
 
 
 @router.post("/heartbeat")
@@ -271,27 +260,3 @@ async def attempt_spec(attempt: Attempt) -> AttemptSpec:
         return await monitor_attempt.build_attempt_spec(attempt)
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
-
-
-@router.get("/skills")
-async def selected_skills(attempt: Attempt) -> SkillsResponse:
-    """The trial's selected skills, loaded as the worker's ``stage_org_skills``
-    loads them. The monitor has no database to read them from."""
-    async with get_read_session() as session:
-        trial = await session.get(TrialModel, _require_trial(attempt))
-    skill_ids = ((trial.harbor_config if trial else None) or {}).get("skill_ids")
-    if trial is None or trial.org_id is None or not skill_ids:
-        return SkillsResponse(skills=[])
-    bundles = await load_org_skills(org_id=trial.org_id, skill_ids=skill_ids)
-    return SkillsResponse(
-        skills=[
-            MonitorSkill(
-                name=bundle.name,
-                files=[
-                    SkillFile(relative_path=path, content=content)
-                    for path, content in bundle.files
-                ],
-            )
-            for bundle in bundles
-        ]
-    )

@@ -84,7 +84,6 @@ async def _plan_append_trials(
         reconcile_where = [
             TrialModel.task_id == task.id,
             TrialModel.task_version_id == append_version_id,
-            TrialModel.is_probe.is_(False),
             TrialModel.superseded_by_trial_id.is_(None),
         ]
         if target_experiment_id is not None:
@@ -233,29 +232,14 @@ async def _finalize_sweep(
     experiment: ExperimentModel | None,
     is_append: bool,
     org_id: str | None,
-    billed_user_id: str | None,
-    registry_auth,
     reservation: Reservation | None,
     idempotency_store: IdempotencyStore | None,
-    append_version_id: str | None = None,
 ) -> None:
     """Shared finalize tail for the append and create sweep branches.
 
-    Behavior-identical for both branches: auto-probe enqueue and idempotency
-    completion. ``is_append`` only selects the response shape stored for replay.
+    Behavior-identical for both branches: idempotency completion.
+    ``is_append`` only selects the response shape stored for replay.
     """
-    from oddish.core.probe.auto_probe import maybe_enqueue_auto_probe
-
-    if task.run_probe:
-        await maybe_enqueue_auto_probe(
-            session,
-            task=task,
-            experiment=experiment,
-            org_id=org_id,
-            billed_user_id=billed_user_id,
-            registry_auth=registry_auth,
-            task_version_id=append_version_id,
-        )
     if reservation is not None and idempotency_store is not None and org_id is not None:
         # Flush so trial ids / timestamps are populated, then store the
         # response for replay alongside the trials in this transaction.
@@ -465,7 +449,7 @@ async def create_task_sweep_core(
 
     ``request_hash`` is the fingerprint used to detect a key reused with a
     different body. Callers that mutate the submission before calling (the cloud
-    backend resolves identity / attribution / probe defaults) must pass a hash
+    backend resolves identity / attribution) must pass a hash
     of the *raw* client submission so an honest retry is not spuriously rejected;
     when omitted it is computed from ``submission`` as received here.
     """
@@ -590,9 +574,6 @@ async def create_task_sweep_core(
         task = await get_task_for_org_core(
             session, task_id=submission.task_id, org_id=org_id
         )
-        # Read-only intent from the unlocked snapshot. Applied under FOR UPDATE
-        # after the quota lock (idempotent flips).
-        want_run_probe = bool(task.run_probe or submission.run_probe)
 
         new_experiment_id: str | None = None
         experiment: ExperimentModel | None = None
@@ -649,10 +630,6 @@ async def create_task_sweep_core(
         # readers of the column agree.
         if not task.run_analysis:
             task.run_analysis = True
-        # Same opt-in flip for auto-probe: a task first run without probes can
-        # later opt in on append. Off by default (probes are opt-in).
-        if want_run_probe and not task.run_probe:
-            task.run_probe = True
         # Update the link whenever a new submission carries one (explicit
         # --link or derived from --github-meta above). A submission with no
         # link leaves the existing value untouched rather than clearing it.
@@ -709,7 +686,6 @@ async def create_task_sweep_core(
                 "priority": task.priority,
                 "experiment_id": target_experiment_id,
                 "tags": task.tags or {},
-                "run_probe": want_run_probe,
                 "user": task.user,
             }
         )
@@ -736,11 +712,8 @@ async def create_task_sweep_core(
             experiment=experiment,
             is_append=True,
             org_id=org_id,
-            billed_user_id=attribution.billed_user_id,
-            registry_auth=submission.registry_auth,
             reservation=reservation,
             idempotency_store=idempotency_store,
-            append_version_id=append_version_id,
         )
         return task, new_trials, True, experiment
 
@@ -799,8 +772,6 @@ async def create_task_sweep_core(
         experiment=experiment,
         is_append=False,
         org_id=org_id,
-        billed_user_id=attribution.billed_user_id,
-        registry_auth=submission.registry_auth,
         reservation=reservation,
         idempotency_store=idempotency_store,
     )

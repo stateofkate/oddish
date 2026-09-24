@@ -21,7 +21,6 @@ def _trial() -> TrialModel:
         attempts=1,
         max_attempts=6,
         origin=TrialOrigin.ODDISH,
-        is_probe=False,
         has_trajectory=False,
         environment="daytona",
         harbor_sha="e" * 40,

@@ -378,8 +378,8 @@ async def seed_resource_trials(pool, count=20):
     )
     await pool.execute(
         """
-        INSERT INTO tasks (id, name, "user", task_path, status, priority, tags, run_analysis, run_probe, created_at, updated_at)
-        VALUES ('task', 'copied task', 'tester', '/tmp/copied-task', 'PENDING', 'LOW', '{}'::jsonb, false, false, NOW(), NOW())
+        INSERT INTO tasks (id, name, "user", task_path, status, priority, tags, run_analysis, created_at, updated_at)
+        VALUES ('task', 'copied task', 'tester', '/tmp/copied-task', 'PENDING', 'LOW', '{}'::jsonb, false, NOW(), NOW())
     """
     )
     await pool.execute(
@@ -454,7 +454,7 @@ async def test_candidate_reservations_cap_pending_and_adopted_workers(database):
 async def test_candidate_claims_exclude_other_kinds_images_orgs_and_priority(database):
     await seed_resource_trials(database, count=10)
     await database.execute("UPDATE trials SET kind='qa' WHERE id='trial-1'")
-    await database.execute("UPDATE trials SET is_probe=true WHERE id='trial-2'")
+    await database.execute("UPDATE trials SET kind='audit' WHERE id='trial-2'")
     await database.execute("UPDATE worker_jobs SET priority=1 WHERE id='job-3'")
     await database.execute(
         "UPDATE worker_jobs SET harbor_variant_id='ephemeral' WHERE id='job-4'"

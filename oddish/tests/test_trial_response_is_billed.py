@@ -25,7 +25,6 @@ def _trial(billed_user_id: str | None) -> TrialModel:
         attempts=1,
         max_attempts=6,
         origin=TrialOrigin.ODDISH,
-        is_probe=False,
         has_trajectory=False,
         billed_user_id=billed_user_id,
         created_at=datetime(2026, 1, 1),

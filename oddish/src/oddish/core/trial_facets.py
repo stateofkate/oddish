@@ -68,16 +68,14 @@ def facet_rows_for_trial(
     provider: str | None = None,
     environment: str | None = None,
     harbor_stage: str | None = None,
-    is_probe: bool = False,
     trial_kind: str = "agent",
 ) -> set[tuple[str, str, str, str]]:
     """Vocabulary rows one trial spec contributes, as (org, kind, value, value_2).
 
-    Probe trials contribute nothing (facets exclude probes), and org-less
-    trials (the single-tenant standalone path, which has no facets endpoint)
-    contribute nothing.
+    Non-agent trials and org-less trials (the single-tenant standalone path,
+    which has no facets endpoint) contribute nothing.
     """
-    if is_probe or trial_kind != "agent" or org_id is None:
+    if trial_kind != "agent" or org_id is None:
         return set()
     rows: set[tuple[str, str, str, str]] = set()
     if agent:
@@ -106,7 +104,6 @@ def facet_rows_for_trial_dicts(
             model=t.get("model"),
             provider=t.get("provider"),
             environment=t.get("environment"),
-            is_probe=bool(t.get("is_probe")),
             trial_kind=t.get("kind", "agent"),
         )
     return rows
@@ -153,7 +150,7 @@ async def rebuild_trial_facets_core(
 
     Mark-and-prune, never wholesale replace, so trial writers never wait on
     the scan: derive lock-free from the same trial population the browse
-    filters match — non-probe, non-superseded, on each task's current
+    filters match — non-superseded, on each task's current
     version, org-scoped (the soft-delete listener adds ``deleted_at IS
     NULL`` for both tables) — then upsert every derived row with a fresh
     ``written_at`` (row locks held for milliseconds), then prune rows
@@ -180,7 +177,6 @@ async def rebuild_trial_facets_core(
         .join(TaskModel, TaskModel.id == TrialModel.task_id)
         .where(
             TrialModel.org_id.isnot(None),
-            TrialModel.is_probe.isnot(True),
             TrialModel.kind == "agent",
             TrialModel.superseded_by_trial_id.is_(None),
             TrialModel.task_version_id == TaskModel.current_version_id,

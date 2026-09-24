@@ -9,7 +9,7 @@ assert against ``_resolve_trial_cost`` — the same function the trial API
 serializes through — instead of hand-computed numbers.
 
 *Scope is spend, not the grid.* Cost counts every member trial: all task
-versions, superseded retries, probes, and soft-deleted trials. The grid hides
+versions, superseded retries, and soft-deleted trials. The grid hides
 those (see ``get_task_status_trials``) so that scores compare like with like,
 but the money was spent and billed regardless — ``core.quotas`` and the admin
 cost breakdown apply none of those filters either. Several tests below exist
@@ -74,7 +74,6 @@ def _trial(
     cache_tokens: int | None = None,
     cache_write_tokens: int | None = None,
     billed_user_id: str | None = None,
-    is_probe: bool = False,
     superseded_by_trial_id: str | None = None,
 ) -> TrialModel:
     trial_id = generate_id()
@@ -95,7 +94,6 @@ def _trial(
         cache_tokens=cache_tokens,
         cache_write_tokens=cache_write_tokens,
         billed_user_id=billed_user_id,
-        is_probe=is_probe,
         superseded_by_trial_id=superseded_by_trial_id,
         created_at=utcnow(),
     )
@@ -358,12 +356,12 @@ async def test_billed_split_tracks_billed_user_id_within_owned(session):
 
 
 @pytest.mark.asyncio
-async def test_probe_and_superseded_trials_still_count_as_spend(session):
+async def test_superseded_trials_still_count_as_spend(session):
     """Cost is spend, so trials the GRID hides must still be summed.
 
-    A probe and a superseded retry attempt both really ran and were really
-    billed (``core.quotas`` applies no probe/superseded filter). The grid omits
-    them for score-comparability reasons; that must not erase their cost.
+    A superseded retry attempt really ran and was really billed
+    (``core.quotas`` applies no superseded filter). The grid omits it for
+    score-comparability reasons; that must not erase its cost.
     """
     task, experiment = await _fixture(session, "scope")
 
@@ -371,11 +369,8 @@ async def test_probe_and_superseded_trials_still_count_as_spend(session):
     session.add(keeper)
     await session.flush()
 
-    session.add_all(
-        [
-            _trial(task, experiment, cost_usd=5.0, is_probe=True),
-            _trial(task, experiment, cost_usd=7.0, superseded_by_trial_id=keeper.id),
-        ]
+    session.add(
+        _trial(task, experiment, cost_usd=7.0, superseded_by_trial_id=keeper.id)
     )
     await session.flush()
 
@@ -383,9 +378,9 @@ async def test_probe_and_superseded_trials_still_count_as_spend(session):
         session, experiment_id=experiment.id, org_id=_ORG
     )
 
-    assert totals.cost_usd == pytest.approx(15.0)
-    assert totals.cost_trial_count == 3
-    assert totals.total_trials == 3
+    assert totals.cost_usd == pytest.approx(10.0)
+    assert totals.cost_trial_count == 2
+    assert totals.total_trials == 2
 
 
 @pytest.mark.asyncio

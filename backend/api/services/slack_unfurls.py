@@ -261,7 +261,6 @@ async def resolve_summary(target: UnfurlTarget, org_id: str) -> Summary | None:
             filters = [
                 TrialModel.task_id == task.id,
                 TrialModel.org_id == org_id,
-                TrialModel.is_probe.is_(False),
                 TrialModel.superseded_by_trial_id.is_(None),
                 TrialModel.deleted_at.is_(None),
                 TaskModel.org_id == org_id,
@@ -330,7 +329,6 @@ async def resolve_summary(target: UnfurlTarget, org_id: str) -> Summary | None:
         trial_filters = [
             trial_in_experiment(experiment.id),
             TrialModel.org_id == org_id,
-            TrialModel.is_probe.is_(False),
             TrialModel.superseded_by_trial_id.is_(None),
             TrialModel.deleted_at.is_(None),
             TaskModel.org_id == org_id,

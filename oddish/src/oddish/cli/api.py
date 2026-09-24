@@ -1183,7 +1183,6 @@ def build_sweep_payload(
     priority: str,
     experiment_id: str | None,
     max_trial_attempts: int | None = None,
-    run_probe: bool = False,
     gate_baselines: bool = True,
     github_username: str | None = None,
     github_id: str | None = None,
@@ -1205,9 +1204,6 @@ def build_sweep_payload(
     use_default_version: bool = False,
     harbor_config: dict[str, Any] | None = None,
     environment_kwargs: list[str] | None = None,
-    extra_instructions: str | None = None,
-    result_focus: str | None = None,
-    evaluation_metric: str | None = None,
     link: str | None = None,
     registry_auth: list[dict] | None = None,
     requires_gpu: bool = False,
@@ -1268,7 +1264,6 @@ def build_sweep_payload(
         "task_id": task_id,
         "configs": configs,
         "priority": priority,
-        "run_probe": run_probe,
         "gate_baselines": gate_baselines,
     }
     if user:
@@ -1295,12 +1290,6 @@ def build_sweep_payload(
         payload["content_hash"] = content_hash
     if use_default_version:
         payload["use_default_version"] = True
-    if extra_instructions:
-        payload["extra_instructions"] = extra_instructions
-    if result_focus:
-        payload["result_focus"] = result_focus
-    if evaluation_metric:
-        payload["evaluation_metric"] = evaluation_metric
     if link:
         payload["link"] = link
     if registry_auth:
@@ -1393,7 +1382,6 @@ def submit_sweep(
     priority: str,
     experiment_id: str | None,
     max_trial_attempts: int | None = None,
-    run_probe: bool = False,
     gate_baselines: bool = True,
     github_username: str | None = None,
     github_id: str | None = None,
@@ -1414,9 +1402,6 @@ def submit_sweep(
     content_hash: str | None = None,
     harbor_config: dict[str, Any] | None = None,
     environment_kwargs: list[str] | None = None,
-    extra_instructions: str | None = None,
-    result_focus: str | None = None,
-    evaluation_metric: str | None = None,
     link: str | None = None,
     registry_auth: list[dict] | None = None,
 ) -> dict:
@@ -1428,7 +1413,6 @@ def submit_sweep(
         priority=priority,
         experiment_id=experiment_id,
         max_trial_attempts=max_trial_attempts,
-        run_probe=run_probe,
         gate_baselines=gate_baselines,
         github_username=github_username,
         github_id=github_id,
@@ -1449,9 +1433,6 @@ def submit_sweep(
         content_hash=content_hash,
         harbor_config=harbor_config,
         environment_kwargs=environment_kwargs,
-        extra_instructions=extra_instructions,
-        result_focus=result_focus,
-        evaluation_metric=evaluation_metric,
         link=link,
         registry_auth=registry_auth,
     )
@@ -2326,8 +2307,8 @@ def _task_error_summary(task: dict) -> dict:
     # header, so they always agree. It stays consistent with the embedded
     # trials below because the server derives both from one trial set: for an
     # experiment fetch the counters and the embedded rows come from the same
-    # experiment-scoped, non-probe ``task_trials`` (build_task_status_response),
-    # so there is no probe/scope skew between the count and the detail.
+    # experiment-scoped ``task_trials`` (build_task_status_response), so there
+    # is no scope skew between the count and the detail.
     errored = task.get("failed") or 0
     errored_trials = [
         t for t in (task.get("trials") or []) if t.get("status") == "failed"

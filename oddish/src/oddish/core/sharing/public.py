@@ -395,7 +395,7 @@ async def get_public_task_qa(
             visible_version_ids = {
                 trial.task_version_id
                 for trial in task.trials
-                if trial.superseded_by_trial_id is None and not trial.is_probe
+                if trial.superseded_by_trial_id is None
             }
             if effective_version_id is not None:
                 visible_version_ids.add(effective_version_id)
@@ -428,11 +428,7 @@ async def get_public_task_qa(
 async def list_public_task_trials(
     public_token: str, task_id: str
 ) -> list[TrialResponse]:
-    """List real-attempt trials for a public task.
-
-    Probes are experimental and never exposed publicly, so this always
-    filters to real attempts (``probe=False``) regardless of caller input.
-    """
+    """List real-attempt trials for a public task."""
     async with get_read_session() as session:
         trials = await list_task_trials_for_public_experiment(
             session, public_token, task_id

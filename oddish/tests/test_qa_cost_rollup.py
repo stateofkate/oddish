@@ -241,8 +241,8 @@ async def test_task_scope_counts_a_soft_deleted_trials_qa(session):
 
 @pytest.mark.asyncio
 async def test_trial_scope_pairs_match_the_cards_agent_cost_population(session):
-    """The task-browse card prices only current-version, non-probe,
-    non-superseded, non-combine-copy, live trials. ``trial_scope_pairs`` holds
+    """The task-browse card prices only current-version, non-superseded,
+    non-combine-copy, live trials. ``trial_scope_pairs`` holds
     the per-trial QA branch to that same population so the card's two figures
     describe the same trials, while task-level QA (no trial) still counts."""
     task, experiment = await _fixture(session, "cardscope")
@@ -262,10 +262,6 @@ async def test_trial_scope_pairs_match_the_cards_agent_cost_population(session):
     superseded.task_version_id = v_current.id
     superseded.superseded_by_trial_id = cur.id
 
-    probe = _trial(task, experiment)
-    probe.task_version_id = v_current.id
-    probe.is_probe = True
-
     combine_copy = _trial(task, experiment)
     combine_copy.task_version_id = v_current.id
     combine_copy.idempotency_key = "combine:abc"
@@ -277,7 +273,7 @@ async def test_trial_scope_pairs_match_the_cards_agent_cost_population(session):
     soft_deleted.task_version_id = v_current.id
 
     session.add_all(
-        [cur, superseded, probe, combine_copy, old_version, soft_deleted]
+        [cur, superseded, combine_copy, old_version, soft_deleted]
     )
     await session.flush()
 
@@ -285,7 +281,6 @@ async def test_trial_scope_pairs_match_the_cards_agent_cost_population(session):
         [
             _qa_row(cost_usd=0.01, trial_id=cur.id),
             _qa_row(cost_usd=0.02, trial_id=superseded.id),
-            _qa_row(cost_usd=0.04, trial_id=probe.id),
             _qa_row(cost_usd=0.08, trial_id=combine_copy.id),
             _qa_row(cost_usd=0.16, trial_id=old_version.id),
             _qa_row(cost_usd=0.32, trial_id=soft_deleted.id),
@@ -305,7 +300,7 @@ async def test_trial_scope_pairs_match_the_cards_agent_cost_population(session):
 
     # Unscoped (task detail / experiment views) still counts every row.
     broad = await get_task_qa_costs(session, task_ids=[task.id], org_id=_ORG)
-    assert broad[task.id].qa_cost_usd == pytest.approx(0.635)
+    assert broad[task.id].qa_cost_usd == pytest.approx(0.595)
 
 
 @pytest.mark.asyncio

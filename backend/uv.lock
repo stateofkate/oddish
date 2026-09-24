@@ -8,7 +8,7 @@ resolution-markers = [
 ]
 
 [manifest]
-overrides = [{ name = "harbor", git = "https://github.com/abundant-ai/harbor?rev=c9b98d99daa54889abe447cc217f163cbadbaf2f" }]
+overrides = [{ name = "harbor", git = "https://github.com/abundant-ai/harbor?rev=548ae2db184bf3af4c2c0b4356de8f7adb0abe0a" }]
 
 [[package]]
 name = "aioboto3"
@@ -863,7 +863,7 @@ wheels = [
 [[package]]
 name = "harbor"
 version = "0.20.0"
-source = { git = "https://github.com/abundant-ai/harbor?rev=c9b98d99daa54889abe447cc217f163cbadbaf2f#c9b98d99daa54889abe447cc217f163cbadbaf2f" }
+source = { git = "https://github.com/abundant-ai/harbor?rev=548ae2db184bf3af4c2c0b4356de8f7adb0abe0a#548ae2db184bf3af4c2c0b4356de8f7adb0abe0a" }
 dependencies = [
     { name = "dirhash" },
     { name = "dockerfile-parse" },
@@ -951,15 +951,6 @@ wheels = [
 [package.optional-dependencies]
 http2 = [
     { name = "h2" },
-]
-
-[[package]]
-name = "httpx-sse"
-version = "0.4.3"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/0f/4c/751061ffa58615a32c31b2d82e8482be8dd4a89154f003147acee90f2be9/httpx_sse-0.4.3.tar.gz", hash = "sha256:9b1ed0127459a66014aec3c56bebd93da3c1bc8bb6618c8082039a44889a755d", size = 15943, upload-time = "2025-10-10T21:48:22.271Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d2/fd/6668e5aec43ab844de6fc74927e155a3b37bf40d7c3790e49fc0406b6578/httpx_sse-0.4.3-py3-none-any.whl", hash = "sha256:0ac1c9fe3c0afad2e0ebb25a934a59f4c7823b60792691f779fad2c5568830fc", size = 8960, upload-time = "2025-10-10T21:48:21.158Z" },
 ]
 
 [[package]]
@@ -1304,31 +1295,6 @@ wheels = [
 ]
 
 [[package]]
-name = "mcp"
-version = "1.26.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "anyio" },
-    { name = "httpx" },
-    { name = "httpx-sse" },
-    { name = "jsonschema" },
-    { name = "pydantic" },
-    { name = "pydantic-settings" },
-    { name = "pyjwt", extra = ["crypto"] },
-    { name = "python-multipart" },
-    { name = "pywin32", marker = "sys_platform == 'win32'" },
-    { name = "sse-starlette" },
-    { name = "starlette" },
-    { name = "typing-extensions" },
-    { name = "typing-inspection" },
-    { name = "uvicorn", marker = "sys_platform != 'emscripten'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/fc/6d/62e76bbb8144d6ed86e202b5edd8a4cb631e7c8130f3f4893c3f90262b10/mcp-1.26.0.tar.gz", hash = "sha256:db6e2ef491eecc1a0d93711a76f28dec2e05999f93afd48795da1c1137142c66", size = 608005, upload-time = "2026-01-24T19:40:32.468Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/fd/d9/eaa1f80170d2b7c5ba23f3b59f766f3a0bb41155fbc32a69adfa1adaaef9/mcp-1.26.0-py3-none-any.whl", hash = "sha256:904a21c33c25aa98ddbeb47273033c435e595bbacfdb177f4bd87f6dceebe1ca", size = 233615, upload-time = "2026-01-24T19:40:30.652Z" },
-]
-
-[[package]]
 name = "mdurl"
 version = "0.1.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1506,7 +1472,6 @@ dependencies = [
     { name = "cryptography" },
     { name = "harbor" },
     { name = "httpx" },
-    { name = "jsonschema" },
     { name = "litellm" },
     { name = "packaging" },
     { name = "pydantic" },
@@ -1529,11 +1494,9 @@ all = [
     { name = "daytona" },
     { name = "dockerfile-parse" },
     { name = "fastapi" },
-    { name = "mcp" },
     { name = "modal" },
     { name = "openai" },
     { name = "pre-commit" },
-    { name = "pypdf" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "python-jose", extra = ["cryptography"] },
@@ -1557,11 +1520,9 @@ requires-dist = [
     { name = "daytona", marker = "extra == 'worker'", specifier = ">=0.192.0" },
     { name = "dockerfile-parse", marker = "extra == 'worker'", specifier = ">=2.0.1" },
     { name = "fastapi", marker = "extra == 'server'", specifier = "==0.128.0" },
-    { name = "harbor", git = "https://github.com/abundant-ai/harbor?rev=c9b98d99daa54889abe447cc217f163cbadbaf2f" },
+    { name = "harbor", git = "https://github.com/abundant-ai/harbor?rev=548ae2db184bf3af4c2c0b4356de8f7adb0abe0a" },
     { name = "httpx", specifier = "==0.28.1" },
-    { name = "jsonschema", specifier = ">=4.0" },
     { name = "litellm", specifier = "==1.83.14" },
-    { name = "mcp", marker = "extra == 'server'", specifier = ">=1.26" },
     { name = "modal", marker = "extra == 'worker'", specifier = ">=1.5.0" },
     { name = "oddish", extras = ["server"], marker = "extra == 'worker'" },
     { name = "oddish", extras = ["worker", "dev"], marker = "extra == 'all'" },
@@ -1570,7 +1531,6 @@ requires-dist = [
     { name = "pre-commit", marker = "extra == 'dev'", specifier = "==4.5.1" },
     { name = "pydantic", specifier = "==2.12.5" },
     { name = "pydantic-settings", specifier = "==2.12.0" },
-    { name = "pypdf", marker = "extra == 'server'", specifier = ">=4.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = "==9.0.2" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = "==1.3.0" },
     { name = "python-jose", extras = ["cryptography"], marker = "extra == 'server'", specifier = "==3.5.0" },
@@ -2205,15 +2165,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pypdf"
-version = "6.13.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/70/79/9fd087fbff8300e5c2a9b2bd0200b75c6ef8c1f9a7a2cfe3df0659aa4025/pypdf-6.13.0.tar.gz", hash = "sha256:558683ec9daf6b91c280c322c84c32f5cc216afd3eaa3a37de5ae88ae0c3b787", size = 6476995, upload-time = "2026-06-05T10:12:05.568Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/9d/70/16942ec95d32187d8679ce8419cee2d5c0dbe90fa3ac1b307daea4c86da9/pypdf-6.13.0-py3-none-any.whl", hash = "sha256:de1294ae49d6956edb4e5c41527fb9e8716ddd2b120f2185c68aab784d4ffe60", size = 345958, upload-time = "2026-06-05T10:12:03.453Z" },
-]
-
-[[package]]
 name = "pyroaring"
 version = "1.0.3"
 source = { registry = "https://pypi.org/simple" }
@@ -2323,16 +2274,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/78/96/804520d0850c7db98e5ccb70282e29208723f0964e88ffd9d0da2f52ea09/python_multipart-0.0.21.tar.gz", hash = "sha256:7137ebd4d3bbf70ea1622998f902b97a29434a9e8dc40eb203bbcf7c2a2cba92", size = 37196, upload-time = "2025-12-17T09:24:22.446Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/aa/76/03af049af4dcee5d27442f71b6924f01f3efb5d2bd34f23fcd563f2cc5f5/python_multipart-0.0.21-py3-none-any.whl", hash = "sha256:cf7a6713e01c87aa35387f4774e812c4361150938d20d232800f75ffcf266090", size = 24541, upload-time = "2025-12-17T09:24:21.153Z" },
-]
-
-[[package]]
-name = "pywin32"
-version = "311"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a5/be/3fd5de0979fcb3994bfee0d65ed8ca9506a8a1260651b86174f6a86f52b3/pywin32-311-cp313-cp313-win32.whl", hash = "sha256:f95ba5a847cba10dd8c4d8fefa9f2a6cf283b8b88ed6178fa8a6c1ab16054d0d", size = 8705700, upload-time = "2025-07-14T20:13:26.471Z" },
-    { url = "https://files.pythonhosted.org/packages/e3/28/e0a1909523c6890208295a29e05c2adb2126364e289826c0a8bc7297bd5c/pywin32-311-cp313-cp313-win_amd64.whl", hash = "sha256:718a38f7e5b058e76aee1c56ddd06908116d35147e133427e59a3983f703a20d", size = 9494700, upload-time = "2025-07-14T20:13:28.243Z" },
-    { url = "https://files.pythonhosted.org/packages/04/bf/90339ac0f55726dce7d794e6d79a18a91265bdf3aa70b6b9ca52f35e022a/pywin32-311-cp313-cp313-win_arm64.whl", hash = "sha256:7b4075d959648406202d92a2310cb990fea19b535c7f4a78d3f5e10b926eeb8a", size = 8709318, upload-time = "2025-07-14T20:13:30.348Z" },
 ]
 
 [[package]]
@@ -2651,19 +2592,6 @@ wheels = [
 [package.optional-dependencies]
 asyncio = [
     { name = "greenlet" },
-]
-
-[[package]]
-name = "sse-starlette"
-version = "3.2.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "anyio" },
-    { name = "starlette" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/8b/8d/00d280c03ffd39aaee0e86ec81e2d3b9253036a0f93f51d10503adef0e65/sse_starlette-3.2.0.tar.gz", hash = "sha256:8127594edfb51abe44eac9c49e59b0b01f1039d0c7461c6fd91d4e03b70da422", size = 27253, upload-time = "2026-01-17T13:11:05.62Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/96/7f/832f015020844a8b8f7a9cbc103dd76ba8e3875004c41e08440ea3a2b41a/sse_starlette-3.2.0-py3-none-any.whl", hash = "sha256:5876954bd51920fc2cd51baee47a080eb88a37b5b784e615abb0b283f801cdbf", size = 12763, upload-time = "2026-01-17T13:11:03.775Z" },
 ]
 
 [[package]]

@@ -71,7 +71,6 @@
   --color-paper-fail: var(--paper-fail);
   --color-paper-partial: var(--paper-partial);
   --color-paper-error: var(--paper-error);
-  --color-paper-minor: var(--paper-minor);
   --color-paper-queued: var(--paper-queued);
   --color-paper-running: var(--paper-running);
 
@@ -153,9 +152,6 @@
     --paper-partial-bg: oklch(95% 0.04 75);
     --paper-error: oklch(55% 0.03 70);
     --paper-error-bg: oklch(92% 0.006 70);
-    /* Third severity step below fail/partial; dark enough to carry white text
-       as a solid fill in both modes, so it needs no dark override. */
-    --paper-minor: oklch(48% 0.07 55);
     --paper-queued: oklch(62% 0.11 280);
     --paper-queued-bg: oklch(94% 0.03 280);
     --paper-running: oklch(65% 0.13 230);
@@ -480,43 +476,6 @@
 .dark .cl-organizationPreviewSecondaryIdentifier,
 .dark .cl-formFieldHintText {
   color: hsl(var(--muted-foreground));
-}
-
-/*
- * Cycling "." -> ".." -> "..." for copy that sits beside in-flight work.
- * Only opacity moves: the dots keep their slots in the line, so the sentence
- * ahead of them holds still instead of jittering once per step. The first dot
- * is always on, so the cycle reads as one/two/three rather than blinking
- * through an empty frame.
- */
-.ellipsis-dot-2 {
-  animation: ellipsis-dot-2 1.2s infinite;
-}
-
-.ellipsis-dot-3 {
-  animation: ellipsis-dot-3 1.2s infinite;
-}
-
-@keyframes ellipsis-dot-2 {
-  0%,
-  33% {
-    opacity: 0;
-  }
-  34%,
-  100% {
-    opacity: 1;
-  }
-}
-
-@keyframes ellipsis-dot-3 {
-  0%,
-  66% {
-    opacity: 0;
-  }
-  67%,
-  100% {
-    opacity: 1;
-  }
 }
 
 /* One soft amber pulse on the task page's version switcher after a

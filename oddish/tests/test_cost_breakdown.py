@@ -321,7 +321,6 @@ def _trial(
     deleted_at=None,
     task_id: str | None = None,
     origin: TrialOrigin = TrialOrigin.ODDISH,
-    is_probe: bool = False,
     idempotency_key: str | None = None,
     finished_at=None,
     harbor_stage: str | None = None,
@@ -348,7 +347,6 @@ def _trial(
         harbor_stage=harbor_stage,
         deleted_at=deleted_at,
         origin=origin,
-        is_probe=is_probe,
         idempotency_key=idempotency_key,
     )
 
@@ -598,7 +596,7 @@ FB = f"costfall-ghid-{_RUN}"
 FC = f"costfall-sub-{_RUN}"
 FD = f"costfall-imported-{_RUN}"
 FE = f"costfall-combine-{_RUN}"
-FF = f"costfall-probe-{_RUN}"
+FF = f"costfall-billed-{_RUN}"
 FG = f"costfall-merge-{_RUN}"
 _FALL_EXPS = (FA, FB, FC, FD, FE, FF, FG)
 SUBMITTER = f"costfall-submitter-{_RUN}"
@@ -681,7 +679,7 @@ async def seeded_fallback_data():
                     idempotency_key=f"combine:{FE}:src-{_RUN}",
                     billed_user_id=PAYER,
                 ),
-                # Billed probe -> counted (drew budget), attributed to its payer.
+                # Billed -> counted (drew budget), attributed to its payer.
                 _trial(
                     FF,
                     0,
@@ -689,7 +687,6 @@ async def seeded_fallback_data():
                     cost_usd=7.0,
                     created_at=recent,
                     billed_user_id=PAYER,
-                    is_probe=True,
                 ),
                 # Same user MERGED billed on one trial and the (unbilled)
                 # submitter fallback on another: they merge into one linkable row
@@ -762,8 +759,8 @@ async def test_cost_breakdown_attribution_fallbacks_and_billability(
     assert by_user[SUBMITTER].has_unbilled_spend is True
     assert by_user[SUBMITTER].label is None
 
-    # Billed probe is kept and attributed to its payer with a drilldown link;
-    # all of its spend is billed, so no unbilled flag.
+    # Billed spend is attributed to its payer with a drilldown link; all of
+    # it is billed, so no unbilled flag.
     assert _approx(by_user[PAYER].cost_usd, 7.0)
     assert by_user[PAYER].owner_user_id == PAYER
     assert by_user[PAYER].has_unbilled_spend is False

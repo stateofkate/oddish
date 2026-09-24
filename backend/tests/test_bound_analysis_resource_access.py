@@ -58,7 +58,7 @@ def _session(analysis_trial, version=None):
 
 
 @pytest.mark.asyncio
-async def test_unbound_operator_probe_key_keeps_existing_read_policy(monkeypatch):
+async def test_unbound_key_keeps_existing_read_policy(monkeypatch):
     await authorize_bound_analysis_request(
         _request("/tasks/{task_id}/detail", path_params={"task_id": "task-2"}),
         _auth(None),
@@ -130,7 +130,6 @@ async def test_bound_key_cannot_cross_organization_boundary(monkeypatch):
         "/trials/{trial_id}/files",
         "/trials/{trial_id}/files/{file_path:path}",
         "/trials/{trial_id}/debug-files",
-        "/trials/{trial_id}/probe-artifacts",
         "/trials/{trial_id}/live",
         "/trials/{trial_id}/trajectory/summary",
     ),

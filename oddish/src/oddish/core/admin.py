@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StringConstraints
-from sqlalchemy import and_, func, or_, select, text
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from oddish.config import MAX_MODEL_CONCURRENCY, normalize_model_id, settings
@@ -1216,17 +1216,10 @@ def _real_spend_filter():
     """WHERE clause selecting real, first-party oddish spend, counted once.
 
     The shared first-party filter excludes imports and experiment-combine
-    copies. Billed probes remain visible because they consumed quota; unbilled
-    probes stay internal. Other unbilled Oddish runs remain visible so
-    offboarded, unlinked, and pre-quota spend is not silently dropped.
+    copies. Unbilled Oddish runs remain visible so offboarded, unlinked, and
+    pre-quota spend is not silently dropped.
     """
-    return and_(
-        first_party_spend_filter(),
-        or_(
-            TrialModel.billed_user_id.isnot(None),
-            TrialModel.is_probe.is_(False),
-        ),
-    )
+    return first_party_spend_filter()
 
 
 def _spend_identity(

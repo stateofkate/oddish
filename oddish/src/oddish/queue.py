@@ -606,20 +606,6 @@ def _build_harbor_config_for_trial(
     if agent_config_payload:
         base["agent_config"] = agent_config_payload
 
-    if submission.extra_instructions:
-        base["mode"] = "probe"
-        base["extra_instructions"] = submission.extra_instructions
-        if submission.probe_name:
-            base["probe_name"] = submission.probe_name
-        if submission.probe_scope == "experiment":
-            base["probe_scope"] = "experiment"
-
-    if submission.result_focus:
-        base["result_focus"] = submission.result_focus
-
-    if submission.skill_ids:
-        base["skill_ids"] = list(submission.skill_ids)
-
     return base or None
 
 
@@ -691,13 +677,13 @@ _TRIAL_BULK_INSERT_SQL = text(
     INSERT INTO trials
         (id, name, task_id, task_version_id, experiment_id, org_id,
          billed_user_id, agent, provider, queue_key, model, timeout_minutes,
-         environment, harbor_config, harbor_sha, is_probe, max_attempts, status,
+         environment, harbor_config, harbor_sha, max_attempts, status,
          attempts, created_at, updated_at)
     SELECT
         t.id, t.name, t.task_id, t.task_version_id, t.experiment_id, t.org_id,
         t.billed_user_id, t.agent, t.provider, t.queue_key, t.model,
         t.timeout_minutes, t.environment, t.harbor_config::jsonb, t.harbor_sha,
-        t.is_probe, t.max_attempts, 'QUEUED'::jobstatus, 0, NOW(), NOW()
+        t.max_attempts, 'QUEUED'::jobstatus, 0, NOW(), NOW()
     FROM unnest(
         CAST(:id AS text[]),
         CAST(:name AS text[]),
@@ -713,13 +699,12 @@ _TRIAL_BULK_INSERT_SQL = text(
         CAST(:environment AS text[]),
         CAST(:harbor_config AS text[]),
         CAST(:harbor_sha AS text[]),
-        CAST(:is_probe AS boolean[]),
         CAST(:max_attempts AS int[]),
         CAST(:billed_user_id AS text[])
     ) WITH ORDINALITY AS t(
         id, name, task_id, task_version_id, experiment_id, org_id,
         agent, provider, queue_key, model, timeout_minutes, environment,
-        harbor_config, harbor_sha, is_probe, max_attempts, billed_user_id, ord
+        harbor_config, harbor_sha, max_attempts, billed_user_id, ord
     )
     """
 )
@@ -754,13 +739,12 @@ async def _bulk_insert_trials(
             for t in trials
         ],
         "harbor_sha": [t["harbor_sha"] for t in trials],
-        "is_probe": [t["is_probe"] for t in trials],
         "max_attempts": [t["max_attempts"] for t in trials],
         "billed_user_id": [t.get("billed_user_id") for t in trials],
     }
     await session.execute(_TRIAL_BULK_INSERT_SQL, params)
     # Write-through vocabulary: the batch's facet values become filterable in
-    # the task browser the moment the trials exist (probes contribute nothing).
+    # the task browser the moment the trials exist.
     await record_trial_facets(session, facet_rows_for_trial_dicts(trials))
 
 
@@ -865,7 +849,6 @@ async def create_task(
         task_s3_key=task_s3_key,
         tags=submission.tags,
         run_analysis=True,
-        run_probe=submission.run_probe,
         link=submission.link,
     )
     session.add(task)
@@ -946,9 +929,7 @@ async def create_task(
         queue_key = settings.get_queue_key_for_trial(spec.agent, model)
         trial_id = f"{task_id}-{i}"
         harbor_config = _build_harbor_config_for_trial(submission, spec)
-        trial_environment = spec.environment or (
-            "modal" if (harbor_config or {}).get("mode") == "probe" else None
-        )
+        trial_environment = spec.environment
         trial_rows.append(
             {
                 "id": trial_id,
@@ -965,7 +946,6 @@ async def create_task(
                 "timeout_minutes": spec.timeout_minutes,
                 "environment": trial_environment,
                 "harbor_config": harbor_config,
-                "is_probe": (harbor_config or {}).get("mode") == "probe",
                 "harbor_sha": (harbor_config or {}).get("resolved_sha"),
                 "max_attempts": submission.max_trial_attempts,
             }
@@ -1225,9 +1205,7 @@ async def append_trials_to_task(
         queue_key = settings.get_queue_key_for_trial(spec.agent, model)
         trial_id = f"{task.id}-{next_index}"
         harbor_config = _build_harbor_config_for_trial(submission, spec)
-        trial_environment = spec.environment or (
-            "modal" if (harbor_config or {}).get("mode") == "probe" else None
-        )
+        trial_environment = spec.environment
         new_trial_rows.append(
             {
                 "id": trial_id,
@@ -1244,7 +1222,6 @@ async def append_trials_to_task(
                 "timeout_minutes": spec.timeout_minutes,
                 "environment": trial_environment,
                 "harbor_config": harbor_config,
-                "is_probe": (harbor_config or {}).get("mode") == "probe",
                 "harbor_sha": (harbor_config or {}).get("resolved_sha"),
                 "max_attempts": submission.max_trial_attempts,
             }

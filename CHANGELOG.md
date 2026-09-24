@@ -31,6 +31,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   grants agy's ADC-mode egress on the service-account profile (token host,
   the location's endpoint, agy's startup probes) instead of failing closed.
 
+### Removed
+
+- Operator probes, the skills library, and the document store are removed end
+  to end: the dashboard's `/qa` section, the `/skills`, `/documents`, probe
+  listing, and probe-artifact API routes, `GET /monitor/skills`, and the
+  `oddish-docstore-mcp` server. CLI 0.1.15 is the first release without
+  `oddish probe`, `oddish probe skill add`, `oddish run --run-probe` (and the
+  sweep-config `run_probe` key), and `oddish ls --trial-is-probe/--run-probe`.
+  Core migration `probe_removal_001` hard-deletes historical probe trials with
+  their worker jobs, cost-ledger, and sandbox rows, then drops
+  `trials.is_probe` (rebuilding the task-browser preview index, whose filter
+  named it, concurrently), `tasks.run_probe`, and the `skills`, `skill_files`,
+  `documents`, and write-only `task_version_model_metrics` tables; stored S3
+  objects are left in place. ⚠️ Older CLIs:
+  `oddish probe` now queues an ordinary agent trial (its instructions are
+  ignored), `oddish probe skill add` gets a 404, and `--run-probe` and the
+  `ls` probe filters are ignored.
+- QA, QA-eval, and audit trials run Harbor's stock `claude-code` agent through
+  the regular trial path. The Oddish Claude Code wrapper classes are gone,
+  which also ends the `AttributeError` after every successful Claude run on
+  the GKE Harbor variant; multi-step tasks with `resume_trajectory=true` now
+  rely on the Harbor fork recording the session id. The analysis task's agent
+  timeout is 1800 s, the budget QA already ran under (summarize drops from
+  3600 s). `oddish-query` drops `harbor src`, `verify run`, `solution`,
+  `verifier source`, `tasks`, and `experiments`. The legacy
+  `worker/local_runner.py` and the settings `ODDISH_PROBE_AGENT_TIMEOUT_SEC`,
+  `ODDISH_PROBE_ANALYZER_MODEL`, and `ODDISH_HARBOR_SOURCE_REPO`/`_REF` are
+  removed.
+
 ## [2026-08-28]
 
 ### Added

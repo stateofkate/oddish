@@ -28,7 +28,7 @@ presigned storage requests do not. Never put tokens or task contents there.
 
 Run `oddish <command> --help` before relying on an option not shown here.
 `--json` exists on many operational commands, but it is not a global option.
-`oddish logs`, `oddish link`, and `oddish probe` do not provide JSON output.
+`oddish logs` and `oddish link` do not provide JSON output.
 
 ## Authorization boundaries
 

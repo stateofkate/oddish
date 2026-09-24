@@ -37,9 +37,7 @@ from oddish.core.harbor_source import harbor_git_requirement
 from oddish.runtime.backends.daytona import DaytonaBackend
 from oddish.schemas import HarborConfig
 from oddish.task_timeouts import validate_task_timeout_config
-from oddish.worker.probe_overlay import PROBE_HARNESS_DIR
 from ._entry import EVENT_SENTINEL
-from oddish.workers.agents.claude_code import _pinned_harbor_requirement
 from .agent_config import (
     _anthropic_hdo_credential_env,
     _build_routed_agent_config,
@@ -124,9 +122,7 @@ def _child_process_env() -> dict[str, str]:
     return env
 
 
-def _claude_code_on_direct_anthropic(
-    agent: str, model: str | None, is_probe: bool
-) -> bool:
+def _claude_code_on_direct_anthropic(agent: str, model: str | None) -> bool:
     """Whether this trial's claude-code agent runs against the direct Anthropic API.
 
     Blanking ``BEDROCK_ENV_VARS`` and rewriting the model id are two halves of
@@ -139,14 +135,14 @@ def _claude_code_on_direct_anthropic(
     )
 
 
-def _child_model_name(*, agent: str, model: str | None, is_probe: bool) -> str | None:
+def _child_model_name(*, agent: str, model: str | None) -> str | None:
     """Resolve the model id for the transport the child will actually use.
 
     A direct Anthropic request needs the bare API id instead of the stored
     ``anthropic/`` prefix or the account-selecting ``anthropic-hdo/`` prefix.
     Only the client spelling changes; the trial keeps its stored model identity.
     """
-    if not _claude_code_on_direct_anthropic(agent, model, is_probe):
+    if not _claude_code_on_direct_anthropic(agent, model):
         return _selected_claude_model(agent, model)
     if is_anthropic_hdo_model(model):
         model = anthropic_hdo_bare_model_id(model or "")
@@ -154,7 +150,7 @@ def _child_model_name(*, agent: str, model: str | None, is_probe: bool) -> str |
 
 
 def _runtime_env_overrides(
-    *, agent: str, model: str | None, raw_harbor_config: dict[str, Any], is_probe: bool
+    *, agent: str, model: str | None, raw_harbor_config: dict[str, Any]
 ) -> dict[str, str]:
     """Build child runtime env overrides."""
     uses_openai = _trial_uses_openai_provider(
@@ -171,7 +167,7 @@ def _runtime_env_overrides(
             _selected_claude_model(agent, openai_model), requested_model=openai_model
         )
     )
-    if _claude_code_on_direct_anthropic(agent, openai_model, is_probe):
+    if _claude_code_on_direct_anthropic(agent, openai_model):
         env.update({var: "" for var in BEDROCK_ENV_VARS})
     if is_vertex_ai_model(openai_model):
         # The child's agent env: keep the baked Bedrock flags blank for Harbor's
@@ -182,22 +178,8 @@ def _runtime_env_overrides(
     return env
 
 
-_SUBAGENT_MODEL_KEY = "CLAUDE_CODE_SUBAGENT_MODEL"
-
-
-def _child_probe_subagent_model(routed: AgentConfig, *, is_probe: bool) -> bool:
-    """Whether the child must pin the probe's subagent model itself.
-
-    ``_apply_claude_code_probe_subagent_model`` pins a probe's subagent to the
-    agent's own model id. For claude-code that id is the child's decision, so
-    the pin has to follow it there -- pinning from the parent's canonical id
-    leaves a probe whose main agent and subagent run different models.
-    """
-    return is_probe and _is_claude_code_agent(routed)
-
-
 def _child_agent_config(
-    routed: AgentConfig, *, raw_harbor_config: dict[str, Any], is_probe: bool
+    routed: AgentConfig, *, raw_harbor_config: dict[str, Any]
 ) -> dict[str, Any]:
     """Serialize the child's ``AgentConfig`` with in-process provider routing applied.
 
@@ -215,22 +197,7 @@ def _child_agent_config(
     """
     payload = dict(raw_harbor_config.get("agent_config") or {})
     if routed.env:
-        env = dict(routed.env)
-        # The probe pin is the one writer that sets this key to the agent's own
-        # model id; every other writer pins the id its endpoint serves, which
-        # differs from the routed id by construction. Drop only that one, so the
-        # child can re-pin it from the model it actually runs while an
-        # endpoint-pinned value (an ``anthropic-hdo/`` alias, say) still crosses.
-        # A trial that names no model has neither a pin nor a routed id, so the
-        # comparison runs only on a pin that is actually present.
-        pinned = env.get(_SUBAGENT_MODEL_KEY)
-        if (
-            pinned
-            and pinned == routed.model_name
-            and _child_probe_subagent_model(routed, is_probe=is_probe)
-        ):
-            env.pop(_SUBAGENT_MODEL_KEY, None)
-        payload["env"] = env
+        payload["env"] = dict(routed.env)
     if routed.kwargs:
         payload["kwargs"] = dict(routed.kwargs)
     return payload
@@ -347,7 +314,6 @@ def _build_payload(
     environment_config: EnvironmentConfig | None = None,
     environment: EnvironmentType | None = None,
     raw_harbor_config: dict[str, Any],
-    is_probe: bool,
     extra_agent_env: dict[str, str] | None = None,
     environment_build_timeout_multiplier: float | None = None,
 ) -> dict[str, Any]:
@@ -376,14 +342,12 @@ def _build_payload(
             agent=agent,
             model=model,
             raw_harbor_config=raw_harbor_config,
-            is_probe=is_probe,
             probe_oddish_env=extra_agent_env,
         )
         runtime_env = _runtime_env_overrides(
             agent=agent,
             model=model,
             raw_harbor_config=raw_harbor_config,
-            is_probe=is_probe,
         )
         # Both halves of the model decision read the same surfaced view: the
         # child's Bedrock/direct choice for claude-code, and the routed
@@ -391,13 +355,9 @@ def _build_payload(
         # wrapper, so neither is asked under the bare worker environment.
         child_model = _child_model_id(
             routed,
-            model=_child_model_name(
-                agent=agent, model=requested_model, is_probe=is_probe
-            ),
+            model=_child_model_name(agent=agent, model=requested_model),
         )
-    agent_config = _child_agent_config(
-        routed, raw_harbor_config=raw_harbor_config, is_probe=is_probe
-    )
+    agent_config = _child_agent_config(routed, raw_harbor_config=raw_harbor_config)
     # The effective requested model (falls back to the stored agent_config
     # when the trial row carries no model): the id the routed builder
     # installed the provider profile for.
@@ -493,7 +453,6 @@ def _build_payload(
         "model": child_model,
         "environment_config": environment_config.model_dump(mode="json"),
         "agent_config": agent_config,
-        "probe_subagent_model": _child_probe_subagent_model(routed, is_probe=is_probe),
         "verifier": raw_harbor_config.get("verifier") or {},
         "artifacts": raw_harbor_config.get("artifacts") or [],
         "timeout_multiplier": raw_harbor_config.get("timeout_multiplier"),
@@ -514,28 +473,9 @@ def _build_payload(
         ),
         "retry": raw_harbor_config.get("retry"),
         "runtime_env": {**anthropic_env, **runtime_env},
-        "probe_task_dir": str(task_path) if is_probe else None,
-        "probe_harness_dir": PROBE_HARNESS_DIR,
         "extra_agent_env": child_extra_env,
         "vertex_ai": vertex_ai_payload,
-        "agent_harbor_requirement": _agent_harbor_requirement(
-            agent=agent,
-            is_probe=is_probe,
-            source=raw_harbor_config.get("source"),
-            sha=raw_harbor_config.get("resolved_sha"),
-        ),
     }
-
-
-def _agent_harbor_requirement(
-    *, agent: str, is_probe: bool, source: str | None, sha: str | None
-) -> str | None:
-    """Build the Harbor install requirement for probe agents."""
-    if not is_probe or (agent or "").strip().lower() != "claude-code":
-        return None
-    if not source or not sha:
-        return None
-    return _pinned_harbor_requirement(source, sha)
 
 
 def _bridge_event(data: dict[str, Any], *, trial_id: str | None) -> SimpleNamespace:
@@ -633,8 +573,6 @@ async def run_ephemeral_harbor_trial(
     harbor_config: dict[str, Any] | None = None,
     extra_agent_env: dict[str, str] | None = None,
     environment_build_timeout_multiplier: float | None = None,
-    is_probe: bool = False,
-    skip_task_validation: bool = False,
 ) -> HarborOutcome:
     """Run one trial in an override Harbor child process.
 
@@ -660,8 +598,7 @@ async def run_ephemeral_harbor_trial(
             exception_type="HarborOverrideImportError",
         )
 
-    if not skip_task_validation:
-        validate_task_timeout_config(task_path)
+    validate_task_timeout_config(task_path)
 
     needs_task_patch = bool(hc.docker_image or hc.mcp_servers)
     preflight_error = _check_local_storage_preflight(
@@ -710,7 +647,6 @@ async def run_ephemeral_harbor_trial(
                 model=model,
                 environment_config=environment_config,
                 raw_harbor_config=raw,
-                is_probe=is_probe,
                 extra_agent_env=extra_agent_env,
                 environment_build_timeout_multiplier=environment_build_timeout_multiplier,
             )

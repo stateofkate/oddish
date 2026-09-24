@@ -163,70 +163,6 @@ async def test_task_fetch_refuses_nothing_to_fetch_and_path_escapes(
         )
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("skill_ids", [["skill-1"], None])
-async def test_selected_skills_come_from_the_control_plane(
-    monkeypatch, tmp_path, make_spec, offline_prepare_task, skill_ids
-):
-    """Seen in review: the driver read the selected skills from Postgres, which
-    the sandbox cannot reach, and ran without them."""
-    import tempfile
-
-    from oddish.mon import runner
-    from oddish.workers.harbor import runner as driver
-
-    harbor_config = {"skill_ids": skill_ids} if skill_ids else None
-    spec = make_spec(harbor_config=harbor_config).model_dump(mode="json")
-    skill_md = "---\nname: alpha\ndescription: d\n---\nbody"
-    asked = []
-
-    def api(request: httpx.Request) -> httpx.Response:
-        asked.append(request.url.path.rsplit("/", 1)[-1])
-        if asked[-1] == "attempt":
-            return httpx.Response(200, json=spec)
-        files = [
-            {"relative_path": "SKILL.md", "content": skill_md},
-            {"relative_path": "scripts/run.sh", "content": "echo hi"},
-        ]
-        return httpx.Response(200, json={"skills": [{"name": "alpha", "files": files}]})
-
-    class _Handed(Exception):
-        pass
-
-    handed = {}
-
-    def drive(**kwargs):
-        handed.update(kwargs)
-        raise _Handed  # stop before the loops and the report
-
-    async def fetch(spec, dest):
-        return dest
-
-    loaded = env.load(_env())
-    monkeypatch.setattr(env, "load", lambda: loaded)
-    monkeypatch.setattr(
-        runner,
-        "MonitorClient",
-        functools.partial(MonitorClient, transport=httpx.MockTransport(api)),
-    )
-    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
-    monkeypatch.setattr(task_fetch, "fetch_task", fetch)
-    monkeypatch.setattr(driver, "run_harbor_trial_async", drive)
-
-    with pytest.raises(_Handed):
-        await runner.run()
-
-    if not skill_ids:
-        assert asked == ["attempt"]
-        assert handed["staged_skills_root"] is None
-        return
-    assert asked == ["attempt", "skills"]
-    root = Path(handed["staged_skills_root"])
-    assert root.parent == handed["jobs_dir"].parent  # the attempt's workdir
-    assert (root / "alpha" / "SKILL.md").read_text() == skill_md
-    assert (root / "alpha" / "scripts" / "run.sh").read_text() == "echo hi"
-
-
 @dataclass
 class _Outcome:
     reward: float | None
@@ -426,9 +362,7 @@ def stage_monitor(monkeypatch, tmp_path, make_spec, offline_prepare_task):
     from oddish.workers.harbor import runner as driver
 
     def stage(*, driver_error=None, refuse=None, hook_events=()):
-        spec = make_spec(harbor_config={"skill_ids": ["skill-1"]}).model_dump(
-            mode="json"
-        )
+        spec = make_spec().model_dump(mode="json")
         calls, phases = [], []
 
         def api(request: httpx.Request) -> httpx.Response:
@@ -440,8 +374,6 @@ def stage_monitor(monkeypatch, tmp_path, make_spec, offline_prepare_task):
                 return httpx.Response(refuse[1], json={"detail": "attempt over"})
             if route == "attempt":
                 return httpx.Response(200, json=spec)
-            if route == "skills":
-                return httpx.Response(200, json={"skills": []})
             return httpx.Response(200, json={"accepted": True, "duplicate": False})
 
         async def drive(**kwargs):
@@ -504,7 +436,6 @@ async def test_a_dead_attempt_is_not_retried_by_the_report_loop():
     ("refuse", "driver_error"),
     [
         (("attempt", 410), None),  # check-in
-        (("skills", 410), None),  # task setup
         (("heartbeat", 410), None),  # driving
         (("heartbeat", 401), None),
         (("control", 410), None),

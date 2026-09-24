@@ -158,7 +158,6 @@ def _trial(index: int) -> TrialModel:
         max_attempts=6,
         harbor_stage="completed",
         reward=1.0,
-        is_probe=False,
         kind="agent",
         input_tokens=100,
         cache_tokens=20,
@@ -405,7 +404,6 @@ def test_experiment_open_sql_reuses_visibility_and_version_rules():
         assert "UNION ALL" in sql
         assert "trials.experiment_id = 'experiment-1' OR" not in sql
         assert ".kind = 'agent'" in sql
-        assert ".is_probe IS false" in sql
         assert ".superseded_by_trial_id IS NULL" in sql
         assert ".deleted_at IS NULL" in sql
         assert "first_value(" in sql
@@ -574,7 +572,6 @@ def test_experiment_focus_uses_the_trial_as_host_task_source(monkeypatch):
     assert "tasks.id = 'stale-task-id'" not in trial_sql
     assert "experiment_trials" in trial_sql
     assert ".kind = 'agent'" not in trial_sql
-    assert ".is_probe IS false" not in trial_sql
     assert ".superseded_by_trial_id IS NULL" not in trial_sql
     assert "effective_task_version_id" not in trial_sql
 
@@ -605,7 +602,6 @@ def test_public_experiment_focus_keeps_grid_trial_visibility():
     assert "user" not in response.task.model_dump()
     trial_sql = _sql(session.calls[0])
     assert ".kind = 'agent'" in trial_sql
-    assert ".is_probe IS false" in trial_sql
     assert ".superseded_by_trial_id IS NULL" in trial_sql
     assert "effective_task_version_id" in trial_sql
     task_sql = _sql(session.calls[1])
@@ -668,7 +664,6 @@ def test_trial_page_is_flat_bounded_and_omits_detail_columns(monkeypatch):
     sql = _sql(session.calls[1])
     assert "LIMIT 2" in sql
     assert ".kind = 'agent'" in sql
-    assert ".is_probe IS false" in sql
     assert ".superseded_by_trial_id IS NULL" in sql
     # The membership subquery carries every trial column; only the select
     # list decides what reaches the response, so check that.

@@ -37,7 +37,6 @@ from oddish.mon.client import (
 from oddish.mon.contract import AttemptSpec
 from oddish.mon.exit_codes import EXIT_ACCEPTED, EXIT_STOPPED
 from oddish.mon.status import MonitorPhase, write_status
-from oddish.worker.skills_overlay import materialize_skills
 from oddish.workers.harbor import live_tail
 
 logger = logging.getLogger(__name__)
@@ -74,7 +73,6 @@ class PreparedTask:
     workdir: Path
     task_path: Path
     harbor_config: dict
-    staged_skills_root: Path | None
 
 
 @dataclass(slots=True)
@@ -92,7 +90,7 @@ async def prepare_task(
     client: MonitorClient, spec: AttemptSpec, monitor_env: env.MonitorEnv
 ) -> PreparedTask:
     """After check-in: record the attempt, fetch the task, log into registries,
-    settle the Harbor config and stage the selected skills."""
+    and settle the Harbor config."""
     logger.info(
         "checked in: trial=%s job=%s attempt=%s agent=%s model=%s kind=%s",
         spec.trial_id,
@@ -124,15 +122,6 @@ async def prepare_task(
     # number, is the cap (Harbor's Docker environment would resolve the
     # default policy as a hard limit).
     harbor_config = resources.with_reservation_semantics(harbor_config)
-    staged_skills_root = None
-    if spec.org_id is not None and harbor_config.get("skill_ids"):
-        # The worker reads the selected skills from Postgres, which the
-        # sandbox cannot reach: the control plane sends them instead.
-        skills_root = workdir / "agent_skills"
-        skills = await client.skills()
-        materialize_skills(skills, skills_root)
-        logger.info("staged %d selected skills", len(skills))
-        staged_skills_root = skills_root
     return PreparedTask(
         spec=spec,
         state=state,
@@ -141,7 +130,6 @@ async def prepare_task(
         workdir=workdir,
         task_path=task_path,
         harbor_config=harbor_config,
-        staged_skills_root=staged_skills_root,
     )
 
 
@@ -174,8 +162,6 @@ async def drive_with_watchers(
             org_id=spec.org_id,
             billed_user_id=spec.billed_user_id,
             extra_agent_env=monitor_env.agent_env or None,
-            trial_kind=spec.trial_kind,
-            staged_skills_root=task.staged_skills_root,
             quota_seams=task.driver_seams.quota,
         )
     )

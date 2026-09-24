@@ -149,9 +149,9 @@ def harbor_git_requirement(
     """PEP 508 direct reference for a Harbor git pin: ``harbor @ git+<src>@<sha>``.
 
     The single source of truth for the override install requirement, shared by
-    the ephemeral child's ``uv run --with``, the blessed-variant image build, and
-    the in-sandbox agent pin. A leading ``git+`` on *source* is stripped first so
-    the result never doubles the prefix.
+    the ephemeral child's ``uv run --with`` and the blessed-variant image build.
+    A leading ``git+`` on *source* is stripped first so the result never doubles
+    the prefix.
 
     When *extras* is given, they are rendered as a PEP 508 extras group on the
     package name (``harbor[daytona,modal] @ git+<src>@<sha>``). Cloud-provider
@@ -170,45 +170,6 @@ def _requirement_name(extras: Sequence[str] | None) -> str:
         if unique:
             return f"harbor[{','.join(unique)}]"
     return "harbor"
-
-
-_GITHUB_HTTPS_RE = re.compile(
-    r"^https://github\.com/(?P<org>[^/]+?)/(?P<repo>[^/]+?)(?:\.git)?/?$",
-    re.IGNORECASE,
-)
-
-
-def harbor_sandbox_requirement(
-    source: str, sha: str, *, extras: Sequence[str] | None = None
-) -> str:
-    """Requirement for installing Harbor where no ``git`` binary exists.
-
-    A ``git+`` direct reference makes the installer shell out to the git
-    binary, which minimal probe sandbox images (Daytona) do not ship — every
-    such install died with "probe: failed to install ... into the sandbox"
-    and the agent ran without an importable harbor. For GitHub sources this
-    renders the commit tarball instead
-    (``https://github.com/<org>/<repo>/archive/<sha>.tar.gz``): the identical
-    immutable tree for that sha, fetched over plain HTTPS, no git involved.
-    A non-GitHub source has no forge tarball endpoint and falls back to the
-    ``git+`` form unchanged.
-
-    Use this ONLY for installs into a sandbox. Orchestrator and image
-    installs must keep :func:`harbor_git_requirement`: the installed
-    package's PEP 610 ``direct_url.json`` then carries ``vcs_info``, which
-    ``_installed_harbor_git_pin`` (oddish.workers.agents.claude_code) reads
-    to re-derive ``(source, sha)``. A tarball install records only
-    ``archive_info`` and would break that chain.
-    """
-    src = _strip_git_prefix(source)
-    match = _GITHUB_HTTPS_RE.match(src)
-    if match is None:
-        return harbor_git_requirement(source, sha, extras=extras)
-    org, repo = match.group("org"), match.group("repo")
-    return (
-        f"{_requirement_name(extras)} @ "
-        f"https://github.com/{org}/{repo}/archive/{sha}.tar.gz"
-    )
 
 
 def harbor_variant_function_name(variant_id: str) -> str:

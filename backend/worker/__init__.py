@@ -23,9 +23,9 @@ from observability import (
 )
 
 _logfire_active = configure_logfire(service_name="oddish-worker")
-# Route the oddish stdlib logger to stderr + Logfire so analyzer/verdict block
-# `logger.info` lines actually surface (see configure_stdlib_log_bridge). Without
-# this the worker drops every INFO record.
+# Route the oddish stdlib logger to stderr + Logfire so `logger.info` lines
+# actually surface (see configure_stdlib_log_bridge). Without this the worker
+# drops every INFO record.
 configure_stdlib_log_bridge(logfire_active=_logfire_active)
 
 with _otel_span("worker.container_init"):

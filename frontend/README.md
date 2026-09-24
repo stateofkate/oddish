@@ -11,9 +11,6 @@ Current app surface:
 - `/tasks` authenticated task browser with search, pagination, per-task version summaries, and links back to experiments
 - `/experiments` base page directing users to select an experiment
 - `/experiments/[experiment]` experiment detail, task and trial inspection, logs, results, files, version history, share controls, per-task retry actions, and **cancel** for in-flight work (task drawer **Cancel (N)** or experiment table bulk **Cancel** when tasks are selected; both use `POST /tasks/cancel` with one or more task ids)
-- `/qa` QA workspace; `/qa/skills` and `/qa/documents` provide organization
-  skill and document-store management
-- `/skills` and `/documents` compatibility routes that redirect into `/qa`
 - `/usage` usage and cost reporting
 - `/settings` organization management and API key management
 - `/admin` includes an **Overview** with editable per-queue-key concurrency limits and queue health, plus detailed **Worker Jobs** and **Concurrency** tabs for job state and `queue_slots` leases

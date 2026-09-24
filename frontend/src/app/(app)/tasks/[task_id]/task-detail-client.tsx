@@ -113,8 +113,6 @@ const TrialDetailPanel = dynamic(
 const QA_TRIAL_KIND_LABELS: Record<string, string> = {
   qa: "QA run",
   audit: "Pre-trial audit",
-  analyzer_map: "Analyzer (map)",
-  analyzer_reduce: "Analyzer (reduce)",
 };
 
 function DrawerContentLoading({ label }: { label: string }) {
@@ -690,6 +688,7 @@ export function TaskDetailClient({
 }: TaskDetailClientProps) {
   const {
     agentCards,
+    agentCount,
     analysisTrialsForVersion,
     defaultVersionError,
     defaultVersionId,
@@ -701,14 +700,13 @@ export function TaskDetailClient({
     isLoading,
     isSettingDefaultVersion,
     open,
-    realAgentCount,
-    realTrialCount,
     revalidateReaderResources,
     selectedVersion,
     selectedVersionId,
     setLoadVersionHistory,
     task,
     totals,
+    trialCount,
     trialsForVersion,
     versions,
   } = useTaskOpenReader(taskId, initialVersionId);
@@ -731,8 +729,8 @@ export function TaskDetailClient({
     claimsPageLoad: true,
     attributes: {
       "oddish.task_id": taskId,
-      "oddish.trial_count": realTrialCount,
-      "oddish.agent_count": realAgentCount,
+      "oddish.trial_count": trialCount,
+      "oddish.agent_count": agentCount,
       "oddish.version_count": versions.length,
       "oddish.browse_snapshot": isBrowseSnapshot,
     },
@@ -1372,9 +1370,9 @@ export function TaskDetailClient({
               Agents
             </h2>
             <span className="font-mono text-[10.5px] text-[color:var(--paper-ink-3)]">
-              {realAgentCount} agent
-              {realAgentCount === 1 ? "" : "s"} · {realTrialCount} trial
-              {realTrialCount === 1 ? "" : "s"}
+              {agentCount} agent
+              {agentCount === 1 ? "" : "s"} · {trialCount} trial
+              {trialCount === 1 ? "" : "s"}
             </span>
           </div>
           {agentCards.length === 0 ? (
@@ -1393,7 +1391,6 @@ export function TaskDetailClient({
                   isBrowseSnapshot ||
                   !selectedVersion ||
                   agentCards.length !== 1 ||
-                  card.summary.is_probe ||
                   card.summary.trial_count !== selectedVersion.trial_count
                 }
                 trials={card.trials}

@@ -5,8 +5,8 @@ Mirrors ``test_browse_filters.py``: schema is built with
 skips when unset.
 
 Dataset (after ``_setup``): org1 has one live current-version trial with the
-full facet spread (model, stage, classification), a live NULL-model trial, a
-probe, an old-version trial, a soft-deleted trial, and a superseded trial;
+full facet spread (model, stage, classification), a live NULL-model trial,
+an old-version trial, a soft-deleted trial, and a superseded trial;
 org2 has one live trial sharing org1's environment. Only the two live org1
 trials and the org2 trial may contribute vocabulary.
 """
@@ -51,24 +51,23 @@ async def _setup(engine):
             insert into experiments (id,name,org_id,is_public,created_at,updated_at)
             values ('exp-1','E1','org1',false,now(),now()),
                    ('exp-2','E2','org2',false,now(),now());
-            insert into tasks (id,name,org_id,"user",priority,status,task_path,link,tags,run_analysis,run_probe,created_at,updated_at)
-            values ('t-1','one','org1','u','LOW','COMPLETED','p',null,'{}'::jsonb,false,false,now(),now()),
-                   ('t-2','two','org2','u','LOW','COMPLETED','p',null,'{}'::jsonb,false,false,now(),now());
+            insert into tasks (id,name,org_id,"user",priority,status,task_path,link,tags,run_analysis,created_at,updated_at)
+            values ('t-1','one','org1','u','LOW','COMPLETED','p',null,'{}'::jsonb,false,now(),now()),
+                   ('t-2','two','org2','u','LOW','COMPLETED','p',null,'{}'::jsonb,false,now(),now());
             insert into task_versions (id,task_id,version,task_path,created_at,updated_at)
             values ('v-1','t-1',1,'p',now(),now()),
                    ('v-0','t-1',0,'p',now(),now()),
                    ('v-2','t-2',1,'p',now(),now());
             update tasks set current_version_id='v-1' where id='t-1';
             update tasks set current_version_id='v-2' where id='t-2';
-            insert into trials (id,name,task_id,task_version_id,experiment_id,org_id,agent,provider,queue_key,timeout_minutes,environment,harbor_config,analysis,status,origin,is_probe,reward,error_message,input_tokens,output_tokens,cache_tokens,total_steps,has_trajectory,finished_at,attempts,max_attempts,heartbeat_failure_count,created_at,updated_at)
+            insert into trials (id,name,task_id,task_version_id,experiment_id,org_id,agent,provider,queue_key,timeout_minutes,environment,harbor_config,analysis,status,origin,reward,error_message,input_tokens,output_tokens,cache_tokens,total_steps,has_trajectory,finished_at,attempts,max_attempts,heartbeat_failure_count,created_at,updated_at)
             values
-              ('tr-live','tr-live','t-1','v-1','exp-1','org1','claude-code','anthropic','q',30,'modal','{}'::jsonb,'{"classification":"env_issue"}'::jsonb,'SUCCESS','oddish',false,1.0,null,100,50,0,10,true,now(),1,6,0,now(),now()),
-              ('tr-nullm','tr-nullm','t-1','v-1','exp-1','org1','nop','oddish','q',30,'modal','{}'::jsonb,null,'SUCCESS','oddish',false,1.0,null,100,50,0,10,true,now(),1,6,0,now(),now()),
-              ('tr-probe','tr-probe','t-1','v-1','exp-1','org1','gemini-cli','google','q',30,'modal','{}'::jsonb,null,'SUCCESS','oddish',true,1.0,null,100,50,0,10,true,now(),1,6,0,now(),now()),
-              ('tr-old','tr-old','t-1','v-0','exp-1','org1','old-agent','anthropic','q',30,'modal','{}'::jsonb,null,'SUCCESS','oddish',false,1.0,null,100,50,0,10,true,now(),1,6,0,now(),now()),
-              ('tr-del','tr-del','t-1','v-1','exp-1','org1','deleted-agent','anthropic','q',30,'modal','{}'::jsonb,null,'SUCCESS','oddish',false,1.0,null,100,50,0,10,true,now(),1,6,0,now(),now()),
-              ('tr-sup','tr-sup','t-1','v-1','exp-1','org1','ghost-agent','anthropic','q',30,'modal','{}'::jsonb,null,'SUCCESS','oddish',false,1.0,null,100,50,0,10,true,now(),1,6,0,now(),now()),
-              ('tr-org2','tr-org2','t-2','v-2','exp-2','org2','org2-agent','openai','q',30,'modal','{}'::jsonb,'{"classification":"infra"}'::jsonb,'SUCCESS','oddish',false,1.0,null,100,50,0,10,true,now(),1,6,0,now(),now());
+              ('tr-live','tr-live','t-1','v-1','exp-1','org1','claude-code','anthropic','q',30,'modal','{}'::jsonb,'{"classification":"env_issue"}'::jsonb,'SUCCESS','oddish',1.0,null,100,50,0,10,true,now(),1,6,0,now(),now()),
+              ('tr-nullm','tr-nullm','t-1','v-1','exp-1','org1','nop','oddish','q',30,'modal','{}'::jsonb,null,'SUCCESS','oddish',1.0,null,100,50,0,10,true,now(),1,6,0,now(),now()),
+              ('tr-old','tr-old','t-1','v-0','exp-1','org1','old-agent','anthropic','q',30,'modal','{}'::jsonb,null,'SUCCESS','oddish',1.0,null,100,50,0,10,true,now(),1,6,0,now(),now()),
+              ('tr-del','tr-del','t-1','v-1','exp-1','org1','deleted-agent','anthropic','q',30,'modal','{}'::jsonb,null,'SUCCESS','oddish',1.0,null,100,50,0,10,true,now(),1,6,0,now(),now()),
+              ('tr-sup','tr-sup','t-1','v-1','exp-1','org1','ghost-agent','anthropic','q',30,'modal','{}'::jsonb,null,'SUCCESS','oddish',1.0,null,100,50,0,10,true,now(),1,6,0,now(),now()),
+              ('tr-org2','tr-org2','t-2','v-2','exp-2','org2','org2-agent','openai','q',30,'modal','{}'::jsonb,'{"classification":"infra"}'::jsonb,'SUCCESS','oddish',1.0,null,100,50,0,10,true,now(),1,6,0,now(),now());
             update trials set model='claude-fable-5', harbor_stage='completed' where id='tr-live';
             update trials set model='m2' where id='tr-org2';
             update trials set deleted_at=now() where id='tr-del';
@@ -91,7 +90,7 @@ async def test_rebuild_and_facets_read():
             assert orgs == 2
 
             facets = await browse_task_facets_core(session, org_id=ORG)
-            # Probe / superseded / old-version / soft-deleted trials must not
+            # Superseded / old-version / soft-deleted trials must not
             # contribute; the two live trials define org1's vocabulary.
             assert facets.agents == ["claude-code", "nop"]
             assert facets.models == ["claude-fable-5"]
@@ -181,8 +180,7 @@ async def test_write_through_is_instant_and_idempotent():
                 ("fresh-agent", "fresh-model")
             }
 
-        # Probes and org-less (standalone) trials contribute nothing.
-        assert facet_rows_for_trial(org_id=ORG, agent="x", is_probe=True) == set()
+        # Org-less (standalone) trials contribute nothing.
         assert facet_rows_for_trial(org_id=None, agent="x") == set()
     finally:
         await engine.dispose()
@@ -212,8 +210,8 @@ async def test_rebuild_survives_concurrent_write_through():
                     async with maker() as writer:
                         await writer.execute(
                             text(
-                                "insert into trials (id,name,task_id,task_version_id,experiment_id,org_id,agent,provider,queue_key,timeout_minutes,environment,harbor_config,analysis,status,origin,is_probe,reward,error_message,input_tokens,output_tokens,cache_tokens,total_steps,has_trajectory,finished_at,attempts,max_attempts,heartbeat_failure_count,created_at,updated_at) "
-                                "values ('tr-race','tr-race','t-1','v-1','exp-1','org1','race-agent','anthropic','q',30,'modal','{}'::jsonb,null,'QUEUED','oddish',false,null,null,100,50,0,10,false,null,0,6,0,now(),now())"
+                                "insert into trials (id,name,task_id,task_version_id,experiment_id,org_id,agent,provider,queue_key,timeout_minutes,environment,harbor_config,analysis,status,origin,reward,error_message,input_tokens,output_tokens,cache_tokens,total_steps,has_trajectory,finished_at,attempts,max_attempts,heartbeat_failure_count,created_at,updated_at) "
+                                "values ('tr-race','tr-race','t-1','v-1','exp-1','org1','race-agent','anthropic','q',30,'modal','{}'::jsonb,null,'QUEUED','oddish',null,null,100,50,0,10,false,null,0,6,0,now(),now())"
                             )
                         )
                         await record_trial_facets(
@@ -247,8 +245,8 @@ async def test_write_through_tolerates_missing_table():
         async with maker() as session:
             await session.execute(
                 text(
-                    'insert into tasks (id,name,org_id,"user",priority,status,task_path,link,tags,run_analysis,run_probe,created_at,updated_at) '
-                    "values ('t-mt','mt','org1','u','LOW','COMPLETED','p',null,'{}'::jsonb,false,false,now(),now())"
+                    'insert into tasks (id,name,org_id,"user",priority,status,task_path,link,tags,run_analysis,created_at,updated_at) '
+                    "values ('t-mt','mt','org1','u','LOW','COMPLETED','p',null,'{}'::jsonb,false,now(),now())"
                 )
             )
             await record_trial_facets(
@@ -296,21 +294,12 @@ async def test_bulk_insert_funnel_writes_vocabulary():
                         "id": "tr-bulk-1",
                         "name": "tr-bulk-1",
                         "agent": "bulk-agent",
-                        "is_probe": False,
-                    },
-                    {
-                        **base,
-                        "id": "tr-bulk-2",
-                        "name": "tr-bulk-2",
-                        "agent": "probe-agent",
-                        "is_probe": True,
                     },
                 ],
             )
             await session.commit()
 
-            # No rebuild ran: everything visible came from the funnel, and the
-            # probe row contributed nothing.
+            # No rebuild ran: everything visible came from the funnel.
             facets = await browse_task_facets_core(session, org_id=ORG)
             assert facets.agents == ["bulk-agent"]
             assert facets.models == ["bulk-model"]

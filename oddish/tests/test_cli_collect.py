@@ -48,9 +48,8 @@ def test_parse_task_ref():
 
 
 class _VersionResolveClient:
-    """GET /tasks/{id}/trials returns three v16 + one v22 trial (one superseded,
-    one probe, one running) so only terminal, non-probe, non-superseded v16
-    trials are linked.
+    """GET /tasks/{id}/trials returns v16 + v22 trials (one superseded, one
+    running) so only terminal, non-superseded v16 trials are linked.
 
     The server already filters superseded rows out of this response, so the
     superseded entry below is belt-and-braces: it proves the client stays
@@ -60,23 +59,20 @@ class _VersionResolveClient:
     def get(self, url, params=None):
         trials = [
             {"id": "T-16a", "task_version_id": "TID-v16", "status": "success",
-             "is_probe": False, "superseded_by_trial_id": None},
+             "superseded_by_trial_id": None},
             {"id": "T-16b", "task_version_id": "TID-v16", "status": "failed",
-             "is_probe": False, "superseded_by_trial_id": None},
-            {"id": "T-16-probe", "task_version_id": "TID-v16", "status": "success",
-             "is_probe": True, "superseded_by_trial_id": None},
+             "superseded_by_trial_id": None},
             {"id": "T-16-superseded", "task_version_id": "TID-v16",
-             "status": "success", "is_probe": False,
-             "superseded_by_trial_id": "T-16a"},
+             "status": "success", "superseded_by_trial_id": "T-16a"},
             {"id": "T-16-running", "task_version_id": "TID-v16", "status": "running",
-             "is_probe": False, "superseded_by_trial_id": None},
+             "superseded_by_trial_id": None},
             {"id": "T-22a", "task_version_id": "TID-v22", "status": "success",
-             "is_probe": False, "superseded_by_trial_id": None},
+             "superseded_by_trial_id": None},
         ]
         return httpx.Response(200, json=trials)
 
 
-def test_version_trial_ids_filters_terminal_nonprobe_nonsuperseded():
+def test_version_trial_ids_filters_terminal_nonsuperseded():
     ids = _version_trial_ids(_VersionResolveClient(), "https://api", "TID", "16")
     assert ids == ["T-16a", "T-16b"]
 
@@ -545,7 +541,6 @@ def test_collect_into_expands_version_pins(monkeypatch):
                 "id": "T-16a",
                 "task_version_id": "mytask-abc12345-v16",
                 "status": "success",
-                "is_probe": False,
                 "superseded_by_trial_id": None,
             }
         ]

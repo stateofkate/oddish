@@ -12,8 +12,6 @@ const GEMINI_35_MODEL_ALIASES = new Set([
   "google/gemini-3.5-flash",
 ]);
 
-export const PROBE_AGENT_KEY = "probe";
-
 export type ExperimentAgentSummary = {
   key: string;
   label: string;
@@ -77,15 +75,9 @@ export function getExperimentAgentDisplay(
 }
 
 export function getExperimentAgentKey(
-  trial: Pick<
-    Trial,
-    "agent" | "model" | "is_probe" | "kind" | "reasoning_effort"
-  >,
+  trial: Pick<Trial, "agent" | "model" | "kind" | "reasoning_effort">,
   groupEfforts = false
 ): string {
-  if (trial.is_probe) {
-    return PROBE_AGENT_KEY;
-  }
   // QA / audit trials are the platform's own runs, not the agent under
   // test: give them their own column so a qa-report experiment does not
   // mirror the agent matrix.
@@ -113,17 +105,6 @@ export function buildExperimentAgentSummaries(
       const key = getExperimentAgentKey(trial, groupEfforts);
       if (summaries.has(key)) continue;
 
-      if (trial.is_probe) {
-        summaries.set(key, {
-          key: PROBE_AGENT_KEY,
-          label: "probe",
-          agent: PROBE_AGENT_KEY,
-          model: null,
-          queueKey: null,
-        });
-        continue;
-      }
-
       if (!isAgentTrial(trial)) {
         summaries.set(key, {
           key,
@@ -150,13 +131,7 @@ export function buildExperimentAgentSummaries(
     }
   }
 
-  const ordered = Array.from(summaries.values());
-  const probeIndex = ordered.findIndex((s) => s.key === PROBE_AGENT_KEY);
-  if (probeIndex >= 0) {
-    ordered.push(ordered.splice(probeIndex, 1)[0]);
-  }
-
-  return ordered;
+  return Array.from(summaries.values());
 }
 
 /** Display only: keep the provider's model identifier unchanged in API calls. */

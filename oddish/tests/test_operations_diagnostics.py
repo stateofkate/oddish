@@ -90,43 +90,13 @@ async def test_unscored_trial_preserves_storage_read_error(
         get_trial_result_json=AsyncMock(side_effect=OSError("storage unavailable")),
     )
     monkeypatch.setattr(db, "get_storage_client", lambda: storage)
-    result = json.loads(await diagnostic.examine.local(72, True, 10, "Docker"))
+    result = json.loads(await diagnostic.examine.local(72, 10, "Docker"))
     assert (
         result["trials"][0]["result_json_read_error"] == "OSError: storage unavailable"
     )
     assert result["trials"][0]["result_json_exception_type"] is None
     assert "unscored trials" in result["aggregate"]["note"]
     assert "failed trials" not in result["aggregate"]["note"]
-
-
-@pytest.mark.asyncio
-async def test_audit_read_failure_is_not_reported_as_missing_artifact(
-    load_diagnostic, monkeypatch
-):
-    import oddish.db.storage
-
-    diagnostic = load_diagnostic("probe_audit_trail_modal.py")
-    trial = db.TrialModel(id="trial-1", task_id="task-1", reward=1)
-    session = SimpleNamespace(
-        execute=AsyncMock(
-            return_value=SimpleNamespace(
-                scalars=lambda: SimpleNamespace(all=lambda: [])
-            )
-        )
-    )
-    storage = SimpleNamespace(
-        _trial_prefix=lambda trial_id: trial_id,
-        list_keys=AsyncMock(side_effect=OSError("storage unavailable")),
-        get_trial_result_json=AsyncMock(return_value=None),
-    )
-    monkeypatch.setattr(
-        oddish.db.storage,
-        "resolve_trial_directory",
-        AsyncMock(side_effect=OSError("download unavailable")),
-    )
-    result = await diagnostic._trail_for_trial(session, storage, trial)
-    assert result["verdict"].startswith("READ ERROR:")
-    assert "storage unavailable" in result["artifacts"]["list_error"]
 
 
 @pytest.mark.asyncio

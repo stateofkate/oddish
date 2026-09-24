@@ -155,7 +155,6 @@ const FILTER_FIELDS: Record<string, (keyof FilterValues)[]> = {
       "hasLink",
       "hasError",
       "hasTrajectory",
-      "trialIsProbe",
       "neverDelivered",
       "sort",
       "toolNames",

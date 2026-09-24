@@ -14,7 +14,6 @@ from harbor.environments.docker.docker import DockerEnvironment
 
 from oddish.config import settings
 from oddish.core.llm_key_fingerprint import hash_llm_key, trial_llm_key_hash
-from oddish.worker.local_runner import _bedrock_agent_env
 from oddish.workers.harbor.agent_config import _build_routed_agent_config
 from oddish.workers.harbor.agent_config import _build_agent_config
 from oddish.workers.harbor.ephemeral import _build_payload
@@ -96,7 +95,6 @@ async def test_claude_command_uses_selected_model_and_provider_allowlist(
             model=requested,
             environment_config=EnvironmentConfig(type=EnvironmentType.DOCKER),
             raw_harbor_config={},
-            is_probe=False,
             extra_agent_env={"ANTHROPIC_MODEL": "claude-wrong-child"},
         )
         config = _build_job_config(payload).agents[0]
@@ -118,7 +116,8 @@ async def test_claude_command_uses_selected_model_and_provider_allowlist(
     assert final_env["ANTHROPIC_API_KEY"] == (
         "" if provider == "bedrock" else "platform-ant"
     )
-    assert agent.to_agent_info().model_info.provider == provider
+    info = agent.to_agent_info().model_info
+    assert "/".join(filter(None, (info.provider, info.name))) == expected
     assert host in outbound_hosts_for_model(requested, agent_env=config.env)
 
 
@@ -168,7 +167,6 @@ async def test_mini_swe_bedrock_forwards_aws_provider_chain(
             model=BEDROCK,
             environment_config=EnvironmentConfig(type=EnvironmentType.DOCKER),
             raw_harbor_config={},
-            is_probe=False,
         )
         config = _build_job_config(payload).agents[0]
     else:
@@ -251,7 +249,6 @@ def test_ephemeral_child_model_and_env_follow_explicit_route(
         model=requested,
         environment_config=EnvironmentConfig(type=EnvironmentType.DOCKER),
         raw_harbor_config={},
-        is_probe=True,
         extra_agent_env={"ANTHROPIC_API_KEY": "user-ant"},
     )
     env = {
@@ -299,13 +296,6 @@ def test_explicit_claude_routes_are_not_sent_to_mixed_qa_gateway():
     assert is_gateway_trial(**args, model="anthropic-hdo/claude-sonnet-5")
 
 
-def test_local_bedrock_env_clears_competing_anthropic_key(monkeypatch):
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "ambient-ant")
-    env = _bedrock_agent_env(BEDROCK)
-    assert env["CLAUDE_CODE_USE_BEDROCK"] == "1"
-    assert env["ANTHROPIC_API_KEY"] == ""
-
-
 def test_platform_key_from_settings_reaches_anthropic_child_without_ambient_env(
     tmp_path, monkeypatch
 ):
@@ -319,7 +309,6 @@ def test_platform_key_from_settings_reaches_anthropic_child_without_ambient_env(
         model=API,
         environment_config=EnvironmentConfig(type=EnvironmentType.DOCKER),
         raw_harbor_config={},
-        is_probe=False,
     )
     assert payload["runtime_env"]["ANTHROPIC_API_KEY"] == "settings-ant"
     assert payload["model"] == "claude-sonnet-4-5"
@@ -357,7 +346,6 @@ def test_child_final_selectors_follow_explicit_route_after_conflicting_overlays(
         model=requested,
         environment_config=EnvironmentConfig(type=EnvironmentType.DOCKER),
         raw_harbor_config={},
-        is_probe=False,
         extra_agent_env=extra,
     )
     child = _build_job_config(payload).agents[0]
@@ -395,7 +383,7 @@ def test_anthropic_child_mini_swe_uses_required_wrapper(tmp_path):
         task_path=tmp_path, jobs_dir=tmp_path / "jobs",
         outcome_path=tmp_path / "outcome.json", agent="mini-swe-agent", model=API,
         environment_config=EnvironmentConfig(type=EnvironmentType.DOCKER),
-        raw_harbor_config={}, is_probe=False,
+        raw_harbor_config={},
     )
     agent = AgentFactory.create_agent_from_config(_build_job_config(payload).agents[0], tmp_path)
     assert isinstance(agent, OddishMiniSweAgent)

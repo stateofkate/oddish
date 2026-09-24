@@ -1,7 +1,6 @@
 """Print or install the packaged oddish SKILL.md agent guide.
 
-This is the usage guide *for driving the oddish CLI* — unrelated to the
-probe skills library uploaded to the platform (``oddish probe skill add``).
+This is the usage guide *for driving the oddish CLI*.
 """
 
 from __future__ import annotations

@@ -15,8 +15,8 @@ export interface TaskOpenAgentCard {
 
 export interface TaskOpenAgentGroups {
   agentCards: TaskOpenAgentCard[];
-  realAgentCount: number;
-  realTrialCount: number;
+  agentCount: number;
+  trialCount: number;
 }
 
 const SUM_FIELDS = [
@@ -51,8 +51,8 @@ function emptySummary(
   const display = getExperimentAgentDisplay(source);
   return {
     ...source,
-    agent: source.is_probe ? "probe" : display.agent,
-    model: source.is_probe ? null : display.model,
+    agent: display.agent,
+    model: display.model,
     providers: [],
     trial_count: 0,
     completed_count: 0,
@@ -112,10 +112,9 @@ export function buildTaskOpenAgentGroups(
       const summary = emptySummary(source);
       card = {
         key,
-        label:
-          source.is_probe || isBaselineAgentName(summary.agent)
-            ? key
-            : `${summary.agent}/${experimentModelLabel(summary.model, summary.reasoning_effort)}`,
+        label: isBaselineAgentName(summary.agent)
+          ? key
+          : `${summary.agent}/${experimentModelLabel(summary.model, summary.reasoning_effort)}`,
         summary,
         trials: [],
       };
@@ -133,10 +132,9 @@ export function buildTaskOpenAgentGroups(
   for (const card of agentCards) card.summary.providers.sort();
   return {
     agentCards,
-    realAgentCount: agentCards.filter((card) => !card.summary.is_probe).length,
-    realTrialCount: agentCards.reduce(
-      (count, card) =>
-        count + (card.summary.is_probe ? 0 : card.summary.trial_count),
+    agentCount: agentCards.length,
+    trialCount: agentCards.reduce(
+      (count, card) => count + card.summary.trial_count,
       0
     ),
   };

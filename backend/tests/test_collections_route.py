@@ -160,7 +160,6 @@ async def seed_org_with_trials():
                     queue_key=f"test-col-{trial_id}",
                     status=TrialStatus.QUEUED,
                     origin=TrialOrigin.ODDISH,
-                    is_probe=False,
                 )
             )
         api_key_model, raw_key = create_api_key(
@@ -258,7 +257,6 @@ async def seed_org_with_task_trials():
                     queue_key=f"test-coltask-{trial_id}",
                     status=TrialStatus.SUCCESS,
                     origin=TrialOrigin.ODDISH,
-                    is_probe=False,
                 )
             )
         api_key_model, raw_key = create_api_key(

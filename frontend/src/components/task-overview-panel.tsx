@@ -173,15 +173,13 @@ export function TaskOverviewPanel({
   const router = useRouter();
   const selectedFinding = useSearchParams().get("finding");
   const versionKnown = version !== undefined;
-  // Probes are excluded at the query: they are internal instruction-overlay
-  // runs, not attempts, and their `analysis` is a different shape entirely.
   // The fetch waits for the version so it can scope server-side — a task
   // carries trials across many versions and experiments, and every full row
   // ships its whole analysis payload.
   const trialsKey =
     taskId && versionKnown && !readOnly
-      ? `${apiBaseUrl}/tasks/${taskId}/trials?probe=false${
-          version !== null ? `&version=${version}` : ""
+      ? `${apiBaseUrl}/tasks/${taskId}/trials${
+          version !== null ? `?version=${version}` : ""
         }`
       : null;
   const { data: trials, error: trialsError } = useSWR<Trial[]>(
@@ -198,7 +196,7 @@ export function TaskOverviewPanel({
     }
   );
 
-  // Host rows can include probes and superseded trials; filter them here too.
+  // Host rows can include superseded and non-agent trials; filter them here too.
   const scoped = useMemo(() => {
     if (scopeTrials == null) return null;
     return scopeTrials.filter((trial) => isReviewableTrial(trial));

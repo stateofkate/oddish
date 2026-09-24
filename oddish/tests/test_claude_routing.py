@@ -122,7 +122,6 @@ def test_historical_response_preserves_stored_identity(
         origin=TrialOrigin.ODDISH,
         attempts=1,
         max_attempts=1,
-        is_probe=False,
         created_at=datetime(2026, 8, 4, tzinfo=timezone.utc),
         cost_usd=0.125,
     )

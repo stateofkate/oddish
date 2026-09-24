@@ -7,7 +7,6 @@ import importlib
 import json
 import logging
 import os
-import shlex
 import sys
 import time
 import traceback
@@ -40,10 +39,6 @@ for _fallback_path in _fallback_paths:
         raise RuntimeError(f"Oddish child fallback path is missing: {_fallback_path!r}")
     if _fallback_path not in sys.path:
         sys.path.append(_fallback_path)
-
-OddishClaudeCode: Any = importlib.import_module(
-    "oddish.workers.agents.claude_code"
-).OddishClaudeCode
 
 logger = logging.getLogger("oddish.harbor_entry")
 
@@ -125,7 +120,7 @@ def _serialize_result(result: Any) -> dict[str, Any] | None:
     return out or None
 
 
-def _make_hook(probe_task_dir: str | None, probe_harness_dir: str | None):
+def _make_hook():
     async def _hook(event: Any) -> None:
         event_name = _event_name(event.event)
         try:
@@ -147,45 +142,7 @@ def _make_hook(probe_task_dir: str | None, probe_harness_dir: str | None):
             if event_name == "environment-provisioned":
                 raise
 
-        environment = getattr(event, "environment", None)
-        if (
-            event_name == "agent-start"
-            and probe_task_dir
-            and probe_harness_dir
-            and environment is not None
-        ):
-            try:
-                await environment.upload_dir(
-                    source_dir=Path(probe_task_dir), target_dir=probe_harness_dir
-                )
-            except Exception:
-                if (Path(probe_task_dir) / "submit-analysis-result").is_file():
-                    raise
-
     return _hook
-
-
-class _ProbeClaudeCode(OddishClaudeCode):  # type: ignore[misc, valid-type]
-    """Claude Code that installs override Harbor in the sandbox."""
-
-    def __init__(
-        self, *args: Any, harbor_requirement: str | None = None, **kwargs: Any
-    ):
-        super().__init__(*args, **kwargs)
-        self._harbor_requirement = harbor_requirement
-
-    async def install(self, environment: Any) -> None:
-        await super().install(environment)
-        if not self._harbor_requirement:
-            return
-        command = f"pip install --user --quiet {shlex.quote(self._harbor_requirement)}"
-        try:
-            await self.exec_as_agent(environment, command=command)
-        except Exception:
-            logger.exception(
-                "probe: failed to install %s into the ephemeral sandbox",
-                self._harbor_requirement,
-            )
 
 
 def _build_job_config(payload: dict[str, Any]):
@@ -219,6 +176,9 @@ def _build_job_config(payload: dict[str, Any]):
         agent_kwargs["name"] = payload["agent"]
     else:
         agent_kwargs["name"] = None
+    if agent_kwargs["name"] == "kimi-claude-code":
+        # Harbor's kimi-claude-code class defaults to Moonshot; run ClaudeCode.
+        agent_kwargs["name"] = "claude-code"
     if payload.get("model"):
         agent_kwargs["model_name"] = payload["model"]
     if payload.get("runtime_env") or payload.get("extra_agent_env"):
@@ -228,37 +188,7 @@ def _build_job_config(payload: dict[str, Any]):
             **dict(payload.get("extra_agent_env") or {}),
         }
 
-    # A probe's Task-tool subagents need an explicit model, and Harbor only
-    # forwards one on its custom-base-url branch. The parent pins it for every
-    # other agent, but claude-code's model id is resolved here, so the pin has
-    # to be taken from the model this child actually runs -- otherwise the probe
-    # and its subagents end up on different ids.
-    if payload.get("probe_subagent_model") and agent_kwargs.get("model_name"):
-        env = dict(agent_kwargs.get("env") or {})
-        env.setdefault("CLAUDE_CODE_SUBAGENT_MODEL", agent_kwargs["model_name"])
-        agent_kwargs["env"] = env
-
-    agent_harbor_requirement = payload.get("agent_harbor_requirement")
-    if agent_harbor_requirement:
-        agent_kwargs["name"] = None
-        agent_kwargs["import_path"] = f"{__name__}:_ProbeClaudeCode"
-        agent_kwargs["kwargs"] = {
-            **dict(agent_kwargs.get("kwargs") or {}),
-            "harbor_requirement": agent_harbor_requirement,
-        }
-    elif (
-        agent_kwargs.get("name") in {"claude-code", "kimi-claude-code"}
-        and str(agent_kwargs.get("model_name") or "").startswith("arn:")
-        and not agent_kwargs.get("import_path")
-    ):
-        # Stock Harbor splits the slash inside Bedrock ARNs as a provider
-        # delimiter when recording the trial result. Use the same wrapper as
-        # in-process Claude Code so the command and metadata share one model.
-        agent_kwargs["name"] = None
-        agent_kwargs["import_path"] = (
-            "oddish.workers.agents.claude_code:OddishClaudeCode"
-        )
-    elif (
+    if (
         agent_kwargs.get("name") == "mini-swe-agent"
         and not agent_kwargs.get("import_path")
     ):
@@ -310,7 +240,7 @@ async def _run(payload: dict[str, Any]) -> dict[str, Any]:
     job = await Job.create(config)
     job_dir = Path(job.job_dir)
 
-    hook = _make_hook(payload.get("probe_task_dir"), payload.get("probe_harness_dir"))
+    hook = _make_hook()
     registers = [
         "on_trial_started",
         "on_environment_started",

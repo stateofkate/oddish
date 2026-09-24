@@ -708,10 +708,6 @@ class TaskModel(TimestampedMixin, Base):
     # Analysis settings
     run_analysis: Mapped[bool] = mapped_column(default=False, nullable=False)
 
-    # Auto-probe opt-in: when True, sweeps on this task enqueue a probe trial
-    # for the task's current version. Off by default (probes are opt-in).
-    run_probe: Mapped[bool] = mapped_column(default=False, nullable=False)
-
     started_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -924,85 +920,6 @@ class TaskBrowseSummaryModel(Base):
     )
 
 
-def _counter() -> Mapped[int]:
-    return mapped_column(Integer, nullable=False, default=0, server_default="0")
-
-
-class TaskVersionModelMetricsModel(Base):
-    """Trial metrics for one task version under one agent and model.
-
-    A finer grain than ``TaskBrowseSummaryModel``: that table answers "how did
-    this task version do", this one answers "how did this model do on it", which
-    cannot be recovered by splitting the coarser row.
-    """
-
-    __tablename__ = "task_version_model_metrics"
-
-    task_version_id: Mapped[str] = mapped_column(
-        String(160),
-        ForeignKey("task_versions.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    agent: Mapped[str] = mapped_column(String(128), primary_key=True)
-    # Older trials carry no model; "" keeps them addressable in the primary key
-    # rather than dropping them or inventing a name.
-    model: Mapped[str] = mapped_column(String(256), primary_key=True, server_default="")
-    task_id: Mapped[str] = mapped_column(
-        String(128), ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False
-    )
-
-    n_pass: Mapped[int] = _counter()
-    n_partial: Mapped[int] = _counter()
-    n_fail: Mapped[int] = _counter()
-
-    n_unscored_agent: Mapped[int] = _counter()
-    n_unscored_env: Mapped[int] = _counter()
-    n_unscored_verify: Mapped[int] = _counter()
-    n_cancelled_user: Mapped[int] = _counter()
-    n_cancelled_reaped: Mapped[int] = _counter()
-    n_cancelled_other: Mapped[int] = _counter()
-    n_skipped: Mapped[int] = _counter()
-    n_scoreless: Mapped[int] = _counter()
-    n_unscored_unknown: Mapped[int] = _counter()
-    n_inflight: Mapped[int] = _counter()
-
-    sum_reward: Mapped[float] = mapped_column(
-        Float, nullable=False, default=0.0, server_default="0"
-    )
-    n_reward_present: Mapped[int] = _counter()
-    sum_runtime: Mapped[float] = mapped_column(
-        Float, nullable=False, default=0.0, server_default="0"
-    )
-    n_runtime_present: Mapped[int] = _counter()
-    n_with_trajectory: Mapped[int] = _counter()
-
-    # NULL on every distribution column means "never measured", which is not the
-    # same as a measured zero -- total_steps is absent on most pre-July trials.
-    n_steps_present: Mapped[int] = _counter()
-    sum_steps: Mapped[int] = mapped_column(
-        BigInteger, nullable=False, default=0, server_default="0"
-    )
-    steps_all_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    steps_all_p50: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    steps_all_max: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    steps_pass_n: Mapped[int] = _counter()
-    steps_pass_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    steps_pass_p50: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    steps_pass_max: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    steps_fail_n: Mapped[int] = _counter()
-    steps_fail_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    steps_fail_p50: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    steps_fail_max: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    steps_partial_n: Mapped[int] = _counter()
-
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        default=utcnow,
-        server_default=text("NOW()"),
-    )
-
-
 # The ``trials.kind`` value of a normal evaluation run. Every other value
 # marks a platform analysis agent run; filters are written as
 # ``kind == AGENT_TRIAL_KIND`` / ``kind != AGENT_TRIAL_KIND`` (never an
@@ -1068,13 +985,6 @@ class TrialModel(TimestampedMixin, Base):
     # indexed projection of harbor_config["resolved_sha"]; stamped at creation).
     harbor_sha: Mapped[str | None] = mapped_column(
         String(64), nullable=True, index=True
-    )
-
-    # Derived, indexed projection of ``harbor_config["mode"] == "probe"`` so
-    # probe runs can be filtered server-side. Source of truth stays in
-    # harbor_config; this is set at trial creation in queue.py.
-    is_probe: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default=text("false"), index=True
     )
 
     # What kind of run this row is: ``'agent'`` (the default) is a normal
@@ -1350,17 +1260,6 @@ class TrialModel(TimestampedMixin, Base):
             "status",
             postgresql_where=text("deleted_at IS NULL"),
         ),
-        # Probe-runs listing (``list_org_probes_core``): seek by org, then
-        # walk per-task newest-first for the window aggregation without a
-        # separate sort. Partial on ``is_probe`` since probe trials are a
-        # small slice of the table.
-        Index(
-            "idx_trials_probe_org_task_created",
-            "org_id",
-            "task_id",
-            text("created_at DESC"),
-            postgresql_where=text("is_probe"),
-        ),
     )
 
 
@@ -1413,7 +1312,6 @@ class AnalysisCostModel(TimestampedMixin, Base):
         Index("ix_analysis_costs_experiment_id", "experiment_id"),
         Index("ix_analysis_costs_org_id", "org_id"),
         Index("ix_analysis_costs_task_id", "task_id"),
-        Index("ix_analysis_costs_analyzer_id", "analyzer_id"),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=generate_id)
@@ -1423,10 +1321,6 @@ class AnalysisCostModel(TimestampedMixin, Base):
     org_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     billed_user_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     task_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    # Historical report association (the reports feature is removed; the column
-    # stays for old rows). Task-level QA and classifiers leave this NULL and
-    # reconcile through task_id/trial_id instead.
-    analyzer_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -2710,109 +2604,6 @@ class SavedTagFilterModel(TimestampedMixin, Base):
     )
 
 
-class SkillModel(TimestampedMixin, Base):
-    """A Claude Code skill (a SKILL.md directory) shared within an org.
-
-    Seed skills (``is_seed=True``, ``org_id`` NULL) are global read-only
-    built-ins. Custom skills are org-scoped and record the uploading user
-    in ``created_by_user_id``. The skill's files live in ``SkillFileModel``
-    rows keyed by ``relative_path`` so the directory tree is reconstructable
-    without object storage.
-    """
-
-    __tablename__ = "skills"
-    __table_args__ = (
-        # Reuse a skill name after soft-delete: partial unique index matching
-        # the ``deleted_at IS NULL`` predicate the soft-delete listener appends.
-        # COALESCE handles NULL org_id (OSS/global) the same way presets do.
-        Index(
-            "idx_skills_unique_org_name",
-            text("COALESCE(org_id, '')"),
-            "name",
-            unique=True,
-            postgresql_where=text("deleted_at IS NULL"),
-        ),
-    )
-
-    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=generate_id)
-    org_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
-    created_by_user_id: Mapped[str | None] = mapped_column(
-        String(64), nullable=True, index=True
-    )
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    description: Mapped[str] = mapped_column(Text, nullable=False)
-    is_seed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    operator_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
-    result_focus: Mapped[str | None] = mapped_column(Text, nullable=True)
-    evaluation_metric: Mapped[str | None] = mapped_column(String(32), nullable=True)
-
-    files: Mapped[list["SkillFileModel"]] = relationship(  # type: ignore[assignment]
-        "SkillFileModel",
-        back_populates="skill",
-        cascade="all, delete-orphan",
-        order_by="SkillFileModel.relative_path",
-        lazy="selectin",
-    )
-
-
-class SkillFileModel(Base):
-    """One file inside a skill, e.g. ``SKILL.md`` or ``scripts/run.sh``.
-
-    Not soft-deletable on its own — files are owned by their skill and
-    cascade with it. ``relative_path`` encodes the directory shape.
-    """
-
-    __tablename__ = "skill_files"
-
-    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=generate_id)
-    skill_id: Mapped[str] = mapped_column(
-        String(64),
-        ForeignKey("skills.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    relative_path: Mapped[str] = mapped_column(String(512), nullable=False)
-    content: Mapped[str] = mapped_column(Text, nullable=False)
-
-    skill: Mapped["SkillModel"] = relationship(  # type: ignore[assignment]
-        "SkillModel", back_populates="files"
-    )
-
-
-class DocumentModel(TimestampedMixin, Base):
-    """An uploaded reference document for agent retrieval.
-
-    Raw bytes live in S3 (``s3_key_raw``); the agent-facing ``digest_text``
-    and ``summary`` are Claude-generated at ingest. Org-scoped and records
-    the uploading user. ``content_text`` is the extracted raw text, retained
-    for a future semantic-search upgrade but not searched in v1.
-    """
-
-    __tablename__ = "documents"
-    __table_args__ = (
-        Index("ix_documents_org_id", "org_id"),
-        Index("ix_documents_created_by_user_id", "created_by_user_id"),
-        Index("ix_documents_updated_at", "updated_at"),
-    )
-
-    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=generate_id)
-    org_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    created_by_user_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    title: Mapped[str] = mapped_column(String(512), nullable=False)
-    # source_type is one of: upload | paste | link
-    source_type: Mapped[str] = mapped_column(String(16), nullable=False)
-    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    digest_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    tags: Mapped[list[str]] = mapped_column(
-        ARRAY(String(64)), nullable=False, default=list
-    )
-    content_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    s3_key_raw: Mapped[str | None] = mapped_column(String(1024), nullable=True)
-    raw_mime: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    raw_filename: Mapped[str | None] = mapped_column(String(512), nullable=True)
-
-
 class QueueRuntimeStatusModel(Base):
     """Per-component runtime heartbeat the admin dashboard reads back.
 
@@ -3010,8 +2801,8 @@ class DeliveryModel(TimestampedMixin, Base):
     check_config: Mapped[dict] = mapped_column(
         JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
     )
-    # Optional delivery-specific QA rubric (preset/skills refs); NULL means
-    # the generic QA pipeline's results are the ones that count.
+    # Optional delivery-specific QA rubric; NULL means the generic QA
+    # pipeline's results are the ones that count.
     qa_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     is_public: Mapped[bool] = mapped_column(
@@ -3459,8 +3250,6 @@ register_soft_delete_models(
     TagExclusionModel,
     TagGrantModel,
     SavedTagFilterModel,
-    SkillModel,
-    DocumentModel,
     CostExcludedLlmKeyModel,
     CostExcludedModelModel,
     CostExcludedExperimentModel,

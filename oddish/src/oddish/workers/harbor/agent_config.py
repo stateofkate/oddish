@@ -47,7 +47,6 @@ from oddish.config import (
     to_zai_model_id,
     zai_bare_model_id,
 )
-from oddish.task_timeouts import PROBE_AGENT_TIMEOUT_SEC
 from .restricted_network import (
     agent_keeps_public_model_identity,
     set_runtime_model_name,
@@ -56,10 +55,6 @@ from .vertex_ai import merge_agent_env as _merge_vertex_ai_env
 
 _ODDISH_CODEX_IMPORT_PATH = "oddish.workers.agents.codex:OddishCodex"
 _AZURE_COMPAT_CODEX_IMPORT_PATH = "oddish.workers.agents.codex:AzureCompatibleCodex"
-_ODDISH_CLAUDE_CODE_IMPORT_PATH = "oddish.workers.agents.claude_code:OddishClaudeCode"
-_ODDISH_PROBE_CLAUDE_CODE_IMPORT_PATH = (
-    "oddish.workers.agents.claude_code:OddishProbeClaudeCode"
-)
 _ODDISH_CURSOR_CLI_IMPORT_PATH = "oddish.workers.agents.cursor_cli:OddishCursorCli"
 _ODDISH_GROK_BUILD_IMPORT_PATH = "oddish.workers.agents.grok_build:OddishGrokBuild"
 _ODDISH_OPENCODE_IMPORT_PATH = "oddish.workers.agents.opencode:OddishOpenCode"
@@ -604,48 +599,6 @@ def _apply_mini_swe_agent(agent_config: AgentConfig) -> None:
     agent_config.import_path = _ODDISH_MINI_SWE_IMPORT_PATH
 
 
-def _apply_claude_code_oddish_wrapper(
-    agent_config: AgentConfig, is_probe: bool
-) -> None:
-    """Keep all Claude prompts off argv; probes also install Harbor."""
-    if agent_config.import_path is not None:
-        return
-    agent_name = (agent_config.name or "").strip().lower()
-    if agent_name not in {"claude-code", _KIMI_CLAUDE_CODE_AGENT}:
-        return
-
-    agent_config.name = None
-    agent_config.import_path = (
-        _ODDISH_PROBE_CLAUDE_CODE_IMPORT_PATH
-        if is_probe
-        else _ODDISH_CLAUDE_CODE_IMPORT_PATH
-    )
-
-
-def _apply_claude_code_probe_subagent_model(
-    agent_config: AgentConfig, is_probe: bool
-) -> None:
-    """Pin a probe claude-code agent's subagent model.
-
-    The per-provider env shapers (fireworks/z.ai/...) set
-    ``CLAUDE_CODE_SUBAGENT_MODEL``, but Harbor's claude-code ``run`` only forwards
-    it on the custom-base-url branch. On the direct Anthropic API / Bedrock path a
-    probe uses, nothing sets it, so a subagent the probe spawns has no explicit
-    model. Set it to the same (already provider-normalized) model id as the main
-    agent so Task-tool subagents work. Call while ``name`` is still
-    ``"claude-code"`` (before the probe-harbor wrapper nulls it); never overrides
-    an existing value.
-    """
-    if not is_probe or not agent_config.model_name:
-        return
-    agent_name = (agent_config.name or "").strip().lower()
-    if agent_name not in {"claude-code", _KIMI_CLAUDE_CODE_AGENT}:
-        return
-    env = dict(agent_config.env or {})
-    env.setdefault("CLAUDE_CODE_SUBAGENT_MODEL", agent_config.model_name)
-    agent_config.env = env
-
-
 def surfaced_anthropic_env(
     *, agent: str | None, model: str | None, agent_env: Mapping[str, str] | None
 ) -> dict[str, str]:
@@ -740,7 +693,6 @@ def _build_routed_agent_config(
     agent: str,
     model: str | None,
     raw_harbor_config: dict[str, Any],
-    is_probe: bool = False,
     probe_oddish_env: dict[str, str] | None = None,
 ) -> AgentConfig:
     """Build the AgentConfig through every provider routing decision.
@@ -793,12 +745,6 @@ def _build_routed_agent_config(
         and legacy_overrides.get("max_timeout_sec") is not None
     ):
         agent_config.max_timeout_sec = legacy_overrides["max_timeout_sec"]
-
-    # Probe trials inherit an existing task's task.toml, which may carry a
-    # multi-hour agent timeout (or none at all). Cap them at the probe default
-    # unless the trial explicitly set its own override above.
-    if is_probe and agent_config.override_timeout_sec is None:
-        agent_config.override_timeout_sec = PROBE_AGENT_TIMEOUT_SEC
 
     if agent_config.import_path is None:
         agent_config.name = agent
@@ -888,7 +834,6 @@ def _build_routed_agent_config(
     _apply_claude_code_geometric_env(agent_config)
     _apply_claude_code_minimax_env(agent_config)
     _apply_claude_code_moonshot_env(agent_config)
-    _apply_claude_code_probe_subagent_model(agent_config, is_probe)
 
     if claude_route:
         agent_config.env = {
@@ -906,7 +851,6 @@ def _build_agent_config(
     agent: str,
     model: str | None,
     raw_harbor_config: dict[str, Any],
-    is_probe: bool = False,
     probe_oddish_env: dict[str, str] | None = None,
 ) -> AgentConfig:
     """Build Harbor's full AgentConfig, preserving rich per-trial fields."""
@@ -915,7 +859,6 @@ def _build_agent_config(
         agent=agent,
         model=model,
         raw_harbor_config=raw_harbor_config,
-        is_probe=is_probe,
         probe_oddish_env=probe_oddish_env,
     )
 
@@ -956,7 +899,9 @@ def _build_agent_config(
     _apply_meta_mini_swe_agent(agent_config)
     _apply_geometric_mini_swe_agent(agent_config)
     _apply_mini_swe_agent(agent_config)
-    _apply_claude_code_oddish_wrapper(agent_config, is_probe)
+    # Harbor's kimi-claude-code class defaults to Moonshot; run stock ClaudeCode.
+    if _is_kimi_claude_code_agent(agent_config):
+        agent_config.name = "claude-code"
     _apply_probe_oddish_creds(agent_config, probe_oddish_env)
     # HDO key must win over probe/BYOK/platform ANTHROPIC_API_KEY merges above.
     # Use the original *model* arg: non-claude-code agents rewrite model_name to

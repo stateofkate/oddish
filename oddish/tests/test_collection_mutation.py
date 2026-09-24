@@ -43,7 +43,6 @@ def _trial(
     *,
     org_id: str = "org1",
     status: TrialStatus = TrialStatus.SUCCESS,
-    is_probe: bool = False,
     task_version_id: str | None = None,
 ) -> TrialModel:
     trial_id = generate_id()
@@ -59,7 +58,6 @@ def _trial(
         queue_key="openai/gpt-5.5",
         model="gpt-5.5",
         status=status,
-        is_probe=is_probe,
     )
 
 
@@ -97,7 +95,7 @@ async def test_from_experiment_ids_includes_gathered_trials(session):
 
 
 @pytest.mark.asyncio
-async def test_from_experiment_ids_filters_probe_and_nonterminal(session):
+async def test_from_experiment_ids_filters_nonterminal(session):
     task = _task("from-exp-filter-task")
     session.add(task)
     await session.flush()
@@ -107,9 +105,8 @@ async def test_from_experiment_ids_filters_probe_and_nonterminal(session):
     await session.flush()
 
     keep = _trial(task, source, status=TrialStatus.FAILED)
-    probe = _trial(task, source, is_probe=True)
     running = _trial(task, source, status=TrialStatus.RUNNING)
-    session.add_all([keep, probe, running])
+    session.add_all([keep, running])
     await session.flush()
 
     trials, _ = await resolve_collection_sources(

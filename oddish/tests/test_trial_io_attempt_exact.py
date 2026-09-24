@@ -104,8 +104,6 @@ def _clear_cache() -> None:
     trial_io._TRAJECTORY_LOCKS.clear()
     trial_io._STRUCTURED_LOGS_CACHE.clear()
     trial_io._STRUCTURED_LOGS_LOCKS.clear()
-    trial_io._PROBE_ARTIFACTS_CACHE.clear()
-    trial_io._PROBE_ARTIFACTS_LOCKS.clear()
 
 
 def test_analysis_upload_validation_accepts_manifest_selected_qa_artifacts():
@@ -1012,27 +1010,6 @@ def test_retry_changes_the_cache_identity(monkeypatch):
 
     assert first == {"trial_name": "attempt-1"}
     assert second == {"trial_name": "attempt-2"}
-
-
-def test_probe_cache_changes_with_the_attempt_pointer(monkeypatch):
-    _clear_cache()
-    calls = []
-
-    async def read_uncached(trial):
-        calls.append(trial.trial_s3_key)
-        return {"watchdog_log": trial.trial_s3_key}
-
-    monkeypatch.setattr(trial_io, "_read_trial_probe_artifacts_uncached", read_uncached)
-    trial = _trial(prefix="attempt-1/", attempts=1)
-
-    first = asyncio.run(trial_io.read_trial_probe_artifacts(trial))
-    trial.attempts = 2
-    trial.trial_s3_key = "attempt-2/"
-    second = asyncio.run(trial_io.read_trial_probe_artifacts(trial))
-
-    assert first == {"watchdog_log": "attempt-1/"}
-    assert second == {"watchdog_log": "attempt-2/"}
-    assert calls == ["attempt-1/", "attempt-2/"]
 
 
 def test_structured_logs_use_the_manifest_selected_harbor_directory(monkeypatch):

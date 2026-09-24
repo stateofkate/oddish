@@ -5,7 +5,7 @@ is wiped to NULL at the start of every attempt (``prepare_trial_run``) and only
 repopulated if the final terminal attempt runs ``_store_trial_results`` to
 completion. A trial stuck retrying, stale-reaped while RUNNING, or whose worker
 died mid-failure shows ``error_message = NULL`` even though every attempt hit the
-same error. Filtering on that column finds nothing (observed: a probe cohort
+same error. Filtering on that column finds nothing (observed: a trial cohort
 that all failed on Daytona's "Docker daemon not ready" showed zero rows when
 filtered on error_message).
 
@@ -23,9 +23,8 @@ just the one error you already knew about.
 Read-only. Runs in the deployed worker image with the ``oddish-prod`` secret.
 
     cd backend
-    .venv/bin/modal run probe_docker_failures_modal.py                 # 72h, probes
+    .venv/bin/modal run probe_docker_failures_modal.py                 # last 72h
     .venv/bin/modal run probe_docker_failures_modal.py --hours 168     # last week
-    .venv/bin/modal run probe_docker_failures_modal.py --all-trials    # incl. non-probe
     .venv/bin/modal run probe_docker_failures_modal.py --limit 300
 """
 
@@ -44,7 +43,7 @@ def _trunc(value, n: int = 200):
 
 
 @app.function(image=image, secrets=runtime_secrets, timeout=900)
-async def examine(hours: int, all_trials: bool, limit: int, needle: str) -> str:
+async def examine(hours: int, limit: int, needle: str) -> str:
     import asyncio
     import json
     from collections import Counter
@@ -71,8 +70,6 @@ async def examine(hours: int, all_trials: bool, limit: int, needle: str) -> str:
             TrialModel.superseded_by_trial_id.is_(None),
             TrialModel.reward.is_(None),
         ]
-        if not all_trials:
-            conditions.append(TrialModel.is_probe.is_(True))
 
         trials = (
             (
@@ -110,7 +107,6 @@ async def examine(hours: int, all_trials: bool, limit: int, needle: str) -> str:
             {
                 "id": t.id,
                 "task_id": t.task_id,
-                "is_probe": t.is_probe,
                 "status": str(t.status),
                 "attempts": t.attempts,
                 "max_attempts": t.max_attempts,
@@ -194,7 +190,6 @@ async def examine(hours: int, all_trials: bool, limit: int, needle: str) -> str:
 
     aggregate = {
         "window_hours": hours,
-        "probe_only": not all_trials,
         "candidate_trials_no_reward": total,
         "trials_with_result_json_exception_info": with_any_exc_info,
         "needle": needle,
@@ -217,10 +212,7 @@ async def examine(hours: int, all_trials: bool, limit: int, needle: str) -> str:
 @app.local_entrypoint()
 def main(
     hours: int = 72,
-    all_trials: bool = False,
     limit: int = 200,
     needle: str = "Docker daemon",
 ) -> None:
-    print(
-        examine.remote(hours=hours, all_trials=all_trials, limit=limit, needle=needle)
-    )
+    print(examine.remote(hours=hours, limit=limit, needle=needle))

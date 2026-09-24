@@ -441,61 +441,6 @@ def test_the_api_registers_the_settlement_hook_at_startup_not_on_import(
     assert monitor_settle._post_success_hook is notify_github_trial
 
 
-@pytest.mark.asyncio
-async def test_skills_are_the_trials_selected_ones_read_as_the_worker_reads_them(
-    client, monkeypatch
-):
-    from oddish.worker import probe_staging
-
-    http, _ = client
-    trial = SimpleNamespace(org_id="org-1", harbor_config={"skill_ids": ["skill-2"]})
-    listed = []
-
-    @asynccontextmanager
-    async def read_session():
-        async def get(model, trial_id):
-            assert trial_id == "trial-1"
-            return trial
-
-        yield SimpleNamespace(get=get)
-
-    @asynccontextmanager
-    async def session():
-        yield SimpleNamespace()
-
-    def skill(skill_id, name):
-        files = [SimpleNamespace(relative_path="SKILL.md", content=f"name: {name}")]
-        return SimpleNamespace(id=skill_id, name=name, files=files)
-
-    async def list_skills(session, *, org_id=None):
-        listed.append(org_id)
-        return [skill("skill-1", "alpha"), skill("skill-2", "beta")]
-
-    monkeypatch.setattr(monitor, "get_read_session", read_session)
-    # The worker's own loader, down to the query it runs.
-    monkeypatch.setattr(probe_staging, "get_session", session)
-    monkeypatch.setattr(probe_staging, "list_skills_core", list_skills)
-
-    selected = await http.get("/monitor/skills", headers=_auth())
-    assert selected.status_code == 200
-    assert selected.json() == {
-        "skills": [
-            {
-                "name": "beta",
-                "files": [{"relative_path": "SKILL.md", "content": "name: beta"}],
-            }
-        ]
-    }
-    assert listed == ["org-1"]
-
-    trial.harbor_config = {"mode": "probe"}
-    none = await http.get("/monitor/skills", headers=_auth())
-    assert none.json() == {"skills": []}
-    assert listed == ["org-1"]  # nothing selected, nothing read
-    stale = await http.get("/monitor/skills", headers=_auth("job-1.1.old"))
-    assert stale.status_code == 410
-
-
 def test_the_router_has_no_import_time_hook_registration():
     import ast
 

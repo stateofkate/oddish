@@ -308,19 +308,9 @@ def ls(
             "--has-trajectory/--no-has-trajectory", help="Trial has a trajectory."
         ),
     ] = None,
-    trial_is_probe: Annotated[
-        bool | None,
-        typer.Option(
-            "--trial-is-probe/--no-trial-is-probe", help="Match probe trials."
-        ),
-    ] = None,
     run_analysis: Annotated[
         bool | None,
         typer.Option("--run-analysis/--no-run-analysis", help="Task runs analysis."),
-    ] = None,
-    run_probe: Annotated[
-        bool | None,
-        typer.Option("--run-probe/--no-run-probe", help="Task runs probe."),
     ] = None,
     # --- Datetimes ---
     created_after: Annotated[
@@ -597,9 +587,7 @@ def ls(
     _bool("has_link", has_link)
     _bool("has_error", has_error)
     _bool("has_trajectory", has_trajectory)
-    _bool("trial_is_probe", trial_is_probe)
     _bool("run_analysis", run_analysis)
-    _bool("run_probe", run_probe)
     if created_before:
         params["created_before"] = created_before.isoformat()
     # Rolling presets take precedence over explicit lower bounds, as in the UI.

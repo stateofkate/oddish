@@ -3,9 +3,8 @@
 The canonical engineering guide for this repo is **`AGENTS.md`** at the repo
 root. Read it first; it covers the three packages (`oddish/` CLI+server,
 `backend/` hosted cloud layer, `frontend/` Next.js dashboard), package
-boundaries, worker-runtime invariants, and the repo-wide gotchas (probe
-visibility in public views, `list_tasks_core` `load_only`). End-user CLI docs
-are in `DOCS.md`.
+boundaries, worker-runtime invariants, and the repo-wide gotchas (such as
+`list_tasks_core` `load_only`). End-user CLI docs are in `DOCS.md`.
 
 ## What this project is
 

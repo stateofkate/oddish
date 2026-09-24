@@ -25,7 +25,7 @@ import {
  *
  * Like tasks-view.spec.ts, this needs a running dev stack and Clerk dev
  * credentials, and it skips when they are missing. The experiment needs
- * at least one non-probe trial; set E2E_EXPERIMENT_ID to choose one,
+ * at least one trial; set E2E_EXPERIMENT_ID to choose one,
  * otherwise the first experiment on the dashboard is used.
  *
  * Counting is race-hardened by the rules in network-log.ts: only finished
@@ -114,7 +114,7 @@ test.describe("experiment page network shape", () => {
       );
       test.skip(
         !hasTrialCell,
-        "discovered experiment has no non-probe trials — set E2E_EXPERIMENT_ID"
+        "discovered experiment has no trials — set E2E_EXPERIMENT_ID"
       );
     }
 

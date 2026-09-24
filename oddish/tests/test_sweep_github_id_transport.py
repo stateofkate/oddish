@@ -61,12 +61,16 @@ def test_unset_github_id_does_not_change_request_hash():
     """A submission that omits github_id must fingerprint identically to its
     pre-github_id form, so an in-flight Idempotency-Key retried across the
     deploy boundary does not spuriously 409."""
-    from oddish.core.idempotency import _canonical_digest, _registry_auth_fingerprints
+    from oddish.core.idempotency import (
+        _REMOVED_SWEEP_FIELD_DEFAULTS,
+        _canonical_digest,
+        _registry_auth_fingerprints,
+    )
 
     submission = _submission()  # github_id is None
     # The body a pre-github_id client/server would hash: the same pipeline
     # compute_request_hash runs, minus the github_id key.
-    data = submission.model_dump(mode="json")
+    data = {**_REMOVED_SWEEP_FIELD_DEFAULTS, **submission.model_dump(mode="json")}
     for absent_in_old_bodies in (
         "github_id",
         "add_trials",
@@ -95,10 +99,14 @@ def test_set_github_id_changes_request_hash():
 def test_unset_requires_gpu_keeps_the_pre_field_request_hash():
     """Clients that predate ``requires_gpu`` never send it; an in-flight
     Idempotency-Key retried across the deploy boundary must not 409."""
-    from oddish.core.idempotency import _canonical_digest, _registry_auth_fingerprints
+    from oddish.core.idempotency import (
+        _REMOVED_SWEEP_FIELD_DEFAULTS,
+        _canonical_digest,
+        _registry_auth_fingerprints,
+    )
 
     submission = _submission()  # requires_gpu defaults to False
-    data = submission.model_dump(mode="json")
+    data = {**_REMOVED_SWEEP_FIELD_DEFAULTS, **submission.model_dump(mode="json")}
     for absent_in_old_bodies in (
         "requires_gpu",
         "gpu_types",

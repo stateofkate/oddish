@@ -19,7 +19,6 @@ def _trial(
     reward: float | None,
     experiment_id: str | None = None,
     superseded_by_trial_id: str | None = None,
-    is_probe: bool = False,
 ):
     return SimpleNamespace(
         id=trial_id,
@@ -28,7 +27,6 @@ def _trial(
         reward=reward,
         experiment_id=experiment_id,
         superseded_by_trial_id=superseded_by_trial_id,
-        is_probe=is_probe,
     )
 
 
@@ -54,7 +52,6 @@ def test_task_status_response_includes_experiment_created_at():
         task_path="/tmp/demo-task",
         current_version_id=None,
         run_analysis=False,
-        run_probe=False,
         verdict_status=None,
         verdict=None,
         verdict_error=None,
@@ -402,14 +399,6 @@ def test_resolve_effective_version_id_requires_visible_default_trial():
                 reward=0,
                 experiment_id="exp-a",
                 superseded_by_trial_id="task-1-3",
-            ),
-            _trial(
-                "task-1-2",
-                task_version_id="task-1-v3",
-                status=TrialStatus.SUCCESS,
-                reward=1,
-                experiment_id="exp-a",
-                is_probe=True,
             ),
         ],
     )

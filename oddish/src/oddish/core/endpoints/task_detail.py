@@ -211,15 +211,13 @@ async def get_task_detail_core(
         ),
     )
 
-    # Version-scoped experiments: which experiments ran non-probe trials
+    # Version-scoped experiments: which experiments ran trials
     # against each version (distinct from the task-level all-time list). Names
     # are resolved straight from the experiments table by the ids the trials
     # reference, so this doesn't depend on task_experiments membership being
     # complete (a soft-deleted or unseeded link would otherwise drop a run).
     referenced_exp_ids = {
-        t.experiment_id
-        for t in all_trial_models
-        if not t.is_probe and t.experiment_id is not None
+        t.experiment_id for t in all_trial_models if t.experiment_id is not None
     }
     exp_name_by_id: dict[str, str] = {}
     if referenced_exp_ids:
@@ -284,17 +282,15 @@ async def get_task_detail_core(
 def _experiments_by_version(
     trials, exp_name_by_id: dict[str, str]
 ) -> dict[str, list[TaskBrowseExperiment]]:
-    """Map version_id -> experiments that ran a non-probe trial against it.
+    """Map version_id -> experiments that ran a trial against it.
 
     ``exp_name_by_id`` maps experiment_id -> name for every experiment the
-    trials may reference. Trials that are probes, lack an experiment link, or
-    reference an id missing from the map are ignored. Each version's list is
+    trials may reference. Trials that lack an experiment link or reference an
+    id missing from the map are ignored. Each version's list is
     sorted by name for a stable UI order.
     """
     ids_by_version: dict[str, set[str]] = {}
     for t in trials:
-        if getattr(t, "is_probe", False):
-            continue
         if t.experiment_id is None or t.task_version_id is None:
             continue
         if t.experiment_id not in exp_name_by_id:

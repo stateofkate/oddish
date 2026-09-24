@@ -284,7 +284,6 @@ def test_gateway_env_wins_over_ambient_provider_credentials(monkeypatch, model):
         agent="claude-code",
         model=model,
         raw_harbor_config={},
-        is_probe=True,
         probe_oddish_env=env,
     )
     assert config.model_name == "claude-sonnet-5"

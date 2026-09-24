@@ -25,13 +25,10 @@ export const APP_ROOT_SEGMENTS = [
   "tasks",
   "experiments",
   "deliveries",
-  "qa",
   "leaderboard",
   "settings",
   "admin",
   "usage",
-  "skills",
-  "documents",
 ] as const;
 
 const PUBLIC_ROOT = new Set<string>(PUBLIC_ROOT_SEGMENTS);

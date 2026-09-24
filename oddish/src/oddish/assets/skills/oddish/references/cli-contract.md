@@ -34,7 +34,7 @@ auto-publish (`run --publish` or GitHub-attributed CI runs); a member-created
 Current top-level commands are `run`, `upload`, `preflight`, `ls`, `status`,
 `skill`, `version`, `update`, `logs`, `cancel`, `backfill-analysis`, `combine`,
 `costs`, `cost-exclusions`, `collect`, `delete`, `admin`, `experiment`, `link`,
-`pull`, `publish`, `unpublish`, `probe`, `delivery`, `assign`, and `qa`.
+`pull`, `publish`, `unpublish`, `delivery`, `assign`, and `qa`.
 
 `publish` keeps the experiment's saved QA sharing choice. QA is hidden by
 default; an org admin can enable **Show QA** in the dashboard's share dialog.
@@ -121,8 +121,7 @@ text, and anti-cheat checks do not depend on brittle source scanning.
 ## JSON output
 
 `--json` is per command, not global. Confirm support with help. In particular,
-`logs`, `link task`, `link trial`, `probe`, and `probe skill add` do not expose
-JSON mode.
+`logs`, `link task`, and `link trial` do not expose JSON mode.
 
 `run --json` prints one document and runs in the background. Its stable
 high-level fields include:

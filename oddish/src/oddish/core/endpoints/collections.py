@@ -104,7 +104,6 @@ async def resolve_collection_sources(
                             ),
                             TrialModel.superseded_by_trial_id.is_(None),
                             TrialModel.status.in_(_TERMINAL),
-                            TrialModel.is_probe.isnot(True),
                             TrialModel.org_id == org_id,
                             not_combine_copy_filter(),
                         )
@@ -143,7 +142,6 @@ async def resolve_collection_sources(
                         TrialModel.org_id == org_id,
                         TrialModel.superseded_by_trial_id.is_(None),
                         TrialModel.status.in_(_TERMINAL),
-                        TrialModel.is_probe.isnot(True),
                     )
                     .order_by(TrialModel.task_id, TrialModel.created_at)
                 )
@@ -179,8 +177,8 @@ async def create_trial_collection_core(
     Trials keep their home experiment; a fresh ``is_collection`` experiment is
     created and the trials are linked into it via ``experiment_trials`` /
     ``task_experiments`` (no copy). ``trial_ids`` links those exact trials;
-    ``task_ids`` links each task's current-version terminal, non-superseded,
-    non-probe trials; ``from_experiment_ids`` links another experiment's
+    ``task_ids`` links each task's current-version terminal, non-superseded
+    trials; ``from_experiment_ids`` links another experiment's
     trials. The caller's session context manager commits.
     """
     from oddish.queue import _link_task_to_experiment

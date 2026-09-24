@@ -19,7 +19,6 @@ from oddish.core.trial_io import (
     read_trial_agent_file,
     read_trial_logs,
     read_trial_logs_structured,
-    read_trial_probe_artifacts,
     read_trial_result,
     read_trial_trajectory,
 )
@@ -232,10 +231,6 @@ async def rerun_trial_analysis(
 async def list_task_trials(
     task_id: str,
     auth: Annotated[AuthContext, Depends(require_auth)],
-    probe: bool | None = Query(
-        None,
-        description="Filter by trial kind: true=probes only, false=real attempts only, omitted=all.",
-    ),
     version: int | None = Query(
         None,
         description="Scope to trials of one task version; omitted=all versions.",
@@ -246,7 +241,7 @@ async def list_task_trials(
 
     async with get_read_session() as session:
         trials = await list_task_trials_for_task(
-            session, task_id, probe=probe, version=version, org_id=auth.org_id
+            session, task_id, version=version, org_id=auth.org_id
         )
         if not trials:
             # Only an empty result needs the existence check: it separates "no
@@ -481,23 +476,6 @@ async def get_trial_file(
         pass
     content, media_type = await read_trial_agent_file(trial, file_path, attempt=attempt)
     return Response(content=content, media_type=media_type)
-
-
-@router.get("/trials/{trial_id}/probe-artifacts")
-async def get_trial_probe_artifacts(
-    request: Request,
-    trial_id: str,
-    auth: Annotated[AuthContext, Depends(get_auth_context)],
-) -> dict:
-    """Get the probe `_artifacts` blob (agent transcript, verifier stdout,
-    trajectory, watchdog log) for a trial.
-
-    Cloud trials never inline this into ``trial.result``; it's read on demand
-    from object storage so the probe result page can render the agent output.
-    """
-    auth.require_scope(APIKeyScope.READ)
-    trial = await _get_authorized_trial(trial_id, auth, request)
-    return await read_trial_probe_artifacts(trial)
 
 
 @router.get("/trials/{trial_id}/trajectory")

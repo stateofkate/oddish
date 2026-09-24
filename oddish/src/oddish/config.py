@@ -124,22 +124,6 @@ _PROVIDER_ONLY_QUEUE_ALIASES: set[str] = {
 }
 
 ANALYSIS_MODEL = "claude-sonnet-5"
-# Model for the probe transcript summarizer -- the one direct LLM call that
-# remains outside the trial pipeline. Kept separate from ANALYSIS_MODEL
-# because run_probe_analyzer speaks the Anthropic API only; it must not
-# follow analysis_model to a non-Anthropic provider. Normalized to a
-# direct-API id at call time.
-PROBE_ANALYZER_MODEL = "global.anthropic.claude-sonnet-4-6"
-
-PROBE_MODEL_ROTATION: list[str] = [
-    "claude-haiku-4-5",
-]
-
-
-def next_probe_model(index: int) -> str:
-    """Round-robin selection over ``PROBE_MODEL_ROTATION``."""
-    return PROBE_MODEL_ROTATION[index % len(PROBE_MODEL_ROTATION)]
-
 
 NOP_ORACLE_QUEUE_KEY = "nop_oracle"
 
@@ -1172,8 +1156,8 @@ def to_anthropic_api_model_id(model: str | None) -> str | None:
     The practical inverse of ``to_bedrock_model_id``: a Bedrock inference-profile
     id (``global.anthropic.claude-haiku-4-5-20251001-v1:0``) maps back to the
     plain API id (``claude-haiku-4-5``). Used by callers that run on the direct
-    Anthropic API (``ANTHROPIC_API_KEY``) rather than Bedrock -- e.g. the probe
-    summary analyzer. Plain Claude ids keep their value (minus an
+    Anthropic API (``ANTHROPIC_API_KEY``) rather than Bedrock -- e.g. the QA
+    model gateway. Plain Claude ids keep their value (minus an
     ``anthropic/``/``claude/`` provider prefix); non-Claude ids pass through.
     """
     if model is None:
@@ -1579,9 +1563,8 @@ class Settings(BaseSettings):
     # workers never infer independent capacity from the number of API keys.
     qa_model_routing_enabled: bool = False
 
-    # Local dev: dispatch trials to the in-process runner
-    # (``worker.local_runner``) instead of the Modal/cloud queue. Set
-    # ODDISH_LOCAL_MODE=1 to exercise probe trials end-to-end on a dev box.
+    # Local dev: run the shared queue worker inside the API process instead of
+    # dispatching to Modal. Set ODDISH_LOCAL_MODE=1 on a dev box.
     local_mode: bool = False
 
     # Local execution scratch paths
@@ -1600,17 +1583,6 @@ class Settings(BaseSettings):
     # Live tail of agent output for running trials
     live_tail_enabled: bool = True
     live_tail_interval_sec: float = 30.0
-
-    harbor_source_repo: str = "abundant-ai/harbor"
-    # Ref the probe `harbor src` command fetches (a codeload tarball, which takes
-    # a branch, tag, or commit alike). It is HARBOR_DEFAULT_SHA -- the exact
-    # commit baked into the worker image -- and not the floating branch the
-    # dependency source tracks: a branch here would resolve to whatever main is
-    # at request time, so the moment harbor main moved past the lock a probe
-    # would read different code than the trial it is probing. Deriving it from
-    # the constant keeps the two aligned by construction, so a re-pin cannot
-    # move the worker without moving the probe.
-    harbor_source_ref: str = HARBOR_DEFAULT_SHA
 
     registry_auth_key: str | None = None
 
@@ -1788,7 +1760,6 @@ class Settings(BaseSettings):
     provider_rate_limits: dict[str, dict] = Field(default_factory=dict)
     queue_key_buckets: dict[str, str] = Field(default_factory=dict)
     analysis_model: str = ANALYSIS_MODEL
-    probe_analyzer_model: str = PROBE_ANALYZER_MODEL
 
     # Agent to provider mapping (computed from Harbor's AgentName enum)
     agent_to_provider: ClassVar[dict[str, str]] = _build_agent_provider_map()

@@ -899,12 +899,6 @@ _COMPATIBILITY_PROFILES: dict[str, _RestrictedAgentSpec] = {
     "harbor.agents.installed.mini_swe_agent:MiniSweAgent": _RestrictedAgentSpec(
         _mini_swe_profile, _mini_swe_base_url_keys
     ),
-    "oddish.workers.agents.claude_code:OddishClaudeCode": _RestrictedAgentSpec(
-        _claude_profile, _anthropic_base_url_keys
-    ),
-    "oddish.workers.agents.claude_code:OddishProbeClaudeCode": _RestrictedAgentSpec(
-        _claude_profile, _anthropic_base_url_keys
-    ),
     "oddish.workers.agents.codex:OddishCodex": _RestrictedAgentSpec(
         _codex_profile, _openai_base_url_keys
     ),

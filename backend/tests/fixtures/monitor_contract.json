@@ -42,19 +42,6 @@
       },
       "request": null
     },
-    "GET /monitor/skills": {
-      "reply": {
-        "(body)": {"type": ["object"]},
-        "skills": {"type": ["array"]},
-        "skills[]": {"type": ["object"]},
-        "skills[].files": {"type": ["array"]},
-        "skills[].files[]": {"type": ["object"]},
-        "skills[].files[].content": {"type": ["string"]},
-        "skills[].files[].relative_path": {"type": ["string"]},
-        "skills[].name": {"type": ["string"]}
-      },
-      "request": null
-    },
     "POST /monitor/artifacts": {
       "reply": {
         "(body)": {"type": ["object"]},

@@ -3,9 +3,7 @@
 Whether a run spawned subagents is arithmetic over tool calls we already hold.
 Routing it through the summariser made it a lottery: the component taxonomy has
 no delegation label, so a dispatch lands in ``implementing`` and the fact
-survives only if the LLM happened to mention it in prose. The cohort comparison
-reads component summaries and nothing else, so once the prose omitted it the
-finding was unrecoverable.
+survives only if the LLM happened to mention it in prose.
 """
 
 from __future__ import annotations
@@ -13,8 +11,8 @@ from __future__ import annotations
 from oddish.analyze.trajectory_tool_calls import tool_name
 
 # claude-code's subagent tool. `Agent` is what current trajectories record;
-# `Task` is the older spelling, and the one the probe overlay still writes
-# (worker/probe_overlay.py:126). Both mean one subagent dispatched.
+# `Task` is the older spelling that historical trajectories still carry. Both
+# mean one subagent dispatched.
 SUBAGENT_TOOL_NAMES = frozenset({"Agent", "Task"})
 
 # Agents that can delegate at all. codex (`shell`) and gemini-cli
@@ -47,9 +45,9 @@ def delegation_facts(trajectory: dict) -> dict:
     """``{agent, capable, dispatches, sidechain_steps}`` for one run.
 
     ``dispatches`` is None -- not 0 -- whenever the agent has no subagent tool,
-    including an agent we do not recognise. A cohort comparison spanning models
-    would otherwise read "gemini-cli: 0" as a choice not to delegate and report
-    a difference that is really just a difference in tooling.
+    including an agent we do not recognise. A comparison across agents would
+    otherwise read "gemini-cli: 0" as a choice not to delegate and report a
+    difference that is really just a difference in tooling.
 
     ``sidechain_steps`` counts the subagent's own captured steps, which is a
     separate question from how many were dispatched: real trajectories carry

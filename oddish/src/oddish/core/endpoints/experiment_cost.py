@@ -24,12 +24,11 @@ user's quota (``billed_user_id``); owned-but-unbilled spend (imports,
 unattributed submitters, offboarded users) keeps the two apart.
 
 Spend is deliberately wider than the trials the grid renders, which are
-filtered to each task's effective version and exclude superseded retries and
-probes -- filters that exist so *scores* compare like with like, not because
-that money wasn't spent. Billing already takes the same view: the quota sum
-(``core.quotas``) applies no version, superseded, or probe filter, and the
-admin spend filter keeps billed probes too. So this counts all versions,
-superseded retries, and probes, and the tile's tooltip tells the reader the
+filtered to each task's effective version and exclude superseded retries --
+filters that exist so *scores* compare like with like, not because that money
+wasn't spent. Billing already takes the same view: the quota sum
+(``core.quotas``) applies no version or superseded filter. So this counts all
+versions and superseded retries, and the tile's tooltip tells the reader the
 table below is a filtered view of it.
 
 Admin cost exclusions (``core.cost_exclusions``) are reported, not applied.
@@ -161,7 +160,7 @@ def experiment_cost_groups_select(
     the page can render (module docstring explains why ``task_experiments``
     links don't widen it). The single WHERE counts a trial once even when it
     is both homed and gathered. ``owned`` splits the groups so the fold can
-    report home spend separately. No version / superseded / probe /
+    report home spend separately. No version / superseded /
     trial-soft-delete filtering: those hide trials from the grid, but the
     spend is real and already billed.
     """

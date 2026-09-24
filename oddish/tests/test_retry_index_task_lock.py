@@ -108,12 +108,12 @@ async def test_retry_waits_for_the_task_row_lock(cleanup_task_ids):
                         (id, name, task_id, task_version_id, experiment_id,
                          org_id, billed_user_id, agent, provider, queue_key,
                          model, timeout_minutes, environment, harbor_config,
-                         harbor_sha, is_probe, max_attempts, status, attempts,
+                         harbor_sha, max_attempts, status, attempts,
                          created_at, updated_at)
                     SELECT :new_id, :new_id, task_id, task_version_id,
                            experiment_id, org_id, billed_user_id, agent,
                            provider, queue_key, model, timeout_minutes,
-                           environment, harbor_config, harbor_sha, is_probe,
+                           environment, harbor_config, harbor_sha,
                            max_attempts, status, attempts, NOW(), NOW()
                     FROM trials WHERE id = :src_id
                     """

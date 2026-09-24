@@ -1,8 +1,8 @@
 """configure_stdlib_log_bridge wires the `oddish` logger to a real sink.
 
 Without the bridge the Modal worker drops every `logging.getLogger("oddish.*")`
-INFO record (root at WARNING, no handler), so the analyzer/verdict block's
-prefixed progress lines never surface. These tests pin that the bridge gives
+INFO record (root at WARNING, no handler), so worker progress lines never
+surface. These tests pin that the bridge gives
 that logger tree an INFO-level handler that actually emits, and that it stays
 scoped + idempotent.
 """
@@ -44,7 +44,7 @@ def _stream_handler(lg: logging.Logger) -> logging.StreamHandler:
     return handlers[0]
 
 
-def test_bridge_emits_oddish_info_with_the_block_prefix(clean_oddish_logger):
+def test_bridge_emits_oddish_info(clean_oddish_logger):
     observability.configure_stdlib_log_bridge(logfire_active=False)
 
     assert clean_oddish_logger.level == logging.INFO
@@ -54,14 +54,13 @@ def test_bridge_emits_oddish_info_with_the_block_prefix(clean_oddish_logger):
     buf = io.StringIO()
     _stream_handler(clean_oddish_logger).stream = buf
 
-    # The real logger name + prefix the analyzer block uses.
-    logging.getLogger("oddish.analyzer_block").info(
-        "[analyzer/task_verdict] block succeeded (1 chunk(s))"
+    logging.getLogger("oddish.workers.analysis_trials").info(
+        "qa-eval trial t1: stored candidate analysis"
     )
 
     out = buf.getvalue()
-    assert "[analyzer/task_verdict] block succeeded (1 chunk(s))" in out
-    assert "oddish.analyzer_block" in out
+    assert "qa-eval trial t1: stored candidate analysis" in out
+    assert "oddish.workers.analysis_trials" in out
     assert "INFO" in out
 
 

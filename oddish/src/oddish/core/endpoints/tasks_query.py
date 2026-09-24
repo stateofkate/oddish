@@ -38,7 +38,6 @@ from oddish.core.helpers import (
     fetch_experiment_effective_version_ids,
     fetch_trial_queue_info,
     fetch_visible_worker_jobs,
-    filter_probe_trials_for_effective_versions,
     get_task_status_trials,
 )
 from oddish.core.tags.filter_ast import (
@@ -173,7 +172,7 @@ async def list_tasks_core(
         # When scoped to an experiment, push the trial filter into the
         # selectin load so each task fetches only the experiment's visible
         # agent trials instead of every trial across versions, experiments,
-        # probes, analysis runs, and superseded reruns. Version selection is
+        # analysis runs, and superseded reruns. Version selection is
         # resolved separately by the shared SQL selector below. The filtered
         # selectin stays eager, so response building cannot lazy-load outside
         # the async greenlet.
@@ -214,7 +213,6 @@ async def list_tasks_core(
                 TrialModel.error_message,
                 TrialModel.harbor_config,
                 TrialModel.harbor_sha,
-                TrialModel.is_probe,
                 TrialModel.kind,
                 TrialModel.has_trajectory,
                 TrialModel.phase_timing,
@@ -297,8 +295,7 @@ async def list_tasks_core(
     # rows. The SQL selector deliberately returns only versions represented by
     # visible experiment trials; a task absent from that partial result still
     # displays its current version. Keeping the fallback in this total map makes
-    # the agent rows, response metadata, and separately-loaded probe rows use
-    # the same version decision.
+    # the agent rows and response metadata use the same version decision.
     effective_by_task: dict[str, str | None] = {
         task.id: task.current_version_id for task in tasks
     }
@@ -327,31 +324,6 @@ async def list_tasks_core(
                 )
             else:
                 set_committed_value(task, "trials", get_task_status_trials(task))
-
-        # Probe trials are not loaded by the experiment selectin (it filters
-        # ``is_probe.is_(False)``). Surface them as their own "Probe" group by
-        # batch-loading every task's probes and keeping only those on the same
-        # effective version the matrix displays -- ``experiment_id`` is ignored
-        # so cross-experiment probes on that version still show. Loaded with
-        # full columns (probe volume per task is tiny), so the response builder
-        # never lazy-loads -> no MissingGreenlet.
-        if experiment_id and tasks:
-            task_ids = [task.id for task in tasks]
-            probe_stmt = select(TrialModel).where(
-                TrialModel.task_id.in_(task_ids),
-                TrialModel.is_probe.is_(True),
-                TrialModel.superseded_by_trial_id.is_(None),
-            )
-            if org_id is not None:
-                probe_stmt = probe_stmt.where(TrialModel.org_id == org_id)
-            probe_rows = (await session.execute(probe_stmt)).scalars().all()
-            probes_by_task = filter_probe_trials_for_effective_versions(
-                probe_rows, effective_by_task
-            )
-            for task in tasks:
-                extra = probes_by_task.get(task.id)
-                if extra:
-                    set_committed_value(task, "trials", [*task.trials, *extra])
 
     if include_trials:
         visible_jobs_started_at = now()
@@ -549,7 +521,7 @@ def _build_browse_author_filter(
 
 # --- Phase 1.2-lite aggregate metrics (no migration) -----------------------
 # Everything below is computed ON THE FLY over the scoped trial set (current
-# version, non-probe, non-superseded) with NO supporting index or denormalized
+# version, non-superseded) with NO supporting index or denormalized
 # roll-up. This is the deliberately-slow "works now" path; full Phase 1.2
 # denormalizes these into task columns + a backfill + indexes so the same filter
 # surface becomes cheap. Do not assume any of these predicates is free.
@@ -686,7 +658,7 @@ def _agent_compare_subquery(
     """Per-``(task, version)`` values for two subjects (agents or models) on one
     metric, so the GLOBAL "A beats B" filter can join + compare. Same scoped
     trial set as ``_task_metrics_subquery`` (current version via the later join,
-    non-probe, non-superseded). On-the-fly; denormalize in full Phase 2."""
+    non-superseded). On-the-fly; denormalize in full Phase 2."""
     a_val = _subject_metric_value(subject_col, value_a, metric, agg).label("a_val")
     b_val = _subject_metric_value(subject_col, value_b, metric, agg).label("b_val")
     stmt = select(
@@ -696,7 +668,6 @@ def _agent_compare_subquery(
         b_val,
     ).where(
         TrialModel.superseded_by_trial_id.is_(None),
-        TrialModel.is_probe.isnot(True),
         # Same scoped trial set as ``_task_metrics_subquery`` — exclude combine
         # copies so the "A beats B" comparison isn't skewed by re-materialized
         # duplicates of a subject's trials.
@@ -721,7 +692,6 @@ def _subject_value_scalar(
         TrialModel.task_id == TaskModel.id,
         TrialModel.task_version_id == TaskModel.current_version_id,
         TrialModel.superseded_by_trial_id.is_(None),
-        TrialModel.is_probe.isnot(True),
         not_combine_copy_filter(),
     )
     if org_id is not None:
@@ -774,7 +744,6 @@ def _top_performer_predicate(
         best_val.label("val"),
     ).where(
         TrialModel.superseded_by_trial_id.is_(None),
-        TrialModel.is_probe.isnot(True),
         not_combine_copy_filter(),
         subject_col.isnot(None),
     )
@@ -865,7 +834,7 @@ def _task_metrics_subquery(
 
     Grouped by ``(task_id, task_version_id)`` and joined later on the task's
     ``current_version_id`` so the aggregates match the same trial set the direct
-    ``_trial_exists`` filters use (non-probe, non-superseded, current version).
+    ``_trial_exists`` filters use (non-superseded, current version).
     Every column is an on-the-fly computation (see the module note above).
     """
     total_tokens = _trial_total_tokens()
@@ -1155,7 +1124,6 @@ async def browse_tasks_core(
     actor_user_id: str | None = None,
     has_link: bool | None = None,
     run_analysis: bool | None = None,
-    run_probe: bool | None = None,
     created_after: datetime | None = None,
     created_before: datetime | None = None,
     trial_finished_after: datetime | None = None,
@@ -1168,7 +1136,6 @@ async def browse_tasks_core(
     environments: Sequence[str] | None = None,
     trial_statuses: Sequence[str] | None = None,
     origins: Sequence[str] | None = None,
-    trial_is_probe: bool | None = None,
     harbor_shas: Sequence[str] | None = None,
     harbor_stages: Sequence[str] | None = None,
     analysis_classifications: Sequence[str] | None = None,
@@ -1247,18 +1214,17 @@ async def browse_tasks_core(
     "Phase 1.1.1" direct filters that require no schema change:
 
     * Task-column filters (``statuses``, ``priorities``, ``verdict_statuses``,
-      ``has_link``, ``run_analysis``, ``run_probe``, ``created_after`` /
+      ``has_link``, ``run_analysis``, ``created_after`` /
       ``created_before``, ``experiment_ids``) are plain ``WHERE`` predicates on
       the ``tasks`` row.
     * Trial-level filters (``agents``, ``models``, ``trial_finished_*``, ``providers``,
-      ``environments``, ``trial_statuses``, ``origins``, ``trial_is_probe``,
-      ``harbor_*``, ``analysis_classifications``, ``has_error``,
-      ``has_trajectory``, ``min_attempts``, token / step / reward ranges) are
-      "task has at least one current-version trial matching X" — expressed as a
-      correlated ``EXISTS`` over ``trials`` (non-superseded, current version,
-      non-probe unless ``trial_is_probe`` is set). They filter the task set; they
-      are NOT aggregates, so e.g. a token range matches a single trial's value,
-      not the task average.
+      ``environments``, ``trial_statuses``, ``origins``, ``harbor_*``,
+      ``analysis_classifications``, ``has_error``, ``has_trajectory``,
+      ``min_attempts``, token / step / reward ranges) are "task has at least one
+      current-version trial matching X" — expressed as a correlated ``EXISTS``
+      over ``trials`` (non-superseded, current version). They filter the task
+      set; they are NOT aggregates, so e.g. a token range matches a single
+      trial's value, not the task average.
     * "Phase 1.2-lite" AGGREGATE filters/sort (``avg_score_*``, ``total_tokens_*``,
       ``*_trials_min``, ``pass/partial/fail/harness_count_min``, ``runtime_*``,
       ``sort``) are computed on the fly by ``_task_metrics_subquery`` — a single
@@ -1427,8 +1393,6 @@ async def browse_tasks_core(
         )
     if run_analysis is not None:
         ranked_tasks = ranked_tasks.where(TaskModel.run_analysis.is_(run_analysis))
-    if run_probe is not None:
-        ranked_tasks = ranked_tasks.where(TaskModel.run_probe.is_(run_probe))
     if created_after is not None:
         ranked_tasks = ranked_tasks.where(TaskModel.created_at >= created_after)
     if created_before is not None:
@@ -1512,15 +1476,13 @@ async def browse_tasks_core(
         )
 
     # Trial-level predicates: "task has >=1 current-version trial matching".
-    def _trial_exists(*predicates: Any, include_probes: bool = False) -> Any:
+    def _trial_exists(*predicates: Any) -> Any:
         conds = [
             TrialModel.task_id == TaskModel.id,
             TrialModel.task_version_id == TaskModel.current_version_id,
             TrialModel.superseded_by_trial_id.is_(None),
             TrialModel.kind == "agent",
         ]
-        if not include_probes:
-            conds.append(TrialModel.is_probe.isnot(True))
         conds.extend(predicates)
         return exists(select(TrialModel.id).where(and_(*conds)))
 
@@ -1596,10 +1558,6 @@ async def browse_tasks_core(
     if origins:
         ranked_tasks = ranked_tasks.where(
             _trial_exists(TrialModel.origin.in_(list(origins)))
-        )
-    if trial_is_probe is not None:
-        ranked_tasks = ranked_tasks.where(
-            _trial_exists(TrialModel.is_probe.is_(trial_is_probe), include_probes=True)
         )
     if harbor_shas:
         ranked_tasks = ranked_tasks.where(
@@ -1905,8 +1863,6 @@ async def browse_tasks_core(
             )
         if spec.get("run_analysis") is not None:
             preds.append(TaskModel.run_analysis.is_(bool(spec["run_analysis"])))
-        if spec.get("run_probe") is not None:
-            preds.append(TaskModel.run_probe.is_(bool(spec["run_probe"])))
 
         if (agents_ := _list("agents")) is not None:
             preds.append(_trial_exists(TrialModel.agent.in_(agents_)))
@@ -1946,13 +1902,6 @@ async def browse_tasks_core(
             preds.append(
                 _trial_exists(
                     TrialModel.analysis["classification"].astext.in_(classifications_)
-                )
-            )
-        if spec.get("trial_is_probe") is not None:
-            preds.append(
-                _trial_exists(
-                    TrialModel.is_probe.is_(bool(spec["trial_is_probe"])),
-                    include_probes=True,
                 )
             )
         if spec.get("has_error") is not None:
@@ -2372,7 +2321,6 @@ async def browse_tasks_core(
                       AND t.task_version_id = visible.task_version_id
                       AND t.deleted_at IS NULL
                       AND t.superseded_by_trial_id IS NULL
-                      AND t.is_probe IS NOT TRUE
                       AND t.kind = 'agent'
                       AND (
                           t.idempotency_key IS NULL
@@ -2489,7 +2437,7 @@ async def browse_tasks_core(
 
     # QA spend is a separate ledger with its own grain (one row per analysis
     # job, not per trial), so it is a second aggregate rather than another
-    # branch of the loop above. Scoped to the same current-version, non-probe,
+    # branch of the loop above. Scoped to the same current-version,
     # non-superseded, non-combine-copy trial population the card prices for
     # agent cost, so the card's two figures describe the same trials.
     qa_by_task = await get_task_qa_costs(

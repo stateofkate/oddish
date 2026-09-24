@@ -96,7 +96,7 @@ async def client(app):
 
 @pytest_asyncio.fixture
 async def seed_experiment_with_trials():
-    """Seed an experiment with two trials (one probe, one non-probe) and an org API key.
+    """Seed an experiment with two trials and an org API key.
 
     Yields (experiment_id, raw_api_key).
     """
@@ -105,7 +105,7 @@ async def seed_experiment_with_trials():
     experiment_id = f"exp_et_{suffix}"
     task_id = f"task_et_{suffix}"
     trial_real_id = f"trial_et_real_{suffix}"
-    trial_probe_id = f"trial_et_probe_{suffix}"
+    trial_second_id = f"trial_et_second_{suffix}"
 
     api_key_model = None
     raw_key = None
@@ -150,23 +150,21 @@ async def seed_experiment_with_trials():
                 queue_key="test-et",
                 status=TrialStatus.QUEUED,
                 origin=TrialOrigin.ODDISH,
-                is_probe=False,
             )
         )
         session.add(
             TrialModel(
-                id=trial_probe_id,
-                name=f"{task_id}-probe",
+                id=trial_second_id,
+                name=f"{task_id}-second",
                 task_id=task_id,
                 experiment_id=experiment_id,
                 org_id=org_id,
                 agent="claude-code",
                 provider="anthropic",
                 model="anthropic/claude-sonnet-4-6",
-                queue_key="test-et-probe",
+                queue_key="test-et-second",
                 status=TrialStatus.QUEUED,
                 origin=TrialOrigin.ODDISH,
-                is_probe=True,
             )
         )
         api_key_model, raw_key = create_api_key(
@@ -177,7 +175,7 @@ async def seed_experiment_with_trials():
     yield experiment_id, raw_key
 
     await _cleanup(
-        trial_ids=[trial_real_id, trial_probe_id],
+        trial_ids=[trial_real_id, trial_second_id],
         task_ids=[task_id],
         experiment_ids=[experiment_id],
         api_key_ids=[api_key_model.id] if api_key_model else None,
@@ -202,7 +200,6 @@ async def test_experiment_trials_returns_org_scoped_rows(
     assert resp.status_code == 200
     rows = resp.json()
     assert len(rows) == 2
-    assert {r["is_probe"] for r in rows} == {True, False}
     assert all(r["experiment_id"] == exp_id for r in rows)
 
 

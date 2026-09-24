@@ -61,7 +61,7 @@ test("an org change sends stale resource URLs to the new dashboard without query
   for (const resource of [
     "deliveries/delivery-1",
     "tasks/task-1",
-    "tasks/task-1/probe/trial-1",
+    "tasks/task-1/trials/trial-1",
     "experiments/experiment-1",
   ]) {
     const page = setup(`/orgs/acme/${resource}`);

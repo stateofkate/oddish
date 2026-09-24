@@ -65,15 +65,14 @@ async def test_open_counts_audit_retained_and_live_findings_without_returning_bo
     session.add(other_version)
     await session.flush()
     # Duplicate IDs and audit links represent one finding. Unreviewed,
-    # baseline, probe, superseded, and other-version findings do not count.
-    for index, (agent, probe, status, superseded, target) in enumerate(
+    # baseline, superseded, and other-version findings do not count.
+    for index, (agent, status, superseded, target) in enumerate(
         [
-            ("codex", False, VerdictStatus.SUCCESS, False, version.id),
-            ("oracle-special", False, VerdictStatus.SUCCESS, False, version.id),
-            ("codex", True, VerdictStatus.SUCCESS, False, version.id),
-            ("codex", False, VerdictStatus.RUNNING, False, version.id),
-            ("codex", False, VerdictStatus.SUCCESS, True, version.id),
-            ("codex", False, VerdictStatus.SUCCESS, False, other_version.id),
+            ("codex", VerdictStatus.SUCCESS, False, version.id),
+            ("oracle-special", VerdictStatus.SUCCESS, False, version.id),
+            ("codex", VerdictStatus.RUNNING, False, version.id),
+            ("codex", VerdictStatus.SUCCESS, True, version.id),
+            ("codex", VerdictStatus.SUCCESS, False, other_version.id),
         ]
     ):
         trial = _trial(
@@ -88,7 +87,6 @@ async def test_open_counts_audit_retained_and_live_findings_without_returning_bo
                 ],
             },
         )
-        trial.is_probe = probe
         trial.analysis_status = status
         if superseded:
             trial.superseded_by_trial_id = run.id

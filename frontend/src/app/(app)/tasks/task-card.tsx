@@ -136,7 +136,7 @@ function TrialIcon({ trial, taskId }: { trial: LatestTrial; taskId: string }) {
 export function TaskEvidence({ task, showSummary = false }: { task: TaskBrowseItem; showSummary?: boolean }) {
   const groups = new Map<string, LatestTrial[]>();
   for (const trial of task.latest_trials) {
-    const key = getExperimentAgentKey({ ...trial, kind: "agent", is_probe: false });
+    const key = getExperimentAgentKey({ ...trial, kind: "agent" });
     const group = groups.get(key);
     if (group) group.push(trial);
     else groups.set(key, [trial]);
@@ -202,7 +202,7 @@ export function TaskCard({ task }: { task: TaskBrowseItem }) {
       )}
     >
       <CardHeader className="space-y-3 px-5 pt-5 pb-3">
-        <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3">
+        <div className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-3">
           <Checkbox
             checked={selected || alreadyAdded}
             disabled={alreadyAdded}
@@ -269,14 +269,6 @@ export function TaskCard({ task }: { task: TaskBrowseItem }) {
               })()}
             </div>
           </div>
-          <Link
-            href={`/tasks/${task.id}/probe`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-muted-foreground hover:text-foreground text-[11px] font-medium underline-offset-2 hover:underline"
-          >
-            Probe run →
-          </Link>
         </div>
         {(task.user_tags ?? []).length > 0 ? (
           <div className="flex flex-wrap gap-1">

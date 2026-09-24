@@ -109,8 +109,8 @@ test("ignores paths that are not a single task page", () => {
   for (const path of [
     "/tasks",
     "/orgs/abundant/tasks",
-    "/tasks/some-task/probe",
-    "/orgs/abundant/tasks/some-task/probe",
+    "/tasks/some-task/files",
+    "/orgs/abundant/tasks/some-task/files",
     "/experiments/abc",
     "/dashboard",
     "/",

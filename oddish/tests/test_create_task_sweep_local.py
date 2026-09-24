@@ -1,7 +1,7 @@
 """Test that local-mode sweeps leave execution to the canonical queue worker.
 
-When ``ODDISH_LOCAL_MODE=1``, probe trials submitted via the sweep endpoint
-should only enqueue worker jobs. The backend lifespan owns the in-process queue
+When ``ODDISH_LOCAL_MODE=1``, trials submitted via the sweep endpoint should
+only enqueue worker jobs. The backend lifespan owns the in-process queue
 worker, so endpoint code must not also dispatch the legacy local runner.
 """
 
@@ -80,7 +80,6 @@ async def test_local_mode_sweep_only_enqueues_worker_job(monkeypatch, seeded_tas
             )
         ],
         user="alice",
-        extra_instructions="cheat",
     )
 
     async with get_session() as s:

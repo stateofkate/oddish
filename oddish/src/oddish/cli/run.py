@@ -488,13 +488,6 @@ def run(
             help="Suppress infrastructure startup logs",
         ),
     ] = False,
-    run_probe: Annotated[
-        bool,
-        typer.Option(
-            "--run-probe",
-            help="Auto-enqueue a probe trial for this task's version (off by default)",
-        ),
-    ] = False,
     gate_baselines: Annotated[
         bool,
         typer.Option(
@@ -866,9 +859,6 @@ def run(
             exclude_task_names = sweep_config["exclude_task_names"]
         if "n_tasks" in sweep_config and n_tasks is None:
             n_tasks = sweep_config["n_tasks"]
-        # Config can enable auto-probe
-        if "run_probe" in sweep_config:
-            run_probe = sweep_config["run_probe"]
         # Config can opt out of the baseline gate
         if "gate_baselines" in sweep_config:
             gate_baselines = sweep_config["gate_baselines"]
@@ -1035,7 +1025,6 @@ def run(
             priority=priority,
             experiment_id=experiment_id,
             max_trial_attempts=max_trial_attempts,
-            run_probe=run_probe,
             gate_baselines=gate_baselines,
             github_username=github_user,
             github_id=github_id,

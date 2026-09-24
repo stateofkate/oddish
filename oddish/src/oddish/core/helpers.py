@@ -489,7 +489,6 @@ def build_trial_response(
         harbor_config=trial.harbor_config,
         harbor_sha=trial.harbor_sha,
         harbor_source=(trial.harbor_config or {}).get("source"),
-        is_probe=trial.is_probe,
         kind=trial.kind or "agent",
         input_tokens=trial.input_tokens,
         cache_tokens=trial.cache_tokens,
@@ -584,7 +583,6 @@ def build_compact_trial_response(
         harbor_config=trial.harbor_config,
         harbor_sha=trial.harbor_sha,
         harbor_source=(trial.harbor_config or {}).get("source"),
-        is_probe=trial.is_probe,
         kind=trial.kind or "agent",
         input_tokens=trial.input_tokens,
         cache_tokens=trial.cache_tokens,
@@ -703,8 +701,6 @@ def resolve_effective_version_id(
         return task.current_version_id
     candidates: list[str] = []
     for trial in task.trials or []:
-        if getattr(trial, "is_probe", False):
-            continue
         if getattr(trial, "superseded_by_trial_id", None) is not None:
             continue
         version_id = getattr(trial, "task_version_id", None)
@@ -859,29 +855,6 @@ def experiment_effective_versions_selectable(
     )
 
 
-def filter_probe_trials_for_effective_versions(
-    probe_trials: Sequence[TrialModel],
-    effective_by_task: Mapping[str, str | None],
-) -> dict[str, list[TrialModel]]:
-    """Group probe trials under their task, keeping only those whose
-    ``task_version_id`` matches that task's effective version.
-
-    ``effective_by_task`` maps ``task_id`` -> the version the experiment view
-    displays for that task. Probes whose task has no effective version, or whose
-    ``task_version_id`` differs from it, are dropped. Superseded probes must be
-    excluded by the caller's query before this is called.
-    """
-    grouped: dict[str, list[TrialModel]] = {}
-    for trial in probe_trials:
-        effective = effective_by_task.get(trial.task_id)
-        if effective is None:
-            continue
-        if trial.task_version_id != effective:
-            continue
-        grouped.setdefault(trial.task_id, []).append(trial)
-    return grouped
-
-
 def get_task_status_trials(
     task: TaskModel,
     *,
@@ -959,7 +932,6 @@ TASK_STATUS_RESPONSE_COLUMNS = (
     TaskModel.task_path,
     TaskModel.current_version_id,
     TaskModel.run_analysis,
-    TaskModel.run_probe,
     TaskModel.verdict_status,
     TaskModel.verdict,
     TaskModel.verdict_error,
@@ -1061,7 +1033,6 @@ def _build_task_status_response(
         reward_sum=formatted_reward_sum,
         reward_total=formatted_reward_total,
         run_analysis=task.run_analysis,
-        run_probe=task.run_probe,
         verdict_status=task.verdict_status,
         verdict=task.verdict,
         verdict_error=task.verdict_error,
@@ -1187,14 +1158,13 @@ def build_task_status_response_compact(
             gathered_trial_ids=gathered_trial_ids,
         )
     task_trials = get_task_status_trials(task, version_id=effective_version_id)
-    real_trials = [t for t in task_trials if not t.is_probe]
-    total = len(real_trials)
-    completed = sum(1 for t in real_trials if t.status == TrialStatus.SUCCESS)
-    failed = sum(1 for t in real_trials if t.status == TrialStatus.FAILED)
-    skipped = sum(1 for t in real_trials if t.status == TrialStatus.SKIPPED)
-    reward_success = sum(1 for t in real_trials if t.reward == 1)
-    reward_sum = sum(t.reward for t in real_trials if t.reward is not None)
-    reward_total = sum(1 for t in real_trials if t.reward is not None)
+    total = len(task_trials)
+    completed = sum(1 for t in task_trials if t.status == TrialStatus.SUCCESS)
+    failed = sum(1 for t in task_trials if t.status == TrialStatus.FAILED)
+    skipped = sum(1 for t in task_trials if t.status == TrialStatus.SKIPPED)
+    reward_success = sum(1 for t in task_trials if t.reward == 1)
+    reward_sum = sum(t.reward for t in task_trials if t.reward is not None)
+    reward_total = sum(1 for t in task_trials if t.reward is not None)
     trials = [
         build_compact_trial_response(
             t,
@@ -1258,7 +1228,6 @@ SLIM_TRIAL_RESPONSE_COLUMNS = (
     TrialModel.harbor_stage,
     TrialModel.reward,
     TrialModel.error_message,
-    TrialModel.is_probe,
     TrialModel.kind,
     TrialModel.analysis,
     TrialModel.analysis_status,
@@ -1324,7 +1293,6 @@ def build_slim_trial_response(
         reward=trial.reward,
         error_message=error_message,
         result=None,
-        is_probe=trial.is_probe,
         kind=trial.kind or "agent",
         input_tokens=trial.input_tokens,
         output_tokens=trial.output_tokens,
@@ -1430,12 +1398,7 @@ async def build_task_status_responses_from_counts(
         # filter, or a shadow page would count zero trials.
         from oddish.core.experiment_membership import trial_in_experiment
 
-        stats_filters.extend(
-            [
-                trial_in_experiment(experiment_context_id),
-                TrialModel.is_probe.is_(False),
-            ]
-        )
+        stats_filters.append(trial_in_experiment(experiment_context_id))
     else:
         stats_filters.append(TrialModel.kind == "agent")
     if effective_map:

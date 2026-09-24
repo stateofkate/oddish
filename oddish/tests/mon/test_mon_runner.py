@@ -22,9 +22,8 @@ MONITOR_ENV = env.MonitorEnv(
 
 
 class _Client:
-    def __init__(self, *, attempt=None, skills=()):
+    def __init__(self, *, attempt=None):
         self._attempt = attempt
-        self._skills = list(skills)
         self.closed = False
         self.results: list[dict] = []
 
@@ -32,9 +31,6 @@ class _Client:
         if isinstance(self._attempt, Exception):
             raise self._attempt
         return self._attempt
-
-    async def skills(self):
-        return self._skills
 
     async def aclose(self):
         self.closed = True
@@ -74,7 +70,6 @@ def prepared_task(tmp_path, make_spec) -> runner.PreparedTask:
         workdir=tmp_path,
         task_path=tmp_path / "task",
         harbor_config={},
-        staged_skills_root=None,
     )
 
 
@@ -82,12 +77,11 @@ def prepared_task(tmp_path, make_spec) -> runner.PreparedTask:
 
 
 @pytest.mark.asyncio
-async def test_prepare_task_fetches_the_task_and_stages_the_selected_skills(
+async def test_prepare_task_fetches_the_task_and_settles_its_config(
     monkeypatch, tmp_path, make_spec, offline_prepare_task
 ):
     phases = _status_log(monkeypatch)
     built: list = []
-    staged: list = []
     driver_seams = _driver_seams()
     monkeypatch.setattr(
         runner.tempfile, "mkdtemp", lambda prefix, dir=None: str(tmp_path)
@@ -111,11 +105,8 @@ async def test_prepare_task_fetches_the_task_and_stages_the_selected_skills(
     monkeypatch.setattr(
         runner.resources, "with_reservation_semantics", lambda c: {**c, "pinned": True}
     )
-    monkeypatch.setattr(
-        runner, "materialize_skills", lambda skills, root: staged.append((skills, root))
-    )
-    client = _Client(skills=["bundle"])
-    spec = make_spec(harbor_config={"skill_ids": ["s-1"]})
+    client = _Client()
+    spec = make_spec()
 
     task = await runner.prepare_task(client, spec, MONITOR_ENV)
 
@@ -124,36 +115,8 @@ async def test_prepare_task_fetches_the_task_and_stages_the_selected_skills(
     assert task.driver_seams is driver_seams
     assert task.spec is spec
     assert task.task_path == tmp_path / "task"
-    assert task.harbor_config == {"skill_ids": ["s-1"], "reused": True, "pinned": True}
-    assert task.staged_skills_root == tmp_path / "agent_skills"
-    assert staged == [(["bundle"], tmp_path / "agent_skills")]
+    assert task.harbor_config == {"reused": True, "pinned": True}
     assert isinstance(task.reporter, hooks.LifecycleReporter)
-
-
-@pytest.mark.asyncio
-async def test_prepare_task_stages_no_skills_without_an_org(
-    monkeypatch, tmp_path, make_spec, offline_prepare_task
-):
-    monkeypatch.setattr(
-        runner.tempfile, "mkdtemp", lambda prefix, dir=None: str(tmp_path)
-    )
-    monkeypatch.setattr(runner.seams, "build", lambda c, s: _driver_seams())
-
-    async def fetch_task(spec, task_dir):
-        return Path(task_dir) / "task"
-
-    monkeypatch.setattr(runner.task_fetch, "fetch_task", fetch_task)
-    monkeypatch.setattr(runner.resources, "with_reservation_semantics", lambda c: c)
-
-    def _no_staging(*a):
-        raise AssertionError("no skills should be staged")
-
-    monkeypatch.setattr(runner, "materialize_skills", _no_staging)
-    spec = make_spec(org_id=None, harbor_config={"skill_ids": ["s-1"]})
-
-    task = await runner.prepare_task(_Client(), spec, MONITOR_ENV)
-
-    assert task.staged_skills_root is None
 
 
 # --- drive_with_watchers ----------------------------------------------------

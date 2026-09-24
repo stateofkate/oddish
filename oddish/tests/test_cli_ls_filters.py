@@ -137,9 +137,7 @@ def test_ls_tristate_booleans_serialize_true_false():
             "--has-link",
             "--no-has-error",
             "--has-trajectory",
-            "--trial-is-probe",
             "--no-run-analysis",
-            "--run-probe",
         ]
     )
     assert captured["exit_code"] == 0
@@ -147,9 +145,7 @@ def test_ls_tristate_booleans_serialize_true_false():
     assert p["has_link"] == "true"
     assert p["has_error"] == "false"
     assert p["has_trajectory"] == "true"
-    assert p["trial_is_probe"] == "true"
     assert p["run_analysis"] == "false"
-    assert p["run_probe"] == "true"
 
 
 def test_ls_omits_unset_booleans():
@@ -160,9 +156,7 @@ def test_ls_omits_unset_booleans():
         "has_link",
         "has_error",
         "has_trajectory",
-        "trial_is_probe",
         "run_analysis",
-        "run_probe",
     ):
         assert key not in p
 

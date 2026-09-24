@@ -58,9 +58,9 @@ def _fail_permanent(message: str) -> JobOutcome:
     return JobOutcome.fail(message, retryable=False)
 
 
-# Trial kinds the in-sandbox monitor can drive today. Probe and analysis kinds
-# have the launcher modify the task copy and mint extra credentials, which the
-# monitor path does not carry yet, so they stay on the worker.
+# Trial kinds the in-sandbox monitor can drive today. Analysis kinds have the
+# launcher modify the task copy and mint extra credentials, which the monitor
+# path does not carry yet, so they stay on the worker.
 _MONITOR_TRIAL_KINDS = {"agent"}
 
 
@@ -69,8 +69,7 @@ async def _monitor_can_drive(trial_id: str) -> bool:
         trial = await session.get(TrialModel, trial_id)
     if trial is None:
         return False
-    is_probe = (trial.harbor_config or {}).get("mode") == "probe"
-    if (trial.kind or "agent") not in _MONITOR_TRIAL_KINDS or is_probe:
+    if (trial.kind or "agent") not in _MONITOR_TRIAL_KINDS:
         return False
     # A trial runs on the provider it asked for. No starter for it: the worker.
     from oddish.workers.launcher.launch import control_plane_url

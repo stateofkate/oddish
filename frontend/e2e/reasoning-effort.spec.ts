@@ -17,7 +17,7 @@ async function expectTaskRowReady(page: Page) {
 }
 
 // Pass/k is a heading in the dynamic chart module. Once it is visible the
-// reserved chart height is in the layout, so later probes and menus do not
+// reserved chart height is in the layout, so later checks and menus do not
 // jump. Recharts role=application paints after that and is what timed out.
 async function expectEffortPageReady(page: Page) {
   await expect(page.getByRole("heading", { name: "Pass/k" })).toBeVisible({
@@ -25,24 +25,6 @@ async function expectEffortPageReady(page: Page) {
   });
   await expectTaskRowReady(page);
 }
-
-test.beforeEach(async ({ page }) => {
-  await page.route("**/api/skills", (route) =>
-    route.fulfill({
-      json: [
-        {
-          id: "test-skill",
-          name: "Queue check",
-          is_seed: false,
-          operator_prompt: "Check the queue behavior.",
-          result_focus: null,
-          evaluation_metric: null,
-          files: [],
-        },
-      ],
-    })
-  );
-});
 
 test.describe("hydrated effort fixture", () => {
   test.beforeEach(async ({ page }) => {
@@ -250,38 +232,6 @@ test.describe("hydrated effort fixture", () => {
     for (const config of configs)
       expect(config).not.toHaveProperty("agent_config");
   });
-
-  for (const effort of ["default", "high"]) {
-    test(`probe submits ${effort} effort`, async ({ page }) => {
-      const requests: {
-        agent_config?: { kwargs: { reasoning_effort: string } };
-      }[] = [];
-      await page.route("**/api/tasks/sweep", async (route) => {
-        requests.push(...route.request().postDataJSON().configs);
-        await route.fulfill({ status: 200, json: {} });
-      });
-      const form = page.getByRole("region", { name: "Probe launch" });
-      await form.getByRole("combobox", { name: "Skill", exact: true }).click();
-      await page
-        .getByRole("option", { name: "Queue check", exact: true })
-        .click();
-      const selector = form.getByRole("combobox", { name: "Reasoning effort" });
-      await expect(selector).toHaveText("Agent default");
-      if (effort === "high") {
-        await selector.click();
-        await page.getByRole("option", { name: "high", exact: true }).click();
-      }
-      await form
-        .getByRole("textbox", { name: "Instructions" })
-        .fill("Check the queue behavior.");
-      await form.getByRole("button", { name: "Submit probe run" }).click();
-      await expect.poll(() => requests.length).toBe(1);
-      if (effort === "default")
-        expect(requests[0]).not.toHaveProperty("agent_config");
-      else
-        expect(requests[0].agent_config?.kwargs.reasoning_effort).toBe("high");
-    });
-  }
 
   test("grouping efforts combines cells and charts, survives reload, and restores columns", async ({
     page,

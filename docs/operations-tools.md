@@ -15,13 +15,12 @@ the intended environment before running. Output may contain internal logs.
 | Command | Purpose |
 | --- | --- |
 | `modal run check_alembic_current_modal.py` | Read both database migration-version tables; compare with `uv run alembic heads` in `oddish/` and `backend/`. Does not apply migrations. |
-| `modal run probe_docker_failures_modal.py --all-trials --hours 72 --limit 200` | Compare unscored trial state, saved result exceptions, and worker errors. Pending/running trials are not automatically failures; storage-read errors are reported separately. |
-| `modal run probe_audit_trail_modal.py --trial-id <id>` | Trace a diagnostic trial through its database row, worker attempts, stored files, and parsed agent output. Downloads artifacts temporarily; does not rerun the trial. |
+| `modal run probe_docker_failures_modal.py --hours 72 --limit 200` | Compare unscored trial state, saved result exceptions, and worker errors. Pending/running trials are not automatically failures; storage-read errors are reported separately. |
 | `modal run scripts/tail_budget_report.py --eid <experiment-id>` | Measure serialized trajectory sizes and the fraction retained at different proposed byte limits. Token counts are estimates; this does not change reviewer limits. |
 | `modal run ops_compare_token_costs.py --since <YYYY-MM-DD> --model <provider/model> --input-rate <rate> --cache-read-rate <rate> --cache-write-rate <rate> --output-rate <rate>` | Compare recorded trial costs with an estimate using explicit USD-per-million-token rates. Does not change costs or reconcile invoices. |
 
 The cost report includes nondeleted completed trials in nondeleted experiments,
-filtered to billed or native non-probe/non-combined runs. This is the tool's
+filtered to billed or native non-combined runs. This is the tool's
 comparison population, not a claim to reproduce every dashboard billing filter.
 
 ## Staging database
@@ -58,7 +57,7 @@ From `oddish/`, with the intended database configured:
 uv run python -m oddish.core.backfill_task_version_model_metrics --batch 200 --limit 500
 ```
 
-This rebuilds both task-browser summaries and per-model statistics for existing task versions using the current
+This rebuilds task-browser summaries for existing task versions using the current
 aggregation code. It does not launch evaluations. Every batch commits separately;
 resume with `--after-id <last-logged-version-id>`. Without that argument a rerun
 starts at the beginning. Versions with no eligible trials do not stall paging.
@@ -66,8 +65,8 @@ starts at the beginning. Versions with no eligible trials do not stall paging.
 For a preview whose browse counters need repair,
 run `uv run python ../.github/scripts/preview/refresh_browse_summaries.py` from
 `backend/`, with `ODDISH_DATABASE_URL` pointing to the preview and the normal
-`NEON_BRANCH_ID` and `NEON_PARENT_BRANCH_ID` set. This rebuilds both browse
-and per-model counters from the preview's own trials, in batches of 200
+`NEON_BRANCH_ID` and `NEON_PARENT_BRANCH_ID` set. This rebuilds browse
+counters from the preview's own trials, in batches of 200
 versions. This is a manual full repair. Normal deploys skip it. First branch setup
 refreshes only versions whose copied active trials it stops, in the same database
 transaction. Reruns of this tool repair stale counters without replacing tasks.

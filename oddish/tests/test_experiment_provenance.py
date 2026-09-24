@@ -16,7 +16,6 @@ import sys
 
 import pytest
 import pytest_asyncio
-from unittest.mock import AsyncMock
 from sqlalchemy import select
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -98,7 +97,6 @@ async def test_experiment_owner_and_link_are_set_once_and_scoped(
     import oddish.config as cfg_mod
 
     monkeypatch.setattr(cfg_mod, "settings", cfg_mod.Settings())
-    monkeypatch.setattr("oddish.worker.local_runner.run_trial_locally", AsyncMock())
 
     # 1. Creating run: owner + link stamped from the submitter (not task.user).
     async with get_session() as s:
@@ -156,7 +154,6 @@ async def test_owner_falls_back_to_user_without_github(monkeypatch, seeded_task_
     import oddish.config as cfg_mod
 
     monkeypatch.setattr(cfg_mod, "settings", cfg_mod.Settings())
-    monkeypatch.setattr("oddish.worker.local_runner.run_trial_locally", AsyncMock())
 
     async with get_session() as s:
         await create_task_sweep_core(
@@ -179,7 +176,6 @@ async def test_existing_task_new_experiment_gets_creation_attribution(
     import oddish.config as cfg_mod
 
     monkeypatch.setattr(cfg_mod, "settings", cfg_mod.Settings())
-    monkeypatch.setattr("oddish.worker.local_runner.run_trial_locally", AsyncMock())
 
     async with get_session() as s:
         await create_task_sweep_core(

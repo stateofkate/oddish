@@ -75,7 +75,6 @@ import { expandTrialParam } from "@/lib/trial-url";
 type DrawerMode = "task" | "trial";
 
 import { ExperimentRunDialog } from "@/components/experiment-run-dialog";
-import { ProbeDetailPanel } from "@/components/probe-detail-panel";
 
 const TrialDetailPanel = dynamic(
   () =>
@@ -234,7 +233,7 @@ function buildExperimentSummary(tasksForExperiment: Task[]): ExperimentSummary {
   let taskScoreCount = 0;
 
   for (const task of tasksForExperiment) {
-    const trials = (task.trials ?? []).filter((t) => !t.is_probe);
+    const trials = task.trials ?? [];
     if (trials.length > 0) {
       // task.experiment_id is the viewing experiment (set by the backend
       // builders); trials homed elsewhere count as cost (they price the work
@@ -608,8 +607,8 @@ function ExperimentSummaryBar({
   showNewSpend,
   showVerifierSpend = true,
   // True when cost came from the server rollup, which reports SPEND: every
-  // trial that ran, including earlier task versions, superseded retries and
-  // probes that the table below filters out. Drives the tooltip's disclosure.
+  // trial that ran, including earlier task versions and superseded retries
+  // that the table below filters out. Drives the tooltip's disclosure.
   costStatus,
   qa,
   reviewFilter,
@@ -1148,14 +1147,6 @@ export function ExperimentDetailView({
     }
     lastDrawerTaskIdRef.current = taskId;
   }, [drawerState?.task.id, handleTaskPaneFileChange, defaultTaskPane]);
-  // Probe cells open main's sliding ProbeDetailPanel (kept from origin/main).
-  // On the slim experiment path the grid has no probe trials to click, so this
-  // stays dormant until probes are fed to that path -- the code is retained so
-  // main's probe-drawer feature is preserved and the merge stays coherent.
-  const [probeDrawer, setProbeDrawer] = useState<{
-    taskId: string;
-    trialId: string;
-  } | null>(null);
   // Use the share setting as the default until the viewer makes a choice.
   const [showPassAtKOverride, setShowPassAtKOverride] = useState<boolean | null>(
     null
@@ -1999,10 +1990,6 @@ export function ExperimentDetailView({
                     groupEfforts,
                   });
                 }}
-                onProbeSelect={(trial, task) => {
-                  cancelPendingDeepLink();
-                  setProbeDrawer({ taskId: task.id, trialId: trial.id });
-                }}
                 onTaskSelect={(task, context) => {
                   cancelPendingDeepLink();
                   const { trialGroups, orderedTrials } = buildTrialGroups(task);
@@ -2177,14 +2164,6 @@ export function ExperimentDetailView({
               />
             )
           }
-        />
-      )}
-      {probeDrawer && (
-        <ProbeDetailPanel
-          taskId={probeDrawer.taskId}
-          trialId={probeDrawer.trialId}
-          isOpen
-          onClose={() => setProbeDrawer(null)}
         />
       )}
     </>

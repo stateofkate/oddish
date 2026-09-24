@@ -4,7 +4,6 @@ import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { ExperimentDetailView } from "../../../../src/components/experiment-detail-view";
 import { ExperimentTrialsTable } from "../../../../src/components/experiment-trials-table";
-import { ProbeSubmitForm } from "../../../../src/components/probe-submit-form";
 import { ExperimentRunDialog } from "../../../../src/components/experiment-run-dialog";
 import { buildExperimentAgentSummaries } from "../../../../src/lib/experiment-agent-grouping";
 import type { Task, Trial } from "../../../../src/lib/types";
@@ -114,9 +113,6 @@ function EffortComparison() {
             )
           }
         />
-        <section aria-label="Probe launch">
-          <ProbeSubmitForm taskId="repair-queue" />
-        </section>
         <output aria-label="Selected effort">{selected}</output>
       </div>
     </Suspense>

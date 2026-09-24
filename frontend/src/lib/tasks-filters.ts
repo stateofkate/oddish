@@ -82,7 +82,6 @@ export interface FilterValues {
   hasLink: boolean | null;
   hasError: boolean | null;
   hasTrajectory: boolean | null;
-  trialIsProbe: boolean | null;
   createdAfter: string | null; // ISO datetime (custom From)
   createdBefore: string | null; // ISO datetime (custom To)
   createdWithin: CreatedPreset | null; // rolling preset (24h/7d/30d/90d)
@@ -471,13 +470,6 @@ export const FILTER_DEFS: FilterDef[] = [
     group: "Trial",
     control: "num",
   },
-  {
-    key: "trialIsProbe",
-    label: "Only probe trials",
-    group: "Trial",
-    control: "boolean",
-    hidden: true,
-  },
   // Phase 1.2-lite aggregate filters/sort (task-level rollups over the scoped
   // current-version trials). Sorting lives in the results toolbar.
   {
@@ -821,8 +813,6 @@ export function isFilterActive(key: string, f: FilterValues): boolean {
       return f.hasError !== null;
     case "hasTrajectory":
       return f.hasTrajectory !== null;
-    case "trialIsProbe":
-      return f.trialIsProbe !== null;
     case "created":
       return (
         f.createdAfter !== null ||
@@ -936,7 +926,6 @@ export function filterParams(f: FilterValues): [string, string][] {
   bool("has_link", f.hasLink);
   bool("has_error", f.hasError);
   bool("has_trajectory", f.hasTrajectory);
-  bool("trial_is_probe", f.trialIsProbe);
   if (f.createdAfter) out.push(["created_after", f.createdAfter]);
   if (f.createdBefore) out.push(["created_before", f.createdBefore]);
   if (f.createdWithin) out.push(["created_within", f.createdWithin]);
@@ -1039,7 +1028,6 @@ export const FILTER_PARAM_KEYS = [
   "has_link",
   "has_error",
   "has_trajectory",
-  "trial_is_probe",
   "created_after",
   "created_before",
   "created_within",
@@ -1106,7 +1094,6 @@ export const FILTER_PARAM_KEYS = [
 // filter control; it now round-trips through searchParamsToFilters.)
 const EXTRA_BROWSE_PARAM_KEYS = [
   "run_analysis",
-  "run_probe",
   "harbor_shas",
   "harbor_stages",
 ] as const;
@@ -1159,7 +1146,6 @@ export function searchParamsToFilters(sp: URLSearchParams): FilterValues {
     hasLink: bool("has_link"),
     hasError: bool("has_error"),
     hasTrajectory: bool("has_trajectory"),
-    trialIsProbe: bool("trial_is_probe"),
     createdAfter: sp.get("created_after"),
     createdBefore: sp.get("created_before"),
     createdWithin: ((): CreatedPreset | null => {

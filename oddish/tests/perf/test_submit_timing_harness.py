@@ -21,12 +21,6 @@ and records, per phase and in aggregate:
   (``response.elapsed``) is split from the connection/client overhead
   (wall-clock minus ``elapsed``), so the two are isolatable.
 
-Probe-off invariant
--------------------
-The sweep pins ``run_probe=false``. Probe agents must stay opt-in, so the
-harness GETs each task afterwards and asserts ``run_probe is False`` with zero
-``is_probe`` trials.
-
 Configuration (env)
 -------------------
 * ``ODDISH_PERF_TASKS``       -- N (default 30).
@@ -75,8 +69,6 @@ class CallSample:
 class TaskOutcome:
     task_id: str | None = None
     submitted: bool = False
-    run_probe: bool | None = None
-    probe_trials: int | None = None
     total_trials: int | None = None
     samples: list[CallSample] = field(default_factory=list)
     error: str | None = None
@@ -196,10 +188,6 @@ def _submit_one_task(
                 "task_id": task_id,
                 "configs": [config],
                 "run_analysis": False,
-                # Pinned OFF: the auto-probe append path must not run (it would
-                # add trials + DB round-trips and skew the timing). Asserted via
-                # the GET below in case the backend flips the user default ON.
-                "run_probe": False,
                 "content_hash": content_hash,
             }
             sweep_resp, sample = _timed(
@@ -219,13 +207,11 @@ def _submit_one_task(
             outcome.samples.append(sample)
             if status_resp is not None and status_resp.status_code == 200:
                 status_data = cast(dict, status_resp.json())
-                outcome.run_probe = bool(status_data.get("run_probe"))
                 trials = status_data.get("trials") or []
                 outcome.total_trials = len(trials)
-                outcome.probe_trials = sum(1 for t in trials if t.get("is_probe"))
             else:
-                # Couldn't read the task back -> the probe-off invariant is
-                # unverifiable for it. Surface it instead of passing silently.
+                # Couldn't read the task back. Surface it instead of passing
+                # silently.
                 outcome.error = f"status check failed: {sample.status}"
     finally:
         shutil.rmtree(Path(tarball_path).parent, ignore_errors=True)
@@ -332,24 +318,4 @@ def test_submit_timing_harness(
         "no task submitted successfully -- check ODDISH_API_URL / ODDISH_API_KEY "
         f"and the target's health. First errors: "
         f"{[o.error for o in outcomes if o.error][:5]}"
-    )
-
-    # Every submitted task must have a read-back run_probe state, else the
-    # probe-off invariant below is silently unverifiable.
-    unverified = [o.task_id for o in submitted if o.run_probe is None]
-    assert not unverified, (
-        f"could not verify run_probe for {len(unverified)} submitted task(s) "
-        f"(status read-back failed): {unverified[:5]}"
-    )
-
-    # Probe-off invariant: the backend must not have flipped run_probe on.
-    flipped = [o.task_id for o in submitted if o.run_probe]
-    assert not flipped, (
-        f"run_probe flipped ON server-side for {len(flipped)} task(s): {flipped[:5]}."
-    )
-    with_probe_trials = [
-        (o.task_id, o.probe_trials) for o in submitted if (o.probe_trials or 0) > 0
-    ]
-    assert not with_probe_trials, (
-        f"unexpected probe trials despite run_probe=false: {with_probe_trials[:5]}"
     )

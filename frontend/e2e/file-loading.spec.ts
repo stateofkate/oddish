@@ -1,5 +1,8 @@
 import { expect, test } from "@playwright/test";
-import type { TaskFile } from "../src/lib/use-task-file-tree";
+import type {
+  FilesListingResponse,
+  TaskFile,
+} from "../src/lib/use-task-file-tree";
 
 const finding =
   "/tasks/task-a?version=7&drawer=task&finding=empty-answer&taskPane=file&taskFile=tests%2Ftest.sh&taskLines=L7";
@@ -444,3 +447,162 @@ test("definition bundle previews switch files without individual reads", async (
   await expect(page.getByText("FIRST", { exact: true })).toBeVisible();
   expect(reads).toEqual([]);
 });
+
+for (const mode of ["eager", "lazy"] as const) {
+  for (const wrapped of [false, true]) {
+    test(`${mode} multi-step files stay in Steps with ${wrapped ? "an archive wrapper" : "root paths"}`, async ({
+      page,
+    }) => {
+      const prefix = wrapped ? "task-archive/" : "";
+      const contents: Record<string, string> = Object.fromEntries(
+        Object.entries({
+          "instruction.md": "Root task prompt",
+          "steps/01-first/instruction.md": "First step prompt",
+          "steps/01-first/tests/test.sh": "echo FIRST_STEP_TEST",
+          "steps/02-second/instruction.md": "Second step prompt",
+          "steps/02-second/tests/test.sh": "echo SECOND_STEP_TEST",
+          "tests/test.sh": "echo ROOT_TEST",
+          "notes.txt": "Task notes",
+        }).map(([path, content]) => [`${prefix}${path}`, content])
+      );
+      const files = Object.entries(contents).map(([path, content]) => ({
+        path,
+        key: path,
+        content,
+      }));
+      const directoryReads: string[] = [];
+      const fileReads: string[] = [];
+      function directory(path: string): FilesListingResponse {
+        const children = new Set<string>();
+        const directFiles: TaskFile[] = [];
+        const start = path ? `${path}/` : "";
+        for (const file of files) {
+          if (!file.path.startsWith(start)) continue;
+          const rest = file.path.slice(start.length);
+          if (rest.includes("/")) {
+            children.add(`${start}${rest.split("/")[0]}`);
+          } else {
+            directFiles.push({ path: file.path, key: file.key });
+          }
+        }
+        return {
+          source_hash: "fixture-v7",
+          files: directFiles,
+          dirs: [...children].map((path) => ({ path })),
+          cursor: null,
+        };
+      }
+      await page.route(fileList, async (route) => {
+        const params = new URL(route.request().url()).searchParams;
+        expect(params.get("version")).toBe("7");
+        if (mode === "eager") {
+          expect(params.get("recursive")).toBe("1");
+          await route.fulfill({ json: { files, source_hash: "fixture-v7" } });
+          return;
+        }
+        expect(params.get("recursive")).toBe("0");
+        const paths = params.getAll("directories");
+        if (paths.length) {
+          directoryReads.push(...paths);
+          await route.fulfill({
+            json: {
+              source_hash: "fixture-v7",
+              directories: Object.fromEntries(
+                paths.map((path) => [path, directory(path)])
+              ),
+            },
+          });
+        } else {
+          const path = params.get("prefix") ?? "";
+          directoryReads.push(path);
+          await route.fulfill({ json: directory(path) });
+        }
+      });
+      await page.route("**/api/tasks/task-a/files/*?**", async (route) => {
+        const url = new URL(route.request().url());
+        const path = decodeURIComponent(url.pathname.split("/files/")[1]);
+        fileReads.push(path);
+        expect(url.searchParams.get("version")).toBe("7");
+        expect(contents[path]).toBeDefined();
+        await route.fulfill({
+          json: {
+            content: contents[path],
+            source_hash: "fixture-v7",
+            is_truncated: false,
+          },
+        });
+      });
+      await page.goto(
+        mode === "eager"
+          ? "/eager-task-files"
+          : "/experiments/review-demo?task=task-a"
+      );
+
+      await expect(page.locator("section > h3")).toHaveText([
+        "Prompt",
+        "Steps",
+        "Verification",
+        "Other files",
+      ]);
+      const steps = page.locator("section").filter({
+        has: page.getByRole("heading", { name: "Steps", exact: true }),
+      });
+      const other = page.locator("section").filter({
+        has: page.getByRole("heading", { name: "Other files", exact: true }),
+      });
+      await expect(other.getByRole("button")).toHaveText(["notes.txt"]);
+      await page
+        .locator("section")
+        .filter({
+          has: page.getByRole("heading", { name: "Prompt", exact: true }),
+        })
+        .getByRole("button", { name: "instruction.md", exact: true })
+        .click();
+      await expect(
+        page.getByText("Root task prompt", { exact: true })
+      ).toBeVisible();
+
+      for (const [step, prompt, testBody] of [
+        ["01-first", "First step prompt", "echo FIRST_STEP_TEST"],
+        ["02-second", "Second step prompt", "echo SECOND_STEP_TEST"],
+      ]) {
+        const stepButton = steps.getByRole("button", {
+          name: step,
+          exact: true,
+        });
+        const stepFiles = stepButton.locator("..");
+        await stepButton.click();
+        await stepFiles
+          .getByRole("button", { name: "instruction.md", exact: true })
+          .click();
+        await expect(page.getByText(prompt, { exact: true })).toBeVisible();
+        await stepFiles.getByRole("button", { name: "tests", exact: true }).click();
+        await stepFiles
+          .getByRole("button", { name: "test.sh", exact: true })
+          .click();
+        await expect(page.getByText(testBody, { exact: true })).toBeVisible();
+        if (mode === "lazy") {
+          expect(new URL(page.url()).searchParams.get("taskFile")).toBe(
+            `${prefix}steps/${step}/tests/test.sh`
+          );
+          expect(directoryReads).toContain(`${prefix}steps/${step}/tests`);
+          expect(fileReads).toContain(`${prefix}steps/${step}/instruction.md`);
+          expect(fileReads).toContain(`${prefix}steps/${step}/tests/test.sh`);
+        }
+      }
+
+      await page
+        .locator("section")
+        .filter({
+          has: page.getByRole("heading", { name: "Verification", exact: true }),
+        })
+        .getByRole("button", { name: "test.sh", exact: true })
+        .click();
+      await expect(
+        page.getByText("echo ROOT_TEST", { exact: true })
+      ).toBeVisible();
+      if (mode === "eager") expect(fileReads).toEqual([]);
+      else expect(directoryReads).toContain(`${prefix}steps`);
+    });
+  }
+}

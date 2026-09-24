@@ -12,7 +12,6 @@ function summary(
     agent,
     model,
     providers: ["gemini"],
-    is_probe: false,
     trial_count: 1,
     completed_count: 1,
     failed_count: 0,
@@ -84,8 +83,8 @@ test("coalesces display aliases into one exact task-open card", () => {
 
   const result = buildTaskOpenAgentGroups(summaries, previews);
 
-  expect(result.realAgentCount).toBe(1);
-  expect(result.realTrialCount).toBe(5);
+  expect(result.agentCount).toBe(1);
+  expect(result.trialCount).toBe(5);
   expect(result.agentCards).toHaveLength(1);
   expect(result.agentCards[0]).toMatchObject({
     key: "gemini-cli/gemini/gemini-3.5-flash/unspecified",
@@ -137,5 +136,5 @@ test("same model with different efforts keeps task summaries and preview trials 
     { key: "codex/openai/gpt-5.6/low", trials: ["trial-low"] },
     { key: "codex/openai/gpt-5.6/high", trials: ["trial-high"] },
   ]);
-  expect(result.realTrialCount).toBe(3);
+  expect(result.trialCount).toBe(3);
 });

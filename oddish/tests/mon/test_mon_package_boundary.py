@@ -93,7 +93,6 @@ _DB_EDGE_DEBT = {
     ("oddish.workers.harbor.runner", "oddish.costs.modal_cost"),
     ("oddish.workers.harbor.runner", "oddish.runtime.sandbox_lifecycle"),
     ("oddish.workers.harbor.runner", "oddish.schemas"),
-    ("oddish.workers.harbor.runner", "oddish.worker.probe_staging"),
 }
 
 

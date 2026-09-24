@@ -242,8 +242,8 @@ def test_scoped_model_env_explicit_anthropic_scopes_anthropic_key(
     assert env == {"ANTHROPIC_API_KEY": "sk-ant"}
 
 
-def test_scoped_model_env_probe_scopes_anthropic_key_with_flag_off(monkeypatch) -> None:
-    # An explicit Anthropic probe stays direct when the bare-ID flag is off.
+def test_scoped_model_env_scopes_anthropic_key_with_flag_off(monkeypatch) -> None:
+    # An explicit Anthropic model stays direct when the bare-ID flag is off.
     settings = _fake_settings(anthropic_api_key="sk-ant")
     _force_direct(monkeypatch, settings, enabled=False, ambient_key="sk-ant")
     settings.get_provider_for_trial = lambda agent, model: "anthropic"
@@ -251,12 +251,11 @@ def test_scoped_model_env_probe_scopes_anthropic_key_with_flag_off(monkeypatch) 
         agent="claude-code",
         model="anthropic/claude-opus-5",
         settings=settings,
-        is_probe=True,
     )
     assert env == {"ANTHROPIC_API_KEY": "sk-ant"}
 
 
-def test_build_bundle_keeps_bedrock_for_probe(monkeypatch) -> None:
+def test_build_bundle_keeps_bedrock(monkeypatch) -> None:
     settings = _fake_settings(anthropic_api_key="sk-ant")
     _force_direct(monkeypatch, settings, enabled=False, ambient_key="sk-ant")
     settings.get_provider_for_trial = lambda agent, model: "bedrock"
@@ -266,7 +265,6 @@ def test_build_bundle_keeps_bedrock_for_probe(monkeypatch) -> None:
         trial_id="t-1",
         settings=settings,
         now=_now(),
-        is_probe=True,
     )
     assert bundle.model_env == {"CLAUDE_CODE_USE_BEDROCK": "1"}
 
@@ -431,55 +429,9 @@ def test_build_bundle_assembles_scoped_credentials() -> None:
     assert not hasattr(bundle, "metadata")
 
 
-def test_prepared_trial_routing_defers_to_the_runner_predicate() -> None:
-    """Credential scoping must ask the runner's question, not a copy of it.
-
-    The transport predicate is an operator probe (``harbor_config.mode ==
-    "probe"``) or a non-summarize analysis kind. An earlier version of this
-    helper keyed on ``extra_instructions`` instead, which disagreed with the
-    runner in both directions.
-    """
-    from oddish.workers.harbor.runner import uses_probe_routing
-    from oddish.workers.queue.trial_handler import (
-        PreparedTrialRun,
-        _prepared_trial_uses_probe_routing,
-    )
-
-    def _run(**kw) -> PreparedTrialRun:
-        base = dict(
-            task_path=None,
-            task_s3_key=None,
-            task_id="t",
-            trial_agent="claude-code",
-            trial_model="global.anthropic.claude-opus-5",
-            trial_environment="docker",
-            trial_harbor_config={},
-        )
-        base.update(kw)
-        return PreparedTrialRun(**base)
-
-    cases = [
-        # (harbor_config, trial_kind, expected)
-        ({}, "agent", False),
-        # Operator probe with no extra_instructions: the old helper said False.
-        ({"mode": "probe"}, "agent", True),
-        ({}, "audit", True),
-        ({}, "qa", True),
-        ({}, "qa_eval", True),
-        ({}, "summarize", False),
-        ({"mode": "probe"}, "summarize", True),
-        # Extra instructions alone are not the marker: the old helper said True.
-        ({"extra_instructions": ["x"]}, "agent", False),
-    ]
-    for hc, kind, expected in cases:
-        run = _run(trial_harbor_config=hc, trial_kind=kind)
-        assert _prepared_trial_uses_probe_routing(run) is expected, (hc, kind)
-        assert uses_probe_routing(harbor_config=hc, trial_kind=kind) is expected
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["qa", "audit", "qa_eval", "summarize"])
-async def test_analysis_dispatch_preserves_kind_when_sharing_probe_routing(
+async def test_analysis_dispatch_preserves_kind(
     monkeypatch, tmp_path, kind
 ):
     from oddish.workers.queue import trial_handler
@@ -514,7 +466,6 @@ async def test_analysis_dispatch_preserves_kind_when_sharing_probe_routing(
     )
 
     assert result.execution_error is None
-    assert captured["trial_kind"] == kind
     assert captured["harbor_config"] == {}
     assert captured["hook_callback"].keywords["probe_task_dir"] == (
         None if kind == "summarize" else tmp_path

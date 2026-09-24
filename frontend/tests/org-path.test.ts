@@ -26,7 +26,7 @@ test("app and public first segments do not overlap", () => {
 
 test("parseOrgSlug reads /orgs/{slug}/…", () => {
   assert.equal(parseOrgSlug("/orgs/acme/tasks"), "acme");
-  assert.equal(parseOrgSlug("/orgs/acme/tasks/task-1/probe"), "acme");
+  assert.equal(parseOrgSlug("/orgs/acme/tasks/task-1/files"), "acme");
   assert.equal(parseOrgSlug("/orgs/acme"), "acme");
   assert.equal(
     parseOrgSlug("/orgs/personal-user_abc/dashboard"),

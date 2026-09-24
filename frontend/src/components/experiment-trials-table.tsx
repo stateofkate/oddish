@@ -61,7 +61,7 @@ import {
   VERDICT_LABELS,
   taskReviewStatus,
 } from "@/lib/review";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { mutate } from "swr";
 import type { Task, Trial, AnalysisClassification } from "@/lib/types";
@@ -83,7 +83,6 @@ import {
   experimentModelLabel,
   compareReasoningEffort,
   isBaselineAgentName,
-  PROBE_AGENT_KEY,
   type ExperimentAgentSummary,
 } from "@/lib/experiment-agent-grouping";
 import { loadHiddenAgents, saveHiddenAgents } from "@/lib/experiment-columns";
@@ -168,7 +167,6 @@ type ExperimentTrialsTableProps = {
   onTaskUnlink?: (task: Task) => Promise<void>;
   onRerun?: (taskIds?: string[]) => void;
   allowRerun?: boolean;
-  onProbeSelect?: (trial: Trial, task: Task) => void;
   readOnly?: boolean;
   showAnalysis?: boolean;
   onTrialSelect?: (
@@ -607,7 +605,6 @@ export function ExperimentTrialsTable({
   onTaskUnlink,
   onRerun,
   allowRerun = true,
-  onProbeSelect,
   readOnly = false,
   showAnalysis = true,
   onTrialSelect,
@@ -616,7 +613,6 @@ export function ExperimentTrialsTable({
   rejectedOnly: rejectedOnlyProp,
   onRejectedOnlyChange,
 }: ExperimentTrialsTableProps) {
-  const router = useRouter();
   const prefetchTaskFiles = usePrefetchTaskFiles();
   const prefetchTask = (task: Task) => {
     if (!readOnly && onTaskSelect)
@@ -896,7 +892,6 @@ export function ExperimentTrialsTable({
 
   const sortedAgentSummaries = useMemo(() => {
     const getAgentSortKey = (agentName: string): number => {
-      if (agentName === PROBE_AGENT_KEY) return 9;
       const lower = agentName.toLowerCase();
       if (lower === "nop") return 0;
       if (lower === "oracle") return 1;
@@ -2590,11 +2585,10 @@ export function ExperimentTrialsTable({
                                 <TaskVerdictChip
                                   task={task}
                                   // Settled agent trials this verdict's run
-                                  // did not grade (baselines/probes never are).
+                                  // did not grade (baselines never are).
                                   ungradedSettled={
                                     orderedTrials.filter(
                                       (t) =>
-                                        !t.is_probe &&
                                         (t.kind ?? "agent") === "agent" &&
                                         !isBaselineAgentName(t.agent) &&
                                         (t.status === "success" ||
@@ -2770,21 +2764,11 @@ export function ExperimentTrialsTable({
                                         type="button"
                                         variant="unstyled"
                                         onPointerDown={() => {
-                                          if (!readOnly && !trial.is_probe) {
+                                          if (!readOnly) {
                                             void preloadTrial("/api", trial.id);
                                           }
                                         }}
                                         onClick={() => {
-                                          if (trial.is_probe) {
-                                            if (onProbeSelect) {
-                                              onProbeSelect(trial, task);
-                                            } else {
-                                              router.push(
-                                                `/tasks/${encodeURIComponent(task.id)}/probe/${trial.id}`
-                                              );
-                                            }
-                                            return;
-                                          }
                                           const trialIndexInGroup =
                                             trialIndexById.get(trial.id) ?? 0;
                                           onTrialSelect?.(trial, task, {

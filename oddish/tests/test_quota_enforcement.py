@@ -56,7 +56,6 @@ def _trial(
         provider="openai",
         queue_key=queue_key,
         model="gpt-5",
-        is_probe=False,
         attempts=1,
         max_attempts=6,
         status=status,

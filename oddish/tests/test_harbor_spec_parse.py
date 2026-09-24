@@ -4,7 +4,6 @@ import tomllib
 from oddish.config import (
     HARBOR_DEFAULT_SHA,
     HARBOR_DEFAULT_SOURCE,
-    Settings,
     parse_harbor_spec,
 )
 
@@ -67,20 +66,6 @@ def test_harbor_pin_toml_matches_default():
         pin = tomllib.load(fh)
     assert pin["git"] == HARBOR_DEFAULT_SOURCE
     assert pin["rev"] == HARBOR_DEFAULT_SHA
-
-
-def test_probe_harbor_ref_matches_pyproject_pin():
-    # The probe fetches harbor at ``harbor_source_ref``; it must resolve to the
-    # exact code the worker image runs, or probe trials inspect different harbor
-    # code than the trials being probed. Assert it against HARBOR_DEFAULT_SHA --
-    # the commit recorded in uv.lock and pinned in pyproject.
-    assert Settings().harbor_source_ref == HARBOR_DEFAULT_SHA
-
-    # The source repo and exact revision must agree with the dependency pin.
-    with open("pyproject.toml", "rb") as fh:
-        harbor_pin = tomllib.load(fh)["tool"]["uv"]["sources"]["harbor"]
-    assert harbor_pin["rev"] == HARBOR_DEFAULT_SHA
-    assert harbor_pin["git"].endswith(Settings().harbor_source_repo)
 
 
 def test_pyproject_default_source_matches_config():

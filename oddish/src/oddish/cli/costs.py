@@ -175,13 +175,11 @@ def _get(client: httpx.Client, url: str, **params: Any) -> Any:
 
 
 def _solver_usd(trials: list[dict[str, Any]]) -> float:
-    """Agent runs Oddish executed; probes and imported runs are not solver spend."""
+    """Agent runs Oddish executed; imported runs are not solver spend."""
     return sum(
         float(t.get("cost_usd") or 0.0)
         for t in trials
-        if (t.get("kind") or "agent") == "agent"
-        and not t.get("is_probe")
-        and t.get("origin") != "imported"
+        if (t.get("kind") or "agent") == "agent" and t.get("origin") != "imported"
     )
 
 

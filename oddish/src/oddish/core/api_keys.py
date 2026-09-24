@@ -54,8 +54,8 @@ async def mint_internal_api_key(
     org_id: str,
     name: str,
     ttl_minutes: int,
+    bound_analysis_trial_id: str,
     scope: APIKeyScope = APIKeyScope.READ,
-    bound_analysis_trial_id: str | None = None,
 ) -> tuple[str, str]:
     """Mint and persist a short-lived internal key.
 

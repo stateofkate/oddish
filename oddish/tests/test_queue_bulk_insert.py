@@ -48,14 +48,12 @@ def _submission(
     *,
     n_trials: int,
     experiment_id: str | None = None,
-    extra_instructions: str | None = None,
 ) -> TaskSubmission:
     return TaskSubmission(
         name=name,
         task_path="s3://test-bucket/bulk-insert-fake-task",
         user="test",
         experiment_id=experiment_id,
-        extra_instructions=extra_instructions,
         trials=[TrialSpec(agent="nop", model=None) for _ in range(n_trials)],
     )
 
@@ -275,12 +273,7 @@ async def test_bulk_insert_parity_with_per_row(cleanup_task_ids):
         # New bulk path.
         await create_task(
             session,
-            _submission(
-                "parity-bulk",
-                n_trials=n,
-                experiment_id=exp_id,
-                extra_instructions="probe me",
-            ),
+            _submission("parity-bulk", n_trials=n, experiment_id=exp_id),
             task_id=bulk_id,
         )
         # Faithful replica of the OLD per-row construction (queue.py:658-694).
@@ -288,12 +281,7 @@ async def test_bulk_insert_parity_with_per_row(cleanup_task_ids):
             session,
             perrow_id,
             exp_id,
-            _submission(
-                "parity-perrow",
-                n_trials=n,
-                experiment_id=exp_id,
-                extra_instructions="probe me",
-            ),
+            _submission("parity-perrow", n_trials=n, experiment_id=exp_id),
         )
 
     async with get_session() as session:
@@ -315,7 +303,6 @@ async def test_bulk_insert_parity_with_per_row(cleanup_task_ids):
         "timeout_minutes",
         "environment",
         "harbor_config",
-        "is_probe",
         "max_attempts",
         "status",
         "attempts",
@@ -407,10 +394,8 @@ async def _legacy_per_row_create(session, task_id, experiment_id, submission):
             queue_key=queue_key,
             model=model,
             timeout_minutes=spec.timeout_minutes,
-            environment=spec.environment
-            or ("modal" if (harbor_config or {}).get("mode") == "probe" else None),
+            environment=spec.environment,
             harbor_config=harbor_config,
-            is_probe=(harbor_config or {}).get("mode") == "probe",
             max_attempts=submission.max_trial_attempts,
             status=queue_mod.TrialStatus.QUEUED,
         )

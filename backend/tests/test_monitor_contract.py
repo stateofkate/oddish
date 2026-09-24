@@ -24,7 +24,6 @@ from oddish.mon import artifacts, hooks, loops, seams, status
 from oddish.mon.client import MonitorClient
 from oddish.mon.contract import AttemptSpec, summarize_hook_event
 from oddish.mon.env import MonitorEnv
-from oddish.schemas import SkillFile
 from oddish.workers.harbor.live_tail import PersistResult
 from oddish.workers.harbor.outcome import HarborOutcome
 from oddish.workers.launcher.hook_events import hook_event_from_summary
@@ -81,7 +80,7 @@ def test_no_model_on_the_monitor_boundary_forbids_unknown_fields():
         _models(route.response_model, found)
     names = {model.__name__ for model in found}
     assert {"AttemptSpec", "ResultPayload", "MonitorStats", "LiveEvent"} <= names
-    assert {"UsageCheckpoint", "MonitorSkill", "SkillFile"} <= names
+    assert "UsageCheckpoint" in names
     forbidding = [m.__name__ for m in found if m.model_config.get("extra") == "forbid"]
     assert not forbidding, f"{forbidding} refuse unknown fields"
 
@@ -96,7 +95,7 @@ SPEC = AttemptSpec(
     task_name="hello",
     agent="oracle",
     model="anthropic/claude",
-    harbor_config={"skill_ids": ["skill-1"]},
+    harbor_config={"variant_id": "variant-1"},
     org_id="org-1",
     billed_user_id="user-1",
     task_files={"task.toml": "https://storage.test/task.toml"},
@@ -127,16 +126,6 @@ async def test_the_monitor_and_the_api_parse_each_other(tmp_path, monkeypatch):
     monkeypatch.setattr(status, "STATUS_PATH", tmp_path / "status.json")
     replies: dict[str, list[BaseModel]] = {
         "GET /monitor/attempt": [SPEC],
-        "GET /monitor/skills": [
-            monitor.SkillsResponse(
-                skills=[
-                    monitor.MonitorSkill(
-                        name="review",
-                        files=[SkillFile(relative_path="SKILL.md", content="# review")],
-                    )
-                ]
-            )
-        ],
         "POST /monitor/heartbeat": [monitor.HeartbeatResponse()],
         "GET /monitor/control": [
             monitor.ControlResponse(authorized=True, pause_requested=True),
@@ -185,10 +174,6 @@ async def test_the_monitor_and_the_api_parse_each_other(tmp_path, monkeypatch):
         transport=httpx.MockTransport(api),
     )
     assert await client.attempt() == SPEC
-    skills = await client.skills()
-    assert [(s.name, s.files) for s in skills] == [
-        ("review", [("SKILL.md", "# review")])
-    ]
     await client.heartbeat(pending_failure_count=2, pending_last_error="timeout")
     state = seams.ControlState()
     with pytest.raises(loops.StopTrial, match="execution revoked"):

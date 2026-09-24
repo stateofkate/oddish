@@ -32,13 +32,16 @@ _OLDER_HARBOR_SHA = "07a576944f95c3f57147ba35a7f3ec97910d6141"
 
 @pytest.mark.skipif(shutil.which("uv") is None, reason="uv not available")
 async def test_real_older_harbor_child_runs_and_bridges_outcome(tmp_path):
-    # A task dir with no task.toml -> the child's real older Harbor fails fast
-    # while building the Job, exercising import + JobConfig + outcome bridge.
+    # A task dir with only timeouts in task.toml -> the child's real older Harbor
+    # fails fast while building the Job, exercising import + JobConfig + bridge.
     task_dir = tmp_path / "task"
     task_dir.mkdir()
+    (task_dir / "task.toml").write_text(
+        "[agent]\ntimeout_sec = 60\n[environment]\nbuild_timeout_sec = 60\n"
+        "[verifier]\ntimeout_sec = 60\n"
+    )
 
     harbor_config = {
-        "mode": "probe",  # skip parent-side task-timeout validation
         "variant_id": "ephemeral",
         "source": HARBOR_DEFAULT_SOURCE,
         "resolved_sha": _OLDER_HARBOR_SHA,
@@ -52,8 +55,6 @@ async def test_real_older_harbor_child_runs_and_bridges_outcome(tmp_path):
         model=None,
         trial_id="t-real-eph",
         harbor_config=harbor_config,
-        is_probe=True,
-        skip_task_validation=True,
     )
 
     # The child started (uv resolved the older Harbor and imported it) and the

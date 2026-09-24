@@ -196,7 +196,6 @@ export interface Trial {
   is_billed?: boolean;
   cost_exclusion_reason?: string | null;
   has_trajectory?: boolean;
-  is_probe?: boolean;
   kind?: TrialKind;
   created_at: string;
   started_at?: string | null;
@@ -267,7 +266,6 @@ export interface Task {
   reward_sum?: number | null;
   reward_total?: number | null;
   run_analysis?: boolean;
-  run_probe?: boolean;
   review_version_matches?: boolean | null;
   /** Source audit of the experiment-selected version (trial_version_id or default). */
   pre_trial_status?: JobStatus | null;
@@ -588,7 +586,6 @@ export interface TaskOpenAgentModelSummary {
   model: string | null;
   reasoning_effort?: string | null;
   providers: string[];
-  is_probe: boolean;
   trial_count: number;
   completed_count: number;
   failed_count: number;
@@ -662,7 +659,6 @@ export interface TaskOpenTrialRef {
   status: TrialStatus;
   reward: number | null;
   error_kind?: string | null;
-  is_probe: boolean;
   cost_usd?: number | null;
   cost_is_estimated?: boolean | null;
   is_billed: boolean;
@@ -733,7 +729,7 @@ interface TaskCostTotals {
  *
  * All scopes are wider than the grid in two ways: not limited to the trial
  * pages loaded so far, and counting trials the table filters out (earlier
- * task versions, superseded retries, probes). Those still burned tokens and
+ * task versions, superseded retries). Those still burned tokens and
  * were still billed. Expect this to exceed the sum of the visible rows; the
  * Cost tooltip says as much. */
 export interface ExperimentCostTotals {

@@ -59,7 +59,6 @@ async def seed(session, specs=(), *, org=None):
             queue_key="test",
             status=TrialStatus.SUCCESS,
             reward=1.0,
-            is_probe=False,
         )
         values.update(spec)
         session.add(
@@ -83,7 +82,7 @@ async def seed(session, specs=(), *, org=None):
     [
         ([], "no_trials", 0),
         (
-            [{"kind": "qa"}, {"is_probe": True}, {"idempotency_key": "combine:test"}],
+            [{"kind": "qa"}, {"idempotency_key": "combine:test"}],
             "no_trials",
             0,
         ),
@@ -262,7 +261,6 @@ async def test_frozen_migration_matches_live_refresh(session):
         {"status": TrialStatus.PENDING, "reward": None},
         {"status": TrialStatus.SKIPPED},
         {"kind": "qa"},
-        {"is_probe": True},
         {"idempotency_key": "combine:copy"},
     ]
     _, version, _ = await seed(session, specs)
@@ -280,7 +278,9 @@ async def test_frozen_migration_matches_live_refresh(session):
     spec = spec_from_file_location("run_migration", path)
     migration = module_from_spec(spec)
     spec.loader.exec_module(migration)
-    await session.execute(text(migration._BACKFILL), {"ids": [version, empty]})
+    # The frozen SQL predates the trials.is_probe column drop.
+    backfill = migration._BACKFILL.replace("tr.is_probe IS NOT TRUE AND ", "")
+    await session.execute(text(backfill), {"ids": [version, empty]})
     actual = TaskRunSummary.model_validate((await session.execute(read)).scalar_one())
     assert actual == expected
     zero = (

@@ -41,8 +41,8 @@ async def test_task_status_lists_all_live_experiments():
                 values ('exp-a','Alpha','org1',false,now(),now()),
                        ('exp-b','Beta','org1',false,now(),now()),
                        ('exp-gone','Gone','org1',false,now(),now());
-                insert into tasks (id,name,org_id,"user",priority,status,task_path,tags,run_analysis,run_probe,created_at,updated_at)
-                values ('t1','task','org1','u','LOW','COMPLETED','p','{}'::jsonb,false,false,now(),now());
+                insert into tasks (id,name,org_id,"user",priority,status,task_path,tags,run_analysis,created_at,updated_at)
+                values ('t1','task','org1','u','LOW','COMPLETED','p','{}'::jsonb,false,now(),now());
                 insert into task_experiments (task_id,experiment_id,created_at,deleted_at)
                 values ('t1','exp-b',now() - interval '2 hour',null),
                        ('t1','exp-a',now() - interval '1 hour',null),
@@ -86,10 +86,10 @@ async def test_public_task_payload_lists_only_public_experiments():
                 values ('exp-pub','Public Exp','org1',true,'tok-pub',now(),now()),
                        ('exp-pub2','Second Public','org1',true,'tok-pub2',now(),now()),
                        ('exp-priv','Aardvark Secret','org1',false,null,now(),now());
-                insert into tasks (id,name,org_id,"user",priority,status,task_path,tags,run_analysis,run_probe,created_at,updated_at)
+                insert into tasks (id,name,org_id,"user",priority,status,task_path,tags,run_analysis,created_at,updated_at)
                 values ('t1','task','org1','private-owner','LOW','COMPLETED','p',
                         '{"github_meta":"{\\"category\\":\\"JS\\",\\"github_username\\":\\"private-owner\\",\\"repository\\":\\"private/repository\\"}"}'::jsonb,
-                        false,false,now(),now());
+                        false,now(),now());
                 insert into task_experiments (task_id,experiment_id,created_at)
                 values ('t1','exp-pub',now()),
                        ('t1','exp-pub2',now()),

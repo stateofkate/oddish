@@ -17,10 +17,8 @@ export async function GET(
     const { task_id } = await params;
 
     const incoming = new URL(request.url).searchParams;
-    const probe = incoming.get("probe");
     const version = incoming.get("version");
     const queryParams: Record<string, string> = {};
-    if (probe !== null) queryParams.probe = probe;
     if (version !== null) queryParams.version = version;
     const url = getBackendUrl(
       "tasks",

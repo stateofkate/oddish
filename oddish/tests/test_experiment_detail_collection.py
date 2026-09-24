@@ -31,7 +31,6 @@ def _trial(
     home_experiment: ExperimentModel,
     *,
     org_id: str = "org1",
-    is_probe: bool = False,
 ) -> TrialModel:
     trial_id = generate_id()
     return TrialModel(
@@ -44,7 +43,6 @@ def _trial(
         provider="openai",
         queue_key="openai/gpt-5.5",
         model="gpt-5.5",
-        is_probe=is_probe,
     )
 
 
@@ -84,28 +82,3 @@ async def test_trial_page_collapses_gathered_combine_copies(session, source_id):
         session, experiment_id=lone_copy.id, org_id="org1"
     )
     assert {trial.id for trial in page.trials} == {copy.id}
-
-
-@pytest.mark.asyncio
-async def test_trial_page_excludes_probe_gathered_trials(session):
-    task = _task("detail-collection-task-2")
-    session.add(task)
-    await session.flush()
-
-    home = _experiment("home-detail-2")
-    session.add(home)
-    await session.flush()
-
-    probe = _trial(task, home, org_id="org1", is_probe=True)
-    session.add(probe)
-    await session.flush()
-
-    coll = await create_trial_collection_core(
-        session, name="c", trial_ids=[probe.id], org_id="org1"
-    )
-    await session.flush()
-
-    page = await get_experiment_trial_page_core(
-        session, experiment_id=coll.id, org_id="org1"
-    )
-    assert probe.id not in {trial.id for trial in page.trials}

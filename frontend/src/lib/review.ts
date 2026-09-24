@@ -41,7 +41,6 @@ export const REVIEW_LABELS = VERDICT_LABELS;
 /** Exclude internal, superseded, and baseline runs from review coverage. */
 export function isReviewableTrial(trial: Trial): boolean {
   return (
-    !trial.is_probe &&
     (trial.kind ?? "agent") === "agent" &&
     !trial.superseded_by_trial_id &&
     !isBaselineAgentName(trial.agent)

@@ -27,7 +27,6 @@ def _group() -> dict[str, object]:
         "is_selected": True,
         "is_current": True,
         "is_billed": False,
-        "is_probe": False,
         "agent": "codex",
         "provider": "openai",
         "model": "openai/gpt-5.6",

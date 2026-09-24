@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any
 
-from sqlalchemy import Integer, case, func, select
+from sqlalchemy import Integer, case, func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,10 +12,6 @@ from oddish.core.task_browse_metrics import (
     browse_trial_scope,
     trial_bucket_label,
     run_summary_columns,
-)
-from oddish.core.task_version_model_metrics import (
-    lock_task_version_metrics,
-    refresh_task_version_model_metrics,
 )
 from oddish.schemas import TaskRunSummary
 from oddish.db import (
@@ -80,13 +76,29 @@ def _empty_summary(task_id: str, version_id: str) -> dict:
 def _steps_percentile(fraction: float) -> Any:
     """Discrete percentile of ``trials.total_steps`` over the group.
 
-    ``percentile_disc`` returns a step count some trial actually had (see
-    ``task_version_model_metrics._median``); NULL step counts are ignored, so
-    the result is NULL only when no trial in the group recorded steps.
+    ``percentile_disc`` returns a step count some trial actually had, never an
+    interpolated one; NULL step counts are ignored, so the result is NULL only
+    when no trial in the group recorded steps.
     """
     return func.cast(
         func.percentile_disc(fraction).within_group(TrialModel.total_steps.asc()),
         Integer,
+    )
+
+
+async def lock_task_version_metrics(
+    session: AsyncSession, version_ids: list[str]
+) -> None:
+    """Acquire the callers' sorted version locks in one database round trip."""
+    await session.execute(
+        text(
+            "WITH ordered AS MATERIALIZED ("
+            " SELECT version_id FROM unnest(CAST(:version_ids AS text[]))"
+            " WITH ORDINALITY AS versions(version_id, position) ORDER BY position"
+            ") SELECT pg_advisory_xact_lock(hashtextextended(version_id, 0))"
+            " FROM ordered"
+        ),
+        {"version_ids": version_ids},
     )
 
 
@@ -207,8 +219,3 @@ async def refresh_task_browse_summaries(
             | {"updated_at": func.now()},
         )
     )
-
-    # The per-model rollup is invalidated by exactly the same events, so it
-    # rides this refresh rather than duplicating the hook at all 18 call sites.
-    # Runs under the advisory locks taken above.
-    await refresh_task_version_model_metrics(session, list(summaries))

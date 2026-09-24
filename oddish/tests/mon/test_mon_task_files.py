@@ -46,8 +46,7 @@ def prepare(monkeypatch, tmp_path, offline_prepare_task):
     monitor_env = env.MonitorEnv(api_url="https://api.test", token="job-1.1.secret")
 
     class _Client:
-        async def skills(self):
-            return []
+        pass
 
     async def prepare(spec: AttemptSpec) -> runner.PreparedTask:
         workdir = tmp_path / "work"

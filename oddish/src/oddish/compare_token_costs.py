@@ -50,7 +50,6 @@ _COST_COMPARISON = text(
           t.billed_user_id IS NOT NULL
           OR (
               t.origin::text = 'oddish'
-              AND t.is_probe IS FALSE
               AND (
                   t.idempotency_key IS NULL
                   OR t.idempotency_key NOT LIKE 'combine:%'

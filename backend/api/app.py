@@ -311,7 +311,6 @@ def create_app() -> FastAPI:
         cost_excluded_models,
         dashboard,
         deliveries,
-        documents,
         feedback,
         github_linkage,
         github_webhooks,
@@ -321,7 +320,6 @@ def create_app() -> FastAPI:
         notifications,
         orgs,
         qa_work,
-        skills,
         public,
         public_analysis,
         qa_eval,
@@ -346,8 +344,6 @@ def create_app() -> FastAPI:
     api.include_router(trials.router)
     api.include_router(imports.router)
     api.include_router(load.router)
-    api.include_router(skills.router)
-    api.include_router(documents.router)
     api.include_router(feedback.router)
     api.include_router(deliveries.router)
     api.include_router(qa_work.router)

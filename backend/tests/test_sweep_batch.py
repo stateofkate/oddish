@@ -71,9 +71,9 @@ async def _reset_schema_and_seed_tasks(engine, task_ids: list[str]) -> None:
                 text(
                     "insert into tasks "
                     '(id,name,org_id,"user",priority,status,task_path,tags,'
-                    "run_analysis,run_probe,created_at,updated_at) "
+                    "run_analysis,created_at,updated_at) "
                     "values (:id,:id,:org,'u','LOW','COMPLETED','p',"
-                    "'{}'::jsonb,false,false,now(),now())"
+                    "'{}'::jsonb,false,now(),now())"
                 ),
                 {"id": task_id, "org": ORG_ID},
             )

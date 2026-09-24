@@ -2,7 +2,6 @@
 
 Schema is built with ``Base.metadata.create_all`` on an empty Postgres
 (``ODDISH_DATABASE_URL``); skips when unset. Covers:
-- probe runs must not pollute browse aggregates, ordering, or chips
 - user-typed LIKE wildcards (%, _, \\) are literals, not patterns
 - the free-text grammar: terms AND in any order, "quoted phrase", -exclusion
 """
@@ -42,21 +41,19 @@ async def _setup(engine):
             insert into organizations (id,name,slug,plan,settings,is_active,created_at,updated_at)
             values ('org1','O','o','free','{}'::jsonb,true,now(),now());
             insert into experiments (id,name,org_id,is_public,created_at,updated_at)
-            values ('exp-real','Real Exp','org1',false,now(),now()),
-                   ('exp-probe','Probe Exp','org1',false,now(),now());
-            insert into tasks (id,name,org_id,"user",priority,status,task_path,tags,run_analysis,run_probe,created_at,updated_at)
-            values ('t-old','older-task','org1','u','LOW','COMPLETED','p','{}'::jsonb,false,false,now() - interval '2 day',now()),
-                   ('t-new','newer-task','org1','u','LOW','COMPLETED','p','{}'::jsonb,false,false,now() - interval '1 day',now()),
-                   ('t-pct','match 100% done','org1','u','LOW','COMPLETED','p','{}'::jsonb,false,false,now(),now()),
-                   ('t-und','under_score','org1','u','LOW','COMPLETED','p','{}'::jsonb,false,false,now(),now());
+            values ('exp-real','Real Exp','org1',false,now(),now());
+            insert into tasks (id,name,org_id,"user",priority,status,task_path,tags,run_analysis,created_at,updated_at)
+            values ('t-old','older-task','org1','u','LOW','COMPLETED','p','{}'::jsonb,false,now() - interval '2 day',now()),
+                   ('t-new','newer-task','org1','u','LOW','COMPLETED','p','{}'::jsonb,false,now() - interval '1 day',now()),
+                   ('t-pct','match 100% done','org1','u','LOW','COMPLETED','p','{}'::jsonb,false,now(),now()),
+                   ('t-und','under_score','org1','u','LOW','COMPLETED','p','{}'::jsonb,false,now(),now());
             insert into task_versions (id,task_id,version,task_path,created_at,updated_at)
             values ('v-old','t-old',1,'p',now(),now()),
                    ('v-new','t-new',1,'p',now(),now());
             update tasks set current_version_id='v-old' where id='t-old';
             update tasks set current_version_id='v-new' where id='t-new';
-            insert into trials (id,name,task_id,task_version_id,experiment_id,org_id,agent,provider,queue_key,timeout_minutes,environment,harbor_config,status,origin,is_probe,reward,finished_at,attempts,max_attempts,heartbeat_failure_count,has_trajectory,created_at,updated_at)
-            values ('tr-real','tr-real','t-new','v-new','exp-real','org1','claude','anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',false,1.0,now() - interval '1 day',1,6,0,false,now() - interval '1 day',now()),
-                   ('tr-probe','tr-probe','t-old','v-old','exp-probe','org1','claude','anthropic','q',30,'modal','{}'::jsonb,'FAILED','oddish',true,0.0,now(),1,6,0,false,now(),now());
+            insert into trials (id,name,task_id,task_version_id,experiment_id,org_id,agent,provider,queue_key,timeout_minutes,environment,harbor_config,status,origin,reward,finished_at,attempts,max_attempts,heartbeat_failure_count,has_trajectory,created_at,updated_at)
+            values ('tr-real','tr-real','t-new','v-new','exp-real','org1','claude','anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',1.0,now() - interval '1 day',1,6,0,false,now() - interval '1 day',now());
             insert into task_experiments (task_id,experiment_id,created_at)
             values ('t-new','exp-real',now());
         """
@@ -66,38 +63,6 @@ async def _setup(engine):
     async with async_sessionmaker(engine, expire_on_commit=False)() as session:
         await refresh_task_browse_summaries(session, ["v-old", "v-new"])
         await session.commit()
-
-
-async def test_probe_runs_do_not_pollute_browse():
-    engine = create_async_engine(URL)
-    maker = async_sessionmaker(engine, expire_on_commit=False)
-    try:
-        await _setup(engine)
-        async with maker() as session:
-            resp = await browse_tasks_core(session, org_id=ORG, limit=10, offset=0)
-        items = {i.name: i for i in resp.items}
-
-        old = items["older-task"]
-        # the probe FAILED run must not count as a trial or a failure ...
-        assert old.total_trials == 0
-        assert old.failed_trials == 0
-        # ... must not surface as a latest-trial chip. Experiment chips now come
-        # from task_experiments membership (all-time, matching the task-detail
-        # page), not from trials; the probe-only task has no membership row.
-        assert old.latest_trials == []
-        assert old.experiments == []
-
-        # ... and must not drive ordering: t-old's only activity is the probe
-        # (most recent event), so without the fix it sorts ABOVE t-new.
-        names = [i.name for i in resp.items]
-        assert names.index("newer-task") < names.index("older-task")
-
-        new = items["newer-task"]
-        assert new.total_trials == 1  # the real trial still counts
-        # surfaced via its task_experiments membership row
-        assert [e.name for e in new.experiments] == ["Real Exp"]
-    finally:
-        await engine.dispose()
 
 
 async def _setup_combine(engine):
@@ -111,14 +76,14 @@ async def _setup_combine(engine):
             insert into experiments (id,name,org_id,is_public,created_at,updated_at)
             values ('exp-a','Exp A','org1',false,now(),now()),
                    ('exp-b','Exp B','org1',false,now(),now());
-            insert into tasks (id,name,org_id,"user",priority,status,task_path,tags,run_analysis,run_probe,created_at,updated_at)
-            values ('t-c','combine-task','org1','u','LOW','COMPLETED','p','{}'::jsonb,false,false,now(),now());
+            insert into tasks (id,name,org_id,"user",priority,status,task_path,tags,run_analysis,created_at,updated_at)
+            values ('t-c','combine-task','org1','u','LOW','COMPLETED','p','{}'::jsonb,false,now(),now());
             insert into task_versions (id,task_id,version,task_path,created_at,updated_at)
             values ('v-c','t-c',1,'p',now(),now());
             update tasks set current_version_id='v-c' where id='t-c';
-            insert into trials (id,name,task_id,task_version_id,experiment_id,org_id,agent,model,provider,queue_key,timeout_minutes,environment,harbor_config,status,origin,is_probe,reward,idempotency_key,finished_at,attempts,max_attempts,heartbeat_failure_count,has_trajectory,created_at,updated_at)
-            values ('tr-src','tr-src','t-c','v-c','exp-a','org1','claude','sonnet','anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',false,1.0,null,now(),1,6,0,false,now(),now()),
-                   ('tr-combine','tr-combine','t-c','v-c','exp-b','org1','claude','sonnet','anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',false,1.0,'combine:exp-b:tr-src',now(),1,6,0,false,now(),now());
+            insert into trials (id,name,task_id,task_version_id,experiment_id,org_id,agent,model,provider,queue_key,timeout_minutes,environment,harbor_config,status,origin,reward,idempotency_key,finished_at,attempts,max_attempts,heartbeat_failure_count,has_trajectory,created_at,updated_at)
+            values ('tr-src','tr-src','t-c','v-c','exp-a','org1','claude','sonnet','anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',1.0,null,now(),1,6,0,false,now(),now()),
+                   ('tr-combine','tr-combine','t-c','v-c','exp-b','org1','claude','sonnet','anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',1.0,'combine:exp-b:tr-src',now(),1,6,0,false,now(),now());
             insert into task_experiments (task_id,experiment_id,created_at)
             values ('t-c','exp-a',now()),('t-c','exp-b',now());
         """
@@ -161,15 +126,15 @@ async def test_default_browse_preview_is_bounded_but_totals_are_exact():
                     INSERT INTO trials (
                         id, name, task_id, task_version_id, experiment_id, org_id,
                         agent, model, provider, queue_key, timeout_minutes,
-                        environment, harbor_config, status, origin, is_probe,
+                        environment, harbor_config, status, origin,
                         reward, cost_usd, billed_user_id, finished_at, attempts,
                         max_attempts, heartbeat_failure_count, has_trajectory,
                         created_at, updated_at
                     )
                     SELECT 'tr-extra-' || n, 'tr-extra-' || n, 't-c', 'v-c',
                            'exp-a', 'org1', 'claude', 'sonnet', 'anthropic', 'q',
-                           30, 'modal', '{}'::jsonb, 'SUCCESS', 'oddish', false,
-                           1.0, 1.0,
+                           30, 'modal', '{}'::jsonb, 'SUCCESS', 'oddish', 1.0,
+                           1.0,
                            CASE WHEN n % 2 = 0 THEN 'user-billed' END,
                            NOW() + n * interval '1 second', 1, 6, 0,
                            false, NOW() + n * interval '1 second', NOW()
@@ -221,13 +186,13 @@ async def test_experiment_delete_refreshes_surviving_task_summaries():
                     INSERT INTO trials (
                         id, name, task_id, task_version_id, experiment_id, org_id,
                         agent, model, provider, queue_key, timeout_minutes,
-                        environment, harbor_config, status, origin, is_probe,
+                        environment, harbor_config, status, origin,
                         reward, finished_at, attempts, max_attempts,
                         heartbeat_failure_count, has_trajectory, created_at, updated_at
                     ) VALUES (
                         'tr-b', 'tr-b', 't-c', 'v-c', 'exp-b', 'org1',
                         'claude', 'sonnet', 'anthropic', 'q', 30, 'modal',
-                        '{}'::jsonb, 'SUCCESS', 'oddish', false, 1.0, NOW(),
+                        '{}'::jsonb, 'SUCCESS', 'oddish', 1.0, NOW(),
                         1, 6, 0, false, NOW(), NOW()
                     )
                     """
@@ -270,13 +235,13 @@ async def test_summary_refresh_serializes_concurrent_settlements():
                 INSERT INTO trials (
                     id, name, task_id, task_version_id, experiment_id, org_id,
                     agent, model, provider, queue_key, timeout_minutes,
-                    environment, harbor_config, status, origin, is_probe,
+                    environment, harbor_config, status, origin,
                     reward, finished_at, attempts, max_attempts,
                     heartbeat_failure_count, has_trajectory, created_at, updated_at
                 ) VALUES (
                     :trial_id, :trial_id, 't-c', 'v-c', 'exp-a', 'org1',
                     'claude', 'sonnet', 'anthropic', 'q', 30, 'modal',
-                    '{}'::jsonb, 'SUCCESS', 'oddish', false, 1, NOW(),
+                    '{}'::jsonb, 'SUCCESS', 'oddish', 1, NOW(),
                     1, 6, 0, false, NOW(), NOW()
                 )
                 """
@@ -340,13 +305,13 @@ async def test_selected_default_version_changes_card_immediately():
                     INSERT INTO trials (
                         id, name, task_id, task_version_id, experiment_id, org_id,
                         agent, model, provider, queue_key, timeout_minutes,
-                        environment, harbor_config, status, origin, is_probe,
+                        environment, harbor_config, status, origin,
                         reward, finished_at, attempts, max_attempts,
                         heartbeat_failure_count, has_trajectory, created_at, updated_at
                     ) VALUES (
                         'tr-v2', 'tr-v2', 't-c', 'v-c-2', 'exp-a', 'org1',
                         'claude', 'sonnet', 'anthropic', 'q', 30, 'modal',
-                        '{}'::jsonb, 'SUCCESS', 'oddish', false, 0.0, NOW(),
+                        '{}'::jsonb, 'SUCCESS', 'oddish', 0.0, NOW(),
                         1, 6, 0, false, NOW(), NOW()
                     )
                     """

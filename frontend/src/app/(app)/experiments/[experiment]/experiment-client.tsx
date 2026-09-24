@@ -1,13 +1,6 @@
 "use client";
 
-import {
-  Suspense,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import { useAuth } from "@clerk/nextjs";
@@ -15,10 +8,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { ExperimentShareButton } from "@/components/experiment-share-button";
-import {
-  ProbeLaunchButton,
-  resolveProbeHostTask,
-} from "@/components/probe-launch-button";
 import { ExperimentDetailView } from "@/components/experiment-detail-view";
 import { ExperimentDescription } from "@/components/experiment-description";
 import { ExperimentResultsStatus } from "@/components/experiment-results-status";
@@ -30,10 +19,6 @@ import { isOrgAdminRole } from "@/lib/org-roles";
 import { Pencil } from "lucide-react";
 import { encodeExperimentRouteParam } from "@/lib/utils";
 import { ExperimentPageSkeleton } from "@/components/experiment-page-skeleton";
-
-// Shared by the experiment header action buttons so they render identically.
-const HEADER_ACTION_BUTTON_CLASS =
-  "h-8 select-none gap-[7px] rounded-[7px] border border-[color:var(--paper-line)] bg-[color:var(--paper-surface)] px-3 text-[12px] leading-none text-[color:var(--paper-ink)] transition-colors hover:border-[color:var(--paper-ink-4)] hover:bg-[color:var(--paper-surface-2)]";
 
 type ExperimentClientPageProps = {
   experimentId: string;
@@ -81,7 +66,7 @@ function ExperimentContent({ experimentId }: ExperimentClientPageProps) {
 
   // What the experiment SPENT. The streamed results can still be arriving, and
   // they're filtered to each task's current version (so they omit earlier
-  // versions, superseded retries and probes, all of which were still billed).
+  // versions and superseded retries, all of which were still billed).
   const costTotalsKey = experimentId
     ? `/api/experiments/${encodedId}/cost-totals`
     : null;
@@ -104,11 +89,6 @@ function ExperimentContent({ experimentId }: ExperimentClientPageProps) {
 
   const hasFatalTaskLoadError = Boolean(openError) && !experimentOpen;
 
-  const probeHostTask = useMemo(
-    () => resolveProbeHostTask(tasksForExperiment),
-    [tasksForExperiment]
-  );
-
   const experimentName = experimentOpen?.name ?? "";
   const displayName = experimentName || experimentId || "Experiment";
   const initialName = experimentName || experimentId || "";
@@ -130,7 +110,7 @@ function ExperimentContent({ experimentId }: ExperimentClientPageProps) {
   // is gone while the cost tiles still show the pre-delete rollup. Do NOT
   // "fix" that by optimistically subtracting the removed trials' cost: the only
   // trials on the client are the ones the grid renders, and the rollup also
-  // counts that task's probes, superseded retries and earlier-version trials.
+  // counts that task's superseded retries and earlier-version trials.
   // Subtracting the visible ones would leave the tile too LOW -- a spend number
   // derived from the visible rows, which is the bug this endpoint exists to
   // remove. Refetching is the correct (and self-healing) answer.
@@ -400,15 +380,6 @@ function ExperimentContent({ experimentId }: ExperimentClientPageProps) {
           headerRight={
             experimentId ? (
               <div className="flex items-center gap-2">
-                {probeHostTask ? (
-                  <ProbeLaunchButton
-                    taskId={probeHostTask.id}
-                    taskName={probeHostTask.name}
-                    variant="labeled"
-                    label="Probe"
-                    className={HEADER_ACTION_BUTTON_CLASS}
-                  />
-                ) : null}
                 <ExperimentShareButton
                   experimentId={experimentId}
                   canManageShare={canManageExperimentShare}

@@ -20,7 +20,6 @@ const hasClerkEnv = !!CLERK_EMAIL && !!CLERK_SECRET && !!CLERK_PUBLISHABLE;
 const TASK_ID = "task-p1-snapshot";
 const TRIAL_ID = "trial-p1-snapshot";
 const SECOND_TRIAL_ID = "trial-p1-second";
-const PROBE_TRIAL_ID = "trial-p1-probe";
 const FAILED_DETAIL_TASK_ID = "task-p1-failed-detail";
 const NOW = "2026-08-10T20:00:00Z";
 
@@ -56,23 +55,6 @@ const trial: Trial = {
   created_at: NOW,
   started_at: "2026-08-10T20:00:00Z",
   finished_at: "2026-08-10T20:00:04Z",
-};
-
-const probeTrial: Trial = {
-  ...trial,
-  id: PROBE_TRIAL_ID,
-  name: "probe-p1",
-  agent: "nop",
-  provider: "",
-  model: null,
-  reward: 1,
-  result: {},
-  analysis_status: null,
-  analysis: null,
-  analysis_started_at: null,
-  analysis_finished_at: null,
-  has_trajectory: false,
-  is_probe: true,
 };
 
 const secondTrial: Trial = {
@@ -161,7 +143,6 @@ const canonicalTaskOpen = {
             agent: trial.agent,
             model: trial.model,
             providers: [trial.provider],
-            is_probe: false,
             trial_count: 1,
             completed_count: 1,
             failed_count: 0,
@@ -181,33 +162,6 @@ const canonicalTaskOpen = {
             billed_has_estimated: false,
             billed_has_native: true,
             last_run_at: trial.finished_at,
-            duration_sum_seconds: 4,
-            duration_trial_count: 1,
-          },
-          {
-            agent: probeTrial.agent,
-            model: probeTrial.model,
-            providers: [probeTrial.provider],
-            is_probe: true,
-            trial_count: 1,
-            completed_count: 1,
-            failed_count: 0,
-            skipped_count: 0,
-            pending_count: 0,
-            pass_count: 1,
-            partial_count: 0,
-            fail_count: 0,
-            reward_sum: 1,
-            reward_total: 1,
-            cost_usd: probeTrial.cost_usd ?? 0,
-            cost_trial_count: 1,
-            cost_has_estimated: false,
-            cost_has_native: true,
-            billed_cost_usd: 0,
-            billed_trial_count: 0,
-            billed_has_estimated: false,
-            billed_has_native: false,
-            last_run_at: probeTrial.finished_at,
             duration_sum_seconds: 4,
             duration_trial_count: 1,
           },
@@ -260,7 +214,7 @@ const taskDetail: TaskDetailResponse = {
     current_version_id: "version-p1",
     trial_version: 1,
     trial_version_id: "version-p1",
-    trials: [trial, secondTrial, probeTrial],
+    trials: [trial, secondTrial],
     user_tags: [],
     created_at: NOW,
     updated_at: NOW,
@@ -453,7 +407,7 @@ test.describe("critical task and trial subtree", () => {
     await page.route(
       new RegExp(`/api/tasks/${TASK_ID}/trials(?:\\?|$)`),
       async (route) => {
-        await route.fulfill({ json: [trial, secondTrial, probeTrial] });
+        await route.fulfill({ json: [trial, secondTrial] });
       }
     );
     await page.route(
@@ -579,12 +533,6 @@ test.describe("critical task and trial subtree", () => {
             final_metrics: null,
           },
         });
-      }
-    );
-    await page.route(
-      new RegExp(`/api/trials/${PROBE_TRIAL_ID}(?:\\?|$)`),
-      async (route) => {
-        await route.fulfill({ json: probeTrial });
       }
     );
     await page.route(

@@ -78,16 +78,12 @@ def _resolved(*, show_qa=True):
         current_version_id="task-1-v2",
         trials=[
             SimpleNamespace(
-                id="live-trial", task_version_id="task-1-v1", is_probe=False,
+                id="live-trial", task_version_id="task-1-v1",
                 superseded_by_trial_id=None, experiment_id="shared-exp",
             ),
             SimpleNamespace(
-                id="old-trial", task_version_id="task-1-v3", is_probe=False,
+                id="old-trial", task_version_id="task-1-v3",
                 superseded_by_trial_id="replacement", experiment_id="shared-exp",
-            ),
-            SimpleNamespace(
-                id="probe-trial", task_version_id="task-1-v4", is_probe=True,
-                superseded_by_trial_id=None, experiment_id="shared-exp",
             ),
         ],
     )

@@ -325,7 +325,6 @@ test("analysis progress separates completed classifications from failed and pend
       }),
       trial({ analysis_status: "success" }),
       trial({ agent: "oracle" }),
-      trial({ is_probe: true }),
       trial({ kind: "qa" }),
       trial({ superseded_by_trial_id: "replacement" }),
       trial({ task_version_id: "v2" }),

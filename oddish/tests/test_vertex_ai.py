@@ -383,7 +383,7 @@ def test_effective_model_comes_from_the_stored_agent_config(
     built = _build_agent_config(agent="gemini-cli", model=None, raw_harbor_config=raw)
     assert built.env["ODDISH_VERTEX_AI_MODE"] == "service_account"
     overrides = ephemeral._runtime_env_overrides(
-        agent="gemini-cli", model=None, raw_harbor_config=raw, is_probe=False
+        agent="gemini-cli", model=None, raw_harbor_config=raw
     )
     assert overrides["CLAUDE_CODE_USE_BEDROCK"] == ""
     payload = ephemeral._build_payload(
@@ -394,7 +394,6 @@ def test_effective_model_comes_from_the_stored_agent_config(
         model=None,
         environment_config=EnvironmentConfig(type=EnvironmentType.MODAL),
         raw_harbor_config=raw,
-        is_probe=False,
     )
     assert payload["vertex_ai"] is not None
     assert payload["vertex_ai"]["worker_path"]
@@ -414,7 +413,6 @@ def test_effective_model_comes_from_the_stored_agent_config(
         model=None,
         environment_config=EnvironmentConfig(type=EnvironmentType.MODAL),
         raw_harbor_config=raw,
-        is_probe=False,
     )
     assert restricted["agent_config"]["extra_allowed_hosts"] == [
         "aiplatform.googleapis.com",
@@ -863,20 +861,17 @@ def test_restricted_antigravity_profile_accepts_the_marked_profile(service_accou
 
 
 def test_claude_profile_keeps_the_token_host_with_a_vertex_override(service_account):
-    from oddish.workers.agents.claude_code import OddishClaudeCode
+    from harbor.agents.installed.claude_code import ClaudeCode
     from oddish.workers.harbor.restricted_network import _claude_profile
 
-    config = AgentConfig(
-        import_path="oddish.workers.agents.claude_code:OddishClaudeCode",
-        model_name="vertex_ai/claude-sonnet-5",
-    )
+    config = AgentConfig(name="claude-code", model_name="vertex_ai/claude-sonnet-5")
     env = vertex_ai.vertex_ai_agent_env(service_account, config.model_name)
-    assert _claude_profile(OddishClaudeCode, config, env).outbound_hosts == (
+    assert _claude_profile(ClaudeCode, config, env).outbound_hosts == (
         "aiplatform.googleapis.com",
         "oauth2.googleapis.com",
     )
     override = dict(env, ANTHROPIC_VERTEX_BASE_URL="https://vertex-gateway.example")
-    assert _claude_profile(OddishClaudeCode, config, override).outbound_hosts == (
+    assert _claude_profile(ClaudeCode, config, override).outbound_hosts == (
         "vertex-gateway.example",
         "oauth2.googleapis.com",
     )
@@ -889,20 +884,17 @@ def test_vertex_override_is_consumed_only_on_a_vertex_trial():
     "does not consume" guard instead of replacing the Anthropic or Bedrock
     allowlist with a caller-chosen host.
     """
-    from oddish.workers.agents.claude_code import OddishClaudeCode
+    from harbor.agents.installed.claude_code import ClaudeCode
     from oddish.workers.harbor.restricted_network import (
         RestrictedNetworkProfileError,
         _claude_profile,
     )
 
     for model in ("global.anthropic.claude-sonnet-5", "claude-sonnet-5"):
-        config = AgentConfig(
-            import_path="oddish.workers.agents.claude_code:OddishClaudeCode",
-            model_name=model,
-        )
+        config = AgentConfig(name="claude-code", model_name=model)
         with pytest.raises(RestrictedNetworkProfileError, match="does not consume"):
             _claude_profile(
-                OddishClaudeCode,
+                ClaudeCode,
                 config,
                 {"ANTHROPIC_VERTEX_BASE_URL": "https://vertex-gateway.example"},
             )
@@ -1201,7 +1193,6 @@ def test_ephemeral_payload_carries_the_plan_but_never_the_worker_path_in_runtime
             model=model,
             environment_config=EnvironmentConfig(type=EnvironmentType.MODAL),
             raw_harbor_config={"agent_config": {"name": agent, "model_name": model}},
-            is_probe=False,
         )
 
     monkeypatch.setattr(settings, "vertex_ai_credentials_json", SecretStr(_SA_JSON))
@@ -1236,7 +1227,6 @@ def test_ephemeral_runtime_env_blanks_bedrock_for_vertex(service_account):
         agent="claude-code",
         model="vertex_ai/claude-sonnet-5",
         raw_harbor_config={},
-        is_probe=False,
     )
     assert (
         env["CLAUDE_CODE_USE_BEDROCK"] == "" and env["AWS_BEARER_TOKEN_BEDROCK"] == ""

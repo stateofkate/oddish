@@ -12,8 +12,7 @@ Dataset (org1):
 - beta   RUNNING, no link, created now; 1 real trial
          (codex / docker / FAILED / reward 0.0 / 300k tokens / 200 steps /
          no trajectory / error "boom").
-- gamma  COMPLETED, created now; ONLY a probe trial (gemini-cli). Probe
-         trials must be invisible to every default trial filter.
+- gamma  COMPLETED, created now; no trials, so it matches no trial filter.
 """
 
 # Task-browser filters (Phase 1.1.1 → 2.3, no migration).
@@ -58,11 +57,11 @@ async def _setup(engine):
             values ('org1','O','o','free','{}'::jsonb,true,now(),now());
             insert into experiments (id,name,org_id,is_public,created_at,updated_at)
             values ('exp-real','Real Exp','org1',false,now(),now()),
-                   ('exp-probe','Probe Exp','org1',false,now(),now());
-            insert into tasks (id,name,org_id,"user",priority,status,task_path,link,tags,run_analysis,run_probe,created_at,updated_at)
-            values ('t-a','alpha','org1','u','LOW','COMPLETED','p','http://x','{}'::jsonb,false,false,now() - interval '2 day',now()),
-                   ('t-b','beta','org1','u','LOW','RUNNING','p',null,'{}'::jsonb,false,false,now(),now()),
-                   ('t-c','gamma','org1','u','LOW','COMPLETED','p',null,'{}'::jsonb,false,false,now(),now());
+                   ('exp-other','Other Exp','org1',false,now(),now());
+            insert into tasks (id,name,org_id,"user",priority,status,task_path,link,tags,run_analysis,created_at,updated_at)
+            values ('t-a','alpha','org1','u','LOW','COMPLETED','p','http://x','{}'::jsonb,false,now() - interval '2 day',now()),
+                   ('t-b','beta','org1','u','LOW','RUNNING','p',null,'{}'::jsonb,false,now(),now()),
+                   ('t-c','gamma','org1','u','LOW','COMPLETED','p',null,'{}'::jsonb,false,now(),now());
             insert into task_versions (id,task_id,version,task_path,created_at,updated_at)
             values ('v-a','t-a',1,'p',now(),now()),
                    ('v-a-old','t-a',0,'p',now(),now()),
@@ -71,12 +70,11 @@ async def _setup(engine):
             update tasks set current_version_id='v-a' where id='t-a';
             update tasks set current_version_id='v-b' where id='t-b';
             update tasks set current_version_id='v-c' where id='t-c';
-            insert into trials (id,name,task_id,task_version_id,experiment_id,org_id,agent,provider,queue_key,timeout_minutes,environment,harbor_config,status,origin,is_probe,reward,error_message,input_tokens,output_tokens,cache_tokens,total_steps,has_trajectory,finished_at,attempts,max_attempts,heartbeat_failure_count,created_at,updated_at)
+            insert into trials (id,name,task_id,task_version_id,experiment_id,org_id,agent,provider,queue_key,timeout_minutes,environment,harbor_config,status,origin,reward,error_message,input_tokens,output_tokens,cache_tokens,total_steps,has_trajectory,finished_at,attempts,max_attempts,heartbeat_failure_count,created_at,updated_at)
             values
-              ('tr-a','tr-a','t-a','v-a','exp-real','org1','claude-code','anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',false,1.0,null,1000,500,0,20,true,now() - interval '1 day',1,6,0,now() - interval '1 day',now()),
-              ('tr-b','tr-b','t-b','v-b','exp-real','org1','codex','openai','q',30,'docker','{}'::jsonb,'FAILED','oddish',false,0.0,'boom',200000,100000,0,200,false,now(),3,6,0,now(),now()),
-              ('tr-c','tr-c','t-c','v-c','exp-probe','org1','gemini-cli','google','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',true,1.0,null,100,100,0,5,true,now(),1,6,0,now(),now()),
-              ('tr-a-old','tr-a-old','t-a','v-a-old','exp-real','org1','legacy-agent','anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',false,1.0,null,100,50,0,10,true,now() - interval '3 day',1,6,0,now() - interval '3 day',now());
+              ('tr-a','tr-a','t-a','v-a','exp-real','org1','claude-code','anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',1.0,null,1000,500,0,20,true,now() - interval '1 day',1,6,0,now() - interval '1 day',now()),
+              ('tr-b','tr-b','t-b','v-b','exp-real','org1','codex','openai','q',30,'docker','{}'::jsonb,'FAILED','oddish',0.0,'boom',200000,100000,0,200,false,now(),3,6,0,now(),now()),
+              ('tr-a-old','tr-a-old','t-a','v-a-old','exp-real','org1','legacy-agent','anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',1.0,null,100,50,0,10,true,now() - interval '3 day',1,6,0,now() - interval '3 day',now());
             insert into task_experiments (task_id,experiment_id,created_at)
             values ('t-a','exp-real',now()),('t-b','exp-real',now());
         """
@@ -129,12 +127,6 @@ async def test_browse_filters():
             assert await _names(session, min_steps=100) == {"beta"}
             assert await _names(session, reward_min=1.0) == {"alpha"}
             assert await _names(session, reward_max=0.0) == {"beta"}
-
-            # Probe trials are invisible to the default trial filters: gamma's
-            # only trial is a probe, so it must never match a trial filter ...
-            assert await _names(session, agents=["gemini-cli"]) == set()
-            # ... but trial_is_probe opts back into them.
-            assert await _names(session, trial_is_probe=True) == {"gamma"}
     finally:
         await engine.dispose()
 
@@ -149,9 +141,8 @@ async def test_browse_facets_scope():
             # from the same trial population the browse filters match.
             await rebuild_trial_facets_core(session)
             facets = await browse_task_facets_core(session, org_id=ORG)
-        # Only current-version, non-probe, non-superseded trials contribute.
-        # So 'gemini-cli' (probe) and 'legacy-agent' (on an old, non-current
-        # version) must NOT appear.
+        # Only current-version, non-superseded trials contribute. So
+        # 'legacy-agent' (on an old, non-current version) must NOT appear.
         assert set(facets.agents) == {"claude-code", "codex"}
         pairs = {(p.agent, p.model) for p in facets.agent_models}
         assert pairs == {("claude-code", None), ("codex", None)}
@@ -220,7 +211,7 @@ async def test_experiment_options():
             assert resp.items == []
 
             # ids= hydration returns named rows and wins over query.
-            resp = await opts(session, org_id=ORG, ids=["exp-real"], query="probe")
+            resp = await opts(session, org_id=ORG, ids=["exp-real"], query="other")
             assert [(o.id, o.name) for o in resp.items] == [("exp-real", "Real Exp")]
 
             # Hydration is a keyed lookup, not a paged search: every id
@@ -231,13 +222,13 @@ async def test_experiment_options():
             assert len(resp.items) == 60
             # ... duplicate ids don't consume the input cap ...
             resp = await opts(
-                session, org_id=ORG, ids=["exp-real"] * 250 + ["exp-probe"]
+                session, org_id=ORG, ids=["exp-real"] * 250 + ["exp-other"]
             )
-            assert {o.id for o in resp.items} == {"exp-real", "exp-probe"}
+            assert {o.id for o in resp.items} == {"exp-real", "exp-other"}
             # ... and the only truncation point is the documented input cap.
             all_ids = [f"exp-bulk-{i:03d}" for i in range(1, 206)] + [
                 "exp-real",
-                "exp-probe",
+                "exp-other",
             ]
             resp = await opts(session, org_id=ORG, ids=all_ids)
             assert len(resp.items) == 200
@@ -258,15 +249,15 @@ async def _insert_mixed_trial_task(engine):
     """Add task 'delta' whose two current-version real trials are MIXED:
     one errored + one clean, one with a trajectory + one without."""
     stmts = """
-        insert into tasks (id,name,org_id,"user",priority,status,task_path,link,tags,run_analysis,run_probe,created_at,updated_at)
-        values ('t-d','delta','org1','u','LOW','COMPLETED','p',null,'{}'::jsonb,false,false,now(),now());
+        insert into tasks (id,name,org_id,"user",priority,status,task_path,link,tags,run_analysis,created_at,updated_at)
+        values ('t-d','delta','org1','u','LOW','COMPLETED','p',null,'{}'::jsonb,false,now(),now());
         insert into task_versions (id,task_id,version,task_path,created_at,updated_at)
         values ('v-d','t-d',1,'p',now(),now());
         update tasks set current_version_id='v-d' where id='t-d';
-        insert into trials (id,name,task_id,task_version_id,experiment_id,org_id,agent,provider,queue_key,timeout_minutes,environment,harbor_config,status,origin,is_probe,reward,error_message,input_tokens,output_tokens,cache_tokens,total_steps,has_trajectory,finished_at,attempts,max_attempts,heartbeat_failure_count,created_at,updated_at)
+        insert into trials (id,name,task_id,task_version_id,experiment_id,org_id,agent,provider,queue_key,timeout_minutes,environment,harbor_config,status,origin,reward,error_message,input_tokens,output_tokens,cache_tokens,total_steps,has_trajectory,finished_at,attempts,max_attempts,heartbeat_failure_count,created_at,updated_at)
         values
-          ('tr-d1','tr-d1','t-d','v-d','exp-real','org1','claude-code','anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',false,0.5,'kaboom',1000,500,0,20,true,now(),1,6,0,now(),now()),
-          ('tr-d2','tr-d2','t-d','v-d','exp-real','org1','claude-code','anthropic','q',30,'modal','{}'::jsonb,'FAILED','oddish',false,0.5,null,1000,500,0,20,false,now(),1,6,0,now(),now());
+          ('tr-d1','tr-d1','t-d','v-d','exp-real','org1','claude-code','anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',0.5,'kaboom',1000,500,0,20,true,now(),1,6,0,now(),now()),
+          ('tr-d2','tr-d2','t-d','v-d','exp-real','org1','claude-code','anthropic','q',30,'modal','{}'::jsonb,'FAILED','oddish',0.5,null,1000,500,0,20,false,now(),1,6,0,now(),now());
     """
     async with engine.begin() as c:
         for stmt in stmts.split(";"):
@@ -289,10 +280,10 @@ async def _insert_aggregate_tasks(engine):
              not harness).
     """
     stmts = """
-        insert into tasks (id,name,org_id,"user",priority,status,task_path,link,tags,run_analysis,run_probe,created_at,updated_at)
-        values ('t-e','epsilon','org1','u','LOW','COMPLETED','p',null,'{}'::jsonb,false,false,now(),now()),
-               ('t-z','zeta','org1','u','LOW','COMPLETED','p',null,'{}'::jsonb,false,false,now(),now()),
-               ('t-h','eta','org1','u','LOW','COMPLETED','p',null,'{}'::jsonb,false,false,now(),now());
+        insert into tasks (id,name,org_id,"user",priority,status,task_path,link,tags,run_analysis,created_at,updated_at)
+        values ('t-e','epsilon','org1','u','LOW','COMPLETED','p',null,'{}'::jsonb,false,now(),now()),
+               ('t-z','zeta','org1','u','LOW','COMPLETED','p',null,'{}'::jsonb,false,now(),now()),
+               ('t-h','eta','org1','u','LOW','COMPLETED','p',null,'{}'::jsonb,false,now(),now());
         insert into task_versions (id,task_id,version,task_path,created_at,updated_at)
         values ('v-e','t-e',1,'p',now(),now()),
                ('v-z','t-z',1,'p',now(),now()),
@@ -300,15 +291,15 @@ async def _insert_aggregate_tasks(engine):
         update tasks set current_version_id='v-e' where id='t-e';
         update tasks set current_version_id='v-z' where id='t-z';
         update tasks set current_version_id='v-h' where id='t-h';
-        insert into trials (id,name,task_id,task_version_id,experiment_id,org_id,agent,provider,queue_key,timeout_minutes,environment,harbor_config,status,origin,is_probe,reward,error_message,input_tokens,output_tokens,cache_tokens,total_steps,has_trajectory,started_at,finished_at,attempts,max_attempts,heartbeat_failure_count,created_at,updated_at)
+        insert into trials (id,name,task_id,task_version_id,experiment_id,org_id,agent,provider,queue_key,timeout_minutes,environment,harbor_config,status,origin,reward,error_message,input_tokens,output_tokens,cache_tokens,total_steps,has_trajectory,started_at,finished_at,attempts,max_attempts,heartbeat_failure_count,created_at,updated_at)
         values
-          ('te1','te1','t-e','v-e','exp-real','org1','claude-code','anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',false,1.0,null,1000,0,0,10,true,now() - interval '60 second',now(),1,6,0,now(),now()),
-          ('te2','te2','t-e','v-e','exp-real','org1','claude-code','anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',false,0.5,null,2000,0,0,10,true,now() - interval '120 second',now(),1,6,0,now(),now()),
-          ('te3','te3','t-e','v-e','exp-real','org1','claude-code','anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',false,0.0,null,3000,0,0,10,true,now() - interval '30 second',now(),1,6,0,now(),now()),
-          ('tz1','tz1','t-z','v-z','exp-real','org1','codex','openai','q',30,'docker','{}'::jsonb,'FAILED','oddish',false,null,'boom',500,0,0,5,false,now() - interval '10 second',now(),1,6,0,now(),now()),
-          ('tz2','tz2','t-z','v-z','exp-real','org1','claude-code','anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',false,1.0,null,1500,0,0,10,true,now() - interval '20 second',now(),1,6,0,now(),now()),
-          ('th1','th1','t-h','v-h','exp-real','org1','claude-code','anthropic','q',30,'modal','{}'::jsonb,'FAILED','oddish',false,0.5,'AgentTimeoutError: timed out',100,0,0,5,false,now() - interval '5 second',now(),1,6,0,now(),now()),
-          ('th2','th2','t-h','v-h','exp-real','org1','claude-code','anthropic','q',30,'modal','{}'::jsonb,'FAILED','oddish',false,null,'AgentTimeoutError: timed out',100,0,0,5,false,null,null,1,6,0,now(),now());
+          ('te1','te1','t-e','v-e','exp-real','org1','claude-code','anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',1.0,null,1000,0,0,10,true,now() - interval '60 second',now(),1,6,0,now(),now()),
+          ('te2','te2','t-e','v-e','exp-real','org1','claude-code','anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',0.5,null,2000,0,0,10,true,now() - interval '120 second',now(),1,6,0,now(),now()),
+          ('te3','te3','t-e','v-e','exp-real','org1','claude-code','anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',0.0,null,3000,0,0,10,true,now() - interval '30 second',now(),1,6,0,now(),now()),
+          ('tz1','tz1','t-z','v-z','exp-real','org1','codex','openai','q',30,'docker','{}'::jsonb,'FAILED','oddish',null,'boom',500,0,0,5,false,now() - interval '10 second',now(),1,6,0,now(),now()),
+          ('tz2','tz2','t-z','v-z','exp-real','org1','claude-code','anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',1.0,null,1500,0,0,10,true,now() - interval '20 second',now(),1,6,0,now(),now()),
+          ('th1','th1','t-h','v-h','exp-real','org1','claude-code','anthropic','q',30,'modal','{}'::jsonb,'FAILED','oddish',0.5,'AgentTimeoutError: timed out',100,0,0,5,false,now() - interval '5 second',now(),1,6,0,now(),now()),
+          ('th2','th2','t-h','v-h','exp-real','org1','claude-code','anthropic','q',30,'modal','{}'::jsonb,'FAILED','oddish',null,'AgentTimeoutError: timed out',100,0,0,5,false,null,null,1,6,0,now(),now());
     """
     async with engine.begin() as c:
         for stmt in stmts.split(";"):
@@ -318,7 +309,7 @@ async def _insert_aggregate_tasks(engine):
 
 async def test_browse_aggregate_filters():
     """Phase 1.2-lite: HAVING-equivalent aggregate filters over the scoped
-    (current-version, non-probe, non-superseded) trial set."""
+    (current-version, non-superseded) trial set."""
     engine = create_async_engine(URL)
     maker = async_sessionmaker(engine, expire_on_commit=False)
     try:
@@ -331,7 +322,7 @@ async def test_browse_aggregate_filters():
             await session.commit()
         async with maker() as session:
             # Avg score is a PERCENT (0-100). alpha & zeta = 100%, epsilon &
-            # eta = 50%, beta = 0%, gamma = NULL (probe-only -> excluded).
+            # eta = 50%, beta = 0%, gamma = NULL (no trials).
             assert await _names(session, avg_score_min=90) == {"alpha", "zeta"}
             assert await _names(session, avg_score_max=10) == {"beta"}
             assert await _names(session, avg_score_min=40, avg_score_max=60) == {
@@ -393,7 +384,7 @@ async def test_browse_aggregate_sort():
             )
             names = [item.name for item in resp.items]
         # 100% (alpha/zeta) before 50% (epsilon/eta) before 0% (beta); the
-        # probe-only NULL-metric task (gamma) sorts last (nulls_last).
+        # trial-less NULL-metric task (gamma) sorts last (nulls_last).
         assert names[-1] == "gamma"
         assert names.index("alpha") < names.index("epsilon")
         assert names.index("epsilon") < names.index("beta")
@@ -413,13 +404,13 @@ async def _insert_compare_tasks(engine):
     cmp-model:   model m-a reward 0.9 vs model m-b 0.3     (model-vs-model).
     """
     stmts = """
-        insert into tasks (id,name,org_id,"user",priority,status,task_path,link,tags,run_analysis,run_probe,created_at,updated_at)
-        values ('t-cr','cmp-reward','org1','u','LOW','COMPLETED','p',null,'{}'::jsonb,false,false,now(),now()),
-               ('t-cru','cmp-runtime','org1','u','LOW','COMPLETED','p',null,'{}'::jsonb,false,false,now(),now()),
-               ('t-ca','cmp-onlyA','org1','u','LOW','COMPLETED','p',null,'{}'::jsonb,false,false,now(),now()),
-               ('t-cm','cmp-margin','org1','u','LOW','COMPLETED','p',null,'{}'::jsonb,false,false,now(),now()),
-               ('t-cavg','cmp-avg','org1','u','LOW','COMPLETED','p',null,'{}'::jsonb,false,false,now(),now()),
-               ('t-cmodel','cmp-model','org1','u','LOW','COMPLETED','p',null,'{}'::jsonb,false,false,now(),now());
+        insert into tasks (id,name,org_id,"user",priority,status,task_path,link,tags,run_analysis,created_at,updated_at)
+        values ('t-cr','cmp-reward','org1','u','LOW','COMPLETED','p',null,'{}'::jsonb,false,now(),now()),
+               ('t-cru','cmp-runtime','org1','u','LOW','COMPLETED','p',null,'{}'::jsonb,false,now(),now()),
+               ('t-ca','cmp-onlyA','org1','u','LOW','COMPLETED','p',null,'{}'::jsonb,false,now(),now()),
+               ('t-cm','cmp-margin','org1','u','LOW','COMPLETED','p',null,'{}'::jsonb,false,now(),now()),
+               ('t-cavg','cmp-avg','org1','u','LOW','COMPLETED','p',null,'{}'::jsonb,false,now(),now()),
+               ('t-cmodel','cmp-model','org1','u','LOW','COMPLETED','p',null,'{}'::jsonb,false,now(),now());
         insert into task_versions (id,task_id,version,task_path,created_at,updated_at)
         values ('v-cr','t-cr',1,'p',now(),now()),
                ('v-cru','t-cru',1,'p',now(),now()),
@@ -433,21 +424,21 @@ async def _insert_compare_tasks(engine):
         update tasks set current_version_id='v-cm' where id='t-cm';
         update tasks set current_version_id='v-cavg' where id='t-cavg';
         update tasks set current_version_id='v-cmodel' where id='t-cmodel';
-        insert into trials (id,name,task_id,task_version_id,experiment_id,org_id,agent,model,provider,queue_key,timeout_minutes,environment,harbor_config,status,origin,is_probe,reward,error_message,input_tokens,output_tokens,cache_tokens,total_steps,has_trajectory,started_at,finished_at,attempts,max_attempts,heartbeat_failure_count,created_at,updated_at)
+        insert into trials (id,name,task_id,task_version_id,experiment_id,org_id,agent,model,provider,queue_key,timeout_minutes,environment,harbor_config,status,origin,reward,error_message,input_tokens,output_tokens,cache_tokens,total_steps,has_trajectory,started_at,finished_at,attempts,max_attempts,heartbeat_failure_count,created_at,updated_at)
         values
-          ('cr1','cr1','t-cr','v-cr','exp-real','org1','claude-code',null,'anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',false,0.9,null,100,50,0,10,true,null,null,1,6,0,now(),now()),
-          ('cr2','cr2','t-cr','v-cr','exp-real','org1','codex',null,'openai','q',30,'docker','{}'::jsonb,'SUCCESS','oddish',false,0.4,null,100,50,0,10,true,null,null,1,6,0,now(),now()),
-          ('cru1','cru1','t-cru','v-cru','exp-real','org1','claude-code',null,'anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',false,0.5,null,100,50,0,10,true,now() - interval '100 second',now(),1,6,0,now(),now()),
-          ('cru2','cru2','t-cru','v-cru','exp-real','org1','codex',null,'openai','q',30,'docker','{}'::jsonb,'SUCCESS','oddish',false,0.5,null,100,50,0,10,true,now() - interval '20 second',now(),1,6,0,now(),now()),
-          ('ca1','ca1','t-ca','v-ca','exp-real','org1','claude-code',null,'anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',false,0.9,null,100,50,0,10,true,null,null,1,6,0,now(),now()),
-          ('cm1','cm1','t-cm','v-cm','exp-real','org1','claude-code',null,'anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',false,0.55,null,100,50,0,10,true,null,null,1,6,0,now(),now()),
-          ('cm2','cm2','t-cm','v-cm','exp-real','org1','codex',null,'openai','q',30,'docker','{}'::jsonb,'SUCCESS','oddish',false,0.50,null,100,50,0,10,true,null,null,1,6,0,now(),now()),
-          ('cavg1','cavg1','t-cavg','v-cavg','exp-real','org1','claude-code',null,'anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',false,1.0,null,100,50,0,10,true,null,null,1,6,0,now(),now()),
-          ('cavg2','cavg2','t-cavg','v-cavg','exp-real','org1','claude-code',null,'anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',false,0.0,null,100,50,0,10,true,null,null,1,6,0,now(),now()),
-          ('cavg3','cavg3','t-cavg','v-cavg','exp-real','org1','codex',null,'openai','q',30,'docker','{}'::jsonb,'SUCCESS','oddish',false,0.6,null,100,50,0,10,true,null,null,1,6,0,now(),now()),
-          ('cavg4','cavg4','t-cavg','v-cavg','exp-real','org1','codex',null,'openai','q',30,'docker','{}'::jsonb,'SUCCESS','oddish',false,0.6,null,100,50,0,10,true,null,null,1,6,0,now(),now()),
-          ('cmod1','cmod1','t-cmodel','v-cmodel','exp-real','org1','claude-code','m-a','anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',false,0.9,null,100,50,0,10,true,null,null,1,6,0,now(),now()),
-          ('cmod2','cmod2','t-cmodel','v-cmodel','exp-real','org1','claude-code','m-b','anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',false,0.3,null,100,50,0,10,true,null,null,1,6,0,now(),now());
+          ('cr1','cr1','t-cr','v-cr','exp-real','org1','claude-code',null,'anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',0.9,null,100,50,0,10,true,null,null,1,6,0,now(),now()),
+          ('cr2','cr2','t-cr','v-cr','exp-real','org1','codex',null,'openai','q',30,'docker','{}'::jsonb,'SUCCESS','oddish',0.4,null,100,50,0,10,true,null,null,1,6,0,now(),now()),
+          ('cru1','cru1','t-cru','v-cru','exp-real','org1','claude-code',null,'anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',0.5,null,100,50,0,10,true,now() - interval '100 second',now(),1,6,0,now(),now()),
+          ('cru2','cru2','t-cru','v-cru','exp-real','org1','codex',null,'openai','q',30,'docker','{}'::jsonb,'SUCCESS','oddish',0.5,null,100,50,0,10,true,now() - interval '20 second',now(),1,6,0,now(),now()),
+          ('ca1','ca1','t-ca','v-ca','exp-real','org1','claude-code',null,'anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',0.9,null,100,50,0,10,true,null,null,1,6,0,now(),now()),
+          ('cm1','cm1','t-cm','v-cm','exp-real','org1','claude-code',null,'anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',0.55,null,100,50,0,10,true,null,null,1,6,0,now(),now()),
+          ('cm2','cm2','t-cm','v-cm','exp-real','org1','codex',null,'openai','q',30,'docker','{}'::jsonb,'SUCCESS','oddish',0.50,null,100,50,0,10,true,null,null,1,6,0,now(),now()),
+          ('cavg1','cavg1','t-cavg','v-cavg','exp-real','org1','claude-code',null,'anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',1.0,null,100,50,0,10,true,null,null,1,6,0,now(),now()),
+          ('cavg2','cavg2','t-cavg','v-cavg','exp-real','org1','claude-code',null,'anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',0.0,null,100,50,0,10,true,null,null,1,6,0,now(),now()),
+          ('cavg3','cavg3','t-cavg','v-cavg','exp-real','org1','codex',null,'openai','q',30,'docker','{}'::jsonb,'SUCCESS','oddish',0.6,null,100,50,0,10,true,null,null,1,6,0,now(),now()),
+          ('cavg4','cavg4','t-cavg','v-cavg','exp-real','org1','codex',null,'openai','q',30,'docker','{}'::jsonb,'SUCCESS','oddish',0.6,null,100,50,0,10,true,null,null,1,6,0,now(),now()),
+          ('cmod1','cmod1','t-cmodel','v-cmodel','exp-real','org1','claude-code','m-a','anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',0.9,null,100,50,0,10,true,null,null,1,6,0,now(),now()),
+          ('cmod2','cmod2','t-cmodel','v-cmodel','exp-real','org1','claude-code','m-b','anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',0.3,null,100,50,0,10,true,null,null,1,6,0,now(),now());
     """
     async with engine.begin() as c:
         for stmt in stmts.split(";"):
@@ -525,7 +516,7 @@ async def test_browse_or_groups():
     """Phase 2.2 'Match any of…': OR of AND-groups, ANDed with the flat filters.
 
     Base dataset (from ``_setup``): alpha = claude-code, link set, avg 100%;
-    beta = codex, errored, avg 0%; gamma = probe-only (gemini-cli).
+    beta = codex, errored, avg 0%; gamma = no trials.
     """
     engine = create_async_engine(URL)
     maker = async_sessionmaker(engine, expire_on_commit=False)
@@ -574,10 +565,6 @@ async def test_browse_or_groups():
                 has_link=True,
                 or_groups=[{"agents": ["claude-code"]}, {"agents": ["codex"]}],
             ) == {"alpha"}
-            # Probe-only task stays excluded (same scope as the flat trial filters).
-            assert (
-                await _names(session, or_groups=[{"agents": ["gemini-cli"]}]) == set()
-            )
             # Empty group / empty list are no-ops.
             assert await _names(session, or_groups=[{}]) == {
                 "alpha",
@@ -594,18 +581,18 @@ async def _insert_median_task(engine):
     [1.0, 1.0, 0.0] (avg 0.667, median 1.0) vs codex [0.8, 0.8] (0.8). So
     claude-code beats codex on best & median but not on average."""
     stmts = """
-        insert into tasks (id,name,org_id,"user",priority,status,task_path,link,tags,run_analysis,run_probe,created_at,updated_at)
-        values ('t-cmed','cmp-median','org1','u','LOW','COMPLETED','p',null,'{}'::jsonb,false,false,now(),now());
+        insert into tasks (id,name,org_id,"user",priority,status,task_path,link,tags,run_analysis,created_at,updated_at)
+        values ('t-cmed','cmp-median','org1','u','LOW','COMPLETED','p',null,'{}'::jsonb,false,now(),now());
         insert into task_versions (id,task_id,version,task_path,created_at,updated_at)
         values ('v-cmed','t-cmed',1,'p',now(),now());
         update tasks set current_version_id='v-cmed' where id='t-cmed';
-        insert into trials (id,name,task_id,task_version_id,experiment_id,org_id,agent,model,provider,queue_key,timeout_minutes,environment,harbor_config,status,origin,is_probe,reward,error_message,input_tokens,output_tokens,cache_tokens,total_steps,has_trajectory,started_at,finished_at,attempts,max_attempts,heartbeat_failure_count,created_at,updated_at)
+        insert into trials (id,name,task_id,task_version_id,experiment_id,org_id,agent,model,provider,queue_key,timeout_minutes,environment,harbor_config,status,origin,reward,error_message,input_tokens,output_tokens,cache_tokens,total_steps,has_trajectory,started_at,finished_at,attempts,max_attempts,heartbeat_failure_count,created_at,updated_at)
         values
-          ('cmd1','cmd1','t-cmed','v-cmed','exp-real','org1','claude-code',null,'anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',false,1.0,null,100,50,0,10,true,null,null,1,6,0,now(),now()),
-          ('cmd2','cmd2','t-cmed','v-cmed','exp-real','org1','claude-code',null,'anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',false,1.0,null,100,50,0,10,true,null,null,1,6,0,now(),now()),
-          ('cmd3','cmd3','t-cmed','v-cmed','exp-real','org1','claude-code',null,'anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',false,0.0,null,100,50,0,10,true,null,null,1,6,0,now(),now()),
-          ('cmd4','cmd4','t-cmed','v-cmed','exp-real','org1','codex',null,'openai','q',30,'docker','{}'::jsonb,'SUCCESS','oddish',false,0.8,null,100,50,0,10,true,null,null,1,6,0,now(),now()),
-          ('cmd5','cmd5','t-cmed','v-cmed','exp-real','org1','codex',null,'openai','q',30,'docker','{}'::jsonb,'SUCCESS','oddish',false,0.8,null,100,50,0,10,true,null,null,1,6,0,now(),now());
+          ('cmd1','cmd1','t-cmed','v-cmed','exp-real','org1','claude-code',null,'anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',1.0,null,100,50,0,10,true,null,null,1,6,0,now(),now()),
+          ('cmd2','cmd2','t-cmed','v-cmed','exp-real','org1','claude-code',null,'anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',1.0,null,100,50,0,10,true,null,null,1,6,0,now(),now()),
+          ('cmd3','cmd3','t-cmed','v-cmed','exp-real','org1','claude-code',null,'anthropic','q',30,'modal','{}'::jsonb,'SUCCESS','oddish',0.0,null,100,50,0,10,true,null,null,1,6,0,now(),now()),
+          ('cmd4','cmd4','t-cmed','v-cmed','exp-real','org1','codex',null,'openai','q',30,'docker','{}'::jsonb,'SUCCESS','oddish',0.8,null,100,50,0,10,true,null,null,1,6,0,now(),now()),
+          ('cmd5','cmd5','t-cmed','v-cmed','exp-real','org1','codex',null,'openai','q',30,'docker','{}'::jsonb,'SUCCESS','oddish',0.8,null,100,50,0,10,true,null,null,1,6,0,now(),now());
     """
     async with engine.begin() as c:
         for stmt in stmts.split(";"):
@@ -771,7 +758,7 @@ async def test_browse_summary_columns():
         everyone = {"alpha", "beta", "gamma", "epsilon", "zeta", "eta"}
         async with maker() as session:
             # Median steps: beta 200, alpha 20, epsilon 10, zeta 5 (discrete
-            # median of 5/10), eta 5, gamma NULL (its only trial is a probe).
+            # median of 5/10), eta 5, gamma NULL (no trials).
             assert await _names(session, steps_p50_min=100) == {"beta"}
             assert await _names(session, steps_p50_max=5) == {"zeta", "eta"}
             assert await _names(session, steps_p50_min=10, steps_p50_max=20) == {
@@ -997,7 +984,7 @@ async def test_browse_pinned_author_ids_and_trials_threshold():
             ) == []
 
             # total_trials_min comes from the summary row: epsilon has 3
-            # scoped trials, zeta/eta 2, alpha/beta 1, gamma 0 (probe only).
+            # scoped trials, zeta/eta 2, alpha/beta 1, gamma 0 (no trials).
             assert await _names(session, total_trials_min=3) == {"epsilon"}
             assert await _names(session, total_trials_min=2) == {"epsilon", "zeta", "eta"}
             assert (

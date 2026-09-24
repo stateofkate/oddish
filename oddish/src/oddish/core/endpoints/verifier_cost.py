@@ -106,7 +106,7 @@ async def get_task_verifier_costs(
     """``task_id -> VerifierCostTotals``, omitting tasks with no verifier spend.
 
     Counts ledger rows attributed to the task directly or via a trial of that
-    task. ``trial_scope_pairs`` narrows to the same current-version / non-probe
+    task. ``trial_scope_pairs`` narrows to the same current-version
     population as agent and QA browse figures; when set, only the trial branch
     is used (verifier rows always have ``trial_id``, so an unscoped task_id
     branch would ignore those filters).
@@ -122,7 +122,7 @@ async def get_task_verifier_costs(
         VerifierCostModel.cost_source.label("cost_source"),
     )
     # Unlike analysis_costs, every verifier row has a trial_id (and usually
-    # task_id). An unscoped direct task_id branch would ignore probe /
+    # task_id). An unscoped direct task_id branch would ignore the
     # superseded / version filters when ``trial_scope_pairs`` is set, so the
     # browse card only walks trials.
     via_trials = (
@@ -138,7 +138,6 @@ async def get_task_verifier_costs(
     if scoped:
         via_trials = via_trials.where(
             TrialModel.superseded_by_trial_id.is_(None),
-            TrialModel.is_probe.isnot(True),
             not_combine_copy_filter(),
             tuple_(TrialModel.task_id, TrialModel.task_version_id).in_(
                 list(trial_scope_pairs)

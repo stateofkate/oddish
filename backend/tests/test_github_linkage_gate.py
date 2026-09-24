@@ -142,9 +142,9 @@ async def _seed_task(org_id: str) -> str:
                 "insert into tasks "
                 '(id,name,org_id,"user",priority,status,task_path,tags,'
                 "effective_tag_ids,current_version_tag_ids,"
-                "run_analysis,run_probe,created_at,updated_at) "
+                "run_analysis,created_at,updated_at) "
                 "values (:id,:id,:org,'u','LOW','COMPLETED','p','{}'::jsonb,"
-                "'{}'::text[],'{}'::text[],false,false,now(),now())"
+                "'{}'::text[],'{}'::text[],false,now(),now())"
             ),
             {"id": task_id, "org": org_id},
         )

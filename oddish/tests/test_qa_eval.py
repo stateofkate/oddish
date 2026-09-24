@@ -133,7 +133,6 @@ def _source(
         model="model",
         kind="agent",
         status=status,
-        is_probe=False,
         has_trajectory=has_trajectory,
         analysis={"classification": "BAD_FAILURE"},
     )

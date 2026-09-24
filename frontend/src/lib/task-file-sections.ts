@@ -1,5 +1,6 @@
 export type TaskFileSectionId =
   | "prompt"
+  | "steps"
   | "solution"
   | "verification"
   | "environment"
@@ -29,6 +30,7 @@ const SECTION_ORDER: Array<{
   label: string;
 }> = [
   { id: "prompt", label: "Prompt" },
+  { id: "steps", label: "Steps" },
   { id: "solution", label: "Reference solution" },
   { id: "verification", label: "Verification" },
   { id: "environment", label: "Agent environment" },
@@ -46,6 +48,7 @@ export function taskFileSectionIdForRootNode(
   ) {
     return "prompt";
   }
+  if (node.type === "dir" && node.name === "steps") return "steps";
   if (node.type === "dir" && node.name === "solution") return "solution";
   if (
     (node.type === "dir" && node.name === "tests") ||

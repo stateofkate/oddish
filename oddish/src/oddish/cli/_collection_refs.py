@@ -94,7 +94,7 @@ def _resolve_task_id(client, api_url: str, ref: str) -> str | None:
 def _version_trial_ids(
     client, api_url: str, task_id: str, version: str
 ) -> list[str] | None:
-    """Trial ids of a task's given version: terminal, non-probe, non-superseded.
+    """Trial ids of a task's given version: terminal and non-superseded.
 
     None means the trials could not be fetched, which is distinct from `[]` --
     a version that genuinely has none. Conflating them lets a transient error
@@ -114,7 +114,6 @@ def _version_trial_ids(
     for t in trials:
         if (
             t.get("task_version_id") == want
-            and not t.get("is_probe")
             and t.get("superseded_by_trial_id") is None
             and t.get("status") in _LINKABLE_STATUSES
         ):

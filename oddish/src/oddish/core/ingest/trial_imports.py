@@ -325,7 +325,6 @@ async def initialize_trial_import(
                 else None
             ),
             harbor_config=trial_spec.harbor_config,
-            is_probe=(trial_spec.harbor_config or {}).get("mode") == "probe",
             status=trial_spec.status,
             origin=TrialOrigin.IMPORTED,
             attempts=1,
@@ -369,7 +368,6 @@ async def initialize_trial_import(
                 provider=trial_row.provider,
                 environment=trial_row.environment,
                 harbor_stage=trial_row.harbor_stage,
-                is_probe=trial_row.is_probe,
             ),
         )
 

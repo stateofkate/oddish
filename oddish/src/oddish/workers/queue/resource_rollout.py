@@ -10,7 +10,7 @@ from oddish.workers.queue.worker_job_dispatcher import QueueDemandKey
 
 COHORT_SQL = """COALESCE((
     wj.kind::text = 'TRIAL' AND wj.subject_table = 'trials'
-    AND tr.kind = 'agent' AND NOT tr.is_probe
+    AND tr.kind = 'agent'
     AND wj.priority <= 0 AND wj.harbor_variant_id = 'default'
     AND wj.execution_lane = 'default'
     AND tr.deleted_at IS NULL AND tk.deleted_at IS NULL

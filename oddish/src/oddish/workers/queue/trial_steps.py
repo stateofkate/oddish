@@ -165,7 +165,7 @@ class PreparedTrialRun:
     experiment_name: str | None = None
     attempt_number: int = 1
     task_tags: dict | None = None
-    # Owning org, used to stage that org's shared skills into the probe sandbox.
+    # Owning org, used to mint analysis read keys and attribute costs.
     org_id: str | None = None
     # Trial owner for BYOK resolution: the task submitter, falling back to the
     # experiment owner. None means BYOK never applies.

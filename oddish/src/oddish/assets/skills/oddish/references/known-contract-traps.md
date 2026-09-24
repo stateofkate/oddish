@@ -17,7 +17,7 @@ appear inconsistent.
 | Omitting `--force` reuses old classifications. | Every replacement QA pass rereads and reclassifies the eligible set; `--force` controls which stored fields are cleared before it starts. |
 | `cancel --qa` affects only the classifier. | The task QA cancellation endpoint cancels live `qa` and `audit` trials. |
 | A replacement QA run immediately hides the old verdict. | The last successful verdict can remain published while the replacement is queued or running. |
-| Every command supports `--json` except logs. | JSON support is declared per command; link and probe paths also lack it. |
+| Every command supports `--json` except logs. | JSON support is declared per command; link paths also lack it. |
 | `run --json` returns a guaranteed `experiment_id`. | It returns the experiment name and URL; retain task IDs and parse the URL only if a caller explicitly accepts that coupling. |
 | An admin-created `tasks` key can run `oddish publish`. | The `publish`/`unpublish` routes are admin-only: API keys need `full` scope regardless of who created them. The admin-created-`tasks`-key exception exists only for sweep-time auto-publish (`run --publish` / GitHub-attributed CI). |
 | A retry updates the old trial row. | It creates a new immutable trial and links the old row through `superseded_by_trial_id`. |

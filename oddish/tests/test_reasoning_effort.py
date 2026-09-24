@@ -230,7 +230,7 @@ async def test_task_summary_and_preview_use_the_same_efforts(session):
 
 
 @pytest.mark.asyncio
-async def test_public_page_exposes_only_effort_and_excludes_probes(session):
+async def test_public_page_exposes_only_effort(session):
     from oddish.core.endpoints.experiment_page import (
         get_public_experiment_trial_page_core,
     )
@@ -238,12 +238,11 @@ async def test_public_page_exposes_only_effort_and_excludes_probes(session):
     task, exp, _version, trials = await seed(session)
     exp.is_public = True
     exp.public_token = uuid4().hex
-    trials[0].is_probe = True
     await session.flush()
     page = await get_public_experiment_trial_page_core(
         session, public_token=exp.public_token
     )
-    assert len(page.trials) == 9
+    assert len(page.trials) == 10
     assert {trial.reasoning_effort for trial in page.trials} == {"low", "high"}
     assert all("harbor_config" not in trial.model_dump() for trial in page.trials)
 

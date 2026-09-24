@@ -77,7 +77,6 @@ async def test_prior_job_mirror_survives_later_domain_lock(monkeypatch):
                     provider="openai",
                     queue_key="openai/gpt-5",
                     model="gpt-5",
-                    is_probe=False,
                     max_attempts=6,
                     attempts=1,
                     status=TrialStatus.RUNNING,

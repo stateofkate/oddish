@@ -217,7 +217,7 @@ Approval changes reach a preview on its next preparation/sync, not immediately
 when production is edited. A standalone reset copies staging and then
 reapplies the current decisions through the same final step.
 
-The first branch setup refreshes browse and per-model counters only for the task
+The first branch setup refreshes browse counters only for the task
 versions whose active trials it stops. It uses the core refresh function in the
 same transaction as the trial changes and setup marker. A failure rolls back all
 three, so a retry can finish the setup. Other counters come from staging's copy.

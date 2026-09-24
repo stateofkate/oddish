@@ -39,7 +39,6 @@ def _released_client_post(base: str, api_key: str, task_id: str, model: str):
             "task_id": task_id,
             "configs": [{"agent": "mini-swe-agent", "model": model, "n_trials": 1}],
             "priority": "low",
-            "run_probe": False,
             "gate_baselines": False,
         },
         timeout=30.0,

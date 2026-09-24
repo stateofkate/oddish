@@ -55,12 +55,11 @@ are excluded. This does not enable trace export or replace `ODDISH_API_KEY`.
 - `oddish link` - print the dashboard URL for a task or trial (built locally; needs no API key)
 - `oddish version` - print the installed CLI version (`--check` compares with the latest PyPI release)
 - `oddish update` - upgrade a `uv pip install oddish` install from PyPI
-- `oddish probe` - internal probe-trial helpers (`oddish probe`, `oddish probe skill add`)
 - `oddish skill` - print or install the packaged SKILL.md agent guide
 
 Most commands accept `--json` for machine-readable output (CI / scripts /
-agents). The exceptions are `oddish logs`, `oddish link`, `oddish skill`, and
-the `oddish probe` helpers, which print human-readable output only.
+agents). The exceptions are `oddish logs`, `oddish link`, and `oddish skill`,
+which print human-readable output only.
 `oddish version` and `oddish update` are local and do not require an API key.
 
 ### Lifecycle
@@ -98,9 +97,8 @@ candidates: the project-local `.agents/skills`, `.codex/skills`,
 directory (`~/.agents/skills` first). If none exist it creates
 `~/.agents/skills`.
 
-This guide is about driving the CLI; it is unrelated to the probe skills
-library (`oddish probe skill add`). The command is local-only and needs no API
-key.
+This guide is about driving the CLI. The command is local-only and needs no
+API key.
 
 ## Submit a Job
 
@@ -159,7 +157,6 @@ Options
 - `--watch/--no-watch`, `-w` - Watch progress after submission; enabled by default
 - `--background`, `--async`, `-b` - Submit and return immediately
 - `--quiet`, `-q` - Suppress startup logs
-- `--run-probe` - Auto-enqueue a probe trial for the task version (off by default)
 - `--baseline-gate/--no-baseline-gate` - Hold LLM trials until the task's nop/oracle baselines validate it (on by default). `--no-baseline-gate` runs them immediately, ungated; the baselines themselves still run. Decided per run — retries choose afresh.
 - `--disable-verification/--enable-verification` - Skip task verification or tests
 - `--force-new-version` - Allocate a new task version even when the content is unchanged
@@ -384,8 +381,7 @@ counts, reward summary, tags, last run time, linked experiments, and recorded
 delivery labs. "Current
 version" is the task's user-selected default — not necessarily the
 highest-numbered one — and the trial counts cover that version's normal
-evaluation trials (not superseded rows, probes, or the platform's QA/audit
-runs).
+evaluation trials (not superseded rows or the platform's QA/audit runs).
 
 ```bash
 oddish ls
@@ -817,8 +813,8 @@ oddish costs --experiment <experiment_id>
 oddish costs --task my-task --task other-task --csv
 ```
 
-Each task row splits spend into Solver (the agent runs, excluding probes and
-imported runs), QA, Audit, Summaries, Judge & other (Reward Kit judges and
+Each task row splits spend into Solver (the agent runs, excluding imported
+runs), QA, Audit, Summaries, Judge & other (Reward Kit judges and
 older QA charges), and Verifier (computer-use verification), plus Total and
 the QA share. With `--experiment`, Solver counts only that experiment's runs;
 review and verifier spend is the task's total, since one QA pass covers the

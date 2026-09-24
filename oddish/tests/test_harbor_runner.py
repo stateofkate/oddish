@@ -32,7 +32,6 @@ from oddish.workers.agents.grok_build import OddishGrokBuild
 from oddish.workers.agents.grok_build_trajectory import (
     convert_grok_build_json_text_to_trajectory,
 )
-from oddish.workers.harbor import agent_config as harbor_agent_config
 from oddish.workers.harbor import runner as harbor_runner
 from oddish.workers.harbor import storage as harbor_storage
 from oddish.workers.harbor.restricted_network import (
@@ -43,57 +42,6 @@ from oddish.workers.queue import trial_handler
 from pydantic import BaseModel, ConfigDict
 
 _DISK_USAGE = namedtuple("DiskUsage", ["total", "used", "free"])
-
-
-@pytest.mark.parametrize(
-    ("trial_kind", "expected_probe_runtime"),
-    (("qa", True), ("summarize", False)),
-)
-def test_analysis_kind_derives_runtime_capabilities_once(
-    tmp_path,
-    monkeypatch,
-    trial_kind,
-    expected_probe_runtime,
-):
-    task_path = tmp_path / "analysis-task"
-    task_path.mkdir()
-    monkeypatch.setattr(harbor_runner, "apply_harbor_patches", lambda **_kwargs: None)
-    monkeypatch.setattr(harbor_runner, "get_backend", lambda _name: None)
-
-    def unexpected_validation(_path):
-        raise AssertionError("analysis trials must skip ordinary task validation")
-
-    monkeypatch.setattr(
-        harbor_runner,
-        "validate_task_timeout_config",
-        unexpected_validation,
-    )
-    monkeypatch.setattr(
-        harbor_runner,
-        "_check_local_storage_preflight",
-        lambda *_args, **_kwargs: "stop after validation boundary",
-    )
-    observed_probe_runtime = []
-
-    def probe_modal_kwargs(is_probe, environment):
-        observed_probe_runtime.append(is_probe)
-        assert environment == EnvironmentType.MODAL
-        return {}
-
-    monkeypatch.setattr(harbor_runner, "_probe_modal_kwargs", probe_modal_kwargs)
-
-    outcome = asyncio.run(
-        harbor_runner.run_harbor_trial_async(
-            task_path=task_path,
-            agent="claude-code",
-            jobs_dir=tmp_path / "jobs",
-            environment=EnvironmentType.MODAL,
-            trial_kind=trial_kind,
-        )
-    )
-
-    assert outcome.exception_type == "LocalStoragePreflightError"
-    assert observed_probe_runtime == [expected_probe_runtime]
 
 
 def _write_network_policy_task(
@@ -2699,69 +2647,7 @@ def test_run_harbor_trial_async_skips_temp_root_preflight_without_task_patch(
     assert outcome.job_result_path is not None
 
 
-def test_run_harbor_trial_async_probe_skips_timeout_validation(monkeypatch, tmp_path):
-    """A probe (mode=probe) against a task whose task.toml omits timeouts must
-    run instead of hard-failing — mirroring the local runner, which skips
-    validation and applies a capped default agent timeout. Regression guard for
-    the cloud/local asymmetry that broke probes in prod."""
-    task_path = tmp_path / "task"
-    task_path.mkdir()
-    # Empty task.toml: declares NO agent/verifier/build timeouts, so the real
-    # validator (left unmocked here on purpose) would raise for a non-probe.
-    (task_path / "task.toml").write_text("", encoding="utf-8")
-    jobs_dir = tmp_path / "jobs"
-    captured: dict[str, object] = {}
-
-    class _FakeJob:
-        def __init__(self, config):
-            captured["config"] = config
-            self.job_dir = config["jobs_dir"] / "job-1"
-
-        @classmethod
-        async def create(cls, config):
-            return cls(config)
-
-        async def run(self):
-            self.job_dir.mkdir(parents=True, exist_ok=True)
-            (self.job_dir / "result.json").write_text("{}\n", encoding="utf-8")
-            return object()
-
-    monkeypatch.setattr(
-        harbor_runner, "_check_local_storage_preflight", lambda *a, **k: None
-    )
-    monkeypatch.setattr(harbor_runner, "TaskConfig", lambda path: path)
-    monkeypatch.setattr(harbor_runner, "JobConfig", lambda **kwargs: kwargs)
-    monkeypatch.setattr(harbor_runner, "Job", _FakeJob)
-    monkeypatch.setattr(
-        harbor_runner,
-        "_extract_outcome_from_job_result",
-        lambda **kwargs: harbor_runner.HarborOutcome(
-            reward=1.0,
-            error=None,
-            exit_code=0,
-            duration_sec=kwargs["duration_sec"],
-            job_result_path=kwargs["job_result_path"],
-            job_dir=kwargs["job_dir"],
-        ),
-    )
-
-    outcome = asyncio.run(
-        harbor_runner.run_harbor_trial_async(
-            task_path=task_path,
-            agent="claude-code",
-            jobs_dir=jobs_dir,
-            harbor_config={"mode": "probe", "extra_instructions": "look around"},
-        )
-    )
-
-    assert outcome.error is None
-    agent_config = captured["config"]["agents"][0]
-    assert (
-        agent_config.override_timeout_sec == harbor_agent_config.PROBE_AGENT_TIMEOUT_SEC
-    )
-
-
-def test_run_harbor_trial_async_non_probe_still_validates(tmp_path):
+def test_run_harbor_trial_async_validates_task_timeouts(tmp_path):
     """Non-probe trials keep the strict contract: a task.toml without timeouts
     must still raise. The 'skip validation' relaxation is probe-only."""
     task_path = tmp_path / "task"
@@ -2778,160 +2664,29 @@ def test_run_harbor_trial_async_non_probe_still_validates(tmp_path):
         )
 
 
-@pytest.mark.parametrize("staged_by_monitor", [True, False])
-def test_run_harbor_trial_async_uses_skills_the_monitor_staged(
-    monkeypatch, tmp_path, staged_by_monitor
-):
-    """The monitor has no database, so it stages the selected skills itself and
-    names the root; the driver must not try the database for them. Without the
-    key (the worker) the database path runs as before."""
-    task_path = tmp_path / "task"
-    task_path.mkdir()
-    (task_path / "task.toml").write_text("", encoding="utf-8")
-    staged = tmp_path / "agent_skills"
-    (staged / "alpha").mkdir(parents=True)
-    (staged / "alpha" / "SKILL.md").write_text("---\nname: alpha\n---\n")
-    captured: dict[str, object] = {}
-    database_reads: list[tuple[Path, str | None, list[str] | None]] = []
-
-    async def _stage_org_skills(skills_root, *, org_id, skill_ids=None):
-        database_reads.append((skills_root, org_id, skill_ids))
-        return 1
-
-    class _FakeJob:
-        def __init__(self, config):
-            captured["config"] = config
-            self.job_dir = config["jobs_dir"] / "job-1"
-
-        @classmethod
-        async def create(cls, config):
-            return cls(config)
-
-        async def run(self):
-            self.job_dir.mkdir(parents=True, exist_ok=True)
-            (self.job_dir / "result.json").write_text("{}\n", encoding="utf-8")
-            return object()
-
-    monkeypatch.setattr(harbor_runner, "stage_org_skills", _stage_org_skills)
-    monkeypatch.setattr(
-        harbor_runner, "_check_local_storage_preflight", lambda *a, **k: None
-    )
-    monkeypatch.setattr(
-        harbor_runner, "validate_task_timeout_config", lambda path: None
-    )
-    monkeypatch.setattr(harbor_runner, "TaskConfig", lambda path: path)
-    monkeypatch.setattr(harbor_runner, "JobConfig", lambda **kwargs: kwargs)
-    monkeypatch.setattr(harbor_runner, "Job", _FakeJob)
-    monkeypatch.setattr(
-        harbor_runner,
-        "_extract_outcome_from_job_result",
-        lambda **kwargs: harbor_runner.HarborOutcome(
-            reward=1.0,
-            error=None,
-            exit_code=0,
-            duration_sec=kwargs["duration_sec"],
-            job_result_path=kwargs["job_result_path"],
-            job_dir=kwargs["job_dir"],
-        ),
-    )
-
-    harbor_config: dict[str, object] = {"skill_ids": ["skill-1"]}
-    outcome = asyncio.run(
-        harbor_runner.run_harbor_trial_async(
-            task_path=task_path,
-            agent="nop",
-            jobs_dir=tmp_path / "jobs",
-            harbor_config=harbor_config,
-            org_id="org-1",
-            staged_skills_root=staged if staged_by_monitor else None,
-        )
-    )
-
-    assert outcome.error is None
-    skills = [str(s) for s in captured["config"]["agents"][0].skills]
-    if staged_by_monitor:
-        assert skills == [str(staged)]
-        assert database_reads == []
-    else:
-        ((skills_root, org_id, skill_ids),) = database_reads
-        assert (org_id, skill_ids) == ("org-1", ["skill-1"])
-        assert skills == [str(skills_root)]
-
-
-def test_build_agent_config_injects_probe_timeout_default(monkeypatch):
+def test_build_agent_config_leaves_timeout_unset(monkeypatch):
     monkeypatch.setattr(harbor_runner.settings, "openai_provider", "openai")
 
     agent_config = harbor_runner._build_agent_config(
         agent="claude-code",
         model=None,
         raw_harbor_config={},
-        is_probe=True,
-    )
-
-    assert (
-        agent_config.override_timeout_sec == harbor_agent_config.PROBE_AGENT_TIMEOUT_SEC
-    )
-
-
-def test_build_agent_config_probe_respects_explicit_override(monkeypatch):
-    """An explicit per-trial override must win over the probe default."""
-    monkeypatch.setattr(harbor_runner.settings, "openai_provider", "openai")
-
-    agent_config = harbor_runner._build_agent_config(
-        agent="claude-code",
-        model=None,
-        raw_harbor_config={"agent_config": {"override_timeout_sec": 42}},
-        is_probe=True,
-    )
-
-    assert agent_config.override_timeout_sec == 42
-
-
-def test_build_agent_config_non_probe_leaves_timeout_unset(monkeypatch):
-    monkeypatch.setattr(harbor_runner.settings, "openai_provider", "openai")
-
-    agent_config = harbor_runner._build_agent_config(
-        agent="claude-code",
-        model=None,
-        raw_harbor_config={},
-        is_probe=False,
     )
 
     assert agent_config.override_timeout_sec is None
 
 
-def test_build_agent_config_wraps_non_probe_claude_code_for_stdin_prompt(
-    monkeypatch,
-):
+def test_build_agent_config_runs_stock_claude_code(monkeypatch):
     monkeypatch.setattr(harbor_runner.settings, "openai_provider", "openai")
 
     agent_config = harbor_runner._build_agent_config(
         agent="claude-code",
         model=None,
         raw_harbor_config={},
-        is_probe=False,
     )
 
-    assert agent_config.name is None
-    assert agent_config.import_path == (
-        "oddish.workers.agents.claude_code:OddishClaudeCode"
-    )
-
-
-def test_build_agent_config_uses_probe_claude_code_wrapper(monkeypatch):
-    monkeypatch.setattr(harbor_runner.settings, "openai_provider", "openai")
-
-    agent_config = harbor_runner._build_agent_config(
-        agent="claude-code",
-        model=None,
-        raw_harbor_config={},
-        is_probe=True,
-    )
-
-    assert agent_config.name is None
-    assert agent_config.import_path == (
-        "oddish.workers.agents.claude_code:OddishProbeClaudeCode"
-    )
+    assert agent_config.name == "claude-code"
+    assert agent_config.import_path is None
 
 
 def test_build_agent_config_mini_swe_anthropic_uses_oddish_wrapper(monkeypatch):
@@ -3024,45 +2779,6 @@ def test_build_agent_config_bedrock_id_stays_on_bedrock_without_bedrock_env(
 
     assert agent_config.model_name == "global.anthropic.claude-sonnet-4-6"
     assert agent_config.env["CLAUDE_CODE_USE_BEDROCK"] == "1"
-
-
-def test_build_agent_config_probe_preserves_explicit_anthropic_route(monkeypatch):
-    """An explicit Anthropic probe stays direct despite ambient Bedrock creds."""
-    monkeypatch.setattr(harbor_runner.settings, "openai_provider", "openai")
-    monkeypatch.setenv("CLAUDE_CODE_USE_BEDROCK", "1")
-    monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "bedrock-bearer-token")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
-
-    agent_config = harbor_runner._build_agent_config(
-        agent="claude-code",
-        model="anthropic/claude-sonnet-4-6",
-        raw_harbor_config={},
-        is_probe=True,
-    )
-
-    assert agent_config.model_name == "claude-sonnet-4-6"
-
-
-def test_build_agent_config_probe_sets_subagent_model(monkeypatch):
-    """A probe claude-code agent pins CLAUDE_CODE_SUBAGENT_MODEL to the same
-    normalized model id so Task-tool subagents have a model on the direct-API
-    path (Harbor's run() only sets it on the custom-base-url branch)."""
-    monkeypatch.setattr(harbor_runner.settings, "openai_provider", "openai")
-    monkeypatch.delenv("CLAUDE_CODE_USE_BEDROCK", raising=False)
-    monkeypatch.delenv("AWS_BEARER_TOKEN_BEDROCK", raising=False)
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
-
-    agent_config = harbor_runner._build_agent_config(
-        agent="claude-code",
-        model="anthropic/claude-sonnet-4-6",
-        raw_harbor_config={},
-        is_probe=True,
-    )
-
-    assert (agent_config.env or {}).get("CLAUDE_CODE_SUBAGENT_MODEL") == (
-        agent_config.model_name
-    )
-    assert agent_config.model_name == "claude-sonnet-4-6"
 
 
 def test_build_agent_config_litellm_agent_native_claude_gets_bedrock_prefix(monkeypatch):
@@ -3161,37 +2877,19 @@ def test_build_agent_config_claude_code_keeps_bare_bedrock_id(monkeypatch):
     assert agent_config.model_name == "global.anthropic.claude-opus-4-8"
 
 
-def test_build_agent_config_non_probe_omits_subagent_model(monkeypatch):
+def test_build_agent_config_omits_subagent_model(monkeypatch):
     monkeypatch.setattr(harbor_runner.settings, "openai_provider", "openai")
 
     agent_config = harbor_runner._build_agent_config(
         agent="claude-code",
         model="claude-sonnet-4-6",
         raw_harbor_config={},
-        is_probe=False,
     )
 
     assert "CLAUDE_CODE_SUBAGENT_MODEL" not in (agent_config.env or {})
 
 
-def test_build_agent_config_probe_respects_existing_subagent_model(monkeypatch):
-    """A pre-set subagent model (e.g. from a provider env shaper) is never clobbered."""
-    monkeypatch.setattr(harbor_runner.settings, "openai_provider", "openai")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
-
-    agent_config = harbor_runner._build_agent_config(
-        agent="claude-code",
-        model="claude-sonnet-4-6",
-        raw_harbor_config={
-            "agent_config": {"env": {"CLAUDE_CODE_SUBAGENT_MODEL": "preset-model"}}
-        },
-        is_probe=True,
-    )
-
-    assert (agent_config.env or {})["CLAUDE_CODE_SUBAGENT_MODEL"] == "preset-model"
-
-
-def test_build_agent_config_non_probe_claude_code_keeps_bedrock_id(monkeypatch):
+def test_build_agent_config_claude_code_keeps_bedrock_id(monkeypatch):
     """With the global force-direct flag OFF, routing is probe-scoped: a normal
     (non-probe) claude-code trial with Bedrock env keeps the Bedrock id even when
     an ANTHROPIC_API_KEY is present."""
@@ -3205,13 +2903,12 @@ def test_build_agent_config_non_probe_claude_code_keeps_bedrock_id(monkeypatch):
         agent="claude-code",
         model="claude-sonnet-4-6",
         raw_harbor_config={},
-        is_probe=False,
     )
 
     assert agent_config.model_name == "global.anthropic.claude-sonnet-4-6"
 
 
-def test_build_agent_config_non_probe_forces_direct_api_when_flag_set(monkeypatch):
+def test_build_agent_config_forces_direct_api_when_flag_set(monkeypatch):
     """The explicit Anthropic prefix remains direct with the global flag on."""
     monkeypatch.setattr(harbor_runner.settings, "openai_provider", "openai")
     monkeypatch.setattr(harbor_runner.settings, "claude_code_force_direct_api", True)
@@ -3223,13 +2920,12 @@ def test_build_agent_config_non_probe_forces_direct_api_when_flag_set(monkeypatc
         agent="claude-code",
         model="anthropic/claude-opus-4-8",
         raw_harbor_config={},
-        is_probe=False,
     )
 
     assert agent_config.model_name == "claude-opus-4-8"
 
 
-def test_build_agent_config_non_probe_keeps_direct_route_without_anthropic_key(
+def test_build_agent_config_keeps_direct_route_without_anthropic_key(
     monkeypatch,
 ):
     """Missing Anthropic credentials do not silently change a selected route."""
@@ -3243,30 +2939,10 @@ def test_build_agent_config_non_probe_keeps_direct_route_without_anthropic_key(
         agent="claude-code",
         model="claude-sonnet-4-6",
         raw_harbor_config={},
-        is_probe=False,
     )
 
     assert agent_config.model_name == "claude-sonnet-4-6"
     assert agent_config.env["CLAUDE_CODE_USE_BEDROCK"] == ""
-
-
-def test_build_agent_config_probe_claude_code_without_anthropic_key_keeps_direct(
-    monkeypatch,
-):
-    """A missing Anthropic key does not silently move the probe to Bedrock."""
-    monkeypatch.setattr(harbor_runner.settings, "openai_provider", "openai")
-    monkeypatch.setenv("CLAUDE_CODE_USE_BEDROCK", "1")
-    monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "bedrock-bearer-token")
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-
-    agent_config = harbor_runner._build_agent_config(
-        agent="claude-code",
-        model="claude-sonnet-4-6",
-        raw_harbor_config={},
-        is_probe=True,
-    )
-
-    assert agent_config.model_name == "claude-sonnet-4-6"
 
 
 def test_build_agent_config_uses_azure_deployment_without_secret_env(monkeypatch):
@@ -5220,42 +4896,6 @@ def test_extract_outcome_from_job_result_exception_type_none_when_no_exc():
     assert outcome.reward == 1.0
 
 
-def test_probe_modal_kwargs_injects_cli_content(monkeypatch):
-    """Modal + probe: env_config.kwargs gets probe_cli_content + probe_cli_path."""
-    monkeypatch.setattr(
-        harbor_runner,
-        "_read_query_cli_text",
-        lambda: "#!/usr/bin/env node\nconsole.log('hello');",
-    )
-    from harbor.models.environment_type import EnvironmentType
-
-    kwargs = harbor_runner._probe_modal_kwargs(
-        is_probe=True, environment=EnvironmentType.MODAL
-    )
-    assert kwargs["probe_cli_content"].startswith("#!/usr/bin/env node")
-    assert kwargs["probe_cli_path"] == "/probe-harness/oddish-query"
-
-
-def test_probe_modal_kwargs_returns_empty_for_non_probe(monkeypatch):
-    """Non-probe: no CLI content injected even on Modal."""
-    from harbor.models.environment_type import EnvironmentType
-
-    kwargs = harbor_runner._probe_modal_kwargs(
-        is_probe=False, environment=EnvironmentType.MODAL
-    )
-    assert kwargs == {}
-
-
-def test_probe_modal_kwargs_returns_empty_for_non_modal_probe(monkeypatch):
-    """Probe on Daytona (non-Modal): no CLI content injected."""
-    from harbor.models.environment_type import EnvironmentType
-
-    kwargs = harbor_runner._probe_modal_kwargs(
-        is_probe=True, environment=EnvironmentType.DAYTONA
-    )
-    assert kwargs == {}
-
-
 def test_gke_env_build_multiplier_covers_pod_ready_wait():
     # For a GKE trial the outer environment-build wait (multiplier x base) must
     # clear the pod-ready/capacity wait, or Harbor deletes the Pending Pod early.
@@ -5928,7 +5568,6 @@ shared_option = "task"
         hc=hc,
         environment=EnvironmentType.MODAL,
         backend=backend,
-        is_probe=False,
         trial_id="trial-1",
         worker_job_id="wj-1",
         sandbox_launch=None,

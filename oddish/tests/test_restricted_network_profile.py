@@ -697,10 +697,7 @@ def test_antigravity_registration_pins_transport_and_fails_closed_for_stock() ->
     [
         AgentConfig(name="nop"),
         AgentConfig(name="oracle"),
-        AgentConfig(
-            import_path="oddish.workers.agents.claude_code:OddishClaudeCode",
-            model_name="anthropic/model",
-        ),
+        AgentConfig(name="claude-code", model_name="anthropic/model"),
         AgentConfig(
             import_path="oddish.workers.agents.codex:OddishCodex",
             model_name="openai/model",

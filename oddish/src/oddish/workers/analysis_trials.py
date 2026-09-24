@@ -377,7 +377,6 @@ async def create_analysis_trial(
         environment=environment,
         timeout_minutes=ANALYSIS_TRIAL_TIMEOUT_MINUTES,
         harbor_config=harbor_config,
-        is_probe=False,
         kind=kind,
         max_attempts=ANALYSIS_TRIAL_MAX_ATTEMPTS,
         status=TrialStatus.QUEUED,

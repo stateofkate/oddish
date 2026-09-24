@@ -11,9 +11,9 @@ name: Monitor Contract Guard
 on:
   # The monitor, the launcher, the /monitor routes and their tests, plus the
   # files the recorded contract is read from outside those (HarborOutcome,
-  # live_tail.PersistResult, SkillFile), the scripts and queue modules the
-  # tests run or inspect, and the dependency pins (Harbor's lifecycle events,
-  # FastAPI, pydantic).
+  # live_tail.PersistResult), the scripts and queue modules the tests run or
+  # inspect, and the dependency pins (Harbor's lifecycle events, FastAPI,
+  # pydantic).
   pull_request:
     paths:
       - "oddish/src/oddish/mon/**"

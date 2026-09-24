@@ -23,7 +23,6 @@ from oddish.mon.contract import (
 )
 from oddish.mon.env import MonitorEnv
 from oddish.mon.status import MonitorPhase, write_status
-from oddish.worker.skills_overlay import SkillBundle
 
 logger = logging.getLogger(__name__)
 
@@ -124,16 +123,6 @@ class MonitorClient:
         spec = AttemptSpec.model_validate(await self._call("GET", "/attempt"))
         self._trial_id = spec.trial_id
         return spec
-
-    async def skills(self) -> list[SkillBundle]:
-        reply = await self._call("GET", "/skills")
-        return [
-            SkillBundle(
-                name=skill["name"],
-                files=[(f["relative_path"], f["content"]) for f in skill["files"]],
-            )
-            for skill in reply["skills"]
-        ]
 
     async def heartbeat(
         self, *, pending_failure_count: int = 0, pending_last_error: str | None = None

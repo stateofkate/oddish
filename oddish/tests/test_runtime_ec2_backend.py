@@ -649,7 +649,6 @@ def test_ec2_runner_requires_complete_ownership_identity(
             hc=HarborConfig(),
             environment=EnvironmentType.EC2,
             backend=None,
-            is_probe=False,
             trial_id=trial_id,
             worker_job_id=worker_job_id,
             sandbox_launch=sandbox_launch,
