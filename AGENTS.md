@@ -2210,10 +2210,11 @@ Claude trials run Harbor's stock `claude-code` agent. The pinned Harbor fork
 records the session ID after successful runs and errors, so a multi-step task
 with `resume_trajectory=true` can continue the same session. Conflicting session
 IDs still block resume. Keep this behavior in Harbor, not an Oddish subclass.
-Harbor's artifact scrubber excludes the `CLAUDE_FORCE_OAUTH` mode flag from
-secret values and redacts valid JSON by parsing it first. This keeps JSON
+Harbor's artifact scrubber excludes the `*_FORCE_OAUTH` mode flags
+(`CLAUDE_FORCE_OAUTH`, `GEMINI_FORCE_OAUTH`) from secret values and redacts
+valid JSON by parsing it first. This keeps JSON
 numbers and booleans typed while removing credentials from strings. Treating
-that flag's `0` value as a secret corrupts trajectories and analysis results.
+a flag's `0` or `false` value as a secret corrupts trajectories and analysis results.
 
 ### Worker resource comparison
 

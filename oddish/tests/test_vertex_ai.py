@@ -271,6 +271,17 @@ def test_gemini_force_oauth_value_parses_in_harbors_resolver(service_account):
         parse_bool_env_value("", name="GEMINI_FORCE_OAUTH", default=False)
 
 
+@pytest.mark.parametrize("flag", ["CLAUDE_FORCE_OAUTH", "GEMINI_FORCE_OAUTH"])
+def test_force_oauth_flags_are_not_secrets_to_harbor(flag):
+    # Harbor's trial scrubber replaces the value of every sensitive-named env
+    # var in all trial files. These flags carry "0"/"false", so scrubbing them
+    # would strip those characters from every artifact, as it did to QA
+    # qa_result.json on 2026-09-24.
+    from harbor.utils.env import is_sensitive_env_key
+
+    assert not is_sensitive_env_key(flag)
+
+
 def test_claude_model_variables_only_for_claude_ids(service_account):
     gemini = _build("claude-code", "vertex_ai/gemini-3.8-flash")
     assert "ANTHROPIC_MODEL" not in gemini.env
