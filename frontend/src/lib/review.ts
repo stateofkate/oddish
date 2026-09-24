@@ -8,6 +8,11 @@ import { formatLineRange } from "@/lib/line-range";
 import { taskHasActiveVerdict, taskHasActiveAnalysis } from "@/lib/job-status";
 import { isBaselineAgentName } from "@/lib/experiment-agent-grouping";
 import { defaultVersionElsewhere } from "@/lib/experiment-task-version";
+import {
+  isCancelledVerdict,
+  isInsufficientEvidence,
+  type VerdictState,
+} from "@/lib/verdict-state";
 
 export const EXECUTION_LABELS: Record<AnalysisClassification, string> = {
   GOOD_SUCCESS: "Good success",
@@ -16,27 +21,6 @@ export const EXECUTION_LABELS: Record<AnalysisClassification, string> = {
   BAD_FAILURE: "Bad failure",
   HARNESS_ERROR: "Harness error",
 };
-
-import { QA_STATUS_LABELS } from "@/lib/deliveries";
-
-/** The server records a settled task with no QA-eligible runs as a failed
- * verdict with this prefix (oddish/core/verdict_state.py). */
-export function isInsufficientEvidence(
-  error: string | null | undefined
-): boolean {
-  return (error ?? "").startsWith("Insufficient evidence");
-}
-
-// Task reviews use outdated only for a version mismatch; deliveries also use it
-// for evidence outside the selected time window or missing required evidence.
-export const VERDICT_LABELS = {
-  ...QA_STATUS_LABELS,
-  outdated: "Verdict pending: regenerate for this version",
-  no_evidence: "Verdict pending: needs agent trials",
-  missing: "Verdict pending: none recorded",
-};
-
-export const REVIEW_LABELS = VERDICT_LABELS;
 
 /** Exclude internal, superseded, and baseline runs from review coverage. */
 export function isReviewableTrial(trial: Trial): boolean {
@@ -90,8 +74,10 @@ export function runReviewSummary(trials: Trial[]): string {
     .join(" · ");
 }
 
-/** Review progress and task quality; solver failure never determines this. */
-export function taskReviewStatus(task: Task): keyof typeof REVIEW_LABELS {
+/** The task's one verdict state, checked in order: active QA, the failed
+ * states, then a verdict owned by the version shown. Solver failure never
+ * determines this. */
+export function taskReviewStatus(task: Task): VerdictState {
   const verdict =
     task.verdict?.verdict ??
     (task.verdict?.is_good === true
@@ -102,9 +88,9 @@ export function taskReviewStatus(task: Task): keyof typeof REVIEW_LABELS {
   // The verdict fields and any QA run belong to the default version. An
   // experiment on another version shows only a verdict stamped for its own.
   if (defaultVersionElsewhere(task) != null) {
-    if (task.review_version_matches !== true) return "missing";
-    if (verdict === "reject") return "needs_fixes";
-    return verdict === "accept" ? "accepted" : "missing";
+    if (task.review_version_matches !== true) return "no_verdict";
+    if (verdict === "reject") return "rejected";
+    return verdict === "accept" ? "accepted" : "no_verdict";
   }
   if (
     taskHasActiveVerdict(task) ||
@@ -112,35 +98,21 @@ export function taskReviewStatus(task: Task): keyof typeof REVIEW_LABELS {
       verdict == null &&
       taskHasActiveAnalysis(task))
   ) {
-    return task.verdict_status === "queued" || task.verdict_status === "pending"
-      ? "queued"
-      : "running";
+    return "queued";
   }
-  if (task.verdict_status === "failed")
-    return isInsufficientEvidence(task.verdict_error) ? "no_evidence" : "error";
-  if (task.verdict && task.review_version_matches === false) return "outdated";
-  if (verdict === "reject") return "needs_fixes";
-  if (verdict === "accept") return "accepted";
-  return task.verdict_status === "success" ? "missing" : "never";
+  if (task.verdict_status === "failed") {
+    if (isInsufficientEvidence(task.verdict_error))
+      return "insufficient_trials";
+    return isCancelledVerdict(task.verdict_error) ? "no_verdict" : "failed";
+  }
+  if (task.verdict && task.review_version_matches === false)
+    return "no_verdict";
+  if (verdict === "reject") return "rejected";
+  return verdict === "accept" ? "accepted" : "no_verdict";
 }
 
-export type TaskReviewFilter =
-  | "all"
-  | "accepted"
-  | "rejected"
-  | "running"
-  | "failed"
-  | "unreviewed";
-
-/** The disjoint groups shared by review counts, table filters and drawer navigation. */
-export function taskReviewFilter(task: Task): Exclude<TaskReviewFilter, "all"> {
-  const status = taskReviewStatus(task);
-  if (status === "accepted") return "accepted";
-  if (status === "needs_fixes") return "rejected";
-  if (status === "error") return "failed";
-  if (status === "queued" || status === "running") return "running";
-  return "unreviewed";
-}
+/** Review counts, table filters and drawer navigation group by verdict state. */
+export type TaskReviewFilter = "all" | VerdictState;
 
 /** A finding address pins content even when that version is today's default. */
 export function findingHref(

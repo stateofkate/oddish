@@ -24,7 +24,10 @@ from sqlalchemy.orm import selectinload
 
 from oddish.core.baseline_gate import baseline_agent_clause
 from oddish.core.cost_basis import settled_cost_columns, settled_cost_parts
-from oddish.core.verdict_state import INSUFFICIENT_EVIDENCE_PREFIX
+from oddish.core.verdict_state import (
+    CANCELLED_VERDICT_ERRORS,
+    INSUFFICIENT_EVIDENCE_PREFIX,
+)
 from oddish.filters.trial_metrics import TrialMetricFilter
 from oddish.filters.trial_predicates import (
     EligibleTrialScope,
@@ -305,9 +308,13 @@ def _baseline_agent_clause():
     return baseline_agent_clause(TrialModel.agent)
 
 
-def _insufficient_evidence_clause():
-    return func.coalesce(TaskModel.verdict_error, "").like(
-        f"{INSUFFICIENT_EVIDENCE_PREFIX}%"
+def _no_verdict_failure_clause():
+    """A failed verdict that is no verdict, not a broken QA run: the task had
+    no QA-eligible trials, or QA was cancelled."""
+    error = func.coalesce(TaskModel.verdict_error, "")
+    return or_(
+        error.like(f"{INSUFFICIENT_EVIDENCE_PREFIX}%"),
+        error.in_(sorted(CANCELLED_VERDICT_ERRORS)),
     )
 
 
@@ -354,14 +361,14 @@ def _build_aggregates_for_experiment_ids(
                     )
                 )
             ).label("verdict_needs_review"),
-            # A settled task with no QA-eligible runs is stored as a failed
-            # verdict; it needs agent trials, so it counts as pending, not failed.
+            # A settled task with no QA-eligible runs, or a cancelled QA pass,
+            # is stored as a failed verdict; it counts as pending, not failed.
             func.count(
                 case(
                     (
                         and_(
                             TaskModel.verdict_status == VerdictStatus.FAILED,
-                            not_(_insufficient_evidence_clause()),
+                            not_(_no_verdict_failure_clause()),
                         ),
                         1,
                     )
@@ -376,7 +383,7 @@ def _build_aggregates_for_experiment_ids(
                                 TaskModel.verdict_status.is_(None),
                                 and_(
                                     TaskModel.verdict_status == VerdictStatus.FAILED,
-                                    _insufficient_evidence_clause(),
+                                    _no_verdict_failure_clause(),
                                 ),
                                 TaskModel.verdict_status.in_(
                                     [

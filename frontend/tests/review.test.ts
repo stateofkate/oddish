@@ -30,6 +30,10 @@ const review = load("@/lib/review") as typeof import("../src/lib/review.ts");
 const jobs = load(
   "@/lib/job-status"
 ) as typeof import("../src/lib/job-status.ts");
+const verdictState = load(
+  "@/lib/verdict-state"
+) as typeof import("../src/lib/verdict-state.ts");
+const LABELS = verdictState.VERDICT_STATE_LABELS;
 const task = {
   id: "task-1",
   name: "Task",
@@ -82,6 +86,7 @@ runInNewContext(
     },
     ...review,
     ...jobs,
+    ...verdictState,
     Tooltip: box,
     TooltipTrigger: box,
     TooltipContent: box,
@@ -134,6 +139,7 @@ runInNewContext(
       return jsx;
     },
     ...review,
+    ...verdictState,
     Loader2: box,
     AlertTriangle: box,
     CheckCircle2: box,
@@ -149,11 +155,11 @@ runInNewContext(
 
 for (const [label, is_good, expected] of [
   ["accept", null, "accepted"],
-  ["reject", null, "needs_fixes"],
+  ["reject", null, "rejected"],
   [undefined, true, "accepted"],
-  [undefined, false, "needs_fixes"],
+  [undefined, false, "rejected"],
   ["accept", false, "accepted"],
-  ["reject", true, "needs_fixes"],
+  ["reject", true, "rejected"],
 ] as const) {
   test(`published ${label ?? is_good} verdict is ${expected}`, () => {
     const reviewed = {
@@ -161,63 +167,36 @@ for (const [label, is_good, expected] of [
       verdict: { verdict: label, is_good, confidence: null },
     };
     assert.equal(review.taskReviewStatus(reviewed), expected);
-    assert.equal(
-      review.taskReviewFilter(reviewed),
-      expected === "accepted" ? "accepted" : "rejected"
-    );
     const presented = badge.present!(reviewed, "", false);
-    assert.equal(presented.title, review.VERDICT_LABELS[expected]);
+    assert.equal(presented.title, LABELS[expected]);
     assert.equal(presented.isGood, expected === "accepted");
     for (const [override, state] of [
-      [{ review_version_matches: false }, "outdated"],
-      [{ verdict_status: "failed" }, "error"],
+      [{ review_version_matches: false }, "no_verdict"],
+      [{ verdict_status: "failed" }, "failed"],
       [{ verdict_status: "queued" }, "queued"],
-      [{ verdict_status: "running" }, "running"],
+      [{ verdict_status: "running" }, "queued"],
     ] as const) {
       const inactive = badge.present!({ ...reviewed, ...override }, "", false);
-      assert.equal(inactive.title, review.VERDICT_LABELS[state]);
+      assert.equal(inactive.title, LABELS[state]);
       assert.equal(inactive.isGood, null);
-      assert.equal(
-        review.taskReviewFilter({ ...reviewed, ...override }),
-        state === "outdated"
-          ? "unreviewed"
-          : state === "error"
-            ? "failed"
-            : "running"
-      );
+      assert.equal(review.taskReviewStatus({ ...reviewed, ...override }), state);
     }
     assert.equal(
       review.taskReviewStatus({ ...reviewed, analysis_status: "running" }),
       expected
     );
-    assert.equal(
-      review.taskReviewStatus({ ...reviewed, review_version_matches: false }),
-      "outdated"
-    );
-    assert.equal(
-      review.taskReviewStatus({ ...reviewed, verdict_status: "failed" }),
-      "error"
-    );
-    assert.equal(
-      review.taskReviewStatus({ ...reviewed, verdict_status: "queued" }),
-      "queued"
-    );
-    assert.equal(
-      review.taskReviewStatus({ ...reviewed, verdict_status: "running" }),
-      "running"
-    );
     for (const ungradedSettled of [0, 2]) {
       const html = renderToStaticMarkup(
         React.createElement(exports.Chip, { task: reviewed, ungradedSettled })
       );
-      assert.ok(html.includes(review.VERDICT_LABELS[expected]), html);
+      assert.ok(html.includes(LABELS[expected]), html);
       assert.ok(
         html.includes(
           expected === "accepted" ? "bg-emerald-100" : "bg-red-100"
         ),
         html
       );
-      assert.ok(!html.includes(review.VERDICT_LABELS.outdated), html);
+      assert.ok(!html.includes(LABELS.no_verdict), html);
       assert.equal(html.includes("2 completed runs"), ungradedSettled === 2);
     }
     const outdated = renderToStaticMarkup(
@@ -226,27 +205,58 @@ for (const [label, is_good, expected] of [
         ungradedSettled: 0,
       })
     );
-    assert.ok(outdated.includes(review.VERDICT_LABELS.outdated), outdated);
+    assert.ok(outdated.includes(LABELS.no_verdict), outdated);
   });
 }
 
-test("missing and inconclusive verdicts remain unreviewed", () => {
-  assert.equal(review.taskReviewStatus(task), "missing");
-  assert.equal(review.taskReviewFilter(task), "unreviewed");
-  assert.equal(
-    review.taskReviewStatus({
-      ...task,
-      verdict: { is_good: null, confidence: null },
-    }),
-    "missing"
-  );
-  assert.equal(
-    review.taskReviewStatus({ ...task, verdict_status: null }),
-    "never"
-  );
-  assert.equal(
-    review.taskReviewFilter({ ...task, verdict_status: null }),
-    "unreviewed"
+test("a task with no verdict of its own reads No verdict yet, whatever the cause", () => {
+  for (const override of [
+    {}, // a classification-only QA pass
+    { verdict: { is_good: null, confidence: null } },
+    { verdict_status: null }, // QA never ran
+    { verdict: { verdict: "accept", is_good: true, confidence: null }, review_version_matches: false },
+    { verdict_status: "failed", verdict_error: "Cancelled by user" },
+    { verdict_status: "failed", verdict_error: "Cancelled because quota was reached" },
+  ] as Partial<Task>[]) {
+    const unreviewed = { ...task, ...override };
+    assert.equal(review.taskReviewStatus(unreviewed), "no_verdict");
+    assert.equal(badge.present!(unreviewed, "", false).title, "No verdict yet");
+    const html = renderToStaticMarkup(
+      React.createElement(exports.Chip, { task: unreviewed, ungradedSettled: 0 })
+    );
+    assert.ok(html.includes("No verdict yet"), html);
+    assert.ok(!html.includes("bg-amber-100"), html);
+  }
+});
+
+test("the six labels are the whole vocabulary", () => {
+  assert.deepEqual(JSON.parse(JSON.stringify(LABELS)), {
+    no_verdict: "No verdict yet",
+    insufficient_trials: "No verdict: insufficient trials",
+    queued: "Verdict queued",
+    accepted: "Verdict accepted",
+    rejected: "Verdict rejected",
+    failed: "Verdict failed",
+  });
+  assert.deepEqual([...verdictState.VERDICT_STATES], Object.keys(LABELS));
+});
+
+test("delivery QA statuses map onto the same six states", () => {
+  assert.deepEqual(
+    Object.fromEntries(
+      (
+        ["accepted", "needs_fixes", "queued", "running", "error", "outdated", "never"] as const
+      ).map((status) => [status, verdictState.deliveryVerdictState(status)])
+    ),
+    {
+      accepted: "accepted",
+      needs_fixes: "rejected",
+      queued: "queued",
+      running: "queued",
+      error: "failed",
+      outdated: "no_verdict",
+      never: "no_verdict",
+    }
   );
 });
 
@@ -260,24 +270,21 @@ test("QA verdict failure retains its cause and remains distinct from rejection",
   assert.equal(presented.title, "Verdict failed");
   assert.equal(presented.detail, reason);
   assert.equal(presented.isGood, null);
-  assert.equal(review.REVIEW_LABELS.error, "Verdict failed");
-  assert.equal(review.REVIEW_LABELS.accepted, "Verdict accepted");
 });
 
-test("a legacy insufficient-evidence error displays needs agent trials", () => {
+test("an insufficient-evidence error displays insufficient trials", () => {
   const reason =
     "Insufficient evidence: no eligible solver trials for the current task version.";
   const noEvidence = { ...task, verdict_status: "failed", verdict_error: reason };
-  assert.equal(review.taskReviewStatus(noEvidence), "no_evidence");
-  assert.equal(review.taskReviewFilter(noEvidence), "unreviewed");
+  assert.equal(review.taskReviewStatus(noEvidence), "insufficient_trials");
   const presented = badge.present!(noEvidence, "", false);
-  assert.equal(presented.title, "Verdict pending: needs agent trials");
+  assert.equal(presented.title, "No verdict: insufficient trials");
   assert.equal(presented.detail, reason);
   assert.equal(presented.isGood, null);
   const html = renderToStaticMarkup(
     React.createElement(exports.Chip, { task: noEvidence, ungradedSettled: 0 })
   );
-  assert.ok(html.includes("Verdict pending: needs agent trials"), html);
+  assert.ok(html.includes("No verdict: insufficient trials"), html);
   assert.ok(html.includes(reason), html);
   assert.ok(!html.includes("bg-amber-100"), html);
 });
@@ -343,7 +350,7 @@ test("analysis progress separates completed classifications from failed and pend
 test("accepted and missing verdict chips have concise exact labels", () => {
   for (const [verdict, label] of [
     [{ verdict: "accept", is_good: true, confidence: null }, "Verdict accepted"],
-    [null, "Verdict pending: none recorded"],
+    [null, "No verdict yet"],
   ] as const) {
     const html = renderToStaticMarkup(
       React.createElement(exports.Chip, {
@@ -421,6 +428,7 @@ test("verdict summary hides empty categories and keeps clearing an active filter
     {
       exports: output,
       require: () => jsx,
+      ...verdictState,
       KpiTile: ({
         label,
         children,
@@ -440,15 +448,22 @@ test("verdict summary hides empty categories and keeps clearing an active filter
         totalTrials: 0,
       },
       costStatus: "loading",
-      qa: { accepted: 2, rejected: 0, running: 0, failed: 1, unreviewed: 0 },
+      qa: {
+        no_verdict: 0,
+        insufficient_trials: 0,
+        queued: 0,
+        accepted: 2,
+        rejected: 0,
+        failed: 1,
+      },
       reviewFilter: "rejected",
       onReviewFilter: () => {},
     })
   );
   assert.match(html, /QA verdicts/);
-  assert.match(html, /2 Accepted/);
-  assert.match(html, /1 Failed/);
-  assert.doesNotMatch(html, /0 (Rejected|Pending)/);
+  assert.match(html, /2 Verdict accepted/);
+  assert.match(html, /1 Verdict failed/);
+  assert.doesNotMatch(html, /0 (Verdict|No verdict)/);
   assert.match(html, /Show all tasks/);
 });
 
@@ -527,7 +542,14 @@ test("routine fetch narration is absent while errors retain a retry action", () 
   assert.match(failure, /Retry/);
 });
 
-for (const verdictStatus of ["success", "running", "failed", null] as const) {
+// A must-fix finding leads QA to reject once it runs, but until then the row
+// keeps the task's real verdict state and shows the count beside it.
+for (const [verdictStatus, label] of [
+  ["success", "No verdict yet · 3 Must fix"],
+  ["running", "Verdict queued · 3 Must fix"],
+  ["failed", "Verdict failed · 3 Must fix"],
+  [null, "No verdict yet · 3 Must fix"],
+] as const) {
   test(`known required fixes stay visible with ${verdictStatus} review`, () => {
     const html = renderToStaticMarkup(
       React.createElement(exports.Chip, {
@@ -541,7 +563,8 @@ for (const verdictStatus of ["success", "running", "failed", null] as const) {
         onOpen: () => {},
       })
     );
-    assert.equal(html.replace(/<[^>]*>/g, ""), "Verdict rejected: 3 Must fix");
+    assert.equal(html.replace(/<[^>]*>/g, ""), label);
+    assert.doesNotMatch(html, /Verdict rejected/);
     assert.match(html, /aria-label="Open findings for Task"/);
   });
 }
@@ -612,7 +635,7 @@ test("selected version without findings does not reuse another version's count",
     false,
     0
   );
-  assert.equal(presented.title, review.VERDICT_LABELS.outdated);
+  assert.equal(presented.title, LABELS.no_verdict);
 });
 
 test("an experiment on an older version shows only a verdict stamped for that version", () => {
@@ -630,17 +653,15 @@ test("an experiment on an older version shows only a verdict stamped for that ve
     { review_version_matches: false, verdict_status: "running" },
     { review_version_matches: false, verdict_status: "failed" },
   ] as const) {
-    const status = review.taskReviewStatus({ ...older, ...override });
-    assert.equal(status, "missing");
     assert.equal(
-      review.VERDICT_LABELS[status],
-      "Verdict pending: none recorded"
+      review.taskReviewStatus({ ...older, ...override }),
+      "no_verdict"
     );
   }
-  assert.equal(review.taskReviewStatus(older), "needs_fixes");
+  assert.equal(review.taskReviewStatus(older), "rejected");
   assert.equal(
     review.taskReviewStatus({ ...older, trial_version: 5 }),
-    "needs_fixes"
+    "rejected"
   );
   assert.equal(
     review.taskReviewStatus({
@@ -648,18 +669,18 @@ test("an experiment on an older version shows only a verdict stamped for that ve
       trial_version: 5,
       review_version_matches: false,
     }),
-    "outdated"
+    "no_verdict"
   );
   // The task page sets trial_version to the picked version but has no
   // experiment: its QA status and mismatched verdict still show.
   const taskPage = { ...older, experiment_id: "" };
   assert.equal(
     review.taskReviewStatus({ ...taskPage, review_version_matches: false }),
-    "outdated"
+    "no_verdict"
   );
   assert.equal(
     review.taskReviewStatus({ ...taskPage, verdict_status: "running" }),
-    "running"
+    "queued"
   );
 });
 
@@ -717,7 +738,7 @@ test("the new version badge names both versions and links to the default", () =>
   const html = renderToStaticMarkup(
     React.createElement(Badge, { task: older })
   );
-  assert.ok(html.includes("New task version available · v4 of v6"), html);
+  assert.ok(html.includes("Newer task version available · v4 of v6"), html);
   assert.ok(
     html.includes('href="/tasks/task-1?version=task-1-v6&amp;from=new-version"'),
     html

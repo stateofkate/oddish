@@ -185,7 +185,7 @@ test("missing-version checks share one label and old snapshots do not invent cou
   row.checks.forEach((check) => delete check.failure_labels);
   // QA-first, matching deliveryCheckOrder: the verdict label leads.
   assert.deepEqual(deliveryTaskLabels(row), [
-    "Verdict pending: not yet generated",
+    "No verdict yet",
     "Pre-trial audit needed",
     "Run requirements unmet",
   ]);
@@ -194,6 +194,12 @@ test("missing-version checks share one label and old snapshots do not invent cou
 test("delivery defect badges count only unacknowledged findings", () => {
   const row = reviewTaskRow();
   const count = row.defects.filter((defect) => !defect.acknowledged).length;
+  // The fixture's QA verdict is outdated, so the badge must not claim a
+  // rejection; it shows the real state with the count.
+  assert.deepEqual(deliveryTaskLabels(row), [
+    `No verdict yet · ${count} Must fix`,
+  ]);
+  row.qa.status = "needs_fixes";
   assert.deepEqual(deliveryTaskLabels(row), [
     `Verdict rejected: ${count} Must fix`,
   ]);

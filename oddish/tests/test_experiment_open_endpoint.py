@@ -303,10 +303,13 @@ def test_experiment_open_includes_selected_audit_status_and_count_without_findin
     assert payload["pre_trial_status"] == "success"
     assert "pre_trial" not in payload
     sql = _sql(session.calls[2])
-    assert "pre_trial_status = 'SUCCESS'" in sql
-    assert "jsonb_array_length(jsonb_path_query_array(" in sql
-    assert '$.items[*] ? (@.tier == "must_fix")' in sql
-    assert "AS must_fix_count" in sql
+    # The row counts required findings the way the task drawer does, so trial
+    # analysis findings count as well as the pre-trial audit's.
+    assert "findings.must_fix_count" in sql
+    assert "v.id = review_version.id" in sql
+    assert "v.reported_findings" in sql
+    assert "tr.analysis->'action_items'" in sql
+    assert "tr.task_id = tasks.id AND tr.task_version_id = review_version.id" in sql
     assert "JOIN task_versions AS review_version" in sql
     assert "coalesce(experiment_task_stats.trial_version_id, tasks.current_version_id)" in sql
     assert len(session.calls) == 4

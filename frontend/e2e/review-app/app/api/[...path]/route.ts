@@ -18,7 +18,7 @@ duplicationBoard.tasks = [reviewTaskRow()];
 for (const check of duplicationBoard.tasks[0].checks) {
   if (check.key === "verdict_ok") {
     check.status = "fail";
-    check.failure_labels = ["Verdict pending: needs agent trials"];
+    check.failure_labels = ["No verdict: insufficient trials"];
     check.detail =
       "Insufficient evidence: no eligible agent trials for this task version.";
   } else if (check.key === "pre_trial_passed") {

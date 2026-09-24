@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { QA_STATUS_LABELS } from "@/lib/deliveries";
+import { qaStatusLabel } from "@/lib/deliveries";
 import type { DeliveryQAStatus } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 
@@ -19,7 +19,8 @@ const QA_PRESENTATION = {
   },
   needs_fixes: { Icon: XCircle, tone: "text-red-700 dark:text-red-400" },
   error: { Icon: AlertCircle, tone: "text-amber-700 dark:text-amber-400" },
-  outdated: { Icon: Clock, tone: "text-amber-700 dark:text-amber-400" },
+  // Same label as never: this version's trials have no current verdict.
+  outdated: { Icon: CircleDashed, tone: "text-muted-foreground" },
   running: { Icon: Loader2, tone: "text-blue-700 dark:text-blue-400" },
   queued: { Icon: Clock, tone: "text-blue-700 dark:text-blue-400" },
   never: { Icon: CircleDashed, tone: "text-muted-foreground" },
@@ -33,7 +34,7 @@ export function DeliveryQAStatusBadge({ qa }: { qa: DeliveryQAStatus }) {
       className={cn("inline-flex items-center gap-1 text-sm", tone)}
     >
       <Icon className="h-3.5 w-3.5" aria-hidden="true" />
-      {QA_STATUS_LABELS[qa.status]}
+      {qaStatusLabel(qa.status)}
     </span>
   );
 }

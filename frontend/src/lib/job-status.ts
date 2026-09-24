@@ -136,15 +136,6 @@ export function taskHasActiveVerdict(task: Task | null | undefined): boolean {
   );
 }
 
-/** Short experiment-row copy for a rejected task. */
-export function rejectedMustFixLabel(task: Task): string {
-  const count = task.must_fix_count ?? 0;
-  if (count > 0) {
-    return `Verdict rejected: ${count} Must fix`;
-  }
-  return "Verdict rejected";
-}
-
 export function taskHasCancellableWork(task: Task | null | undefined): boolean {
   if (!task) return false;
   if (task.jobs?.some(isActiveVisibleJob)) return true;

@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { rejectedMustFixLabel } from "../src/lib/job-status";
-import { taskReviewFilter } from "../src/lib/review";
+import { taskReviewStatus } from "../src/lib/review";
 import type { Task } from "../src/lib/types";
 
 const rejected = {
@@ -11,9 +11,9 @@ const rejected = {
 } as unknown as Task;
 
 test("published and legacy rejections are reviewable", () => {
-  expect(taskReviewFilter(rejected)).toBe("rejected");
+  expect(taskReviewStatus(rejected)).toBe("rejected");
   expect(
-    taskReviewFilter({
+    taskReviewStatus({
       ...rejected,
       verdict: { is_good: false } as Task["verdict"],
     })
@@ -22,24 +22,24 @@ test("published and legacy rejections are reviewable", () => {
 
 test("acceptance, missing evidence and failed QA are not rejections", () => {
   expect(
-    taskReviewFilter({
+    taskReviewStatus({
       ...rejected,
       verdict: { verdict: "accept", is_good: true } as Task["verdict"],
     })
   ).not.toBe("rejected");
-  expect(taskReviewFilter({ ...rejected, verdict: null })).not.toBe("rejected");
-  expect(taskReviewFilter({ ...rejected, verdict_status: "failed" })).not.toBe(
+  expect(taskReviewStatus({ ...rejected, verdict: null })).not.toBe("rejected");
+  expect(taskReviewStatus({ ...rejected, verdict_status: "failed" })).not.toBe(
     "rejected"
   );
 });
 
 for (const status of ["queued", "running"] as const) {
   test(`replacement QA ${status} hides an old rejection`, () => {
-    expect(taskReviewFilter({ ...rejected, verdict_status: status })).not.toBe(
+    expect(taskReviewStatus({ ...rejected, verdict_status: status })).not.toBe(
       "rejected"
     );
     expect(
-      taskReviewFilter({
+      taskReviewStatus({
         ...rejected,
         active_qa_trial: { kind: "qa", status } as Task["active_qa_trial"],
       })
@@ -65,7 +65,7 @@ test("rejected experiment copy uses the must-fix count", () => {
 
 test("a failing solver run alone does not reject a task", () => {
   expect(
-    taskReviewFilter({
+    taskReviewStatus({
       ...rejected,
       verdict: null,
       trials: [

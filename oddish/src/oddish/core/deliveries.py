@@ -22,7 +22,11 @@ from oddish.core.delivery_progress import (
     record_delivery_progress,
 )
 from oddish.core.task_findings import task_defect_items
-from oddish.core.verdict_state import is_insufficient_evidence
+from oddish.core.verdict_state import (
+    VERDICT_STATE_LABELS,
+    is_failed_without_verdict,
+    is_insufficient_evidence,
+)
 from oddish.db import (
     CustomerModel,
     DeliveryManualCheckModel,
@@ -1122,23 +1126,23 @@ async def _compute_board(
                 + ([f"Agents: {agents}/{min_agents}"] if agents < min_agents else []),
             )
 
-            # Verdict failed is reserved for a QA run that did not complete;
-            # every other gap is pending work, named in the label. The task's
-            # own insufficient-evidence state outranks an older failed run.
+            # Verdict failed is reserved for a QA run that did not complete.
+            # The task's own insufficient-evidence or cancelled state outranks
+            # an older failed run.
             qa_status = qa_statuses.get(task.id, DeliveryQAStatus())
-            if task.verdict_status == VerdictStatus.FAILED and is_insufficient_evidence(
-                task.verdict_error
-            ):
-                verdict_label = "Verdict pending: needs agent trials"
+            if is_failed_without_verdict(task):
+                verdict_label = VERDICT_STATE_LABELS[
+                    "insufficient_trials"
+                    if is_insufficient_evidence(task.verdict_error)
+                    else "no_verdict"
+                ]
                 missing_detail = task.verdict_error or f"no completed QA verdict on {vlabel}"
             elif qa_status.status == "error":
-                verdict_label, missing_detail = "Verdict failed", qa_status.detail
+                verdict_label, missing_detail = VERDICT_STATE_LABELS["failed"], qa_status.detail
             else:
-                verdict_label = {
-                    "queued": "Verdict pending: generation queued",
-                    "running": "Verdict pending: generating",
-                    "outdated": "Verdict pending: regeneration needed",
-                }.get(qa_status.status, "Verdict pending: not yet generated")
+                verdict_label = VERDICT_STATE_LABELS[
+                    "queued" if qa_status.status in ("queued", "running") else "no_verdict"
+                ]
                 missing_detail = f"no completed QA verdict on {vlabel}"
             verdict = task.verdict if isinstance(task.verdict, dict) else None
             if verdict is None:
@@ -1158,7 +1162,7 @@ async def _compute_board(
                     "QA verdict found no blocking defects; human sign-off is separate"
                     if accepted
                     else f"blocking defect: {verdict.get('primary_issue') or ''}",
-                    ["Verdict rejected"],
+                    [VERDICT_STATE_LABELS["rejected"]],
                 )
 
             unacknowledged = sum(1 for d in defects if not d.acknowledged)

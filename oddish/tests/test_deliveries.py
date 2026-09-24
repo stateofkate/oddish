@@ -1547,10 +1547,12 @@ async def test_delivery_failure_labels_identify_audit_state(
     "state, label",
     [
         ("rejected", "Verdict rejected"),
-        ("no_evidence", "Verdict pending: needs agent trials"),
-        ("stale_failed_qa", "Verdict pending: needs agent trials"),
-        ("older_version_qa", "Verdict pending: needs agent trials"),
-        ("never", "Verdict pending: not yet generated"),
+        ("no_evidence", "No verdict: insufficient trials"),
+        ("stale_failed_qa", "No verdict: insufficient trials"),
+        ("older_version_qa", "No verdict: insufficient trials"),
+        ("never", "No verdict yet"),
+        ("qa_cancelled", "No verdict yet"),
+        ("stale_failed_qa_cancelled", "No verdict yet"),
         ("qa_failed", "Verdict failed"),
     ],
 )
@@ -1568,9 +1570,10 @@ async def test_delivery_verdict_labels_reserve_failed_for_broken_qa_runs(
                 )
             )
         )
-        if state == "stale_failed_qa":
+        if state in ("stale_failed_qa", "stale_failed_qa_cancelled"):
             # A failed run for this version predates the task settling without
-            # QA-eligible trials; the task's current state wins.
+            # QA-eligible trials, or its QA being cancelled; the task's current
+            # state wins.
             qa_trials[0].status = TrialStatus.FAILED
             qa_trials[0].error_message = "worker crashed"
         elif state == "older_version_qa":
@@ -1591,12 +1594,14 @@ async def test_delivery_verdict_labels_reserve_failed_for_broken_qa_runs(
             "stale_failed_qa": INSUFFICIENT_EVIDENCE_ERROR,
             "older_version_qa": INSUFFICIENT_EVIDENCE_ERROR,
             "qa_failed": "worker crashed",
+            "qa_cancelled": "Cancelled by user",
+            "stale_failed_qa_cancelled": "Cancelled by user",
         }.get(state)
-        if state == "qa_failed":
+        if state in ("qa_failed", "qa_cancelled"):
             failed_qa = _trial(
                 task, experiment, version.id, kind="qa", status=TrialStatus.FAILED
             )
-            failed_qa.error_message = "worker crashed"
+            failed_qa.error_message = task.verdict_error
             session.add(failed_qa)
     await session.flush()
     delivery = await create_delivery_core(
@@ -1620,6 +1625,10 @@ async def test_delivery_verdict_labels_reserve_failed_for_broken_qa_runs(
     if state == "qa_failed":
         assert check.detail == "worker crashed"
         assert qa.status == "error"
+    if state in ("qa_cancelled", "stale_failed_qa_cancelled"):
+        # A cancelled run left no verdict; it did not break.
+        assert check.detail == "Cancelled by user"
+        assert (qa.status, qa.detail) == ("never", "Cancelled by user")
 
 
 @pytest.mark.asyncio

@@ -10,7 +10,8 @@ import type { ReactNode } from "react";
 import { AnalysisProse } from "@/components/analysis-prose";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { VERDICT_LABELS, taskReviewStatus } from "@/lib/review";
+import { taskReviewStatus } from "@/lib/review";
+import { verdictMustFixLabel } from "@/lib/verdict-state";
 import type { Task } from "@/lib/types";
 
 type VerdictPresentation = {
@@ -31,78 +32,63 @@ function presentVerdict(
   mustFixCount = task.must_fix_count ?? 0
 ): VerdictPresentation {
   const verdict = task.verdict ?? null;
-  const review = qaActive ? "running" : taskReviewStatus(task);
-  const pending = review === "queued" || review === "running";
-  const failed = review === "error";
+  const review = qaActive ? "queued" : taskReviewStatus(task);
+  const pending = review === "queued";
+  const failed = review === "failed";
   const isGood =
-    review === "accepted" ? true : review === "needs_fixes" ? false : null;
+    review === "accepted" ? true : review === "rejected" ? false : null;
 
+  // Required findings add a count; they never stand in for a rejection QA
+  // has not published.
+  const title = verdictMustFixLabel(review, mustFixCount);
   let icon: ReactNode;
-  let title: string;
   let toneCard: string;
   let toneInline: string;
-  if (mustFixCount > 0) {
-    icon = (
-      <AlertTriangle className={`${iconSizeClass} shrink-0 text-red-600`} />
-    );
-    title = `Verdict rejected: ${mustFixCount} Must fix`;
-    toneCard = "border-red-500/50 bg-red-500/10";
-    toneInline = "border-red-500/50 bg-red-500/10";
-  } else if (pending) {
+  if (pending) {
     icon = (
       <Loader2
         className={`${iconSizeClass} shrink-0 animate-spin text-blue-500`}
       />
     );
-    title = VERDICT_LABELS[review];
     toneCard = "border-blue-500/30 bg-blue-500/5";
     toneInline = "border-[color:var(--paper-line)]";
   } else if (failed) {
     icon = (
       <AlertTriangle className={`${iconSizeClass} shrink-0 text-amber-600`} />
     );
-    title = VERDICT_LABELS.error;
     toneCard = "border-amber-500/30 bg-amber-500/5";
     toneInline = "border-amber-500/40 bg-amber-500/[0.04]";
-  } else if (
-    review === "outdated" ||
-    review === "no_evidence" ||
-    review === "missing"
-  ) {
+  } else if (review === "insufficient_trials") {
     icon = (
       <Microscope
         className={`${iconSizeClass} text-muted-foreground shrink-0`}
       />
     );
-    title = VERDICT_LABELS[review];
     toneCard = "border-border";
     toneInline = "border-border";
   } else if (isGood === true) {
     icon = (
       <CheckCircle2 className={`${iconSizeClass} shrink-0 text-emerald-500`} />
     );
-    title = VERDICT_LABELS.accepted;
     toneCard = "border-emerald-500/30 bg-emerald-500/5";
     toneInline = "border-emerald-500/40 bg-emerald-500/[0.04]";
   } else if (isGood === false) {
     icon = (
       <AlertTriangle className={`${iconSizeClass} shrink-0 text-red-600`} />
     );
-    title = VERDICT_LABELS.needs_fixes;
     toneCard = "border-red-500/50 bg-red-500/10";
     toneInline = "border-red-500/50 bg-red-500/10";
   } else {
     icon = (
       <Microscope className={`${iconSizeClass} shrink-0 text-slate-500`} />
     );
-    title = VERDICT_LABELS.never;
     toneCard = "border-slate-500/30 bg-slate-500/5";
     toneInline = "border-[color:var(--paper-line)]";
   }
 
   // An in-flight review must never display a previous verdict from cached data.
   let detail: string | null = null;
-  if (failed || review === "no_evidence") {
+  if (failed || review === "insufficient_trials") {
     detail = task.verdict_error ?? null;
   } else if (!pending && isGood === true) {
     detail = verdict?.reasoning?.trim() || null;
@@ -189,7 +175,10 @@ export function TaskVerdictBadge({
                   : "font-mono text-[12px] font-semibold text-[color:var(--paper-ink)]"
               }
             >
-              {variant === "summary" && mustFixCount > 0 && rejectionSource
+              {variant === "summary" &&
+              mustFixCount > 0 &&
+              p.isGood === false &&
+              rejectionSource
                 ? `Verdict rejected · ${rejectionSource}`
                 : isRunning && mustFixCount === 0
                   ? "Queuing QA verdict…"
@@ -211,7 +200,10 @@ export function TaskVerdictBadge({
               </Button>
             )}
           </div>
-          {variant === "summary" && mustFixCount > 0 && rejectionSource ? (
+          {variant === "summary" &&
+          mustFixCount > 0 &&
+          p.isGood === false &&
+          rejectionSource ? (
             <p className="mt-1 text-sm">{mustFixCount} Must fix</p>
           ) : null}
           {rejectionDetail}

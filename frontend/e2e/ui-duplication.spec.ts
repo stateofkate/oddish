@@ -138,7 +138,7 @@ for (const id of ["unreviewed", "review-failed"]) {
     await expect(action).toHaveCount(1);
     const card = action.locator("..");
     await expect(card).toContainText(
-      id === "unreviewed" ? "Verdict pending" : "Verdict failed"
+      id === "unreviewed" ? "No verdict yet" : "Verdict failed"
     );
     if (id === "review-failed")
       await expect(card).toContainText("Evidence could not be read.");

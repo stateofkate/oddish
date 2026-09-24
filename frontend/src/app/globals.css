@@ -479,7 +479,7 @@
 }
 
 /* One soft amber pulse on the task page's version switcher after a
- * "New task version available" badge click. */
+ * "Newer task version available" badge click. */
 .version-arrival-flash {
   animation: version-arrival-flash 700ms ease-out;
 }

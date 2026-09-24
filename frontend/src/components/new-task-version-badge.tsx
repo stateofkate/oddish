@@ -20,7 +20,7 @@ export function NewTaskVersionBadge({
   const latest = task.current_version;
   if (shown == null || latest == null || latest <= shown) return null;
 
-  const label = `New task version available · v${shown} of v${latest}`;
+  const label = `Newer task version available · v${shown} of v${latest}`;
   const badgeClass =
     "inline-flex shrink-0 items-center gap-0.5 rounded-[3px] bg-amber-100 px-1 py-px font-mono text-[9.5px] leading-[14px] font-medium whitespace-nowrap text-amber-800 dark:bg-amber-900/40 dark:text-amber-300";
   if (!linked) return <span className={badgeClass}>{label}</span>;

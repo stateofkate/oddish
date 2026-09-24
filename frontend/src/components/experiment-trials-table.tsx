@@ -56,11 +56,8 @@ import {
 import type { MouseEvent as ReactMouseEvent } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import {
-  EXECUTION_LABELS,
-  VERDICT_LABELS,
-  taskReviewStatus,
-} from "@/lib/review";
+import { EXECUTION_LABELS, taskReviewStatus } from "@/lib/review";
+import { verdictMustFixLabel } from "@/lib/verdict-state";
 import { useSearchParams } from "next/navigation";
 import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { mutate } from "swr";
@@ -91,7 +88,6 @@ import {
   isActiveTrialStatus,
   taskHasActiveAnalysis,
   taskHasActiveVerdict,
-  rejectedMustFixLabel,
   taskHasCancellableWork,
   taskHasLiveAnalysisTrial,
 } from "@/lib/job-status";
@@ -420,28 +416,24 @@ function TaskVerdictChip({
 }) {
   const status = taskReviewStatus(task);
   const hasRequiredFixes = (task.must_fix_count ?? 0) > 0;
-  const running = status === "queued" || status === "running";
-  const chipClass = hasRequiredFixes
-    ? "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300"
-    : status === "error"
+  const running = status === "queued";
+  const chipClass =
+    status === "failed"
       ? "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
       : status === "accepted"
         ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300"
-        : status === "needs_fixes"
+        : status === "rejected"
           ? "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300"
           : running
             ? "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300"
             : "bg-muted text-muted-foreground";
-  const label =
-    hasRequiredFixes || status === "needs_fixes"
-      ? rejectedMustFixLabel(task)
-      : VERDICT_LABELS[status];
+  const label = verdictMustFixLabel(status, task.must_fix_count ?? 0);
   let tip: string | null =
-    status === "error" || status === "no_evidence"
+    status === "failed" || status === "insufficient_trials"
       ? (task.verdict_error ?? null)
       : null;
   if (
-    (status === "accepted" || status === "needs_fixes") &&
+    (status === "accepted" || status === "rejected") &&
     task.verdict &&
     ungradedSettled > 0
   ) {
@@ -462,7 +454,7 @@ function TaskVerdictChip({
       onFocus={onPrefetch}
       onClick={onOpen}
       className="inline-flex shrink-0 cursor-pointer bg-transparent p-0"
-      aria-label={`${hasRequiredFixes || status === "needs_fixes" ? "Open findings" : "Open QA verdict"} for ${task.name}`}
+      aria-label={`${hasRequiredFixes || status === "rejected" ? "Open findings" : "Open QA verdict"} for ${task.name}`}
     >
       {chip}
     </button>
@@ -630,7 +622,7 @@ export function ExperimentTrialsTable({
   const rejectedOnly = rejectedOnlyProp ?? rejectedOnlyState;
   const setRejectedOnly = onRejectedOnlyChange ?? setRejectedOnlyState;
   const rejectedTasks = useMemo(
-    () => tasks.filter((task) => taskReviewStatus(task) === "needs_fixes"),
+    () => tasks.filter((task) => taskReviewStatus(task) === "rejected"),
     [tasks]
   );
   const rejectedCount = rejectedTasks.length;
@@ -2021,11 +2013,10 @@ export function ExperimentTrialsTable({
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-red-500/50 bg-red-500/10 p-4">
             <div>
               <p className="text-base font-semibold text-red-700 dark:text-red-300">
-                {mustFixTotal > 0
-                  ? `${mustFixTotal} Must fix`
-                  : `${rejectedCount} ${
-                      rejectedCount === 1 ? "task" : "tasks"
-                    } rejected by QA`}
+                {`${rejectedCount} ${
+                  rejectedCount === 1 ? "task" : "tasks"
+                } rejected by QA`}
+                {mustFixTotal > 0 ? ` · ${mustFixTotal} Must fix` : null}
               </p>
             </div>
             <Button

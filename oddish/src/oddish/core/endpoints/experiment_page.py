@@ -7,9 +7,9 @@ from typing import Any, Literal
 
 from fastapi import HTTPException
 from sqlalchemy import (
+    Integer,
     and_,
     case,
-    cast,
     column,
     func,
     literal,
@@ -20,7 +20,7 @@ from sqlalchemy import (
     true,
     type_coerce,
 )
-from sqlalchemy.dialects.postgresql import JSONB, JSONPATH
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.sql import ClauseElement, Executable
@@ -30,7 +30,10 @@ from oddish.config import settings
 from oddish.core.baseline_gate import baseline_agent_clause
 from oddish.core.cost_exclusions import CostExclusions, load_cost_exclusions
 from oddish.core.experiment_membership import experiment_trial_scope
-from oddish.core.endpoints.task_open_queries import VERDICT_VERSION_SQL
+from oddish.core.endpoints.task_open_queries import (
+    FINDING_COUNTS_SQL,
+    VERDICT_VERSION_SQL,
+)
 from oddish.core.helpers import (
     SLIM_TRIAL_RESPONSE_COLUMNS,
     _parse_github_meta,
@@ -339,22 +342,24 @@ def _experiment_task_rows(
     ]
     if include_user:
         review_version = aliased(TaskVersionModel, name="review_version")
+        # The same required-finding count the task drawer shows: the audit's,
+        # the version's reported ones, and those from analyzed trial runs.
+        findings = (
+            text(
+                FINDING_COUNTS_SQL.format(
+                    task_id="tasks.id",
+                    version_id="review_version.id",
+                    org_id="tasks.org_id",
+                )
+            )
+            .columns(must_fix_count=Integer, pre_trial_must_fix_count=Integer)
+            .lateral("findings")
+        )
         columns.extend(
             [
                 TaskModel.user,
                 review_version.pre_trial_status.label("pre_trial_status"),
-                case(
-                    (
-                        review_version.pre_trial_status == VerdictStatus.SUCCESS,
-                        func.jsonb_array_length(
-                            func.jsonb_path_query_array(
-                                review_version.pre_trial,
-                                cast('$.items[*] ? (@.tier == "must_fix")', JSONPATH),
-                            )
-                        ),
-                    ),
-                    else_=None,
-                ).label("must_fix_count"),
+                findings.c.must_fix_count,
             ]
         )
     query = (
@@ -401,7 +406,7 @@ def _experiment_task_rows(
                 review_version.id == shown_version_id,
                 review_version.deleted_at.is_(None),
             ),
-        )
+        ).outerjoin(findings, true())
     return query
 
 

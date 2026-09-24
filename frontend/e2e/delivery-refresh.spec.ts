@@ -971,7 +971,7 @@ test("review shows outstanding decisions first and acknowledgment retains the ve
     page.getByRole("table").getByText("Ready", { exact: true })
   ).toBeVisible();
   await expect(
-    page.getByText("Verdict pending: regeneration needed", { exact: true })
+    page.getByText("No verdict yet", { exact: true })
   ).toBeVisible();
   expect(state.writes.map(({ body }) => body.check_key)).toEqual([
     "ack:verifier",
@@ -1743,7 +1743,7 @@ for (const group of ["none", "state"]) {
         status: "fail",
         label: "Verdict",
         detail: "Insufficient eligible agent trial evidence.",
-        failure_labels: ["Verdict pending: needs agent trials"],
+        failure_labels: ["No verdict: insufficient trials"],
       },
     ];
     await page.goto(`/?group=${group}`);
@@ -1754,7 +1754,7 @@ for (const group of ["none", "state"]) {
       "Pre-trial audit running",
       "Runs: 2/8",
       "Agents: 1/4",
-      "Verdict pending: needs agent trials",
+      "No verdict: insufficient trials",
     ])
       await expect(row.getByText(label, { exact: true })).toBeVisible();
     await expect(page.getByText("QA incomplete", { exact: true })).toHaveCount(
@@ -1775,7 +1775,7 @@ for (const group of ["none", "state"]) {
     ).toBeVisible();
     await expect(
       page.getByRole("link", {
-        name: "Verdict pending: needs agent trials Insufficient eligible agent trial evidence.",
+        name: "No verdict: insufficient trials Insufficient eligible agent trial evidence.",
         exact: true,
       })
     ).toBeVisible();
@@ -1788,7 +1788,7 @@ for (const group of ["none", "state"]) {
       })
       .getByRole("listitem");
     await expect(checkCards).toHaveCount(3);
-    await expect(checkCards.nth(0)).toContainText("Verdict pending: needs agent trials");
+    await expect(checkCards.nth(0)).toContainText("No verdict: insufficient trials");
     await expect(checkCards.nth(1)).toContainText("Pre-trial audit running");
     await expect(checkCards.nth(2)).toContainText("2/8 runs and 1/4 agents");
     expect(state.writes).toEqual([]);

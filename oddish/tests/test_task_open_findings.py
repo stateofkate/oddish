@@ -2,10 +2,22 @@
 
 import pytest
 from test_deliveries import ORG, _green_task, _trial, _version
-from oddish.db import VerdictStatus
+from oddish.db import VerdictStatus, task_experiments
+from oddish.core.endpoints.experiment_page import get_experiment_open_core
 from oddish.core.endpoints.task_open import get_task_open_core
 from oddish.core.deliveries import create_delivery_core, get_delivery_board_core
 from oddish.schemas import DeliveryCreate
+
+
+async def _experiment_row_must_fix(session, task, experiment):
+    """The experiment page's count for this task's row."""
+    await session.execute(
+        task_experiments.insert().values(task_id=task.id, experiment_id=experiment.id)
+    )
+    page = await get_experiment_open_core(
+        session, experiment_id=experiment.id, org_id=ORG
+    )
+    return page.tasks[0].must_fix_count
 
 
 @pytest.mark.asyncio
@@ -101,6 +113,10 @@ async def test_open_counts_audit_retained_and_live_findings_without_returning_bo
     assert "pre_trial_findings" not in payload
     assert "retained_findings" not in payload
     assert "PRIVATE FINDING BODY" not in response.model_dump_json()
+    # The experiment row shows the drawer's count, not only the audit's.
+    assert await _experiment_row_must_fix(session, task, experiment) == (
+        3 if is_must_fix else 0
+    )
     historical = await get_task_open_core(
         session, task_id=task.id, version_id=other_version.id, org_id=ORG
     )
@@ -137,3 +153,4 @@ async def test_first_run_review_is_counted_without_source_or_retained_findings(s
     response = await get_task_open_core(session, task_id=task.id, org_id=ORG)
     assert response.selected_version.must_fix_count == 1
     assert response.selected_version.pre_trial_must_fix_count == 0
+    assert await _experiment_row_must_fix(session, task, experiment) == 1

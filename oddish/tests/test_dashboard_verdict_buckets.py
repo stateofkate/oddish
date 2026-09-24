@@ -48,20 +48,23 @@ def _trial(task: TaskModel, experiment: ExperimentModel) -> TrialModel:
 
 
 @pytest.mark.asyncio
-async def test_missing_evidence_counts_as_pending_verdict_not_failed(session):
+async def test_missing_evidence_and_cancellation_count_as_pending_not_failed(session):
     no_evidence = _task(
         "verdict-bucket-no-evidence", verdict_error=INSUFFICIENT_EVIDENCE_ERROR
     )
+    cancelled = _task("verdict-bucket-cancelled", verdict_error="Cancelled by user")
     crashed = _task("verdict-bucket-crashed", verdict_error="worker crashed")
     experiment = ExperimentModel(name="verdict-buckets", org_id="org1")
-    session.add_all([no_evidence, crashed, experiment])
+    session.add_all([no_evidence, cancelled, crashed, experiment])
     await session.flush()
-    session.add_all([_trial(no_evidence, experiment), _trial(crashed, experiment)])
+    session.add_all(
+        [_trial(task, experiment) for task in (no_evidence, cancelled, crashed)]
+    )
     await session.execute(
         insert(task_experiments).values(
             [
                 {"task_id": task.id, "experiment_id": experiment.id}
-                for task in (no_evidence, crashed)
+                for task in (no_evidence, cancelled, crashed)
             ]
         )
     )
@@ -79,9 +82,9 @@ async def test_missing_evidence_counts_as_pending_verdict_not_failed(session):
         .mappings()
         .one()
     )
-    assert row["task_count"] == 2
+    assert row["task_count"] == 3
     assert row["verdict_failed"] == 1
-    assert row["verdict_pending"] == 1
+    assert row["verdict_pending"] == 2
 
     only_missing_evidence = {**row, "verdict_failed": 0, "failed_trials": 0}
     assert _experiment_row_passes_status_filter(

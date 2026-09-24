@@ -62,7 +62,12 @@ import {
   isBaselineAgentName,
   type ExperimentAgentSummary,
 } from "@/lib/experiment-agent-grouping";
-import { taskReviewFilter, type TaskReviewFilter } from "@/lib/review";
+import { taskReviewStatus, type TaskReviewFilter } from "@/lib/review";
+import {
+  VERDICT_STATES,
+  VERDICT_STATE_LABELS,
+  type VerdictState,
+} from "@/lib/verdict-state";
 import { resolveExperimentTaskVersion } from "@/lib/experiment-task-version";
 import {
   formatLineRange,
@@ -624,13 +629,7 @@ function ExperimentSummaryBar({
   /** CUA/verifier spend is internal recon; omit on public share pages. */
   showVerifierSpend?: boolean;
   costStatus: ExperimentCostTotalsResource["status"];
-  qa: {
-    accepted: number;
-    rejected: number;
-    running: number;
-    failed: number;
-    unreviewed: number;
-  } | null;
+  qa: Record<VerdictState, number> | null;
 }) {
   if (isInitialLoading) {
     return (
@@ -786,14 +785,9 @@ function ExperimentSummaryBar({
       {qa && (
         <KpiTile label="QA verdicts">
           <div className="flex flex-wrap gap-x-1.5 gap-y-0.5 text-xs">
-            {(
-              [
-                ["accepted", qa.accepted, "Accepted"],
-                ["rejected", qa.rejected, "Rejected"],
-                ["running", qa.running, "Pending: generating"],
-                ["failed", qa.failed, "Failed"],
-                ["unreviewed", qa.unreviewed, "Pending: no current verdict"],
-              ] as const
+            {VERDICT_STATES.map(
+              (value) =>
+                [value, qa[value], VERDICT_STATE_LABELS[value]] as const
             )
               .filter(([, count]) => count > 0)
               .map(([value, count, label]) => (
@@ -1058,15 +1052,15 @@ export function ExperimentDetailView({
     { revalidateOnFocus: false }
   );
   const [drawerState, setDrawerState] = useState<DrawerState>(null);
-  const rawReviewFilter = searchParams.get("verdict");
-  const reviewFilter = [
-    "accepted",
-    "rejected",
-    "running",
-    "failed",
-    "unreviewed",
-  ].includes(rawReviewFilter ?? "")
-    ? (rawReviewFilter as TaskReviewFilter)
+  // Links from before the six verdict states used running and unreviewed.
+  const rawReviewFilter =
+    { running: "queued", unreviewed: "no_verdict" }[
+      searchParams.get("verdict") ?? ""
+    ] ?? searchParams.get("verdict");
+  const reviewFilter: TaskReviewFilter = VERDICT_STATES.includes(
+    rawReviewFilter as VerdictState
+  )
+    ? (rawReviewFilter as VerdictState)
     : "all";
   // Let Next copy its own history state; passing __NA bypasses hook updates.
   const setReviewFilter = useCallback((value: string) => {
@@ -1082,7 +1076,7 @@ export function ExperimentDetailView({
   );
   const reviewTasks = tasksForExperiment.filter((task) => {
     if (reviewFilter === "all" || reviewFilter === "rejected") return true;
-    return taskReviewFilter(task) === reviewFilter;
+    return taskReviewStatus(task) === reviewFilter;
   });
   // Task-definition pane addressing. The drawer can show the task's file
   // tree beside the trial view, so the two panes address independently:
@@ -1429,14 +1423,14 @@ export function ExperimentDetailView({
     const preservedOrderedTasks =
       drawerState.taskNavScope !== "experiment"
         ? remappedOrderedTasks.filter(
-            (task) => taskReviewFilter(task) === drawerState.taskNavScope
+            (task) => taskReviewStatus(task) === drawerState.taskNavScope
           )
         : remappedOrderedTasks;
     const seen = new Set(preservedOrderedTasks.map((task) => task.id));
     const growthPool =
       drawerState.taskNavScope !== "experiment"
         ? tasksForExperiment.filter(
-            (task) => taskReviewFilter(task) === drawerState.taskNavScope
+            (task) => taskReviewStatus(task) === drawerState.taskNavScope
           )
         : tasksForExperiment;
     const scopedOrderedTasks = [
@@ -1754,14 +1748,10 @@ export function ExperimentDetailView({
   // The server summary does not include the live analysis carried by trials.
   const qaRollup = useMemo(() => {
     if (tasksForExperiment.length === 0) return null;
-    const counts = {
-      accepted: 0,
-      rejected: 0,
-      running: 0,
-      failed: 0,
-      unreviewed: 0,
-    };
-    for (const task of tasksForExperiment) counts[taskReviewFilter(task)] += 1;
+    const counts = Object.fromEntries(
+      VERDICT_STATES.map((state) => [state, 0])
+    ) as Record<VerdictState, number>;
+    for (const task of tasksForExperiment) counts[taskReviewStatus(task)] += 1;
     return counts;
   }, [tasksForExperiment]);
 

@@ -50,6 +50,44 @@ def is_insufficient_evidence(error: str | None) -> bool:
     return bool(error and error.startswith(INSUFFICIENT_EVIDENCE_PREFIX))
 
 
+# cancel_verdict() errors: the QA cancel endpoint and queue cancels write
+# USER_CANCELLED_MESSAGE, quota enforcement writes QUOTA_CANCELLED_MESSAGE.
+CANCELLED_VERDICT_ERRORS = frozenset(
+    ("Cancelled by user", "Cancelled because quota was reached")
+)
+
+
+def is_cancelled_verdict(error: str | None) -> bool:
+    """A failed verdict that was stopped on purpose, not a broken QA run."""
+    return error in CANCELLED_VERDICT_ERRORS
+
+
+def is_failed_without_verdict(task: VerdictState) -> bool:
+    """A failed task verdict that means no verdict, not a broken QA run.
+
+    The task had no QA-eligible trials, or QA was cancelled. This is the
+    task's current state, so it outranks whatever its latest QA trial
+    recorded; the dashboard (``_no_verdict_failure_clause``) and task page
+    (frontend/src/lib/review.ts) classify it the same way.
+    """
+    error = task.verdict_error
+    return task.verdict_status == VerdictStatus.FAILED and (
+        is_insufficient_evidence(error) or is_cancelled_verdict(error)
+    )
+
+
+# One label per verdict state; every task is in exactly one. The dashboard
+# shows the same text from frontend/src/lib/verdict-state.ts.
+VERDICT_STATE_LABELS = {
+    "no_verdict": "No verdict yet",
+    "insufficient_trials": "No verdict: insufficient trials",
+    "queued": "Verdict queued",
+    "accepted": "Verdict accepted",
+    "rejected": "Verdict rejected",
+    "failed": "Verdict failed",
+}
+
+
 def has_published_verdict(task: VerdictState) -> bool:
     """Return whether the task has a result from a successful QA pass."""
     return getattr(task, "verdict", None) is not None

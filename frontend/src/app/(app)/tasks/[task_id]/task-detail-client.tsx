@@ -777,7 +777,7 @@ export function TaskDetailClient({
     [drawerTrialGroups]
   );
 
-  // Arriving from an experiment's "New task version available" badge flashes
+  // Arriving from an experiment's "Newer task version available" badge flashes
   // the version switcher once. The marker then leaves the URL so a reload does
   // not flash again; useState keeps the first read so the flash plays out.
   // Null state, like the other URL writes here: Next ignores a replaceState
@@ -1166,7 +1166,7 @@ export function TaskDetailClient({
           drawer &&
           activeTaskPane === "overview" &&
           (drawer.mode === "task" || drawerShowTask) &&
-          !["queued", "running"].includes(taskReviewStatus(task)) &&
+          taskReviewStatus(task) !== "queued" &&
           !isRunningJudge
         ) ? (
           <TaskVerdictBadge
