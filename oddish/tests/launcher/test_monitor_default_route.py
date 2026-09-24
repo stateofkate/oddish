@@ -341,3 +341,24 @@ async def test_gpu_trial_runs_on_the_worker(
     assert (len(launched), len(drove)) == ((1, 0) if on_monitor else (0, 1))
     gpu_line = any("route=worker reason=gpu" in line for line in lines)
     assert gpu_line is not on_monitor
+
+
+@pytest.mark.asyncio
+async def test_the_route_line_names_where_a_non_agent_trial_goes(monkeypatch):
+    """Staging 24 Sep: an audit trial logged route=monitor, then ran on the
+    worker. The line reports the final decision and its reason."""
+    monkeypatch.setattr(settings, "monitor_execution_enabled", True)
+    monkeypatch.setattr(settings, "monitor_execution_sample_percent", 100)
+    trial = _settled_agent_trial()
+    trial.kind = "audit"
+    monkeypatch.setattr(handlers_module, "get_session", _session_returning(trial))
+    launched = _stub(
+        monkeypatch, monitor_launch, "launch_monitor_attempt", JobOutcome.handed_off()
+    )
+    drove = _stub(monkeypatch, handlers_module, "run_trial_job", None)
+    lines = _route_lines(monkeypatch)
+
+    await TrialJobHandler().run(_claim())
+
+    assert (len(launched), len(drove)) == (0, 1)
+    assert any("route=worker reason=kind=audit" in line for line in lines), lines

@@ -64,25 +64,32 @@ def _fail_permanent(message: str) -> JobOutcome:
 _MONITOR_TRIAL_KINDS = {"agent"}
 
 
-async def _monitor_can_drive(trial_id: str) -> bool:
+async def _monitor_blocker(trial_id: str) -> str | None:
+    """Why the monitor cannot drive this trial (the route line's reason), or
+    None when it can."""
     async with get_session() as session:
         trial = await session.get(TrialModel, trial_id)
     if trial is None:
-        return False
-    if (trial.kind or "agent") not in _MONITOR_TRIAL_KINDS:
-        return False
+        return "no-trial"
+    kind = trial.kind or "agent"
+    if kind not in _MONITOR_TRIAL_KINDS:
+        return f"kind={kind}"
     # A trial runs on the provider it asked for. No starter for it: the worker.
     from oddish.workers.launcher.launch import control_plane_url
     from oddish.workers.launcher.providers.base import provider_for_environment
 
     if provider_for_environment(getattr(trial, "environment", None)) is None:
-        return False
+        return "no-monitor-provider"
     # The sandbox must be able to reach the control plane; a host with no
     # resolvable API URL keeps the trial on the worker instead of failing it.
     try:
-        return bool(control_plane_url())
+        return None if control_plane_url() else "no-control-plane-url"
     except Exception:  # noqa: BLE001 - not configured is not an error here
-        return False
+        return "no-control-plane-url"
+
+
+async def _monitor_can_drive(trial_id: str) -> bool:
+    return await _monitor_blocker(trial_id) is None
 
 
 async def _task_requests_gpu(trial_id: str) -> bool:
@@ -127,8 +134,10 @@ async def _monitor_routes(trial_id: str, attempt: int) -> bool:
         percent=settings.monitor_execution_sample_percent,
         fallback_after=settings.monitor_execution_fallback_after_attempts,
     )
-    drives = route.monitor and await _monitor_can_drive(trial_id)
-    if drives:
+    # The line reports where the trial actually goes.
+    if route.monitor and (blocker := await _monitor_blocker(trial_id)):
+        route = Route(False, blocker)
+    elif route.monitor:
         try:
             if await _task_requests_gpu(trial_id):
                 route = Route(False, "gpu")
@@ -139,7 +148,7 @@ async def _monitor_routes(trial_id: str, attempt: int) -> bool:
         f"route={route.name} reason={route.reason}",
         highlight=False,
     )
-    return drives and route.monitor
+    return route.monitor
 
 
 class TrialJobHandler:
