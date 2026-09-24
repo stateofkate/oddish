@@ -69,13 +69,11 @@ export function QuotaUsageCard() {
             </div>
             {blocked ? (
               <p className="text-destructive text-xs">
-                You&rsquo;ve reached your 24-hour limit. New billable runs are
-                blocked until older spend ages out of the window.
+                New runs are on hold until your limit resets or is increased.
               </p>
             ) : over ? (
               <p className="text-muted-foreground text-xs">
-                You&rsquo;re over your 24-hour budget. Runs aren&rsquo;t blocked
-                yet, but usage is being tracked.
+                You&rsquo;re over your limit. Runs aren&rsquo;t blocked yet.
               </p>
             ) : null}
           </div>
