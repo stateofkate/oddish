@@ -58,6 +58,26 @@ def _default_environment_has_a_starter(monkeypatch):
     monkeypatch.setattr(settings, "monitor_api_url", "https://api.test")
 
 
+@pytest.fixture(autouse=True)
+def _cpu_task(monkeypatch, tmp_path):
+    """Every trial here reads a CPU-only task unless a test rewrites it."""
+    from oddish.db import storage
+    from oddish.workers.queue import trial_steps
+
+    (tmp_path / "task.toml").write_text('version = "1.0"\n[environment]\ncpus = 2\n')
+
+    async def _resolve(**_):
+        return tmp_path, None, None
+
+    async def _context(_session, _trial, **_):
+        return SimpleNamespace(
+            task_id="t", task_s3_key=None, task_path=None, trial_harbor_config={}
+        )
+
+    monkeypatch.setattr(storage, "resolve_task_directory", _resolve)
+    monkeypatch.setattr(trial_steps, "load_trial_context", _context)
+
+
 def _stub(monkeypatch, module, name, result):
     calls = []
 
@@ -286,3 +306,38 @@ async def test_at_100_percent_every_attempt_stays_on_the_monitor(monkeypatch):
 
     assert len(launched) == 1
     assert any("attempt=6 route=monitor reason=percent=100" in line for line in lines)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("environment", "gpus", "on_monitor"),
+    [("modal", 1, False), ("daytona", 1, False), ("modal", 0, True)],
+)
+async def test_gpu_trial_runs_on_the_worker(
+    monkeypatch, tmp_path, environment, gpus, on_monitor
+):
+    """A GPU trial never gets a monitor sandbox or a warm-up, on any provider;
+    a CPU trial still does."""
+    from oddish.workers.launcher.providers.modal import ModalStarter
+
+    (tmp_path / "task.toml").write_text(
+        f'version = "1.0"\n[environment]\ncpus = 2\nmemory_mb = 4096\ngpus = {gpus}\n'
+    )
+    monkeypatch.setattr(settings, "monitor_execution_enabled", True)
+    monkeypatch.setattr(settings, "monitor_execution_sample_percent", 100)
+    trial = _settled_agent_trial()
+    trial.environment = environment
+    monkeypatch.setattr(handlers_module, "get_session", _session_returning(trial))
+    launched = _stub(
+        monkeypatch, monitor_launch, "launch_monitor_attempt", JobOutcome.handed_off()
+    )
+    warmed = _stub(monkeypatch, ModalStarter, "build_warm_image", "im-x")
+    drove = _stub(monkeypatch, handlers_module, "run_trial_job", None)
+    lines = _route_lines(monkeypatch)
+
+    await TrialJobHandler().run(_claim())
+
+    assert warmed == []
+    assert (len(launched), len(drove)) == ((1, 0) if on_monitor else (0, 1))
+    gpu_line = any("route=worker reason=gpu" in line for line in lines)
+    assert gpu_line is not on_monitor

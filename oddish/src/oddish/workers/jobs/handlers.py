@@ -85,11 +85,41 @@ async def _monitor_can_drive(trial_id: str) -> bool:
         return False
 
 
+async def _task_requests_gpu(trial_id: str) -> bool:
+    """A GPU trial stays on the worker: Modal's VM runtime, which the monitor
+    needs for Docker, refuses accelerators. The request lives in the task's
+    own files, read as the launcher sizes its sandbox."""
+    import shutil
+
+    from oddish.db import storage
+    from oddish.workers.harbor.runner import capture_sandbox_resources
+    from oddish.workers.launcher.providers.base import provider_for_environment
+    from oddish.workers.queue import trial_steps
+
+    async with get_session() as session:
+        trial = await session.get(TrialModel, trial_id)
+        provider = provider_for_environment(getattr(trial, "environment", None))
+        prepared = await trial_steps.load_trial_context(session, trial)
+    task_path, temp_dir, _ = await storage.resolve_task_directory(
+        task_id=prepared.task_id,
+        task_s3_key=prepared.task_s3_key,
+        task_path=prepared.task_path,
+    )
+    try:
+        resources = capture_sandbox_resources(
+            task_path, prepared.trial_harbor_config, str(provider)
+        )
+        return (resources.gpu_count or 0) > 0
+    finally:
+        if temp_dir is not None:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+
 async def _monitor_routes(trial_id: str, attempt: int) -> bool:
     """The sampled-rollout decision, logged once per claim with its reason."""
     from oddish.config import settings
     from oddish.workers.console import console
-    from oddish.workers.launcher.route import monitor_route
+    from oddish.workers.launcher.route import Route, monitor_route
 
     route = monitor_route(
         trial_id,
@@ -97,12 +127,19 @@ async def _monitor_routes(trial_id: str, attempt: int) -> bool:
         percent=settings.monitor_execution_sample_percent,
         fallback_after=settings.monitor_execution_fallback_after_attempts,
     )
+    drives = route.monitor and await _monitor_can_drive(trial_id)
+    if drives:
+        try:
+            if await _task_requests_gpu(trial_id):
+                route = Route(False, "gpu")
+        except Exception:  # noqa: BLE001 - the launcher could not read it either
+            route = Route(False, "task-unreadable")
     console.out(
         f"metric=monitor_route trial={trial_id} attempt={attempt} "
         f"route={route.name} reason={route.reason}",
         highlight=False,
     )
-    return route.monitor and await _monitor_can_drive(trial_id)
+    return drives and route.monitor
 
 
 class TrialJobHandler:
