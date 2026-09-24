@@ -191,7 +191,11 @@ async def sync_verdict_to_task(
             return None
 
         if payload:
-            complete_verdict(task, payload=payload, now=utcnow())
+            version_id = payload.get("_task_version_id")
+            version = (
+                await session.get(TaskVersionModel, version_id) if version_id else None
+            )
+            complete_verdict(task, payload=payload, now=utcnow(), version=version)
             terminal_status = VerdictStatus.SUCCESS
         else:
             failure = error or "Verdict synthesis failed with exception"

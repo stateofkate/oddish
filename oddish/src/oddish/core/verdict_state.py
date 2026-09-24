@@ -3,7 +3,9 @@
 ``tasks.verdict`` is the current QA result. Queuing a replacement withdraws
 the previous result; only that replacement can publish a new one. A completed
 classification-only pass has SUCCESS status and no verdict. This module is
-the single writer for the verdict state columns.
+the single writer for the verdict state columns. A published verdict is also
+kept on the version it evaluated (``task_versions.verdict``), where later
+versions' QA passes cannot replace it.
 """
 
 from __future__ import annotations
@@ -20,6 +22,10 @@ class VerdictState(Protocol):
     verdict_error: str | None
     verdict_started_at: datetime | None
     verdict_finished_at: datetime | None
+
+
+class VersionVerdict(Protocol):
+    verdict: dict[str, Any] | None
 
 
 ACTIVE_VERDICT_STATUSES = frozenset(
@@ -64,13 +70,22 @@ def queue_verdict(task: VerdictState) -> None:
 
 
 def complete_verdict(
-    task: VerdictState, *, payload: dict[str, Any], now: datetime
+    task: VerdictState,
+    *,
+    payload: dict[str, Any],
+    now: datetime,
+    version: VersionVerdict | None,
 ) -> None:
-    """Publish a replacement verdict after a successful QA pass."""
+    """Publish a replacement verdict after a successful QA pass.
+
+    ``version`` is the task version the verdict evaluated.
+    """
     task.verdict = payload
     task.verdict_status = VerdictStatus.SUCCESS
     task.verdict_error = None
     task.verdict_finished_at = now
+    if version is not None:
+        version.verdict = payload
 
 
 def complete_verdict_without_result(task: VerdictState, *, now: datetime) -> None:

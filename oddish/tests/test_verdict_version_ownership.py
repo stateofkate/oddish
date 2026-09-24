@@ -97,7 +97,14 @@ async def _seed(session):
     return task, v4, v5, v4_experiment, v5_experiment, oracle
 
 
-async def _ownership(session, task, version, experiment):
+def _is_good(verdict):
+    if isinstance(verdict, dict):
+        return verdict.get("is_good")
+    return getattr(verdict, "is_good", None)
+
+
+async def _verdicts(session, task, version, experiment):
+    """(version matches, is_good) from the drawer, task page and experiment row."""
     panel = await get_task_panel_core(
         session, task_id=task.id, version=version.version, org_id=task.org_id
     )
@@ -116,12 +123,26 @@ async def _ownership(session, task, version, experiment):
     # The experiment row represents the version its trials ran.
     assert row["trial_version"] == version.version
     states = {
-        panel.task.review_version_matches,
-        opened.task.review_version_matches,
-        row["review_version_matches"],
+        (
+            panel.task.review_version_matches,
+            _is_good(panel.task.verdict),
+        ),
+        (
+            opened.task.review_version_matches,
+            _is_good(opened.task.verdict),
+        ),
+        (
+            row["review_version_matches"],
+            {"true": True, "false": False}.get(row["verdict_is_good"]),
+        ),
     }
     assert len(states) == 1, states
     return states.pop()
+
+
+async def _ownership(session, task, version, experiment):
+    matches, _ = await _verdicts(session, task, version, experiment)
+    return matches
 
 
 @pytest.mark.asyncio
@@ -139,6 +160,9 @@ async def test_v5_baseline_rejection_never_appears_on_v4(session):
     assert issue.startswith("Baseline validation could not complete.")
     assert f"oracle trial {oracle.id} (failed): {HEARTBEAT}" in issue
     assert "Fix the nop/oracle" not in " ".join(task.verdict["recommendations"])
+    # Kept on the version it evaluated, where a later QA pass cannot replace it.
+    assert v5.verdict == task.verdict
+    assert v4.verdict is None
 
     assert await _ownership(session, task, v4, v4_experiment) is False
     assert await _ownership(session, task, v5, v5_experiment) is True
@@ -155,3 +179,16 @@ async def test_v5_baseline_rejection_never_appears_on_v4(session):
     await session.flush()
     assert await _ownership(session, task, v4, v4_experiment) is False
     assert await _ownership(session, task, v5, v5_experiment) is False
+    task.verdict = {**task.verdict, "_task_version_id": v5.id}
+
+    # v4's own verdict, published before v5 existed, still shows on v4.
+    v4.verdict = {"verdict": "accept", "is_good": True, "_task_version_id": v4.id}
+    task.verdict_status = VerdictStatus.RUNNING
+    await session.flush()
+    assert await _verdicts(session, task, v4, v4_experiment) == (True, True)
+    assert await _verdicts(session, task, v5, v5_experiment) == (True, False)
+    summary, _ = await _experiment_summary(
+        session, experiment_id=v4_experiment.id, org_id=task.org_id
+    )
+    # A QA pass running on v5 does not make v4's verdict pending.
+    assert (summary.qa_accepted, summary.qa_running) == (1, 0)

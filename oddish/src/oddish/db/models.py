@@ -850,6 +850,10 @@ class TaskVersionModel(TimestampedMixin, Base):
     pre_trial_finished_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # The last QA verdict published for this version. ``tasks.verdict`` holds
+    # only the newest one, so a version whose verdict was replaced by a later
+    # version's still has its own here.
+    verdict: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     # Relationships
     # ``lazy="select"``: no read path consumes ``task_version.task``, so

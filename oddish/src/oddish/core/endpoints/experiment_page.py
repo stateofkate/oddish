@@ -6,8 +6,21 @@ from datetime import datetime
 from typing import Any, Literal
 
 from fastapi import HTTPException
-from sqlalchemy import and_, case, cast, column, func, literal_column, or_, select, text
-from sqlalchemy.dialects.postgresql import JSONPATH
+from sqlalchemy import (
+    and_,
+    case,
+    cast,
+    column,
+    func,
+    literal,
+    literal_column,
+    or_,
+    select,
+    text,
+    true,
+    type_coerce,
+)
+from sqlalchemy.dialects.postgresql import JSONB, JSONPATH
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.sql import ClauseElement, Executable
@@ -243,6 +256,28 @@ def _experiment_task_rows(
         .subquery("experiment_task_stats")
     )
     current_version = aliased(TaskVersionModel)
+    shown_version = aliased(TaskVersionModel, name="shown_version")
+    # Rows show the version their trials ran; see shown_version_verdict_sql.
+    shown_version_id = func.coalesce(
+        stats.c.trial_version_id, TaskModel.current_version_id
+    )
+    other_version = shown_version_id.is_distinct_from(TaskModel.current_version_id)
+    # One owner lookup per row, read by every verdict column below.
+    verdict_owner = select(
+        literal_column(
+            VERDICT_VERSION_SQL.format(task_id="tasks.id", verdict="tasks.verdict")
+        ).label("version_id")
+    ).lateral("verdict_owner")
+    owned_by_shown = func.coalesce(
+        verdict_owner.c.version_id == shown_version_id, False
+    )
+    kept_verdict = func.coalesce(
+        shown_version.verdict, case((owned_by_shown, TaskModel.verdict))
+    )
+    has_version_verdict = kept_verdict.is_not(None)
+    verdict = type_coerce(
+        case((other_version, kept_verdict), else_=TaskModel.verdict), JSONB
+    )
     columns = [
         TaskModel.id.label("task_id"),
         TaskModel.name,
@@ -255,25 +290,40 @@ def _experiment_task_rows(
         stats.c.trial_version_id,
         stats.c.trial_version,
         TaskModel.run_analysis,
-        TaskModel.verdict_status,
-        func.coalesce(
-            literal_column(
-                VERDICT_VERSION_SQL.format(task_id="tasks.id", verdict="tasks.verdict")
-            )
-            == func.coalesce(stats.c.trial_version_id, TaskModel.current_version_id),
-            False,
-        ).label("review_version_matches"),
-        TaskModel.verdict["verdict"].astext.label("verdict_label"),
-        TaskModel.verdict["is_good"].astext.label("verdict_is_good"),
-        TaskModel.verdict["confidence"].astext.label("verdict_confidence"),
+        type_coerce(
+            case(
+                (
+                    other_version,
+                    case(
+                        (
+                            has_version_verdict,
+                            literal(
+                                VerdictStatus.SUCCESS, TaskModel.verdict_status.type
+                            ),
+                        ),
+                        else_=None,
+                    ),
+                ),
+                else_=TaskModel.verdict_status,
+            ),
+            TaskModel.verdict_status.type,
+        ).label("verdict_status"),
+        case((other_version, has_version_verdict), else_=owned_by_shown).label(
+            "review_version_matches"
+        ),
+        verdict["verdict"].astext.label("verdict_label"),
+        verdict["is_good"].astext.label("verdict_is_good"),
+        verdict["confidence"].astext.label("verdict_confidence"),
         func.left(
             func.coalesce(
-                func.nullif(TaskModel.verdict["primary_issue"].astext, ""),
-                TaskModel.verdict["reasoning"].astext,
+                func.nullif(verdict["primary_issue"].astext, ""),
+                verdict["reasoning"].astext,
             ),
             240,
         ).label("verdict_primary_issue"),
-        func.left(TaskModel.verdict_error, 200).label("verdict_error"),
+        func.left(
+            case((other_version, None), else_=TaskModel.verdict_error), 200
+        ).label("verdict_error"),
         TaskModel.created_at,
         TaskModel.updated_at,
         func.coalesce(stats.c.total, 0).label("total"),
@@ -326,6 +376,14 @@ def _experiment_task_rows(
             ),
         )
         .outerjoin(stats, stats.c.task_id == TaskModel.id)
+        .outerjoin(
+            shown_version,
+            and_(
+                shown_version.id == shown_version_id,
+                shown_version.deleted_at.is_(None),
+            ),
+        )
+        .outerjoin(verdict_owner, true())
         .where(
             TaskModel.org_id == org_id,
             TaskModel.deleted_at.is_(None),
@@ -340,10 +398,7 @@ def _experiment_task_rows(
         query = query.outerjoin(
             review_version,
             and_(
-                review_version.id
-                == func.coalesce(
-                    stats.c.trial_version_id, TaskModel.current_version_id
-                ),
+                review_version.id == shown_version_id,
                 review_version.deleted_at.is_(None),
             ),
         )

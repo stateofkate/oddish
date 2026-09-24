@@ -381,6 +381,49 @@ test.describe("real components with local fixture API", () => {
       await drawer.screenshot({ path: process.env.DRAWER_SCREENSHOT_PATH });
   });
 
+  test("an older-version experiment shows the verdict kept for its version", async ({
+    page,
+  }) => {
+    // The reader returns v4's own verdict, not the task's newest (v7's).
+    await page.route(/\/api\/tasks\/task-a\/panel(?:\?|$)/, async (route) => {
+      const panel = await (await route.fetch()).json();
+      panel.task.verdict = {
+        verdict: "accept",
+        is_good: true,
+        confidence: "high",
+        reasoning: "v4's baselines and agent runs support the task.",
+      };
+      panel.task.verdict_status = "success";
+      panel.task.review_version_matches = true;
+      panel.version.pre_trial_findings = [];
+      panel.version.retained_findings = [];
+      await route.fulfill({ json: panel });
+    });
+    await page.setViewportSize({ width: 1600, height: 900 });
+    await page.goto(
+      "/experiments/review-demo?scenario=older-trials-reviewed&task=task-a"
+    );
+    const row = page.getByRole("row").filter({
+      has: page.getByRole("button", { name: "Task A", exact: true }),
+    });
+    await expect(row.getByText("Verdict accepted", { exact: true })).toBeVisible();
+    const drawer = page.locator("[data-slot=resizable-drawer]");
+    await expect(
+      drawer.getByText("Verdict accepted", { exact: true })
+    ).toBeVisible();
+    await expect(
+      drawer.getByText("v4's baselines and agent runs support the task.")
+    ).toBeVisible();
+    await expect(
+      drawer.getByRole("button", {
+        name: "Generate QA verdict for v4",
+        exact: true,
+      })
+    ).toBeDisabled();
+    if (process.env.DRAWER_SCREENSHOT_PATH)
+      await drawer.screenshot({ path: process.env.DRAWER_SCREENSHOT_PATH });
+  });
+
   test("background updates retain scores, selection, and scroll position", async ({
     page,
   }) => {

@@ -74,7 +74,7 @@ def test_replacement_lifecycle_withdraws_old_result_when_queued(previous) -> Non
     assert task.verdict_started_at is None
     assert task.verdict_finished_at is None
 
-    complete_verdict(task, payload=replacement, now=finished_at)
+    complete_verdict(task, payload=replacement, now=finished_at, version=None)
     assert task.verdict is replacement
     assert task.verdict_status == VerdictStatus.SUCCESS
     assert task.verdict_finished_at == finished_at

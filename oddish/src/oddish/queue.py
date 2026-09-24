@@ -1589,7 +1589,7 @@ async def start_qa_for_task(
             payload = build_verdict_payload(
                 verdict, [], task_version_id=evaluated_version_id
             )
-            complete_verdict(task, payload=payload, now=utcnow())
+            complete_verdict(task, payload=payload, now=utcnow(), version=version)
         else:
             fail_verdict(task, error=INSUFFICIENT_EVIDENCE_ERROR, now=utcnow())
         return False

@@ -282,10 +282,15 @@ def test_experiment_open_includes_rejection_preview_without_full_report():
         "primary_issue": reason,
     }
     sql = _sql(session.calls[2])
-    assert (
-        "left(coalesce(nullif(tasks.verdict ->> 'primary_issue', ''), tasks.verdict ->> 'reasoning'), 240) AS verdict_primary_issue"
-        in sql
-    )
+    # The shown version's verdict: the task's, or the one kept on an older
+    # version its trials ran.
+    preview = sql[
+        sql.rindex("left(coalesce(nullif(", 0, sql.index("AS verdict_primary_issue")) :
+    ]
+    preview = preview[: preview.index("AS verdict_primary_issue")]
+    assert "->> 'primary_issue', '')" in preview
+    assert "->> 'reasoning'), 240)" in preview
+    assert "shown_version.verdict" in preview
     assert len(session.calls) == 4
 
 

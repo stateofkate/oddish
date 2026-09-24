@@ -1156,6 +1156,53 @@ async def _qa_import_still_current(
     return pending is None
 
 
+def qa_verdict_outcome(
+    trial: TrialModel,
+    artifact: dict,
+    expected: dict,
+    classifications: list[TrialClassification],
+    *,
+    task_defect_count: int,
+    baseline_errors: dict[str, str | None],
+) -> tuple[dict | None, str | None]:
+    """The verdict a validated QA result publishes.
+
+    Returns ``(payload, None)`` to publish, ``(None, error)`` to fail the
+    verdict, or ``(None, None)`` for a result that publishes no verdict.
+    """
+    # Classification-only runs (including historical evidence-gated runs)
+    # were told not to produce a verdict; a missing one is expected.
+    verdict = None
+    if expected["verdict_expected"]:
+        try:
+            verdict = TaskVerdictModel.model_validate(artifact["verdict"])
+        except Exception as exc:  # noqa: BLE001
+            return None, f"QA trial {trial.id} verdict failed validation: {exc}"
+    # Audit readiness controls model synthesis, not a rejection
+    # established by validated source-audit or deterministic baseline facts.
+    verdict = apply_deterministic_verdict_rules(
+        verdict,
+        must_fix_ids=list(expected.get("pre_trial_must_fix_ids") or []),
+        task_defect_count=task_defect_count,
+        baseline_evidence=list(expected.get("baseline_evidence") or []),
+        baseline_errors=baseline_errors,
+    )
+    if verdict is None:
+        return None, None
+    # A harness error never exercised the task, so an accept backed only by
+    # harness errors rests on the baselines alone. Rejects stand: they come
+    # from audit, baseline, or leak evidence that needs no solver run.
+    if verdict.is_good and all(
+        c.classification is Classification.HARNESS_ERROR for c in classifications
+    ):
+        return None, HARNESS_ONLY_EVIDENCE_ERROR
+    payload = build_verdict_payload(
+        verdict, classifications, task_version_id=trial.task_version_id
+    )
+    payload["_graded_by"] = trial.id
+    return payload, None
+
+
 async def _import_qa_result(
     trial: TrialModel, own_trajectory: dict | None = None
 ) -> None:
@@ -1179,9 +1226,6 @@ async def _import_qa_result(
     artifact = None
     if trial.status == TrialStatus.SUCCESS:
         artifact = await read_analysis_artifact(trial, QA_RESULT_FILENAME)
-    # Classification-only runs (including historical evidence-gated runs)
-    # were told not to produce a verdict; a missing one is expected.
-    verdict_expected = expected["verdict_expected"]
     # The same validator the in-sandbox verifier ran. Import is
     # all-or-nothing: a partial or malformed artifact must never publish a
     # subset of grades or a verdict built on one.
@@ -1346,36 +1390,15 @@ async def _import_qa_result(
             error=f"QA trial {trial.id} artifact contained no valid classifications",
         )
         return
-    verdict = None
-    if verdict_expected:
-        try:
-            verdict = TaskVerdictModel.model_validate(artifact["verdict"])
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "qa trial %s: verdict for task %s failed validation: %s",
-                trial.id,
-                task_id,
-                exc,
-            )
-            await sync_verdict_to_task(
-                task_id,
-                payload=None,
-                should_store=lambda s: _qa_import_still_current(
-                    s, task_id, graded_version_id, expected=expected, trial_id=trial.id
-                ),
-                error=f"QA trial {trial.id} verdict failed validation: {exc}",
-            )
-            return
-    # Audit readiness controls model synthesis, not a rejection
-    # established by validated source-audit or deterministic baseline facts.
-    verdict = apply_deterministic_verdict_rules(
-        verdict,
-        must_fix_ids=list(expected.get("pre_trial_must_fix_ids") or []),
+    payload, error = qa_verdict_outcome(
+        trial,
+        artifact,
+        expected,
+        classifications,
         task_defect_count=len(reports),
-        baseline_evidence=list(expected.get("baseline_evidence") or []),
         baseline_errors=baseline_errors,
     )
-    if verdict is None:
+    if payload is None and error is None:
         await complete_task_without_verdict(
             task_id,
             should_store=lambda s: _qa_import_still_current(
@@ -1383,25 +1406,19 @@ async def _import_qa_result(
             ),
         )
         return
-    # A harness error never exercised the task, so an accept backed only by
-    # harness errors rests on the baselines alone. Rejects stand: they come
-    # from audit, baseline, or leak evidence that needs no solver run.
-    if verdict.is_good and all(
-        c.classification is Classification.HARNESS_ERROR for c in classifications
-    ):
+    if payload is None:
+        logger.warning(
+            "qa trial %s: no verdict for task %s: %s", trial.id, task_id, error
+        )
         await sync_verdict_to_task(
             task_id,
             payload=None,
             should_store=lambda s: _qa_import_still_current(
                 s, task_id, graded_version_id, expected=expected, trial_id=trial.id
             ),
-            error=HARNESS_ONLY_EVIDENCE_ERROR,
+            error=error,
         )
         return
-    payload = build_verdict_payload(
-        verdict, classifications, task_version_id=graded_version_id
-    )
-    payload["_graded_by"] = trial.id
     await sync_verdict_to_task(
         task_id,
         payload=payload,

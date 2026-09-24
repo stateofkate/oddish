@@ -23,13 +23,51 @@ VERDICT_VERSION_SQL = """COALESCE({verdict}->>'_task_version_id', (
       AND q.kind = 'qa' AND q.status = 'SUCCESS' AND q.deleted_at IS NULL
 ))"""
 
+
+def shown_version_verdict_sql(
+    *, task: str, version_id: str, version_verdict: str
+) -> dict[str, str]:
+    """Verdict columns for the version a reader shows.
+
+    The default version's verdict is the task's, with its QA lifecycle. QA
+    runs only on the default, so another version shows the last verdict
+    published for it, which later QA passes neither replace nor withdraw. The
+    task's verdict still counts when it evaluated that version: a writer that
+    predates ``task_versions.verdict`` stored it only there.
+    """
+    other = f"{version_id} IS DISTINCT FROM {task}.current_version_id"
+    owner = VERDICT_VERSION_SQL.format(task_id=f"{task}.id", verdict=f"{task}.verdict")
+    kept = (
+        f"COALESCE({version_verdict}, "
+        f"CASE WHEN {owner} = {version_id} THEN {task}.verdict END)"
+    )
+    return {
+        "verdict": f"CASE WHEN {other} THEN {kept} ELSE {task}.verdict END",
+        "verdict_status": (
+            f"CASE WHEN {other} THEN CASE WHEN {kept} IS NOT NULL "
+            f"THEN 'success' END ELSE lower({task}.verdict_status::text) END"
+        ),
+        "verdict_error": f"CASE WHEN {other} THEN NULL ELSE {task}.verdict_error END",
+        "review_version_matches": (
+            f"CASE WHEN {other} THEN {kept} IS NOT NULL "
+            f"ELSE COALESCE({owner} = {version_id}, false) END"
+        ),
+    }
+
+
+_IDENTITY_VERDICT = shown_version_verdict_sql(
+    task="t", version_id="sv.id", version_verdict="sv.verdict"
+)
+
 IDENTITY_SQL = text(f"""
     WITH identity AS (
       SELECT t.id AS task_id, t.name, lower(t.status::text) AS status,
              lower(t.priority::text) AS priority, t."user", t.task_path, t.link,
              t.tags, t.current_version_id, t.run_analysis,
-             lower(t.verdict_status::text) AS verdict_status,
-             t.verdict, t.verdict_error,
+             {_IDENTITY_VERDICT["verdict_status"]} AS verdict_status,
+             {_IDENTITY_VERDICT["verdict"]} AS verdict,
+             {_IDENTITY_VERDICT["verdict_error"]} AS verdict_error,
+             {_IDENTITY_VERDICT["review_version_matches"]} AS review_version_matches,
              t.effective_tag_ids, t.current_version_tag_ids,
              t.created_at, t.updated_at, t.org_id,
              dv.id AS default_version_id, dv.version AS default_version,
@@ -49,7 +87,6 @@ IDENTITY_SQL = text(f"""
       LIMIT 1
     )
     SELECT i.*, browse.run_summary, findings.must_fix_count, findings.pre_trial_must_fix_count,
-      COALESCE({VERDICT_VERSION_SQL.format(task_id="i.task_id", verdict="i.verdict")} = i.selected_version_id, false) AS review_version_matches,
       COALESCE((SELECT jsonb_agg(to_jsonb(x)) FROM (
         SELECT e.id, e.name FROM task_experiments te
         JOIN experiments e ON e.id = te.experiment_id

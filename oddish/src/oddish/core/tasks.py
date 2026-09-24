@@ -474,6 +474,7 @@ async def complete_task_upload(
             version_row.pre_trial_error = None
             version_row.pre_trial_started_at = None
             version_row.pre_trial_finished_at = None
+            version_row.verdict = None
 
         new_version_created = False
         if version_row is None:

@@ -41,8 +41,10 @@ export function FixtureExperiment() {
           },
         },
       ];
-    // The task's default moved to v5 after this experiment ran v4.
-    if (scenario === "older-trials" && task.id === "task-a")
+    // The task's default moved to v7 after this experiment ran v4. With
+    // "older-trials-reviewed", v4 kept the verdict published for it.
+    const reviewedV4 = scenario === "older-trials-reviewed";
+    if ((scenario === "older-trials" || reviewedV4) && task.id === "task-a")
       return [
         {
           ...task,
@@ -50,13 +52,16 @@ export function FixtureExperiment() {
           current_version_id: "task-a-v7",
           trial_version: 4,
           trial_version_id: "task-a-v4",
-          // v7's rejection, which says nothing about these v4 trials.
-          verdict: {
-            is_good: false,
-            confidence: "low",
-            primary_issue: "Baseline validation could not complete.",
-          },
-          review_version_matches: false,
+          // Without v4's own verdict, the task's is v7's rejection, which
+          // says nothing about these v4 trials.
+          verdict: reviewedV4
+            ? { is_good: true, confidence: "high" }
+            : {
+                is_good: false,
+                confidence: "low",
+                primary_issue: "Baseline validation could not complete.",
+              },
+          review_version_matches: reviewedV4,
           must_fix_count: 0,
           trials:
             task.trials?.map((trial) => ({
