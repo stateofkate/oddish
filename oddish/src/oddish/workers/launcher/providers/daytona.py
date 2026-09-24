@@ -198,6 +198,10 @@ def _check_size(sandbox, image: str, size: SandboxSize | None) -> None:
 
 class DaytonaStarter:
     provider = SandboxProvider.DAYTONA
+    # Off until snapshots are evicted (ABT-1375): the org keeps at most 100,
+    # and once full every warm-up builds, is refused its snapshot, and the
+    # trial builds again cold.
+    warms_images = False
 
     async def start(
         self,

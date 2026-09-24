@@ -301,6 +301,17 @@ async def test_a_provider_without_snapshots_runs_cold(store):
 
 
 @pytest.mark.asyncio
+async def test_daytona_boots_cold_without_warming(store):
+    from oddish.workers.launcher.providers.daytona import DaytonaStarter
+
+    starter = DaytonaStarter()
+    starter.build_warm_image = _Starter().build_warm_image  # must not be called
+
+    assert await _resolve(starter) == ("/oddish/mon.Dockerfile", None, "cold")
+    assert store == {}
+
+
+@pytest.mark.asyncio
 async def test_a_refused_snapshot_is_forgotten(store):
     starter = _Starter()
     _, key, _ = await _resolve(starter)

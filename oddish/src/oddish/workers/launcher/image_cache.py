@@ -254,6 +254,7 @@ async def resolve(
         not warm_source
         or has_registry_login
         or not hasattr(starter, "build_warm_image")
+        or not getattr(starter, "warms_images", True)
     ):
         return Resolved(monitor_image, None, ImageOutcome.COLD)
     started = time.monotonic()

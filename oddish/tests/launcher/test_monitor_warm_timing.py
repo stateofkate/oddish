@@ -176,6 +176,8 @@ async def test_daytona_reads_the_same_line(
     caplog.set_level(logging.INFO)
     monkeypatch.setattr(_Process, "warm_exit_code", code)
     monkeypatch.setattr(_Process, "warm_output", OUTPUT)
+    # Warm-up is off on Daytona (ABT-1375); the timing line still holds for it.
+    monkeypatch.setattr(DaytonaStarter, "warms_images", True)
 
     await _resolve(DaytonaStarter())
 
