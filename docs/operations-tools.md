@@ -24,6 +24,21 @@ The cost report includes nondeleted completed trials in nondeleted experiments,
 filtered to billed or native non-probe/non-combined runs. This is the tool's
 comparison population, not a claim to reproduce every dashboard billing filter.
 
+## Staging database
+
+Git staging uses Neon `main`. The data move is an offline operator task; no
+copy or bootstrap runs in CI. The old source connection is saved in the staging
+Modal secret `oddish-staging-supabase-source` for recovery.
+
+Normal deploys use `.github/scripts/staging/deploy_staging.sh`. They apply both
+migration stacks, publish Neon's pooled URL to `oddish-staging-db`, and deploy.
+They keep the existing data and API keys.
+
+Keep **Automatic branching** off in the Supabase GitHub integration. Git `main`
+keeps its production database and deployment path. Removing `supabase/config.toml`
+does not change that cloud setting. See the
+[Supabase GitHub integration guide](https://supabase.com/docs/guides/deployment/branching/github-integration).
+
 ## Preview historical delivery metadata
 
 `python -m oddish.core.ingest.delivery_backfill` prepares a local preview from
@@ -48,13 +63,14 @@ aggregation code. It does not launch evaluations. Every batch commits separately
 resume with `--after-id <last-logged-version-id>`. Without that argument a rerun
 starts at the beginning. Versions with no eligible trials do not stall paging.
 
-For a preview whose raw sample was loaded without rebuilding browse counters,
+For a preview whose browse counters need repair,
 run `uv run python ../.github/scripts/preview/refresh_browse_summaries.py` from
 `backend/`, with `ODDISH_DATABASE_URL` pointing to the preview and the normal
-preview source/project environment variables set. This rebuilds both browse
+`NEON_BRANCH_ID` and `NEON_PARENT_BRANCH_ID` set. This rebuilds both browse
 and per-model counters from the preview's own trials, in batches of 200
-versions. The preparation pipeline runs it automatically after migrations and
-seeding; reruns repair partial or stale results without reseeding tasks.
+versions. This is a manual full repair. Normal deploys skip it. First branch setup
+refreshes only versions whose copied active trials it stops, in the same database
+transaction. Reruns of this tool repair stale counters without replacing tasks.
 
 ## Urgent hotfix release rehearsal
 

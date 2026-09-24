@@ -5,11 +5,9 @@ import uuid
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import MetaData, text
-from sqlalchemy.ext.asyncio import create_async_engine
-
 from preview_org_approvals import read_approval_decisions, sync_approval_decisions
-import preview_seed
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine
 
 URL = os.environ.get("ODDISH_DATABASE_URL")
 pytestmark = [
@@ -159,36 +157,3 @@ async def test_source_uses_approval_and_active_state_and_requires_schema(databas
         )
     with pytest.raises(RuntimeError, match="not initialized"):
         await read_approval_decisions(database)
-
-
-@pytest.mark.parametrize("fallback", [False, True])
-async def test_sample_copy_cannot_grant_or_revoke_approval(
-    database, monkeypatch, fallback
-):
-    await insert_org(database, "existing", approved=True)
-    metadata = MetaData()
-    async with database.connect() as conn:
-        await conn.run_sync(metadata.reflect)
-    if fallback:
-
-        async def fail_copy(*args):
-            raise RuntimeError("exercise batch fallback")
-
-        monkeypatch.setattr(preview_seed, "_load_table_copy_merge", fail_copy)
-    rows = [
-        {
-            "id": id,
-            "name": id,
-            "slug": id,
-            "clerk_org_id": "clerk_" + id,
-            "execution_enabled": id == "new",
-            "is_active": True,
-            "plan": "free",
-            "settings": {},
-            "created_at": preview_seed.SEED_EPOCH,
-            "updated_at": preview_seed.SEED_EPOCH,
-        }
-        for id in ("existing", "new")
-    ]
-    await preview_seed._load_table(database, metadata.tables["organizations"], rows)
-    assert await flags(database) == {"existing": True, "new": False}

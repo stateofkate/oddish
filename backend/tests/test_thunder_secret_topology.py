@@ -8,6 +8,7 @@ from pathlib import Path
 from types import ModuleType
 
 import modal_app
+import pytest
 import thunder_readiness
 import worker.functions as worker_functions
 
@@ -102,6 +103,65 @@ def test_only_thunder_lane_workers_receive_thunder_secret() -> None:
         secret not in worker_functions.reconciler_secrets
         for secret in modal_app.thunder_worker_secrets
     )
+
+
+@pytest.mark.parametrize("enabled", ["false", "true"])
+def test_deploy_settings_survive_shared_runtime_secret_overrides(enabled) -> None:
+    code = """
+import importlib
+import json
+import os
+import modal
+
+captured = []
+original = modal.Secret.from_dict
+def capture(values, *args, **kwargs):
+    captured.append(dict(values))
+    return original(values, *args, **kwargs)
+modal.Secret.from_dict = capture
+
+import modal_app
+authoritative = captured[-1]
+plan = modal_app.THUNDER_SECRET_PLAN
+dependencies = len(modal_app.runtime_secrets) + len(modal_app.thunder_worker_secrets)
+expected = {name: modal_app.ENV_VARS[name] for name in modal_app._THUNDER_PUBLIC_ENV_NAMES}
+assert all(authoritative[name] == value for name, value in expected.items())
+
+# Modal injects shared secrets over image env. The final deploy-owned
+# secret must restore this app's settings before container imports run.
+os.environ.update({
+    "ODDISH_THUNDER_ENABLED": "false" if expected["ODDISH_THUNDER_ENABLED"] == "true" else "true",
+    "ODDISH_THUNDER_SECRET_NAME": "old-shared-thunder",
+    "ODDISH_THUNDER_CAPACITY_FALLBACK": "true",
+    "ODDISH_THUNDER_MAX_CAPACITY": "999",
+})
+os.environ.update(authoritative)
+importlib.reload(modal_app)
+assert modal_app.THUNDER_SECRET_PLAN == plan
+assert len(modal_app.runtime_secrets) + len(modal_app.thunder_worker_secrets) == dependencies
+from oddish.config import Settings
+settings = Settings(_env_file=None)
+assert settings.thunder_enabled == (expected["ODDISH_THUNDER_ENABLED"] == "true")
+assert settings.thunder_capacity_fallback is False
+assert settings.thunder_max_capacity == 64
+print("runtime Thunder settings preserved")
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=Path(modal_app.__file__).parent,
+        env={
+            **os.environ,
+            "ODDISH_THUNDER_ENABLED": enabled,
+            "ODDISH_THUNDER_SECRET_NAME": "test-thunder",
+            "ODDISH_THUNDER_CAPACITY_FALLBACK": "false",
+            "ODDISH_THUNDER_MAX_CAPACITY": "64",
+            "ODDISH_SAURON_AWS_SECRET_NAME": "",
+        },
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout.splitlines()[-1] == "runtime Thunder settings preserved"
 
 
 def test_worker_readiness_validates_dependencies_without_returning_credentials(

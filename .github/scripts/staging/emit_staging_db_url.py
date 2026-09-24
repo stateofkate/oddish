@@ -1,21 +1,19 @@
-"""Print the staging database URL from the oddish-staging-db Modal secret.
+"""Print the current staging runtime URL from a Modal secret for recovery.
 
-The Supabase API redacts branch passwords, and the Modal CLI cannot read a
-secret's value back, so a Modal function that mounts the secret is the one
-way to recover the live URL after a password reset. Run from backend/:
+Run from backend/:
 
     uv run modal run --env staging ../.github/scripts/staging/emit_staging_db_url.py
 
-The URL is the only thing this script prints, but `modal run` writes its own
-progress output around it. Select the URL line and check it is non-empty
-before writing any secret: `gh secret set` stores whatever reaches its stdin,
-including nothing. The bootstrap job summary prints a recipe that does both,
-then dispatches the Staging Deploy workflow.
+Modal writes progress output around the URL. Select the line that starts with
+``postgresql`` and check it is non-empty before using it. Set STAGING_DB_SECRET
+to inspect another staging secret. If the local data move saved the old source
+URL as oddish-staging-supabase-source, read it with:
 
-Set STAGING_DB_SECRET to read a different secret. The bootstrap writes the
-new password to oddish-staging-db-pending as soon as it resets one, and only
-promotes it to oddish-staging-db once the branch holds a complete database,
-so a recipe printed mid-run reads the pending copy.
+    STAGING_DB_SECRET=oddish-staging-supabase-source uv run modal run --env staging ../.github/scripts/staging/emit_staging_db_url.py
+
+Staging deployments now resolve the direct and pooled URLs from the Neon API.
+They publish the pooled URL to oddish-staging-db after migrations pass. The
+one-time Supabase data move runs outside this repository and GitHub Actions.
 """
 
 import os

@@ -5,10 +5,8 @@ set -euo pipefail
 : "${GITHUB_WORKSPACE:?}"
 : "${MODAL_ENVIRONMENT:?}"
 : "${MODAL_APP_NAME:?}"
-: "${SUPABASE_PROJECT_REF:?}"
 : "${VERCEL_GIT_BRANCH:?}"
 
-branch_name="${BRANCH_NAME:-pr-${PR_NUMBER:?}}"
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 is_configured_vercel() {
@@ -35,21 +33,20 @@ modal app stop -y --env "$MODAL_ENVIRONMENT" "$MODAL_APP_NAME" || true
 # this line had been silently leaking one orphaned secret per closed PR.
 modal secret delete -y --env "$MODAL_ENVIRONMENT" "$MODAL_APP_NAME-db" || true
 
-ids=$(supabase branches list --project-ref "$SUPABASE_PROJECT_REF" -o json \
-  | jq -r --arg name "$branch_name" '
-      .[] | select(.persistent != true)
-          | select(.name == $name)
-          | .id')
-
-for id in $ids; do
-  echo "deleting Supabase branch $id"
-  supabase branches delete "$id" --project-ref "$SUPABASE_PROJECT_REF" || true
-done
+cleanup_failed=0
+if ! python "$GITHUB_WORKSPACE/.github/scripts/neon_database.py" delete-preview; then
+  echo "::error::Neon preview cleanup failed. Vercel cleanup will still run." >&2
+  cleanup_failed=1
+fi
 
 if is_configured_vercel; then
-  (
-    cd "$GITHUB_WORKSPACE/frontend"
-    vercel pull --yes --environment=preview --git-branch="$VERCEL_GIT_BRANCH" --token="$VERCEL_TOKEN"
+  if ! (
+    cd "$GITHUB_WORKSPACE/frontend" || exit 1
+    vercel_failed=0
+    if ! vercel pull --yes --environment=preview --git-branch="$VERCEL_GIT_BRANCH" --token="$VERCEL_TOKEN"; then
+      echo "::error::Could not load the Vercel preview project. Cleanup will still be attempted." >&2
+      vercel_failed=1
+    fi
     for name in \
       NEXT_PUBLIC_API_URL \
       NEXT_PUBLIC_ODDISH_PREVIEW \
@@ -64,5 +61,10 @@ if is_configured_vercel; then
     if [ -n "${PREVIEW_ALIAS_HOSTNAME:-}" ]; then
       vercel alias rm "$PREVIEW_ALIAS_HOSTNAME" --scope "$VERCEL_ORG_ID" --yes --token="$VERCEL_TOKEN" || true
     fi
-  )
+    exit "$vercel_failed"
+  ); then
+    cleanup_failed=1
+  fi
 fi
+
+exit "$cleanup_failed"

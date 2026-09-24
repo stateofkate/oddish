@@ -1,135 +1,146 @@
-"""Reuse this commit's Vercel preview when its resolved configuration matches.
-
-The Git integration builds immediately on push. First-time branch configuration
-still needs a redeploy; subsequent pushes can use that build unchanged. Compare
-both build-time and runtime values from the deployment itself, never the mutable
-project environment (which may have changed after the build started).
-"""
+"""Build the exact PR commit, wait for it, and set its preview alias."""
 
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 
-MAX_LOOKUP_ATTEMPTS = 18
-LOOKUP_POLL_INTERVAL_S = 10
 
-
-def deployment_commit_sha(deployment):
-    meta = deployment.get("meta") or {}
-    git_source = deployment.get("gitSource") or {}
-    for candidate in (
-        meta.get("githubCommitSha"),
-        meta.get("githubCommitSHA"),
-        meta.get("gitCommitSha"),
-        git_source.get("sha"),
-    ):
-        if candidate:
-            return candidate
-    return None
-
-
-def find_existing_deployment(token, project_id, team_id, branch, commit_sha):
-    params = urllib.parse.urlencode(
-        {
-            "projectId": project_id,
-            "teamId": team_id,
-            "limit": 20,
-            "target": "preview",
-            "branch": branch,
-        }
-    )
-    url = f"https://api.vercel.com/v6/deployments?{params}"
-    headers = {"Authorization": f"Bearer {token}"}
-
-    for _ in range(MAX_LOOKUP_ATTEMPTS):
-        request = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(request, timeout=30) as response:
-            payload = json.load(response)
-        for deployment in payload.get("deployments", []):
-            if deployment_commit_sha(deployment) == commit_sha:
-                return deployment
-        time.sleep(LOOKUP_POLL_INTERVAL_S)
-    raise SystemExit(
-        "No Vercel preview deployment found yet for "
-        f"branch {branch!r} at commit {commit_sha!r}"
-    )
-
-
-def redeploy(token, team_id, project_name, deployment_id):
-    url = (
-        "https://api.vercel.com/v13/deployments"
-        f"?teamId={urllib.parse.quote(team_id, safe='')}&forceNew=1"
-    )
-    body = json.dumps({"name": project_name, "deploymentId": deployment_id}).encode()
-    request = urllib.request.Request(
-        url,
-        data=body,
-        method="POST",
+def request(token, team_id, method, path, *, body=None, query=None):
+    params = urllib.parse.urlencode({"teamId": team_id, **(query or {})})
+    req = urllib.request.Request(
+        f"https://api.vercel.com{path}?{params}",
+        data=json.dumps(body).encode() if body is not None else None,
+        method=method,
         headers={
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
         },
     )
-    with urllib.request.urlopen(request, timeout=30) as response:
-        return json.load(response)
-
-
-def deployment_matches_config(token, team_id, deployment, expected):
-    if deployment.get("state") not in {"QUEUED", "INITIALIZING", "BUILDING", "READY"}:
-        return False
-    # This is the deployment-specific endpoint used by Vercel CLI's env pull.
-    # It returns the resolved snapshot, including values embedded by Next.js.
-    params = urllib.parse.urlencode(
-        {"teamId": team_id, "source": "vercel-cli:env:pull"}
-    )
-    request = urllib.request.Request(
-        f"https://api.vercel.com/v3/env/pull/{deployment['uid']}?{params}",
-        headers={"Authorization": f"Bearer {token}"},
-    )
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            snapshot = json.load(response)
+        with urllib.request.urlopen(req, timeout=30) as response:
+            return json.load(response)
     except urllib.error.HTTPError as exc:
-        if exc.code not in {400, 403, 404}:
-            raise
-        # Older deployments or tokens may not support reading the snapshot.
-        # Retain the existing redeploy path when reuse cannot be established.
-        print(
-            f"Deployment environment unavailable (HTTP {exc.code}); requesting a fresh preview",
-            file=sys.stderr,
+        # API errors can contain resolved environment values. Do not print them.
+        raise RuntimeError(
+            f"Vercel {method} request failed (HTTP {exc.code})"
+        ) from None
+
+
+def deployment_shas(deployment):
+    return {
+        sha
+        for sha in (
+            (deployment.get("gitSource") or {}).get("sha"),
+            (deployment.get("meta") or {}).get("githubCommitSha"),
         )
-        return False
-    # Vercel CLI uses buildEnv as the complete resolved snapshot. With large
-    # env encryption, env contains decryption keys instead of the runtime vars.
-    build_env = snapshot.get("buildEnv")
-    runtime_env = snapshot.get("env")
-    return (
-        isinstance(build_env, dict)
-        and isinstance(runtime_env, dict)
-        and all(build_env.get(key, "") == value for key, value in expected.items())
-        and all(
-            runtime_env[key] == value
-            for key, value in expected.items()
-            if key in runtime_env
-        )
+        if sha
+    }
+
+
+def create_preview(token, project_id, team_id, repo_id, branch, commit_sha, env):
+    if not branch or branch in {"main", "staging"}:
+        raise ValueError("A PR branch other than main or staging is required")
+    if not re.fullmatch(r"[0-9a-f]{40}", commit_sha):
+        raise ValueError("VERCEL_GIT_COMMIT_SHA must be the full PR commit SHA")
+    if not re.fullmatch(r"[1-9][0-9]*", repo_id):
+        raise ValueError("GITHUB_REPOSITORY_ID must be the GitHub repository ID")
+
+    project = request(
+        token, team_id, "GET", f"/v9/projects/{urllib.parse.quote(project_id, safe='')}"
     )
+    if project.get("id") != project_id or not project.get("name"):
+        raise RuntimeError("Vercel returned a different or unnamed project")
+
+    # Keep the branch cache, pin the commit, and omit target for a preview build.
+    deployment = request(
+        token,
+        team_id,
+        "POST",
+        "/v13/deployments",
+        query={"forceNew": "1", "withCache": "1"},
+        body={
+            "name": project["name"],
+            "project": project_id,
+            "gitSource": {
+                "type": "github",
+                "repoId": repo_id,
+                "ref": branch,
+                "sha": commit_sha,
+            },
+            "env": env,
+            "build": {"env": env},
+        },
+    )
+    if not deployment_shas(deployment) and deployment.get("id"):
+        deployment = request(
+            token,
+            team_id,
+            "GET",
+            f"/v13/deployments/{urllib.parse.quote(deployment['id'], safe='')}",
+            query={"withGitRepoInfo": "true"},
+        )
+    if deployment_shas(deployment) != {commit_sha}:
+        raise RuntimeError("Vercel did not confirm the requested PR commit SHA")
+    if deployment.get("target") not in {None, "preview"}:
+        raise RuntimeError("Vercel did not create a preview deployment")
+    if not re.fullmatch(r"[A-Za-z0-9.-]+", deployment.get("url", "")):
+        raise RuntimeError("Vercel did not return a valid preview URL")
+    return deployment
+
+
+def wait_for_ready(token, team_id, deployment, commit_sha, *, timeout=600):
+    deployment_id = deployment["id"]
+    deadline = time.monotonic() + timeout
+    while True:
+        if deployment.get("id") != deployment_id:
+            raise RuntimeError("Vercel returned a different deployment")
+        state = deployment.get("readyState")
+        if state == "READY":
+            if deployment_shas(deployment) != {commit_sha}:
+                raise RuntimeError("Vercel built a different or unknown PR commit")
+            if deployment.get("target") not in {None, "preview"}:
+                raise RuntimeError("Vercel did not build a preview deployment")
+            return
+        if state not in {"QUEUED", "INITIALIZING", "BUILDING"}:
+            raise RuntimeError(f"Vercel preview build did not become ready ({state})")
+        if time.monotonic() >= deadline:
+            raise RuntimeError("Vercel preview build did not finish within 10 minutes")
+        time.sleep(3)
+        deployment = request(
+            token,
+            team_id,
+            "GET",
+            f"/v13/deployments/{urllib.parse.quote(deployment_id, safe='')}",
+            query={"withGitRepoInfo": "true"},
+        )
+
+
+def assign_alias(token, team_id, deployment_id, hostname):
+    result = request(
+        token,
+        team_id,
+        "POST",
+        f"/v2/deployments/{urllib.parse.quote(deployment_id, safe='')}/aliases",
+        body={"alias": hostname},
+    )
+    if result.get("alias") != hostname:
+        raise RuntimeError("Vercel did not confirm the requested preview alias")
+    return f"https://{hostname}"
 
 
 def main():
     token = os.environ["VERCEL_TOKEN"]
-    project_id = os.environ["VERCEL_PROJECT_ID"]
     team_id = os.environ["VERCEL_ORG_ID"]
-    branch = os.environ["VERCEL_GIT_BRANCH"]
     commit_sha = os.environ["VERCEL_GIT_COMMIT_SHA"]
-
-    deployment = find_existing_deployment(
-        token, project_id, team_id, branch, commit_sha
-    )
-    expected = {
+    alias = os.environ.get("PREVIEW_ALIAS_HOSTNAME", "")
+    if alias and not re.fullmatch(r"pr-[1-9][0-9]*\.oddish\.app", alias):
+        raise ValueError("PREVIEW_ALIAS_HOSTNAME must be a PR's oddish.app hostname")
+    env = {
         "NEXT_PUBLIC_API_URL": os.environ["BACKEND_API_URL"],
         "NEXT_PUBLIC_ODDISH_PREVIEW": "true",
         "NEXT_PUBLIC_ODDISH_PREVIEW_BACKEND_LABEL": os.environ["PREVIEW_BACKEND_LABEL"],
@@ -141,19 +152,22 @@ def main():
         "NEXT_PUBLIC_ODDISH_PREVIEW_PR_URL": os.environ.get("PR_URL", ""),
         "NEXT_PUBLIC_ODDISH_PREVIEW_PR_TITLE": os.environ.get("PR_TITLE", ""),
     }
-    if deployment_matches_config(token, team_id, deployment, expected):
-        print(
-            f"Reusing Vercel deployment {deployment['uid']} for {commit_sha}",
-            file=sys.stderr,
-        )
-    else:
-        deployment = redeploy(token, team_id, deployment["name"], deployment["uid"])
-        print(f"Created Vercel deployment for {commit_sha}", file=sys.stderr)
+    deployment = create_preview(
+        token,
+        os.environ["VERCEL_PROJECT_ID"],
+        team_id,
+        os.environ["GITHUB_REPOSITORY_ID"],
+        os.environ["VERCEL_GIT_BRANCH"],
+        commit_sha,
+        env,
+    )
+    wait_for_ready(token, team_id, deployment, commit_sha)
+    alias_url = assign_alias(token, team_id, deployment["id"], alias) if alias else ""
     preview_url = "https://" + deployment["url"]
-
-    with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-        f.write(f"preview_url={preview_url}\n")
-
+    with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+        output.write(f"preview_url={preview_url}\n")
+        output.write(f"preview_alias_url={alias_url}\n")
+    print("Created the PR's Vercel preview with build cache enabled.", file=sys.stderr)
     print(preview_url)
 
 

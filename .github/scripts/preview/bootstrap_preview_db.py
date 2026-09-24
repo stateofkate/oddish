@@ -1,36 +1,29 @@
-"""Rehearse the prod migration path on the PR's preview branch.
+"""Upgrade a Neon preview without replacing its schema or saved data.
 
-On rebuild (fresh branch, invalidated trust marker, or auto-heal) the branch
-gets a snapshot of production's ``public`` schema plus prod's Alembic version
-pointers, is seeded with sampled prod rows, and then runs
-``alembic upgrade head`` for oddish and backend -- the same commands, order,
-and starting shape as the push-to-main migration workflow. The PR's new
-migrations therefore execute here first, against prod-shaped schema and data,
-instead of being stamped as applied. A trusted (already-built) branch skips
-the snapshot and runs the same incremental ``upgrade head`` prod does.
+Neon copies staging's schema and rows when it creates a preview branch. Every
+run applies only pending migrations. After the first successful upgrade, one
+transaction stops inherited work and records the child branch ID. Later deploys
+keep the preview's jobs, credentials, and saved data.
 """
 
 import asyncio
-import hashlib
-import json
 import os
 import subprocess
 import sys
 from pathlib import Path
 
 from sqlalchemy import pool, text
-from sqlalchemy.exc import DBAPIError, IntegrityError
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 ODDISH_DIR = REPO_ROOT / "oddish"
 BACKEND_DIR = REPO_ROOT / "backend"
-SCRIPT_DIR = Path(__file__).resolve().parent
-# Prod migration order: oddish first, then backend (modal-deploy.yml).
+# Use the same order as production: oddish first, then backend.
 STACKS = (ODDISH_DIR, BACKEND_DIR)
 ALEMBIC_VERSION_TABLES = ("alembic_version_oddish", "alembic_version_backend")
-
-SCHEMA_MARKER = "oddish-preview:prod-snapshot"
+REQUIRED_STAGING_TABLES = {"tasks", "trials", "api_keys", *ALEMBIC_VERSION_TABLES}
+INITIALIZATION_TABLE = "_oddish_preview_initialization"
+INHERITED_WORK_ERROR = "Stopped in this preview when copied from staging."
 
 
 def _upgrade_head(project: Path) -> None:
@@ -39,41 +32,29 @@ def _upgrade_head(project: Path) -> None:
 
 def _branch_db_url() -> str:
     url = os.environ["ODDISH_DATABASE_URL"]
-    if url.startswith("postgresql://") and "+asyncpg" not in url:
+    if url.startswith("postgresql://"):
         url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
     return url
 
 
-def _source_db_url() -> str:
-    """Production URL used read-only for the schema snapshot + pointer copy."""
-    url = os.environ.get("PREVIEW_SAMPLE_SOURCE_DB_URL", "")
-    if not url:
+def _preview_branch_ids() -> tuple[str, str]:
+    """Require the child identity supplied by the Neon branch helper."""
+    branch_id = os.environ.get("NEON_BRANCH_ID", "").strip()
+    parent_id = os.environ.get("NEON_PARENT_BRANCH_ID", "").strip()
+    if not branch_id or not parent_id or branch_id == parent_id:
         raise RuntimeError(
-            "bootstrap_preview_db: PREVIEW_SAMPLE_SOURCE_DB_URL is required to "
-            "snapshot the production schema; refusing to rebuild without it"
+            "bootstrap_preview_db: NEON_BRANCH_ID and NEON_PARENT_BRANCH_ID "
+            "must identify different branches. Use the Neon preview branch "
+            "helper; this script must not run on staging."
         )
-    if url.startswith("postgresql://") and "+asyncpg" not in url:
-        url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
-    return url
+    return branch_id, parent_id
 
 
-def _libpq_url(url: str) -> str:
-    """pg_dump/psql speak libpq URLs; strip the SQLAlchemy driver suffix."""
-    return url.replace("postgresql+asyncpg://", "postgresql://", 1)
-
-
-def _session_pooler_url(url: str) -> str:
-    """Route pg_dump/psql through the SESSION pooler (port 5432).
-
-    They set session-level state -- pg_dump hardens its connection with
-    ``set_config('search_path', '', false)`` -- and on the transaction pooler
-    (port 6543) that state sticks to a SHARED pooled backend after disconnect,
-    poisoning later clients: their unqualified queries then fail with
-    ``relation ... does not exist`` (observed on prod for ~7 minutes after the
-    first snapshot dump). Session mode dedicates the backend to this one
-    connection and discards its state on disconnect. Same host, same auth.
-    """
-    return _libpq_url(url).replace(":6543/", ":5432/", 1)
+def _assert_preview_branch(url: str) -> None:
+    """Shared guard for preview-only post-migration commands."""
+    _preview_branch_ids()
+    if url != _branch_db_url():
+        raise RuntimeError("Preview command must use the selected Neon branch URL")
 
 
 def _engine(url: str):
@@ -83,11 +64,7 @@ def _engine(url: str):
 
 
 def _load_base():
-    """Import the backend + oddish models so the full cross-stack metadata is registered.
-
-    Importing the backend models registers the cloud tables on the shared Base,
-    so the fingerprint and the model-schema assert see both stacks.
-    """
+    """Register both model stacks for the schema check."""
     for path in (BACKEND_DIR, ODDISH_DIR / "src"):
         path_str = str(path)
         if path_str not in sys.path:
@@ -98,496 +75,199 @@ def _load_base():
     return Base
 
 
-def _index_descriptor(index) -> str:
-    """One index's identity (name, columns, uniqueness) for the fingerprint.
-
-    Folding indexes in means an index-only model change invalidates the cached
-    schema; otherwise it would never reach a preview.
-    """
-    cols = ",".join(sorted(col.name for col in index.columns))
-    return f"{index.name}({cols}){'!u' if index.unique else ''}"
-
-
-def _fingerprint_metadata(metadata) -> str:
-    """Stable short hash of a metadata's table + column + index names.
-
-    Constraints are deliberately not fingerprinted: the branch schema derives
-    from the prod snapshot + migration files (never from this metadata), so a
-    constraint-only model edit with no migration changes nothing anywhere —
-    preview and prod stay identical, which is the contract. The marker's only
-    job is to notice inputs that would change the rebuilt schema or the assert.
-    """
-    parts = []
-    for table in sorted(metadata.tables.values(), key=lambda t: t.name):
-        cols = ",".join(sorted(col.name for col in table.columns))
-        idxs = ",".join(sorted(_index_descriptor(ix) for ix in table.indexes))
-        parts.append(f"{table.name}:{cols}:{idxs}")
-    return hashlib.sha256("|".join(parts).encode()).hexdigest()[:16]
-
-
-def _model_fingerprint() -> str:
-    """Fingerprint of the current model graph.
-
-    Folded into the trust marker so a schema cached by an earlier prep is reused
-    only while it still matches the branch's *current* models. Without this, a
-    branch that gains a column after its first prep -- a merge that adds a
-    migration, or a re-pointed migration chain -- keeps its stale cached schema:
-    the version is already at head, so ``alembic upgrade head`` is a no-op, the
-    new column is never created, and every read of it 500s.
-    """
-    return _fingerprint_metadata(_load_base().metadata)
-
-
-def _migration_fingerprint() -> str:
-    """Hash of every migration file's path + contents across both stacks.
-
-    Folded into the trust marker so that editing a migration in place (or
-    adding one) invalidates the cached schema and forces a fresh snapshot
-    rebuild -- an already-at-head branch would otherwise never notice.
-    """
-    digest = hashlib.sha256()
-    for project in STACKS:
-        for path in sorted((project / "alembic").rglob("*.py")):
-            if "__pycache__" in path.parts:
-                continue
-            digest.update(path.relative_to(project).as_posix().encode())
-            digest.update(b"\0")
-            digest.update(path.read_bytes())
-            digest.update(b"\0")
-    return digest.hexdigest()[:16]
-
-
-def _trust_marker() -> str:
-    return f"{SCHEMA_MARKER}:{_model_fingerprint()}:{_migration_fingerprint()}"
-
-
-async def _schema_trusted(url: str) -> bool:
+async def _assert_staging_snapshot(url: str) -> None:
+    """Refuse an empty clone before Alembic can turn it into an empty app DB."""
     engine = _engine(url)
     try:
         async with engine.connect() as conn:
-            # Two-arg form; one-arg obj_description() is unreliable for schema comments.
-            marker = await conn.scalar(
-                text("SELECT obj_description('public'::regnamespace, 'pg_namespace')")
+            tables = set(
+                (
+                    await conn.execute(
+                        text(
+                            "SELECT tablename FROM pg_tables WHERE schemaname = 'public'"
+                        )
+                    )
+                ).scalars()
             )
+            missing = REQUIRED_STAGING_TABLES - tables
+            if not missing:
+                for table in ALEMBIC_VERSION_TABLES:
+                    has_revision = await conn.scalar(
+                        text(
+                            f"SELECT EXISTS (SELECT 1 FROM public.{table} "
+                            "WHERE version_num IS NOT NULL AND version_num <> '')"
+                        )
+                    )
+                    if not has_revision:
+                        missing.add(f"{table} revision")
+            if missing:
+                raise RuntimeError(
+                    "bootstrap_preview_db: this preview has no complete staging copy "
+                    f"(missing: {', '.join(sorted(missing))}). Finish the local staging data move, "
+                    "then run Preview Reset for this PR to copy staging again. "
+                    "No migrations or data changes were run."
+                )
     finally:
         await engine.dispose()
-    # Trust the cached schema only when it was built from the current models
-    # AND the current migration files.
-    return marker == _trust_marker()
 
 
-def _assert_preview_branch(url: str) -> None:
-    prod_ref = os.environ.get("SUPABASE_PROJECT_REF")
-    source = os.environ.get("PREVIEW_SAMPLE_SOURCE_DB_URL", "")
-    if (prod_ref and prod_ref in url) or (
-        source and url.split("://", 1)[-1] == source.split("://", 1)[-1]
-    ):
-        raise RuntimeError(
-            "bootstrap_preview_db: ODDISH_DATABASE_URL resolves to production "
-            "(matched SUPABASE_PROJECT_REF / PREVIEW_SAMPLE_SOURCE_DB_URL); "
-            "refusing to DROP SCHEMA. This script only rebuilds preview branches."
-        )
+async def _initialize_clone(url: str, branch_id: str, parent_id: str) -> bool:
+    """Stop copied work once, in the same transaction as the branch marker.
 
-
-# Rows that belong to THIS preview branch and must survive its rebuild, in
-# restore order: an API key is rejected by auth when its organization is
-# missing, so the organization has to land first.
-#
-# API keys are minted against one preview, hashed, and are meaningless
-# anywhere else. They are deliberately NOT part of the prod sample (see
-# preview_seed._NEVER_SAMPLED_TABLES) and must never be, or one environment's
-# credentials would appear in another. Preserving them here is the opposite
-# operation: the rows never leave the branch.
-#
-# Without this, every rebuild silently invalidates the key a developer just
-# created from the preview dashboard -- and a rebuild is not rare: any
-# cancelled run leaves the branch untrusted, so the next push rebuilds it.
-# Restore order follows the foreign keys, parents first:
-#
-#   organizations <- users.org_id          (fk_users_org_id, NOT NULL)
-#   users         <- api_keys.created_by_user_id
-#                                          (fk_api_keys_created_by_user_id)
-#
-# Both constraints are real on a rebuilt schema. `fk_users_org_id` comes from
-# backend/alembic a1b2c3d4e5f6, as does `fk_api_keys_created_by_user_id`; the
-# later oddish migration drops only `api_keys_created_by_user_id_fkey`, a
-# different name, so that one survives too. Neither column declares
-# ForeignKey() on a model this script can see, which is why the order has to
-# be written down rather than derived.
-#
-# Organizations also matter for a second reason: verify_api_key rejects a key
-# whose organization row is missing, so a key restored alone would come back
-# and still fail every request.
-_PRESERVED_TABLES = ("organizations", "users", "api_keys")
-
-# The stash lives OUTSIDE public, because the rebuild runs
-# ``DROP SCHEMA IF EXISTS public CASCADE`` and nothing else. Holding the rows
-# in the database rather than in this process is the whole point: the workflow
-# uses cancel-in-progress, so a second push can kill the run between the drop
-# and the restore. In-memory rows would die with it and the next run would
-# capture an already-empty table -- losing the keys permanently, in exactly the
-# scenario this change exists to fix.
-#
-# Rows are stored as jsonb keyed by (table_name, row_id) so the stash survives
-# schema drift: a migration that adds, drops or renames a column cannot break
-# a payload that is read back column by column.
-_PRESERVE_SCHEMA = "preview_preserved"
-_PRESERVE_TABLE = f"{_PRESERVE_SCHEMA}.rows"
-
-
-async def _capture_preserved_rows(url: str) -> None:
-    """Copy this branch's credential rows into the stash before the drop.
-
-    Idempotent and additive: re-capturing refreshes a row that is still in
-    public and leaves a row that a previous rebuild already stashed. That is
-    what makes a cancelled run recoverable.
-
-    Best effort -- a fresh branch has no such tables, and a read failure must
-    never block the rebuild.
+    The marker uses the actual Neon child ID. A marker inherited from a parent
+    cannot skip this step. The lock serializes concurrent first runs, and a
+    failure rolls back both the cleanup and marker so a retry can finish it.
+    No remote worker or sandbox is stopped: those belong to staging.
     """
-    engine = None
-    # Guard BEFORE the first write. This creates a schema, so it is now the
-    # earliest database write in a rebuild -- ahead of _reset_schema, which
-    # used to hold that position along with this check. A mispointed
-    # ODDISH_DATABASE_URL would otherwise copy users, organizations and
-    # api_keys into production before the drop guard refused: the exact
-    # cross-environment credential copy _NEVER_SAMPLED_TABLES exists to stop.
-    _assert_preview_branch(url)
+    engine = _engine(url)
     try:
-        # Inside the guard: a malformed URL or a missing driver must degrade to
-        # "nothing preserved", never abort the rebuild.
-        engine = _engine(url)
         async with engine.begin() as conn:
-            await conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {_PRESERVE_SCHEMA}"))
+            await conn.execute(
+                text("SELECT pg_advisory_xact_lock(hashtext(:lock_name))"),
+                {"lock_name": "oddish-preview-initialize"},
+            )
             await conn.execute(
                 text(
-                    f"CREATE TABLE IF NOT EXISTS {_PRESERVE_TABLE} ("
-                    " table_name text NOT NULL,"
-                    " row_id text NOT NULL,"
-                    " payload jsonb NOT NULL,"
-                    " captured_at timestamptz NOT NULL DEFAULT now(),"
-                    " PRIMARY KEY (table_name, row_id))"
+                    f"CREATE TABLE IF NOT EXISTS public.{INITIALIZATION_TABLE} ("
+                    "branch_id text PRIMARY KEY, parent_branch_id text NOT NULL, "
+                    "initialized_at timestamptz NOT NULL DEFAULT now())"
                 )
             )
-            for table in _PRESERVED_TABLES:
-                present = await conn.scalar(
-                    text("SELECT to_regclass(:qualified) IS NOT NULL"),
-                    {"qualified": f"public.{table}"},
-                )
-                print(
-                    f"bootstrap_preview_db: capture public.{table} "
-                    f"present={bool(present)}",
-                    file=sys.stderr,
-                )
-                if not present:
-                    continue
-                stashed = await conn.scalar(
-                    text(
-                        f"WITH copied AS ("
-                        f"  INSERT INTO {_PRESERVE_TABLE}"
-                        f"    (table_name, row_id, payload)"
-                        f"  SELECT :t, source.id::text, to_jsonb(source)"
-                        f"  FROM public.{table} AS source"
-                        f"  ON CONFLICT (table_name, row_id) DO UPDATE"
-                        f"    SET payload = EXCLUDED.payload,"
-                        f"        captured_at = now()"
-                        f"  RETURNING 1)"
-                        f" SELECT count(*) FROM copied"
-                    ),
-                    {"t": table},
-                )
-                print(
-                    f"bootstrap_preview_db: stashed {stashed} {table} row(s)",
-                    file=sys.stderr,
-                )
-    except Exception:
-        # Deliberately NOT swallowed. Capture is the only thing standing
-        # between a live API key and DROP SCHEMA, so continuing past an
-        # unexpected failure guarantees the loss it exists to prevent -- and a
-        # later run could then restore an older stash "successfully" and mark
-        # the schema trusted, making that loss permanent.
-        #
-        # Failing here costs one run, which the next push retries. The
-        # expected case, a fresh branch with no such table yet, is handled
-        # above by skipping the table and is not an error.
-        print(
-            "bootstrap_preview_db: could not stash preserved rows; refusing to "
-            "drop the schema, because that would destroy keys this run cannot "
-            "put back. The next push retries.",
-            file=sys.stderr,
-        )
-        raise
-    finally:
-        if engine is not None:
-            await engine.dispose()
+            initialized = await conn.scalar(
+                text(
+                    f"SELECT EXISTS (SELECT 1 FROM public.{INITIALIZATION_TABLE} "
+                    "WHERE branch_id = :branch_id)"
+                ),
+                {"branch_id": branch_id},
+            )
+            if initialized:
+                return False
 
-
-async def _restore_preserved_rows(url: str) -> bool:
-    """Put the stashed rows back after the schema is rebuilt.
-
-    Returns True when the restore completed. The caller must NOT mark the
-    schema trusted on False: a trusted schema takes the upgrade path on the
-    next push, which never restores, so the rows would sit in the stash while
-    public stays empty. Retrying on the next rebuild keeps a failure
-    temporary instead of permanent.
-
-    Rows go back ONE AT A TIME inside savepoints. A single row that cannot be
-    written -- a payload from before a NOT NULL column existed, a foreign key
-    that no longer resolves -- must not take the other rows with it. A single
-    set-at-a-time INSERT would abort the whole transaction and lose every
-    preserved key.
-
-    ``jsonb_populate_record`` maps a payload onto the CURRENT row type: it
-    gives each value that column's real type (a plain ``->>`` yields text,
-    which has no assignment cast to boolean or timestamptz), ignores a column
-    a migration removed, and leaves a column a migration added as NULL.
-
-    The stash is deliberately NOT cleared, so a run cancelled before this
-    point is still recoverable by the next one.
-    """
-    engine = None
-    ok = True
-    try:
-        engine = _engine(url)
-        async with engine.begin() as conn:
-            if not await conn.scalar(
-                text("SELECT to_regclass(:qualified) IS NOT NULL"),
-                {"qualified": _PRESERVE_TABLE},
-            ):
-                return True
-
-            for table in _PRESERVED_TABLES:
-                if not await conn.scalar(
-                    text("SELECT to_regclass(:qualified) IS NOT NULL"),
-                    {"qualified": f"public.{table}"},
-                ):
-                    continue
-
-                payloads = [
-                    row[0]
-                    for row in await conn.execute(
-                        text(
-                            f"SELECT payload FROM {_PRESERVE_TABLE}"
-                            " WHERE table_name = :t"
-                        ),
-                        {"t": table},
+            changed_versions = (
+                (
+                    await conn.execute(
+                        text(_STOP_INHERITED_TRIALS_SQL),
+                        {"reason": INHERITED_WORK_ERROR},
                     )
-                ]
-                restored = skipped = 0
-                for payload in payloads:
-                    if await _restore_one(conn, table, payload):
-                        restored += 1
-                    else:
-                        skipped += 1
-                        ok = False
-                print(
-                    f"bootstrap_preview_db: restored {restored} {table} row(s)"
-                    + (f", skipped {skipped}" if skipped else ""),
-                    file=sys.stderr,
                 )
-    except Exception as exc:  # noqa: BLE001 - a failed restore must not fail the deploy
-        print(
-            f"bootstrap_preview_db: could not restore preserved rows ({exc}); "
-            "the schema stays untrusted so the next run retries",
-            file=sys.stderr,
-        )
-        return False
+                .scalars()
+                .all()
+            )
+            for statement in _CLONE_INITIALIZATION_SQL:
+                await conn.execute(text(statement), {"reason": INHERITED_WORK_ERROR})
+            await _refresh_initialized_versions(conn, changed_versions)
+
+            # Last write, but in the same transaction as all inherited changes.
+            await conn.execute(
+                text(
+                    f"INSERT INTO public.{INITIALIZATION_TABLE} "
+                    "(branch_id, parent_branch_id) VALUES (:branch_id, :parent_id)"
+                ),
+                {"branch_id": branch_id, "parent_id": parent_id},
+            )
     finally:
-        if engine is not None:
-            await engine.dispose()
-    return ok
+        await engine.dispose()
+    return True
 
 
-async def _restore_one(conn, table: str, payload: dict) -> bool:
-    """Write one preserved row, inside its own savepoint.
+async def _refresh_initialized_versions(conn, task_version_ids) -> None:
+    """Refresh only stopped trials' versions before the setup marker commits."""
+    version_ids = sorted({str(value) for value in task_version_ids if value})
+    if not version_ids:
+        return
+    from oddish.core.task_browse_summary import refresh_task_browse_summaries
 
-    An api_key whose creator no longer exists is retried once with
-    ``created_by_user_id`` cleared: the column is nullable, and losing the
-    attribution is far better than losing the key itself. An api_key whose
-    organization did not come back is skipped outright -- verify_api_key
-    refuses such a key, so restoring it would look repaired while still
-    failing every request.
+    # The connection owns this transaction. The session must not commit or
+    # close it: a refresh error must also roll back the trial stops and marker.
+    async with AsyncSession(
+        bind=conn, join_transaction_mode="rollback_only"
+    ) as session:
+        for start in range(0, len(version_ids), 200):
+            await refresh_task_browse_summaries(
+                session, version_ids[start : start + 200]
+            )
+    print(f"bootstrap_preview_db: refreshed {len(version_ids)} stopped trial versions")
+
+
+_STOP_INHERITED_TRIALS_SQL = """
+    UPDATE public.trials
+    SET status = 'FAILED', finished_at = now(), updated_at = now(),
+        error_message = :reason, harbor_stage = 'cancelled', next_retry_at = NULL,
+        current_worker_id = NULL, current_queue_slot = NULL,
+        claimed_at = NULL, heartbeat_at = NULL
+    WHERE status IN ('PENDING', 'QUEUED', 'RUNNING', 'PAUSED', 'RETRYING')
+    RETURNING task_version_id
+"""
+
+
+# Use explicit status sets so completed history keeps its results and dates.
+# These statements run only after both migration stacks and the schema check.
+_CLONE_INITIALIZATION_SQL = (
     """
-    if table == "api_keys":
-        org_id = payload.get("org_id")
-        if org_id and not await conn.scalar(
-            text("SELECT 1 FROM public.organizations WHERE id = :o"), {"o": org_id}
-        ):
-            print(
-                f"bootstrap_preview_db: skipping api_key {payload.get('id')}: "
-                f"organization {org_id} is not present, so the key could not "
-                "authenticate anyway",
-                file=sys.stderr,
-            )
-            return False
-
-    live = {
-        row[0]
-        for row in await conn.execute(
-            text(
-                "SELECT column_name FROM information_schema.columns"
-                " WHERE table_schema = 'public' AND table_name = :t"
-            ),
-            {"t": table},
-        )
-    }
-
-    for attempt, body in enumerate(_restore_attempts(table, payload)):
-        # Name only the columns the payload actually carries. A column a
-        # migration added after this payload was stashed is then left out of
-        # the statement entirely, so its server default applies. Expanding the
-        # whole record instead would write SQL NULL into it and fail any NOT
-        # NULL column -- and because the stash is kept and the schema is left
-        # untrusted, that row would fail the same way on every later push.
-        columns = [c for c in body if c in live]
-        if not columns:
-            return False
-        column_list = ", ".join(f'"{c}"' for c in columns)
-        # (source.rec)."col" -- the parentheses are required: without them
-        # Postgres reads `rec` as a table alias rather than a composite value.
-        value_list = ", ".join(f'(source.rec)."{c}"' for c in columns)
-        try:
-            async with conn.begin_nested():
-                await conn.execute(
-                    text(
-                        f'INSERT INTO public."{table}" ({column_list})'
-                        f"  SELECT {value_list} FROM ("
-                        f"    SELECT jsonb_populate_record("
-                        f'      NULL::public."{table}",'
-                        f"      CAST(:payload AS jsonb)) AS rec) AS source"
-                        f"  ON CONFLICT DO NOTHING"
-                    ),
-                    {"payload": json.dumps(body, default=str)},
-                )
-            return True
-        except (IntegrityError, DBAPIError) as exc:
-            if attempt == 0 and table == "api_keys":
-                continue  # retry without the creator reference
-            print(
-                f"bootstrap_preview_db: could not restore {table} row "
-                f"{payload.get('id')}: {exc.__class__.__name__}",
-                file=sys.stderr,
-            )
-            return False
-    return False
-
-
-def _restore_attempts(table: str, payload: dict):
-    """The payload, then a fallback that drops a dangling creator reference."""
-    yield payload
-    if table == "api_keys" and payload.get("created_by_user_id") is not None:
-        yield {**payload, "created_by_user_id": None}
-
-
-async def _reset_schema(url: str) -> None:
-    _assert_preview_branch(url)
-    engine = _engine(url)
-    try:
-        async with engine.begin() as conn:
-            await conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
-            await conn.execute(text("CREATE SCHEMA public"))
-            await conn.execute(text("GRANT ALL ON SCHEMA public TO public"))
-    finally:
-        await engine.dispose()
-
-
-def _pg_dump_schema_cmd(source_url: str) -> list[str]:
-    # --no-comments keeps prod's schema comments (if any) from ever colliding
-    # with the trust marker; --no-owner/--no-privileges because prod's roles
-    # don't matter on a branch (objects belong to the connecting role).
-    return [
-        "pg_dump",
-        "--schema-only",
-        "--no-owner",
-        "--no-privileges",
-        "--no-comments",
-        "--schema=public",
-        _session_pooler_url(source_url),
-    ]
-
-
-def _psql_restore_cmd(branch_url: str) -> list[str]:
-    # One transaction pins a single pooled backend (transaction-mode Supavisor)
-    # and makes the restore all-or-nothing; schema-only dumps never contain
-    # CREATE INDEX CONCURRENTLY, so this is always transaction-safe.
-    return [
-        "psql",
-        "--no-psqlrc",
-        "--quiet",
-        "-v",
-        "ON_ERROR_STOP=1",
-        "--single-transaction",
-        _session_pooler_url(branch_url),
-    ]
-
-
-def _filter_schema_sql(sql: str) -> str:
-    """Drop ``CREATE SCHEMA public;`` lines -- the schema is pre-created."""
-    lines = [ln for ln in sql.splitlines() if ln.strip() != "CREATE SCHEMA public;"]
-    return "\n".join(lines) + "\n"
-
-
-def _dump_prod_schema() -> str:
-    proc = subprocess.run(
-        _pg_dump_schema_cmd(_source_db_url()),
-        capture_output=True,
-        text=True,
-    )
-    if proc.returncode != 0:
-        sys.stderr.write(proc.stderr)
-        raise RuntimeError(
-            "bootstrap_preview_db: pg_dump of the production schema failed"
-        )
-    return _filter_schema_sql(proc.stdout)
-
-
-def _restore_schema(url: str, sql: str) -> None:
-    subprocess.run(_psql_restore_cmd(url), input=sql, text=True, check=True)
-
-
-async def _fetch_prod_alembic_versions() -> dict[str, str]:
-    """Read prod's Alembic pointers so the branch upgrades from the same spot."""
-    engine = _engine(_source_db_url())
-    versions: dict[str, str] = {}
-    try:
-        async with engine.connect() as conn:
-            for table in ALEMBIC_VERSION_TABLES:
-                result = await conn.execute(
-                    text(f"SELECT version_num FROM {table}")  # noqa: S608
-                )
-                rows = result.scalars().all()
-                if len(rows) != 1:
-                    raise RuntimeError(
-                        f"bootstrap_preview_db: prod {table} has {len(rows)} rows; "
-                        "expected exactly 1 -- is prod mid-migration-incident?"
-                    )
-                versions[table] = rows[0]
-    finally:
-        await engine.dispose()
-    return versions
-
-
-async def _write_alembic_versions(url: str, versions: dict[str, str]) -> None:
-    engine = _engine(url)
-    try:
-        async with engine.begin() as conn:
-            for table, version in versions.items():
-                await conn.execute(text(f"DELETE FROM {table}"))  # noqa: S608
-                await conn.execute(
-                    text(
-                        f"INSERT INTO {table} (version_num) "  # noqa: S608
-                        "VALUES (:version)"
-                    ),
-                    {"version": version},
-                )
-    finally:
-        await engine.dispose()
-
-
-def _run_seed() -> None:
-    # Same interpreter (the backend venv under `uv run`); the seed reads
-    # ODDISH_DATABASE_URL / PREVIEW_SAMPLE_SOURCE_DB_URL / PR_NUMBER from env.
-    subprocess.run([sys.executable, str(SCRIPT_DIR / "seed_preview_db.py")], check=True)
+    UPDATE public.worker_jobs
+    SET status = 'CANCELLED', finished_at = now(), updated_at = now(),
+        error_message = :reason, next_retry_at = NULL,
+        current_worker_id = NULL, current_queue_slot = NULL,
+        provider = NULL, modal_function_call_id = NULL, external_id = NULL,
+        reroute_pending_teardown = false, claimed_at = NULL, heartbeat_at = NULL,
+        job_token_hash = NULL, job_token_expires_at = NULL,
+        job_token_revoked_at = now(), monitor_token_hash = NULL,
+        monitor_token_expires_at = NULL, monitor_token_revoked_at = now()
+    WHERE status IN ('QUEUED', 'RUNNING', 'RETRYING', 'BLOCKED')
+    """,
+    """
+    UPDATE public.sandbox_runs
+    SET state = 'TERMINATED', terminated_at = now(), last_error = :reason,
+        updated_at = now()
+    WHERE state IN ('PROVISIONING', 'RUNNING', 'TERMINATING')
+    """,
+    """
+    UPDATE public.sandbox_runs SET external_id = NULL
+    WHERE external_id IS NOT NULL
+    """,
+    """
+    UPDATE public.trials
+    SET analysis_status = 'FAILED', analysis_error = :reason,
+        analysis_finished_at = now(), updated_at = now()
+    WHERE analysis_status IN ('PENDING', 'QUEUED', 'RUNNING', 'PAUSED', 'RETRYING')
+    """,
+    """
+    UPDATE public.task_versions
+    SET pre_trial_status = CASE
+            WHEN pre_trial IS NULL OR pre_trial = 'null'::jsonb THEN 'FAILED'::jobstatus
+            ELSE 'SUCCESS'::jobstatus
+        END, pre_trial_error = :reason,
+        pre_trial_finished_at = now(), updated_at = now()
+    WHERE pre_trial_status IN ('PENDING', 'QUEUED', 'RUNNING', 'RETRYING')
+    """,
+    """
+    UPDATE public.tasks
+    SET status = 'FAILED', finished_at = now(), updated_at = now()
+    WHERE status IN ('PENDING', 'RUNNING', 'ANALYZING', 'VERDICT_PENDING')
+    """,
+    """
+    UPDATE public.tasks
+    SET verdict_status = CASE
+            WHEN verdict IS NULL OR verdict = 'null'::jsonb THEN 'FAILED'::jobstatus
+            ELSE 'SUCCESS'::jobstatus
+        END, verdict_error = :reason,
+        verdict_finished_at = now(), updated_at = now()
+    WHERE verdict_status IN ('PENDING', 'QUEUED', 'RUNNING', 'RETRYING')
+    """,
+    """
+    UPDATE public.api_keys
+    SET is_active = false, updated_at = now()
+    WHERE is_active
+    """,
+    "DELETE FROM public.queue_slots",
+    "DELETE FROM public.sandbox_capacity_leases",
+    "DELETE FROM public.model_request_leases",
+    "DELETE FROM public.model_request_pools",
+    "DELETE FROM public.queue_dispatch_state",
+    "DELETE FROM public.queue_runtime_status",
+    "DELETE FROM public.trial_events",
+    "DELETE FROM public.submission_idempotency",
+)
 
 
 async def _assert_model_schema(url: str) -> None:
@@ -642,76 +322,6 @@ async def _assert_model_schema(url: str) -> None:
         raise RuntimeError(f"preview schema is missing model objects: {preview}{extra}")
 
 
-async def _mark_trusted(url: str) -> None:
-    marker = _trust_marker()
-    engine = _engine(url)
-    try:
-        async with engine.begin() as conn:
-            await conn.execute(text(f"COMMENT ON SCHEMA public IS '{marker}'"))
-    finally:
-        await engine.dispose()
-
-
-def _snapshot_prod() -> tuple[str, dict[str, str]]:
-    """Dump prod's schema and Alembic pointers as a CONSISTENT pair.
-
-    The pointers are read before and after the dump: a mismatch means prod
-    applied a migration mid-snapshot, and pairing the older schema with the
-    newer pointers would make ``upgrade head`` silently skip that migration's
-    DDL on the branch. Equal brackets mean no migration committed during the
-    dump. One retry, then fail loudly.
-    """
-    for _attempt in range(2):
-        before = asyncio.run(_fetch_prod_alembic_versions())
-        schema_sql = _dump_prod_schema()
-        after = asyncio.run(_fetch_prod_alembic_versions())
-        if before == after:
-            return schema_sql, after
-        print(
-            "bootstrap_preview_db: prod applied a migration mid-snapshot; "
-            "retrying with a fresh dump",
-            file=sys.stderr,
-        )
-    raise RuntimeError(
-        "bootstrap_preview_db: prod migrated during two consecutive schema "
-        "snapshots; re-run once prod's migration workflow settles"
-    )
-
-
-def _rebuild(url: str) -> None:
-    """Snapshot prod, restore it into the branch, seed, then upgrade to head."""
-    # Snapshot (consistent schema + pointer pair) before touching the branch:
-    # if prod is unreachable or mid-migration, the branch is left as it was. A branch whose tree dropped a migration
-    # (e.g. a reverted PR commit) is also healed here: the rebuild never
-    # consults the branch's old pointer.
-    schema_sql, versions = _snapshot_prod()
-    # Stashed before the drop, restored after the upgrade: a rebuild must not
-    # invalidate the API key a developer just created on this preview. The
-    # stash lives in the database, so a cancelled run does not lose it.
-    asyncio.run(_capture_preserved_rows(url))
-    asyncio.run(_reset_schema(url))
-    _restore_schema(url, schema_sql)
-    asyncio.run(_write_alembic_versions(url, versions))
-    # Seed BEFORE upgrading so the PR's migrations run against realistic data,
-    # exactly as they will on prod. The prod-shaped schema means every sampled
-    # column fits 1:1.
-    _run_seed()
-    for project in STACKS:
-        _upgrade_head(project)
-    asyncio.run(_assert_model_schema(url))
-    # Trust last, and only when the restore worked: a trusted schema takes the
-    # upgrade path next push, which never restores, so trusting after a failed
-    # restore would strand the rows in the stash for good.
-    if asyncio.run(_restore_preserved_rows(url)):
-        asyncio.run(_mark_trusted(url))
-    else:
-        print(
-            "bootstrap_preview_db: leaving the schema untrusted so the next "
-            "run rebuilds and retries the preserved rows",
-            file=sys.stderr,
-        )
-
-
 def _upgrade_and_verify(url: str) -> None:
     for project in STACKS:
         _upgrade_head(project)
@@ -719,44 +329,24 @@ def _upgrade_and_verify(url: str) -> None:
 
 
 def main() -> None:
+    branch_id, parent_id = _preview_branch_ids()
     url = _branch_db_url()
-    rebuilt = True
-    healed = False
-    if asyncio.run(_schema_trusted(url)):
-        try:
-            _upgrade_and_verify(url)
-            rebuilt = False
-        except Exception as exc:  # noqa: BLE001 - funnel into retry, then heal
-            # Prod's convention is idempotent migration steps that are safe to
-            # re-trigger (autocommit_block migrations commit step-by-step, so a
-            # failure leaves partial state -- there is no rollback to lean on).
-            # Retrying once rehearses exactly that re-trigger.
-            print(
-                f"bootstrap_preview_db: trusted-path upgrade failed ({exc}); "
-                "retrying once on the partial state (prod re-trigger semantics)",
-                file=sys.stderr,
-            )
-            try:
-                _upgrade_and_verify(url)
-                rebuilt = False
-            except Exception as retry_exc:  # noqa: BLE001 - heal on retry failure
-                print(
-                    f"bootstrap_preview_db: retry failed ({retry_exc}); "
-                    "auto-healing with a full rebuild from the prod snapshot",
-                    file=sys.stderr,
-                )
-                _rebuild(url)
-                healed = True
-    else:
-        print(
-            "bootstrap_preview_db: untrusted schema; rebuilding from prod snapshot",
-            file=sys.stderr,
-        )
-        _rebuild(url)
-
-    sentinel = os.environ.get("SCHEMA_REBUILT_FILE")
-    if rebuilt and sentinel:
-        Path(sentinel).write_text("healed" if healed else "1")
+    asyncio.run(_assert_staging_snapshot(url))
+    try:
+        _upgrade_and_verify(url)
+    except Exception as exc:
+        raise RuntimeError(
+            "bootstrap_preview_db: preview migration or schema check failed; "
+            "no reset was run. Fix the migration or restore any missing "
+            "revision file, then run the deploy again. Applied migrations "
+            "must stay in the branch history; add a new migration to change them."
+        ) from exc
+    initialized = asyncio.run(_initialize_clone(url, branch_id, parent_id))
+    print(
+        "bootstrap_preview_db: migrations passed; "
+        + ("staging copy initialized" if initialized else "preview data kept"),
+        file=sys.stderr,
+    )
 
 
 if __name__ == "__main__":

@@ -1015,9 +1015,9 @@ ENV_VARS = {
 }
 
 
-# Named provider secrets can also carry old concurrency settings and override
-# image ENV. Capture the deploy's limits last so container imports and the
-# dispatcher use the same values as the deployed Modal function definitions.
+# Named provider secrets can carry old settings and override image ENV.
+# Capture the deploy's limits and Thunder settings last so container imports
+# use the same secret dependencies and limits as the deployed functions.
 # Always append: Modal requires identical dependency counts on container import.
 runtime_secrets.append(
     modal.Secret.from_dict(
@@ -1035,6 +1035,7 @@ runtime_secrets.append(
                 "ODDISH_DEFAULT_MODEL_CONCURRENCY",
                 "ODDISH_MODEL_CONCURRENCY_OVERRIDES",
                 "ODDISH_NOP_ORACLE_CONCURRENCY",
+                *sorted(_THUNDER_PUBLIC_ENV_NAMES),
             )
         }
     )

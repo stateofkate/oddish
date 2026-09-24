@@ -13,117 +13,52 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  detect-changes:
-    name: Detect preview changes
-    # Promotion pull requests (staging -> main) provision nothing: the staging
-    # environment already serves the exact commit under review, so a per-PR
-    # copy duplicates it. The required gate below still reports for them.
-    if: >-
-      github.event.action != 'closed' &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.head.ref != 'staging'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      actions: read
-    outputs:
-      deploy_backend: ${{ steps.compute.outputs.deploy_backend }}
-      run_migrations: ${{ steps.compute.outputs.run_migrations }}
-      deploy_frontend: ${{ steps.compute.outputs.deploy_frontend }}
-      any_change: ${{ steps.compute.outputs.any_change }}
-      preview_backend_live: ${{ steps.compute.outputs.preview_backend_live }}
-      preview_api_url: ${{ format('https://abundant-ai-preview--oddish-pr-{0}-api.modal.run', github.event.pull_request.number) }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-
-      # find_last_deploys.py emits all the change signals (see its docstring):
-      #   - pr_{backend,migrations,frontend}: does the whole PR touch each
-      #     component (diffed vs the PR base branch) -- used on opened/reopened
-      #     and as the no-base fallback.
-      #   - On synchronize: backend_base/migrations_base (last successful deploy
-      #     SHAs) + {backend,migrations,workflow}_changed (only this push's
-      #     files, diffed vs that base / the previous push).
-      # We compute these via the GitHub compare API instead of dorny/paths-filter
-      # because that action ignores its `base` input on pull_request events (so
-      # it diffs the whole PR) and, under its default `some` quantifier, its
-      # negated excludes match almost anything -- both forced the DB seed.
-      - name: Detect preview component changes
-        id: last_deployed
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          OWNER_REPO: ${{ github.repository }}
-          EVENT_ACTION: ${{ github.event.action }}
-          HEAD_REF: ${{ github.event.pull_request.head.ref }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          BEFORE_SHA: ${{ github.event.before }}
-        run: python "$GITHUB_WORKSPACE/.github/scripts/preview/find_last_deploys.py"
-
-      - name: Compute deployment plan
-        id: compute
-        env:
-          EVENT_ACTION: ${{ github.event.action }}
-          BACKEND_BASE: ${{ steps.last_deployed.outputs.backend_base }}
-          MIGRATIONS_BASE: ${{ steps.last_deployed.outputs.migrations_base }}
-          BACKEND_CHANGED: ${{ steps.last_deployed.outputs.backend_changed }}
-          MIGRATIONS_CHANGED: ${{ steps.last_deployed.outputs.migrations_changed }}
-          PR_BACKEND_CHANGED: ${{ steps.last_deployed.outputs.pr_backend }}
-          PR_MIGRATIONS_CHANGED: ${{ steps.last_deployed.outputs.pr_migrations }}
-          PR_FRONTEND_CHANGED: ${{ steps.last_deployed.outputs.pr_frontend }}
-          WORKFLOW_CHANGED: ${{ steps.last_deployed.outputs.workflow_changed }}
-        run: bash "$GITHUB_WORKSPACE/.github/scripts/preview/compute_deployment_plan.sh"
-
   prepare-preview-database:
     name: Prepare preview database
-    needs:
-      - detect-changes
-    # Backend-scoped PRs keep their Supabase preview branch smoke-tested on
-    # later frontend-only pushes, so the required preview stays end-to-end.
+    # Every real PR gets its own database, backend, and frontend. Git main
+    # and staging already have deployed environments; forks have no secrets.
     if: |
       !cancelled() &&
-      needs.detect-changes.result == 'success' &&
-      (
-        needs.detect-changes.outputs.preview_backend_live == 'true' ||
-        needs.detect-changes.outputs.deploy_backend == 'true' ||
-        needs.detect-changes.outputs.run_migrations == 'true'
-      )
+      github.event.action != 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref != 'main' &&
+      github.event.pull_request.head.ref != 'staging'
     runs-on: ubuntu-latest
-    # Covers the auto-heal worst case: incremental upgrade + retry, then a full
-    # snapshot rebuild (restore + seed + upgrade) back-to-back.
+    # Existing branches keep their data; migrations fail without a rebuild.
     timeout-minutes: 20
     permissions:
       contents: read
-      packages: read
     outputs:
-      branch_ref: ${{ steps.prepare.outputs.branch_ref }}
       branch_id: ${{ steps.prepare.outputs.branch_id }}
-      branch_was_created: ${{ steps.prepare.outputs.branch_was_created }}
-    container:
-      image: ghcr.io/abundant-ai/oddish-ci-base-private:latest
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
+      preview_api_url: ${{ format('https://abundant-ai-preview--oddish-pr-{0}-api.modal.run', github.event.pull_request.number) }}
     env:
       MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
       MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
       MODAL_ENVIRONMENT: preview
       MODAL_APP_NAME: oddish-pr-${{ github.event.pull_request.number }}
-      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
-      UV_PROJECT_ENVIRONMENT: /opt/venvs/backend
-      # Production DB URL, used strictly read-only as the source of the schema
-      # snapshot + Alembic pointers (bootstrap_preview_db.py) and the sampled
-      # seed data -- the preview's only data source. Deliberately NOT named
-      # ODDISH_DATABASE_URL: that var is rebound to the branch DB by
-      # wait_for_supabase_branch.sh in this job.
+      NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+      NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
+      NEON_DATABASE_NAME: ${{ vars.NEON_DATABASE_NAME }}
+      NEON_ROLE_NAME: ${{ vars.NEON_ROLE_NAME }}
+      # Read only organization approval decisions. No schema or sample copy.
       PREVIEW_SAMPLE_SOURCE_DB_URL: ${{ secrets.ODDISH_DATABASE_URL }}
+      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
     defaults:
       run:
         working-directory: backend
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
+
+      # Neon setup needs Python packages, not the old database/Node toolchain.
+      - name: Set up Python and uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: |
+            backend/uv.lock
+            oddish/uv.lock
 
       - name: Sync backend dependencies
         run: uv sync --frozen
@@ -132,22 +67,15 @@ jobs:
         id: prepare
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          DEPLOY_BACKEND: ${{ needs.detect-changes.outputs.deploy_backend }}
-          RUN_MIGRATIONS: ${{ needs.detect-changes.outputs.run_migrations }}
         run: "$GITHUB_WORKSPACE/.github/scripts/preview/prepare_preview_database.sh"
 
   deploy-preview-backend:
     name: Deploy preview backend
     needs:
-      - detect-changes
       - prepare-preview-database
     if: |
       !cancelled() &&
-      needs.prepare-preview-database.result == 'success' &&
-      (
-        needs.detect-changes.outputs.deploy_backend == 'true' ||
-        needs.prepare-preview-database.outputs.branch_was_created == 'true'
-      )
+      needs.prepare-preview-database.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -159,12 +87,12 @@ jobs:
       MODAL_ENVIRONMENT: preview
       MODAL_APP_NAME: oddish-pr-${{ github.event.pull_request.number }}
       MODAL_SECRET_ENVIRONMENT: main
-      EXPECTED_MODAL_API_URL: ${{ needs.detect-changes.outputs.preview_api_url }}
+      EXPECTED_MODAL_API_URL: ${{ needs.prepare-preview-database.outputs.preview_api_url }}
       # Previews run with a real GKE backend so a branch's trial path can be
       # validated end to end before it merges. Trials only spend money when a
       # submission actually runs, and the cost is bounded by the teardown
       # paths this repository ships: a closing preview deletes its own
-      # cluster, a mid-run redeploy deletes it first, the stale-app pruner
+      # cluster, normal redeploys keep it, and the stale-app pruner
       # covers abandoned previews, and the hourly reaper collects idle
       # clusters.
       ODDISH_GKE_ENABLED: "true"
@@ -224,7 +152,6 @@ jobs:
   update-vercel-preview:
     name: Update Vercel preview
     needs:
-      - detect-changes
       - prepare-preview-database
     # Run for every open same-repository PR, not only frontend changes: the
     # branch ruleset requires a working Preview deployment before merge.
@@ -232,11 +159,7 @@ jobs:
     # preparation's output. The final gate still waits for both deployments.
     if: |
       !cancelled() &&
-      needs.detect-changes.result == 'success' &&
-      (
-        needs.prepare-preview-database.result == 'success' ||
-        needs.prepare-preview-database.result == 'skipped'
-      )
+      needs.prepare-preview-database.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -248,17 +171,10 @@ jobs:
       VERCEL_GIT_COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
       PR_URL: ${{ github.event.pull_request.html_url }}
       PR_TITLE: ${{ github.event.pull_request.title }}
-      # Point the preview frontend at the preview backend whenever one is live
-      # (deployed this run or a prior run), NOT only when it redeployed this push
-      # -- otherwise a frontend-only follow-up push blanks this, and
-      # update_vercel_preview.sh falls back to prod, so the preview frontend
-      # starts querying production. Blank (-> prod fallback) only when no preview
-      # backend was ever provisioned (frontend-only PRs).
-      MODAL_API_URL: ${{ needs.detect-changes.outputs.preview_backend_live == 'true' && needs.detect-changes.outputs.preview_api_url || '' }}
+      MODAL_API_URL: ${{ needs.prepare-preview-database.outputs.preview_api_url }}
       MODAL_APP_NAME: oddish-pr-${{ github.event.pull_request.number }}
-      STAGING_API_URL: ${{ vars.ODDISH_STAGING_API_URL }}
-      PROD_API_URL: ${{ vars.ODDISH_PROD_API_URL }}
-      SUPABASE_BRANCH_REF: ${{ needs.prepare-preview-database.outputs.branch_ref }}
+      NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
+      NEON_BRANCH_ID: ${{ needs.prepare-preview-database.outputs.branch_id }}
       PREVIEW_ALIAS_HOSTNAME: pr-${{ github.event.pull_request.number }}.oddish.app
     outputs:
       preview_url: ${{ steps.vercel.outputs.preview_url }}
@@ -270,25 +186,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Cache Vercel CLI
-        id: vercel-cli
-        uses: actions/cache@v4
-        with:
-          path: ~/.local/share/oddish-vercel
-          key: vercel-cli-${{ runner.os }}-${{ runner.arch }}-node20-59.20.0
-
-      - name: Install Vercel CLI
-        if: steps.vercel-cli.outputs.cache-hit != 'true'
-        run: npm install --prefix "$HOME/.local/share/oddish-vercel" --no-audit --no-fund vercel@59.20.0
-
-      - name: Add Vercel CLI to PATH
-        run: echo "$HOME/.local/share/oddish-vercel/node_modules/.bin" >> "$GITHUB_PATH"
-
       - name: Update Vercel preview
         id: vercel
         run: "$GITHUB_WORKSPACE/.github/scripts/preview/update_vercel_preview.sh"
@@ -296,7 +193,6 @@ jobs:
   require-working-preview:
     name: Require working preview
     needs:
-      - detect-changes
       - prepare-preview-database
       - deploy-preview-backend
       - update-vercel-preview
@@ -317,10 +213,9 @@ jobs:
       deployments: write
     env:
       GH_TOKEN: ${{ github.token }}
-      # Same-repository condition included: a fork branch named `staging`
-      # must not short-circuit the gate to success.
-      PROMOTION_PR: ${{ github.event.pull_request.head.ref == 'staging' && github.event.pull_request.head.repo.full_name == github.repository }}
-      DEPLOY_URL: ${{ (github.event.pull_request.head.ref == 'staging' && github.event.pull_request.head.repo.full_name == github.repository) && 'https://staging.oddish.app' || needs.update-vercel-preview.outputs.preview_alias_url || needs.update-vercel-preview.outputs.preview_url }}
+      # Forks named main or staging must still fail the same-repository check.
+      PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+      DEPLOY_URL: ${{ github.event.pull_request.head.ref == 'staging' && 'https://staging.oddish.app' || github.event.pull_request.head.ref == 'main' && 'https://oddish.app' || needs.update-vercel-preview.outputs.preview_alias_url || needs.update-vercel-preview.outputs.preview_url }}
     steps:
       - name: Create the Preview deployment record
         id: deployment
@@ -347,19 +242,15 @@ jobs:
         id: verify
         env:
           SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
-          DETECT_RESULT: ${{ needs.detect-changes.result }}
           PREPARE_RESULT: ${{ needs.prepare-preview-database.result }}
           BACKEND_RESULT: ${{ needs.deploy-preview-backend.result }}
           VERCEL_RESULT: ${{ needs.update-vercel-preview.result }}
-          DEPLOY_BACKEND: ${{ needs.detect-changes.outputs.deploy_backend }}
-          RUN_MIGRATIONS: ${{ needs.detect-changes.outputs.run_migrations }}
-          PREVIEW_BACKEND_LIVE: ${{ needs.detect-changes.outputs.preview_backend_live }}
-          BRANCH_WAS_CREATED: ${{ needs.prepare-preview-database.outputs.branch_was_created }}
           DB_BRANCH_ID: ${{ needs.prepare-preview-database.outputs.branch_id }}
-          DB_BRANCH_REF: ${{ needs.prepare-preview-database.outputs.branch_ref }}
           PREVIEW_URL: ${{ needs.update-vercel-preview.outputs.preview_url }}
           PREVIEW_ALIAS_URL: ${{ needs.update-vercel-preview.outputs.preview_alias_url }}
-          BACKEND_API_URL: ${{ needs.update-vercel-preview.outputs.backend_api_url }}
+          BACKEND_API_URL: ${{ needs.deploy-preview-backend.outputs.modal_api_url }}
+          FRONTEND_BACKEND_API_URL: ${{ needs.update-vercel-preview.outputs.backend_api_url }}
+          EXPECTED_BACKEND_API_URL: ${{ needs.prepare-preview-database.outputs.preview_api_url }}
         run: |
           set -euo pipefail
 
@@ -374,60 +265,38 @@ jobs:
             exit 1
           }
 
-          if [ "$PROMOTION_PR" = "true" ]; then
-            echo "- Promotion pull request: staging is the preview environment." >> "$GITHUB_STEP_SUMMARY"
-            echo "- https://staging.oddish.app runs this commit (see Staging Deploy)." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-
-          preview_url="${PREVIEW_ALIAS_URL:-${PREVIEW_URL:-}}"
-          backend_required=false
-          db_required=false
-          if [ "$PREVIEW_BACKEND_LIVE" = "true" ]; then
-            backend_required=true
-            db_required=true
-          fi
-          if [ "$DEPLOY_BACKEND" = "true" ] || [ "$RUN_MIGRATIONS" = "true" ]; then
-            backend_required=true
-            db_required=true
-          fi
-
           if [ "$SAME_REPO" != "true" ]; then
             fail "PR preview deployments require a same-repository branch with access to preview secrets."
           fi
 
-          if [ "$DETECT_RESULT" != "success" ]; then
-            fail "Preview change detection did not succeed."
-          fi
+          case "$PR_HEAD_REF" in
+            main|staging)
+              echo "- Git $PR_HEAD_REF uses its existing environment: $DEPLOY_URL" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+              ;;
+          esac
 
-          if [ "$db_required" = "true" ]; then
-            if [ "$PREPARE_RESULT" != "success" ]; then
-              fail "Preview database preparation did not succeed."
-            fi
-            if [ -z "$DB_BRANCH_ID" ] || [ -z "$DB_BRANCH_REF" ]; then
-              fail "Preview database branch was not produced."
-            fi
-          elif [ "$PREPARE_RESULT" != "success" ] && [ "$PREPARE_RESULT" != "skipped" ]; then
+          if [ "$PREPARE_RESULT" != "success" ]; then
             fail "Preview database preparation did not succeed."
           fi
-
-          if [ "$backend_required" = "true" ]; then
-            if { [ "$DEPLOY_BACKEND" = "true" ] || [ "$BRANCH_WAS_CREATED" = "true" ]; } &&
-              [ "$BACKEND_RESULT" != "success" ]; then
-              fail "Preview backend deployment did not succeed."
-            fi
-            if [ "$BACKEND_RESULT" != "success" ] && [ "$BACKEND_RESULT" != "skipped" ]; then
-              fail "Preview backend deployment did not succeed."
-            fi
-            if [ -z "$BACKEND_API_URL" ]; then
-              fail "Preview backend URL was not produced."
-            fi
+          if [ -z "$DB_BRANCH_ID" ]; then
+            fail "Preview database branch was not produced."
           fi
-
+          if [ "$BACKEND_RESULT" != "success" ]; then
+            fail "Preview backend deployment did not succeed."
+          fi
+          if [ -z "$EXPECTED_BACKEND_API_URL" ] ||
+            [ "${BACKEND_API_URL%/}" != "${EXPECTED_BACKEND_API_URL%/}" ]; then
+            fail "Preview backend URL does not match this PR."
+          fi
           if [ "$VERCEL_RESULT" != "success" ]; then
             fail "Vercel preview update did not succeed."
           fi
+          if [ "${FRONTEND_BACKEND_API_URL%/}" != "${EXPECTED_BACKEND_API_URL%/}" ]; then
+            fail "Vercel preview does not use this PR backend."
+          fi
 
+          preview_url="${PREVIEW_ALIAS_URL:-${PREVIEW_URL:-}}"
           if [ -z "$preview_url" ]; then
             fail "Vercel preview URL was not produced."
           fi
@@ -446,33 +315,25 @@ jobs:
             sleep 5
           done
 
-          if [ "$backend_required" = "true" ]; then
-            readiness_url="${BACKEND_API_URL%/}/openapi.json"
-            # --max-time must outlast a backend cold start (~30s+); a shorter
-            # one abandons every attempt mid-boot so no retry count can pass.
-            for attempt in $(seq 1 12); do
-              body_file="$(mktemp)"
-              status="$(curl --silent --output "$body_file" --write-out '%{http_code}' --max-time 120 "$readiness_url" || true)"
-              if [ "$status" = "200" ] && [ -s "$body_file" ]; then
-                rm -f "$body_file"
-                echo "- Backend preview is ready: $readiness_url" >> "$GITHUB_STEP_SUMMARY"
-                break
-              fi
+          readiness_url="${BACKEND_API_URL%/}/openapi.json"
+          # --max-time must outlast a backend cold start (~30s+); a shorter
+          # one abandons every attempt mid-boot so no retry count can pass.
+          for attempt in $(seq 1 12); do
+            body_file="$(mktemp)"
+            status="$(curl --silent --output "$body_file" --write-out '%{http_code}' --max-time 120 "$readiness_url" || true)"
+            if [ "$status" = "200" ] && [ -s "$body_file" ]; then
               rm -f "$body_file"
-              if [ "$attempt" = "12" ]; then
-                fail "Preview backend never became ready at $readiness_url."
-              fi
-              sleep 5
-            done
-          fi
-
-          {
-            echo "- Backend required: \`$backend_required\`"
-            echo "- Database required: \`$db_required\`"
-            if [ "$db_required" = "true" ]; then
-              echo "- Database preview branch: \`$DB_BRANCH_REF\`"
+              echo "- Backend preview is ready: $readiness_url" >> "$GITHUB_STEP_SUMMARY"
+              break
             fi
-          } >> "$GITHUB_STEP_SUMMARY"
+            rm -f "$body_file"
+            if [ "$attempt" = "12" ]; then
+              fail "Preview backend never became ready at $readiness_url."
+            fi
+            sleep 5
+          done
+
+          echo "- Database preview branch: \`$DB_BRANCH_ID\`" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish the deployment result
         if: always() && steps.deployment.outputs.id != ''
@@ -493,14 +354,14 @@ jobs:
   post-preview-links:
     name: Post preview links
     needs:
-      - detect-changes
       - prepare-preview-database
       - deploy-preview-backend
       - update-vercel-preview
     if: |
       !cancelled() &&
-      needs.detect-changes.result == 'success' &&
-      needs.detect-changes.outputs.any_change == 'true'
+      needs.prepare-preview-database.result == 'success' &&
+      needs.deploy-preview-backend.result == 'success' &&
+      needs.update-vercel-preview.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -510,15 +371,13 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
       PREVIEW_COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
-      DEPLOY_BACKEND: ${{ needs.detect-changes.outputs.deploy_backend }}
-      RUN_MIGRATIONS: ${{ needs.detect-changes.outputs.run_migrations }}
-      DEPLOY_FRONTEND: ${{ needs.detect-changes.outputs.deploy_frontend }}
       VERCEL_PREVIEW_URL: ${{ needs.update-vercel-preview.outputs.preview_alias_url || needs.update-vercel-preview.outputs.preview_url }}
       VERCEL_DEPLOYMENT_URL: ${{ needs.update-vercel-preview.outputs.preview_url }}
-      MODAL_API_URL: ${{ needs.deploy-preview-backend.outputs.modal_api_url || needs.update-vercel-preview.outputs.backend_api_url }}
+      MODAL_API_URL: ${{ needs.deploy-preview-backend.outputs.modal_api_url }}
       PREVIEW_BACKEND_LABEL: ${{ needs.update-vercel-preview.outputs.backend_label }}
       PREVIEW_DATABASE_LABEL: ${{ needs.update-vercel-preview.outputs.database_label }}
-      SUPABASE_BRANCH_REF: ${{ needs.prepare-preview-database.outputs.branch_ref }}
+      NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
+      NEON_BRANCH_ID: ${{ needs.prepare-preview-database.outputs.branch_id }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -531,7 +390,8 @@ jobs:
     if: >-
       github.event.action == 'closed' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.head.ref != 'staging'
+      github.event.pull_request.head.ref != 'staging' &&
+      github.event.pull_request.head.ref != 'main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -546,8 +406,10 @@ jobs:
       MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
       MODAL_ENVIRONMENT: preview
       MODAL_APP_NAME: oddish-pr-${{ github.event.pull_request.number }}
-      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+      NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+      NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
+      NEON_DATABASE_NAME: ${{ vars.NEON_DATABASE_NAME }}
+      NEON_ROLE_NAME: ${{ vars.NEON_ROLE_NAME }}
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}

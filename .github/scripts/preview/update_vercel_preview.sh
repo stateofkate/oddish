@@ -1,57 +1,40 @@
 #!/usr/bin/env bash
-# Point the Vercel preview deployment at the selected backend target.
+# Point the Vercel preview deployment at this PR's backend and Neon branch.
 set -euo pipefail
 
 : "${GITHUB_STEP_SUMMARY:?}"
 : "${GITHUB_WORKSPACE:?}"
 : "${VERCEL_GIT_BRANCH:?}"
+: "${VERCEL_TOKEN:?}"
+: "${VERCEL_ORG_ID:?}"
+: "${VERCEL_PROJECT_ID:?}"
+: "${MODAL_API_URL:?A preview backend URL is required}"
+: "${NEON_PROJECT_ID:?A Neon project ID is required}"
+: "${NEON_BRANCH_ID:?A preview Neon branch ID is required}"
+
+if [[ ! "$MODAL_API_URL" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?/?$ ]]; then
+  echo "A valid MODAL_API_URL is required for this PR preview" >&2
+  exit 1
+fi
+if [[ ! "$NEON_PROJECT_ID" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
+  echo "A valid NEON_PROJECT_ID is required for this PR preview" >&2
+  exit 1
+fi
+if [[ ! "$NEON_BRANCH_ID" =~ ^br-[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
+  echo "A valid NEON_BRANCH_ID is required for this PR preview" >&2
+  exit 1
+fi
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 github_output="${GITHUB_OUTPUT:-}"
 preview_url=""
 preview_alias_url=""
-# Fallback order for PRs with no preview backend (frontend-only changes):
-# staging before prod. PRs target the staging branch, so a frontend-only PR is
-# written against staging's API contract — and preview traffic must not reach
-# production. PROD_API_URL remains the last resort for a repo with no staging.
-backend_api_url="${MODAL_API_URL:-${STAGING_API_URL:-${PROD_API_URL:-}}}"
-backend_label="${PREVIEW_BACKEND_LABEL:-}"
-database_label="${PREVIEW_DATABASE_LABEL:-}"
+backend_api_url="$MODAL_API_URL"
+backend_label="${PREVIEW_BACKEND_LABEL:-${MODAL_APP_NAME:-preview Modal backend}}"
+database_label="${PREVIEW_DATABASE_LABEL:-Neon ${NEON_BRANCH_ID}}"
 
-if [ -z "$backend_label" ]; then
-  if [ -n "${MODAL_API_URL:-}" ]; then
-    backend_label="${MODAL_APP_NAME:-preview Modal backend}"
-  elif [ -n "${STAGING_API_URL:-}" ]; then
-    backend_label="staging"
-  else
-    backend_label="production"
-  fi
-fi
-
-if [ -z "$database_label" ]; then
-  if [ -n "${SUPABASE_BRANCH_REF:-}" ]; then
-    database_label="project ${SUPABASE_BRANCH_REF}"
-  elif [ -n "${MODAL_API_URL:-}" ]; then
-    database_label="preview Supabase"
-  elif [ -n "${STAGING_API_URL:-}" ]; then
-    database_label="staging branch"
-  else
-    database_label="production"
-  fi
-fi
-
-# branch_ref is the preview branch's own Supabase project ref, so link it to
-# that project's dashboard. Prod DB stays plain text (no per-PR dashboard).
-database_url=""
-if [ -n "${SUPABASE_BRANCH_REF:-}" ]; then
-  database_url="https://supabase.com/dashboard/project/${SUPABASE_BRANCH_REF}"
-fi
-
-is_configured_vercel() {
-  [ -n "${VERCEL_TOKEN:-}" ] &&
-    [ -n "${VERCEL_ORG_ID:-}" ] &&
-    [ -n "${VERCEL_PROJECT_ID:-}" ]
-}
+# Link to the Neon branch page. These IDs are public metadata, not credentials.
+database_url="https://console.neon.tech/app/projects/${NEON_PROJECT_ID}/branches/${NEON_BRANCH_ID}"
 
 read_output_value() {
   local file="$1"
@@ -88,49 +71,18 @@ summarize_vercel_phase() {
       if [ -n "$preview_alias_url" ]; then
         echo "- Stable alias: $preview_alias_url"
       fi
-    elif is_configured_vercel; then
-      echo "- Vercel preview: redeploy did not produce a URL"
     else
-      echo "- Vercel preview: skipped because Vercel credentials are not configured"
+      echo "- Vercel preview: deploy did not produce a URL"
     fi
     echo "- Backend target: $backend_label"
     echo "- Database target: $database_label"
   } >> "$GITHUB_STEP_SUMMARY"
 }
 
-set_vercel_env() {
-  local name="$1"
-  local value="$2"
-
-  [ -n "$value" ] || return 0
-  printf '%s' "$value" \
-    | vercel env add "$name" preview "$VERCEL_GIT_BRANCH" --force --no-sensitive --token="$VERCEL_TOKEN"
-}
-
 trap summarize_vercel_phase EXIT
 
-if ! is_configured_vercel; then
-  exit 0
-fi
-
-(
-  cd "$GITHUB_WORKSPACE/frontend"
-  vercel pull --yes --environment=preview --git-branch="$VERCEL_GIT_BRANCH" --token="$VERCEL_TOKEN"
-  if [ -n "$backend_api_url" ]; then
-    set_vercel_env NEXT_PUBLIC_API_URL "$backend_api_url"
-  else
-    vercel env rm NEXT_PUBLIC_API_URL preview "$VERCEL_GIT_BRANCH" --yes --token="$VERCEL_TOKEN" || true
-  fi
-  set_vercel_env NEXT_PUBLIC_ODDISH_PREVIEW true
-  set_vercel_env NEXT_PUBLIC_ODDISH_PREVIEW_BACKEND_LABEL "$backend_label"
-  set_vercel_env NEXT_PUBLIC_ODDISH_PREVIEW_BACKEND_URL "$backend_api_url"
-  set_vercel_env NEXT_PUBLIC_ODDISH_PREVIEW_DATABASE_LABEL "$database_label"
-  set_vercel_env NEXT_PUBLIC_ODDISH_PREVIEW_DATABASE_URL "$database_url"
-  set_vercel_env NEXT_PUBLIC_ODDISH_PREVIEW_PR_URL "${PR_URL:-}"
-  set_vercel_env NEXT_PUBLIC_ODDISH_PREVIEW_PR_TITLE "${PR_TITLE:-}"
-)
-
 vercel_output="$(mktemp)"
+trap 'rm -f "$vercel_output"; summarize_vercel_phase' EXIT
 GITHUB_OUTPUT="$vercel_output" \
   BACKEND_API_URL="$backend_api_url" \
   PREVIEW_BACKEND_LABEL="$backend_label" \
@@ -139,17 +91,19 @@ GITHUB_OUTPUT="$vercel_output" \
   python "$script_dir/redeploy_vercel.py"
 [ -z "$github_output" ] || cat "$vercel_output" >> "$github_output"
 preview_url="$(read_output_value "$vercel_output" preview_url)"
-if [ -n "${PREVIEW_ALIAS_HOSTNAME:-}" ] && [ -n "$preview_url" ]; then
-  vercel inspect "$preview_url" --wait --timeout=10m --scope "$VERCEL_ORG_ID" --token="$VERCEL_TOKEN" >/dev/null
-  vercel alias set "$preview_url" "$PREVIEW_ALIAS_HOSTNAME" --scope "$VERCEL_ORG_ID" --token="$VERCEL_TOKEN"
-  preview_alias_url="https://$PREVIEW_ALIAS_HOSTNAME"
+: "${preview_url:?Vercel did not return a preview URL}"
+preview_alias_url="$(read_output_value "$vercel_output" preview_alias_url)"
+if [ -n "${PREVIEW_ALIAS_HOSTNAME:-}" ]; then
+  [ "$preview_alias_url" = "https://$PREVIEW_ALIAS_HOSTNAME" ] || {
+    echo "Vercel did not return the requested preview alias" >&2
+    exit 1
+  }
   wait_for_url_ready "$preview_alias_url"
-elif [ -n "$preview_url" ]; then
+else
   wait_for_url_ready "$preview_url"
 fi
 if [ -n "$github_output" ]; then
   {
-    echo "preview_alias_url=$preview_alias_url"
     echo "backend_api_url=$backend_api_url"
     echo "backend_label=$backend_label"
     echo "database_label=$database_label"

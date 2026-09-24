@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "${DEPLOY_BACKEND:?}"
-: "${RUN_MIGRATIONS:?}"
 : "${GITHUB_STEP_SUMMARY:?}"
 : "${GITHUB_WORKSPACE:?}"
 
@@ -13,8 +11,6 @@ branch_ref=""
 branch_was_created=""
 published_modal_secret=false
 schema_upgraded=false
-schema_rebuilt=false
-schema_healed=false
 
 read_output_value() {
   local file="$1"
@@ -37,65 +33,38 @@ summarize_database_phase() {
     echo "## Preview database"
     echo
     if [ -n "$branch_ref" ]; then
-    echo "- Supabase branch: \`$branch_ref\`"
+    echo "- Neon branch: \`$branch_ref\`"
     fi
     echo "- Branch created: \`${branch_was_created:-unknown}\`"
-    echo "- Migrations requested: \`$RUN_MIGRATIONS\`"
     echo "- Schema upgraded to head: \`$schema_upgraded\`"
-    echo "- Schema rebuilt from prod snapshot: \`$schema_rebuilt\`"
-    echo "- Auto-healed after a failed incremental upgrade: \`$schema_healed\`"
+    echo "- Existing preview data is kept on redeploy."
     echo "- Modal DB secret published: \`$published_modal_secret\`"
   } >> "$GITHUB_STEP_SUMMARY"
 }
 
 trap summarize_database_phase EXIT
 
-if [ "$DEPLOY_BACKEND" = "true" ]; then
-  "$script_dir/stop_modal_preview_app.sh" || true
-fi
+neon_env="$(mktemp)"
+neon_output="$(mktemp)"
+trap 'rm -f "$neon_env" "$neon_output"; summarize_database_phase' EXIT
+GITHUB_ENV="$neon_env" GITHUB_OUTPUT="$neon_output" python "$script_dir/../neon_database.py" preview
+load_env_file "$neon_env"
+[ -z "$github_env" ] || cat "$neon_env" >> "$github_env"
+[ -z "$github_output" ] || cat "$neon_output" >> "$github_output"
 
-supabase_env="$(mktemp)"
-supabase_output="$(mktemp)"
-GITHUB_ENV="$supabase_env" GITHUB_OUTPUT="$supabase_output" "$script_dir/wait_for_supabase_branch.sh"
-load_env_file "$supabase_env"
-[ -z "$github_env" ] || cat "$supabase_env" >> "$github_env"
-[ -z "$github_output" ] || cat "$supabase_output" >> "$github_output"
+branch_ref="$(read_output_value "$neon_output" branch_ref)"
+branch_was_created="$(read_output_value "$neon_output" branch_was_created)"
 
-branch_ref="$(read_output_value "$supabase_output" branch_ref)"
-branch_was_created="$(read_output_value "$supabase_output" branch_was_created)"
+# This also completes a first setup interrupted after Neon created the branch.
+# Setup has a database marker; later runs only apply migrations and check schema.
+# No schema reset, seed refresh, or password change happens during a deploy.
+"$script_dir/run_preview_migrations.sh"
+schema_upgraded=true
 
-schema_rebuilt_file="$(mktemp)"
-export SCHEMA_REBUILT_FILE="$schema_rebuilt_file"
-
-# Migrate on any backend deploy, not just migration-file changes, so a reused
-# branch can't run new code against a stale schema.
-if [ "$DEPLOY_BACKEND" = "true" ] || [ "$RUN_MIGRATIONS" = "true" ] || [ "$branch_was_created" = "true" ]; then
-  "$script_dir/run_preview_migrations.sh"
-  schema_upgraded=true
-fi
-
-if [ -s "$schema_rebuilt_file" ]; then
-  schema_rebuilt=true
-  [ "$(cat "$schema_rebuilt_file")" = "healed" ] && schema_healed=true
-fi
-
-# The bootstrap seeds internally when it rebuilds -- before the PR's migrations
-# run, so they execute against realistic data. Here we only converge the sample
-# on a reused, trusted branch (fresh branches always rebuild).
-if [ "$schema_rebuilt" != "true" ] && { [ "$RUN_MIGRATIONS" = "true" ] || [ "$branch_was_created" = "true" ]; }; then
-  ( cd "$GITHUB_WORKSPACE/backend" && uv run python "$script_dir/seed_preview_db.py" )
-fi
-
-# Run after migrations, sample updates and preserved-row restoration, including
-# reused branches that did not need any schema/data changes.
+# Keep approval decisions current. The first setup already refreshes counters
+# for the trials it stopped; a normal deploy needs no full counter rebuild.
 ( cd "$GITHUB_WORKSPACE/backend" && uv run python "$script_dir/sync_org_approvals.py" ) &
 approval_sync_pid=$!
-( cd "$GITHUB_WORKSPACE/backend" && uv run python "$script_dir/refresh_browse_summaries.py" ) &
-summary_refresh_pid=$!
-# Unconditional: the supabase step rotates the DB password every run, so the
-# secret must carry the new value even when no backend deploy follows.
-# Publication does not depend on organization rows; overlap the network calls.
 "$script_dir/publish_modal_db_secret.sh"
 published_modal_secret=true
 wait "$approval_sync_pid"
-wait "$summary_refresh_pid"

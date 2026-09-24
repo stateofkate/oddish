@@ -5,11 +5,9 @@ The endpoint and sweep route share the same org-scoped linkage predicate.
 
 from __future__ import annotations
 
-import importlib.util
 import os
 import uuid
 from datetime import timedelta
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -293,17 +291,6 @@ async def client(app):
         yield c
 
 
-def _load_bootstrap():
-    path = (
-        Path(__file__).resolve().parents[2]
-        / ".github/scripts/preview/bootstrap_preview_db.py"
-    )
-    spec = importlib.util.spec_from_file_location("bootstrap_preview_db", path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
 async def _resolve(
     org_id: str, handle: str | None, *, github_id: str | None = None
 ) -> str | None:
@@ -502,30 +489,13 @@ async def test_endpoint_inactive_user_excluded(client, org_with_users):
 
 
 # ---------------------------------------------------------------------------
-# Schema and preview fingerprint
+# Schema
 # ---------------------------------------------------------------------------
 
 
 def test_clerk_user_id_is_not_globally_unique():
     """The model must not declare a global clerk_user_id unique constraint."""
     assert UserModel.__table__.c.clerk_user_id.unique is not True
-
-
-def test_preview_fingerprint_covers_unique_constraint_change():
-    """Unique constraint changes must alter the preview schema fingerprint."""
-    mod = _load_bootstrap()
-    with_uc = sa.MetaData()
-    sa.Table(
-        "users", with_uc,
-        sa.Column("id", sa.String), sa.Column("clerk_user_id", sa.String),
-        sa.UniqueConstraint("clerk_user_id", name="uq_users_clerk"),
-    )
-    without_uc = sa.MetaData()
-    sa.Table(
-        "users", without_uc,
-        sa.Column("id", sa.String), sa.Column("clerk_user_id", sa.String),
-    )
-    assert mod._fingerprint_metadata(with_uc) != mod._fingerprint_metadata(without_uc)
 
 
 # ---------------------------------------------------------------------------

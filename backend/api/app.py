@@ -269,6 +269,7 @@ def create_app() -> FastAPI:
     """
     api = FastAPI(
         title="Oddish Cloud",
+        description="Run tasks, track trials, and review experiment results.",
         version="0.3.0",
         lifespan=lifespan,
     )

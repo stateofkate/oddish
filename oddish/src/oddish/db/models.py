@@ -2817,10 +2817,8 @@ class QueueRuntimeStatusModel(Base):
     """Per-component runtime heartbeat the admin dashboard reads back.
 
     Written via raw SQL in ``workers/queue/runtime_status.py`` and created by
-    migration. Modeled here so ``create_all`` materializes it on preview DBs:
-    previews ``stamp`` migrations instead of running them, so a raw-SQL-only
-    table would otherwise be absent (see ``backend/preview_seed.py`` and
-    ``.github/scripts/preview/bootstrap_preview_db.py``).
+    migration. Modeled here so ``create_all`` also creates it in local test
+    databases that do not run migrations.
     """
 
     __tablename__ = "queue_runtime_status"
@@ -2840,7 +2838,7 @@ class TagProjectionSweepStateModel(Base):
     Holds ``last_full_sweep_at``; read/written via raw SQL in
     ``workers/queue/cleanup.py`` and created by migration ``aa04ta05sweep``.
     Modeled here for the same reason as :class:`QueueRuntimeStatusModel` — so
-    ``create_all`` builds it on preview DBs.
+    ``create_all`` builds it in local test databases.
     """
 
     __tablename__ = "tag_projection_sweep_state"

@@ -108,10 +108,10 @@ jobs:
           ../oddish/tests/test_model_concurrency_overrides.py
           ../oddish/tests/test_curated_model_submit.py -v
 
-      - name: Test and benchmark preview relationship updates
+      - name: Test preview data retention
         env:
           ODDISH_DATABASE_URL: postgresql+asyncpg://oddish:oddish@127.0.0.1:5432/oddish
-        run: uv run pytest tests/test_preview_linkage.py tests/test_preview_bootstrap_fingerprint.py -v -s
+        run: uv run pytest tests/test_preview_bootstrap_fingerprint.py tests/test_preview_api_key_persistence.py -v -s
 
       - name: Run e2e CLI suite
         env:

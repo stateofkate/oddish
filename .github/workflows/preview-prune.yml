@@ -1,16 +1,8 @@
 name: Preview Prune
 
-# Sweeps Supabase preview branches older than a week so the 50-active-branch
-# ceiling never blocks a new PR's "Prepare preview database" job. Runs on its
-# own schedule rather than at the point of failure, so a PR that hits the
-# ceiling is a bug in this sweep, not something to recover from inline.
-#
-# Then stops preview Modal apps whose PR is closed or whose Supabase branch
-# no longer exists (including the branches deleted moments earlier by this
-# very run). Without this second pass an app outlives its database and
-# redials the deleted Supabase tenant from every scheduled function forever.
-# Order matters: apps are swept AFTER branches so a branch pruned by this run
-# takes its app down in the same run, not a day later.
+# Open PRs keep their preview data at every age. Closed PR apps stop only
+# after GKE teardown; their old Neon branches are deleted last. Unknown PR
+# state keeps all resources. Legacy Supabase cleanup is manual only.
 
 on:
   schedule:
@@ -18,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       max_age_days:
-        description: "Delete preview branches created more than this many days ago"
+        description: "Delete Neon branches older than this many days only when their PR is closed"
         default: "7"
       dry_run:
         description: "Log what would be deleted/stopped without doing it"
@@ -45,8 +37,8 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
     env:
-      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+      NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+      NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
       MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
       MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
       MODAL_ENVIRONMENT: preview
@@ -57,15 +49,5 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Prune stale Supabase preview branches
-        run: "$GITHUB_WORKSPACE/.github/scripts/preview/prune_stale_supabase_branches.sh"
-
-      - name: Stop preview Modal apps whose PR closed or whose database is gone
-        # Runs even when a `supabase branches delete` above failed (the prune
-        # script exits 1 if ANY delete fails, which would skip this step and
-        # leave every already-pruned branch's app running as a zombie for
-        # another day). The sweep re-lists branches and classifies
-        # missing/stale itself, so it never depends on the prune succeeding;
-        # the job still reports the prune failure.
-        if: ${{ !cancelled() }}
+      - name: Prune closed PR apps and old Neon branches
         run: "$GITHUB_WORKSPACE/.github/scripts/preview/prune_stale_preview_apps.sh"

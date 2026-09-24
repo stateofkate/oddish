@@ -1,11 +1,13 @@
-"""Create or update the sticky PR comment with preview environment links."""
+"""Keep preview links in the PR body and its sticky comment up to date."""
 
 import json
 import os
+import re
 import urllib.error
 import urllib.request
 
 MARKER = "<!-- oddish-preview-links -->"
+END_MARKER = "<!-- /oddish-preview-links -->"
 
 
 def env(name: str, default: str = "") -> str:
@@ -38,32 +40,33 @@ def gh_request(method: str, path: str, body: dict | None = None):
         raise RuntimeError(f"GitHub API {method} {path} failed: {detail}") from exc
 
 
-def link_or_text(label: str, url: str) -> str:
-    return f"[{label}]({url})" if url else label
-
-
 def build_body() -> str:
     commit_sha = env("PREVIEW_COMMIT_SHA")
     short_sha = commit_sha[:7] if commit_sha else "unknown"
     vercel_url = env("VERCEL_PREVIEW_URL")
     vercel_deployment_url = env("VERCEL_DEPLOYMENT_URL")
     modal_api_url = env("MODAL_API_URL")
-    backend_label = env("PREVIEW_BACKEND_LABEL", "unknown")
-    database_label = env("PREVIEW_DATABASE_LABEL", "unknown")
-    supabase_branch_ref = env("SUPABASE_BRANCH_REF")
-    deploy_backend = env("DEPLOY_BACKEND", "false")
-    run_migrations = env("RUN_MIGRATIONS", "false")
-    deploy_frontend = env("DEPLOY_FRONTEND", "false")
-
-    supabase_url = ""
-    if supabase_branch_ref:
-        # branch_ref is the preview branch's own Supabase project ref.
-        supabase_url = f"https://supabase.com/dashboard/project/{supabase_branch_ref}"
+    neon_branch_id = env("NEON_BRANCH_ID")
+    neon_project_id = env("NEON_PROJECT_ID")
+    for name, value, pattern in (
+        ("NEON_BRANCH_ID", neon_branch_id, r"br-[a-z0-9]+(?:-[a-z0-9]+)*"),
+        ("NEON_PROJECT_ID", neon_project_id, r"[a-z0-9]+(?:-[a-z0-9]+)*"),
+        ("MODAL_API_URL", modal_api_url, r"https://[A-Za-z0-9.-]+(?::[0-9]+)?/?"),
+        ("VERCEL_PREVIEW_URL", vercel_url, r"https://[A-Za-z0-9.-]+(?::[0-9]+)?/?"),
+    ):
+        if not re.fullmatch(pattern, value):
+            raise ValueError(f"A valid {name} is required for this PR preview")
+    backend_label = env("PREVIEW_BACKEND_LABEL") or f"oddish-pr-{env('PR_NUMBER')}"
+    database_label = env("PREVIEW_DATABASE_LABEL") or f"Neon {neon_branch_id}"
+    database_url = (
+        f"https://console.neon.tech/app/projects/{neon_project_id}"
+        f"/branches/{neon_branch_id}"
+    )
 
     rows = [
-        f"| Frontend | {link_or_text(vercel_url or 'not deployed', vercel_url)} | Vercel preview for `{short_sha}` |",
-        f"| Backend | {link_or_text(backend_label, modal_api_url)} | `{backend_label}` |",
-        f"| Database | {link_or_text(database_label, supabase_url)} | `{database_label}` |",
+        f"| Frontend | [{vercel_url}]({vercel_url}) | Vercel preview for `{short_sha}` |",
+        f"| Backend | [{backend_label}]({modal_api_url}) | `{backend_label}` |",
+        f"| Database | [{database_label}]({database_url}) | `{database_label}` |",
     ]
 
     return "\n".join(
@@ -82,14 +85,20 @@ def build_body() -> str:
                 if vercel_deployment_url and vercel_deployment_url != vercel_url
                 else []
             ),
-            "Plan:",
-            f"- Frontend deploy: `{deploy_frontend}`",
-            f"- Backend deploy: `{deploy_backend}`",
-            f"- Migrations: `{run_migrations}`",
-            "",
-            "_This comment is updated by the PR Preview workflow._",
+            "_Updated by the PR Preview workflow._",
+            END_MARKER,
         ]
     )
+
+
+def update_body(current: str, preview: str) -> str:
+    """Replace our marked block without changing the author's other text."""
+    start = current.find(MARKER)
+    end = current.find(END_MARKER, start) if start >= 0 else -1
+    if end >= 0:
+        return current[:start] + preview + current[end + len(END_MARKER) :]
+    separator = "\n\n" if current else ""
+    return current + separator + preview
 
 
 def find_existing_comment(pr_number: str):
@@ -117,6 +126,12 @@ def main() -> None:
         gh_request("PATCH", f"/issues/comments/{existing['id']}", {"body": body})
     else:
         gh_request("POST", f"/issues/{pr_number}/comments", {"body": body})
+
+    pull = gh_request("GET", f"/pulls/{pr_number}")
+    current = pull.get("body") or ""
+    updated = update_body(current, body)
+    if updated != current:
+        gh_request("PATCH", f"/pulls/{pr_number}", {"body": updated})
 
 
 if __name__ == "__main__":

@@ -159,15 +159,15 @@ mandatory check, including when quota enforcement is disabled. This change does
 not introduce a hard global spending ceiling for approved organizations.
 
 Preview deployment jobs in `.github/workflows/pr-preview.yml` stop when a newer
-push cancels the run. If cancellation interrupts database preparation or the
-replacement backend deploy, change detection forces backend recovery on the next
-push; an older successful deployment is not proof that the app still runs.
-Database preparation retains the private CI tools image. Backend deployment uses
-Python 3.13 and uv's dependency cache on the runner; Vercel uses a cached, pinned
-CLI without downloading the Python/database image. Frontend and backend deploys
+push cancels the run. Each feature PR gets its own Neon branch, backend, and
+frontend. Every push prepares that same database and deploys both apps, including
+changes that only touch the frontend or docs.
+Database preparation and backend deployment use Python 3.13 and uv's dependency
+cache on the runner. Vercel preview deploys use its REST API. Frontend and backend deploys
 run concurrently after database preparation, and the required preview gate waits
-for both. A Vercel deployment is reused only for the requested commit when its
-resolved build and runtime environment snapshots match all preview settings.
+for both. GitHub requests one cached Vercel build for the exact PR head commit,
+with its public preview settings in the build request. Automatic Vercel Git
+builds stay enabled for staging only; production keeps its existing workflow.
 
 The Modal image installs locked third-party dependencies before copying Oddish
 source or applying deployment-specific environment variables. Its base uses
@@ -175,19 +175,31 @@ Python 3.13, matching the project requirement. `UV_LINK_MODE=copy` is set before
 all uv installs, separately from the later deployment-specific environment.
 Harbor variant dependencies are installed before source; the later editable
 Oddish install uses `--no-deps` so it cannot replace that variant.
-Preview seeding restores cyclic task/trial references
-in bounded SQL batches and logs table-load/reference timings. Sampling coverage,
-schema trust fingerprints, preview-owned credentials, and zero warm preview
-containers retain their existing behavior.
+Neon `main` is the staging database. Each PR preview uses one `pr-N` child
+of Neon `main`, copied from staging when the preview starts. Git `main` uses the
+existing production database and has no Neon branch. Preview deploys keep the
+same branch and password, apply pending migrations, and check the schema. They
+do not reload samples or reset the database after an error. A failed migration
+stops the deploy so its cause can be fixed without deleting preview data.
 
-Preview setup ends with `.github/scripts/preview/sync_org_approvals.py`, after
-migrations, sample seeding, and restoration of preview-owned API keys. This
+Before Neon deploys are enabled, an operator must copy and verify the existing
+staging data. This one-time move runs locally, outside the repo and GitHub
+Actions. See [the move sequence](../docs/operations-tools.md#staging-database-move).
+
+The first setup stops copied active work, clears copied runtime locks and remote
+handles, and disables copied API keys. Saved tasks, results, users, provider
+keys, and other data stay in the preview. A database marker records setup for
+that Neon branch in the same transaction. Later deploys keep preview work and
+API keys, including after code or model changes. The `Preview Reset` workflow
+is the explicit way to delete a preview and copy staging again.
+
+Preview setup runs `.github/scripts/preview/sync_org_approvals.py` after
+migrations and the first branch setup. This
 reads production approval decisions once and applies them in one preview
 transaction. Approval is matched by Clerk ID; legacy Personal organizations
 without Clerk IDs use their original database ID. Approved identities are
-included even when none of their tasks were sampled. Unknown/revoked identities
+included even when staging has none of their tasks. Unknown/revoked identities
 are denied, while budgets, memberships, and API keys remain preview-owned.
-The ordinary sample loader never inserts or overwrites `execution_enabled`.
 
 Production must already have the approval column and reviewed decisions before
 this step is enabled. A missing source column fails explicitly. Abundant,
@@ -198,28 +210,25 @@ IDs validate operator decisions; they do not grant approval. New organizations
 still default to unapproved. Run the same sync against existing preview URLs
 to refresh their decisions without rebuilding or redeploying them.
 
-This runs in the existing database job even when seeding is skipped, and logs
+This runs in the existing database job on each prepare, and logs
 elapsed time. It overlaps credential publication; the job awaits both before
 deployment. It adds no CI job, image build, browser test, or fleet-wide loop.
 Approval changes reach a preview on its next preparation/sync, not immediately
-when production is edited. A standalone reset rebuilds from production and then
+when production is edited. A standalone reset copies staging and then
 reapplies the current decisions through the same final step.
 
-The final preparation step also runs `refresh_browse_summaries.py` against the
-preview database. Seeding copies a subset of trials without executing normal
-trial-write hooks; this step rebuilds browse and per-model counters from those
-sampled rows, including on reused branches. It uses the existing core refresh
-function in batches of 200 versions and commits each batch separately. Counters
-from production are never copied, and page reads add no aggregation queries.
-The job waits for summary repair, approval sync, and secret publication before
-deploying.
+The first branch setup refreshes browse and per-model counters only for the task
+versions whose active trials it stops. It uses the core refresh function in the
+same transaction as the trial changes and setup marker. A failure rolls back all
+three, so a retry can finish the setup. Other counters come from staging's copy.
+Later deploys do not rebuild all counters. `refresh_browse_summaries.py` remains
+available for a manual full repair. Approval sync and secret publication must
+both finish before deployment.
 
-The preview sample includes imported delivery history for its sampled tasks,
-with the referenced source records, import receipts, and mapped customer rows.
-Unmapped lab labels remain selectable. Live delivery checklists are not copied.
-Changes to the seed loader trigger sample reconciliation on reused previews;
-the source evidence and customer rows are retained when membership leaves the
-sample, so preview-owned work can continue referencing them.
+The PR body, its sticky comment, and the preview banner link to the same frontend,
+backend, and Neon database owned by that PR. Link publication requires the PR's
+backend URL, Neon project ID, and Neon branch ID. A preview never falls back to
+the shared staging app or database.
 
 Hosted dispatch excludes unapproved organizations. Both Modal and EC2 runners
 check approval before each job and every 15 seconds during execution; losing

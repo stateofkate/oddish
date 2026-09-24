@@ -12,7 +12,7 @@ look identical in the GitHub interface but complete in opposite ways.
 
 | Stage | Base branch | What CI does | How it completes |
 |---|---|---|---|
-| Feature PR | `staging` | `pr-preview` deploys a preview app and preview database for the PR on every push and posts the links as a comment. | Press the merge button. Squash is the only allowed method. The `Require working preview` check must be green and every review thread resolved. |
+| Feature PR | `staging` | Each PR has its own Neon branch, backend, and frontend. `pr-preview` deploys both apps on each push, keeps its data, and updates the PR links. | Press the merge button. Squash is the only allowed method. The `Require working preview` check must be green and every review thread resolved. |
 | Staging deploy | none | `staging-deploy` runs on every push to `staging` (a squash merge counts) and deploys staging.oddish.app. | Automatic. Nobody does anything. |
 | Promotion PR | `main`, head `staging` | `Promotion warning` adds the caution block to the body; `promote-comment` verifies the pinned commit and fast-forwards `main`. | Comment `/promote` on the PR. Never press the merge button. |
 

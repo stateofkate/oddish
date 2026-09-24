@@ -1,25 +1,23 @@
 name: Preview Reset
+run-name: "Reset preview #${{ inputs.pr_number }}"
 
-# Manual recovery for a broken preview database: deletes the PR's Supabase
-# branch and rebuilds it from the prod schema snapshot on the PR's CURRENT
-# merge ref, then redeploys the preview backend.
+# Manual recovery for a broken preview database: deletes the PR's Neon
+# branch and clones staging again on the PR's CURRENT
+# merge ref, then updates the backend, frontend banner, and PR links.
 #
-# Why not `gh run rerun` on the last PR Preview run: reruns pin the original
-# (stale) merge SHA, and find_last_deploys.py re-queries the live last
-# successful deploys -- so rerunning a run that already SUCCEEDED computes
-# "nothing changed" and skips the database job entirely. This workflow does
-# the reset itself instead, on a fresh checkout of refs/pull/<N>/merge.
+# Rerunning a normal preview keeps its database. This workflow does an
+# explicit reset, on a fresh checkout of refs/pull/<N>/merge.
 #
 # Shares pr-preview's per-PR concurrency group so a reset never races a
 # preview run; cancel-in-progress stays false so a reset queues behind an
 # in-flight run (a new push may still cancel a queued reset -- correct
-# precedence, the push rebuilds anyway).
+# precedence). Normal pushes never reset the database.
 
 on:
   workflow_dispatch:
     inputs:
       pr_number:
-        description: "PR number whose Supabase preview branch is deleted and rebuilt"
+        description: "PR number whose Neon preview data is deleted and replaced with staging"
         required: true
 
 concurrency:
@@ -34,6 +32,8 @@ jobs:
     permissions:
       contents: read
       packages: read
+      issues: write
+      pull-requests: write
     container:
       image: ghcr.io/abundant-ai/oddish-ci-base-private:latest
       credentials:
@@ -46,11 +46,17 @@ jobs:
       MODAL_APP_NAME: oddish-pr-${{ inputs.pr_number }}
       MODAL_SECRET_ENVIRONMENT: main
       EXPECTED_MODAL_API_URL: https://abundant-ai-preview--oddish-pr-${{ inputs.pr_number }}-api.modal.run
-      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+      NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+      NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
+      NEON_DATABASE_NAME: ${{ vars.NEON_DATABASE_NAME }}
+      NEON_ROLE_NAME: ${{ vars.NEON_ROLE_NAME }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      PREVIEW_ALIAS_HOSTNAME: pr-${{ inputs.pr_number }}.oddish.app
       UV_PROJECT_ENVIRONMENT: /opt/venvs/backend
-      # Read-only source of the schema snapshot, Alembic pointers, and seed
-      # sample (see pr-preview.yml for why it is not ODDISH_DATABASE_URL).
+      # Read only organization approval decisions, without a data refresh.
+      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
       PREVIEW_SAMPLE_SOURCE_DB_URL: ${{ secrets.ODDISH_DATABASE_URL }}
       # GKE parity with pr-preview.yml: a reset must redeploy the same
       # preview it replaces, so the ODDISH_* env of the two deploy jobs
@@ -80,6 +86,7 @@ jobs:
       ODDISH_MODEL_CONCURRENCY_OVERRIDES: "{}"
       ODDISH_GATE_LLM_ON_BASELINES: "1"
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       PR_NUMBER: ${{ inputs.pr_number }}
     defaults:
       run:
@@ -94,16 +101,48 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          : "${VERCEL_TOKEN:?}"
+          : "${VERCEL_ORG_ID:?}"
+          : "${VERCEL_PROJECT_ID:?}"
+          if [[ ! "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::PR number must be a positive whole number."
+            exit 1
+          fi
           pr_json=$(curl -sSf \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${{ github.repository }}/pulls/$PR_NUMBER")
           state=$(printf '%s' "$pr_json" | jq -r '.state')
+          head_ref=$(printf '%s' "$pr_json" | jq -r '.head.ref')
+          if [ "$head_ref" = main ] || [ "$head_ref" = staging ]; then
+            echo "::error::Main and staging do not have a PR database."
+            exit 1
+          fi
           head_repo=$(printf '%s' "$pr_json" | jq -r '.head.repo.full_name')
           if [ "$state" != "open" ] || [ "$head_repo" != "${{ github.repository }}" ]; then
             echo "::error::PR #$PR_NUMBER is not an open same-repo PR (state=$state, head=$head_repo); refusing to reset."
             exit 1
           fi
+          # Titles can contain newlines. Keep each value inside its own random
+          # delimiter so PR text cannot add environment variables.
+          export PR_METADATA_JSON
+          PR_METADATA_JSON=$(printf '%s' "$pr_json" | jq -c '{
+            VERCEL_GIT_BRANCH: .head.ref,
+            VERCEL_GIT_COMMIT_SHA: .head.sha,
+            PREVIEW_COMMIT_SHA: .head.sha,
+            PR_URL: .html_url,
+            PR_TITLE: .title
+          }')
+          python - <<'PY'
+          import json
+          import os
+          import uuid
+
+          with open(os.environ["GITHUB_ENV"], "a") as env_file:
+              for key, value in json.loads(os.environ["PR_METADATA_JSON"]).items():
+                  delimiter = f"oddish_{uuid.uuid4().hex}"
+                  env_file.write(f"{key}<<{delimiter}\n{value}\n{delimiter}\n")
+          PY
 
       - name: Checkout PR merge ref
         uses: actions/checkout@v5
@@ -113,14 +152,33 @@ jobs:
       - name: Sync backend dependencies
         run: uv sync --frozen
 
-      - name: Delete Supabase preview branch
+      - name: Stop preview backend before reset
+        run: "$GITHUB_WORKSPACE/.github/scripts/preview/stop_modal_preview_app.sh"
+
+      - name: Delete Neon preview branch
         run: "$GITHUB_WORKSPACE/.github/scripts/preview/reset_preview_branch.sh"
 
       - name: Rebuild preview database
-        env:
-          DEPLOY_BACKEND: "true"
-          RUN_MIGRATIONS: "true"
+        id: database
         run: "$GITHUB_WORKSPACE/.github/scripts/preview/prepare_preview_database.sh"
 
       - name: Deploy preview backend
+        id: backend
         run: "$GITHUB_WORKSPACE/.github/scripts/preview/deploy_preview_backend.sh"
+
+      - name: Update Vercel preview
+        id: vercel
+        env:
+          MODAL_API_URL: ${{ steps.backend.outputs.modal_api_url }}
+          NEON_BRANCH_ID: ${{ steps.database.outputs.branch_id }}
+        run: "$GITHUB_WORKSPACE/.github/scripts/preview/update_vercel_preview.sh"
+
+      - name: Post preview links
+        env:
+          VERCEL_PREVIEW_URL: ${{ steps.vercel.outputs.preview_alias_url || steps.vercel.outputs.preview_url }}
+          VERCEL_DEPLOYMENT_URL: ${{ steps.vercel.outputs.preview_url }}
+          MODAL_API_URL: ${{ steps.backend.outputs.modal_api_url }}
+          PREVIEW_BACKEND_LABEL: ${{ steps.vercel.outputs.backend_label }}
+          PREVIEW_DATABASE_LABEL: ${{ steps.vercel.outputs.database_label }}
+          NEON_BRANCH_ID: ${{ steps.database.outputs.branch_id }}
+        run: python "$GITHUB_WORKSPACE/.github/scripts/preview/post_preview_links.py"

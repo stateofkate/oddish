@@ -2506,21 +2506,9 @@ with `.github/scripts/preview/extract_modal_api_url.py`. The QA-model gateway's
 `-api-qa-model.modal.run` URL is a separate endpoint and must never become the
 frontend's backend URL. Missing or ambiguous API URLs fail deployment validation.
 
-Preview deployment jobs in `.github/workflows/pr-preview.yml` stop when a newer
-push cancels the run. If cancellation interrupts database preparation or the
-replacement backend deploy, change detection forces backend recovery on the next
-push; an older successful deployment is not proof that the app still runs.
-Successful preparation followed by a skipped backend job permits reuse of an
-older backend only when the whole workflow succeeded. A cancelled, failed, or
-unfinished workflow instead forces recovery, since the skip may follow an app stop.
-If preparation itself was interrupted and no newer preparation succeeded, the
-next push reruns database preparation even when no migration files changed.
-Database preparation retains the private CI tools image. Backend deployment uses
-Python 3.13 and uv's dependency cache on the runner; Vercel uses a cached, pinned
-CLI without downloading the Python/database image. Frontend and backend deploys
-run concurrently after database preparation, and the required preview gate waits
-for both. A Vercel deployment is reused only for the requested commit when its
-resolved build and runtime environment snapshots match all preview settings.
+Every PR preview prepares its Neon database, then deploys its backend and
+frontend in parallel. A newer push cancels an older run. The required preview
+check waits for both deploys. Python and Vercel use cached dependencies.
 
 The Modal image installs locked third-party dependencies before copying Oddish
 source or applying deployment-specific environment variables. Its base uses
@@ -2528,10 +2516,6 @@ Python 3.13, matching the project requirement. `UV_LINK_MODE=copy` is set before
 all uv installs, separately from the later deployment-specific environment.
 Harbor variant dependencies are installed before source; the later editable
 Oddish install uses `--no-deps` so it cannot replace that variant.
-Preview seeding restores cyclic task/trial references
-in bounded SQL batches and logs table-load/reference timings. Sampling coverage,
-schema trust fingerprints, preview-owned credentials, and zero warm preview
-containers retain their existing behavior.
 
 PR preview deploys and manual preview resets set
 `ODDISH_MODAL_WORKER_MAX_CONTAINERS=400`, allowing each worker function up to
@@ -2577,73 +2561,18 @@ scheduling and fail with the requiredness error until updated.
 ### Preview organization approval
 
 `backend/preview_org_approvals.py` owns copying production operator decisions
-into previews. `prepare_preview_database.sh` invokes it after migrations,
-seeding, and preserved-row restoration on every preparation, including reused
-branches, overlapping credential publication and awaiting both before deploy.
-It adds approved organization identities absent from the task sample,
+into previews. `prepare_preview_database.sh` invokes it after migrations
+on every preparation, including reused branches, overlapping credential publication and awaiting both before deploy.
+It adds approved organization identities absent from the staging copy,
 matches by Clerk ID (original database ID for legacy Personal organizations),
 revokes unknown/denied identities, and validates expected access in one
 transaction. Production's approval column must exist first. Abundant,
 SRE-World, and CyberMasters are required successful-access fixtures; their IDs
 are assertions about production approval, never an approval grant.
 
-Both paths in `preview_seed.py` must exclude `execution_enabled` from inserts
-and updates, allowing the column default on new rows. Budgets and credentials
-are not copied by approval sync. Keep the final sync outside migration/seed
-conditionals, and keep fleet maintenance out of per-PR CI. Revocation reaches
-existing previews only when their next preparation or operator sync runs.
-
-### Preview Branch Preserved Rows
-
-`preview_seed.py` samples `task_delivery_history` for sampled tasks together with
-its source records, import receipts, and mapped customers. It reconciles imported
-task membership but retains source evidence and customers, which preview-owned
-work may reference. `find_last_deploys.migrations_matches` includes seed-loader
-changes so reused branches receive changed sample coverage without a schema reset.
-
-After migrations, sample updates, and preserved-row restoration,
-`prepare_preview_database.sh` runs `refresh_browse_summaries.py` on both new and
-reused previews. Raw seed inserts bypass the trial-write hooks, so
-`backend.preview_seed.refresh_browse_summaries` recalculates stored browse and
-per-model statistics from the preview's own trials using the core refresh
-function, in transactions of 200 task versions. Both metric refreshers acquire
-their sorted per-version advisory locks in one SQL statement per batch, retaining
-the same transaction lifetime and lock keys without per-version round trips.
-Production aggregate totals
-must not be copied: production contains trials outside the preview sample.
-This also repairs existing previews; browse requests retain their stored-summary
-read path. Summary repair overlaps approval sync and secret publication, and
-all three must succeed before deployment.
-
-Each preview branch database holds a schema named `preview_preserved` with one
-table, `rows`. It keeps the API keys that a person creates from that preview
-dashboard, and the `organizations` and `users` rows those keys need.
-
-**Why it exists.** A preview rebuild runs `DROP SCHEMA public CASCADE` and
-restores a schema-only snapshot of production, which holds no rows. Without
-this stash, every rebuild removes the keys.
-
-**Why it sits outside `public`.** The rebuild drops `public` and nothing else,
-so the stash survives. It also holds the rows in the database rather than in
-the workflow process: the preview workflow uses `cancel-in-progress`, so a
-second push can stop a run between the drop and the write-back.
-
-**Lifecycle.** `bootstrap_preview_db.py` writes to the stash before the drop
-and reads from it after `upgrade head`. The stash is not cleared after a
-successful write-back, so a cancelled run stays recoverable. Rows are jsonb,
-and `jsonb_populate_record` maps each one onto the current row type.
-
-**Do not copy it between environments.** An API key is a credential for one
-environment only. The seed must never sample `api_keys` from production or
-from another branch; `_NEVER_SAMPLED_TABLES` in `backend/preview_seed.py`
-enforces that, and `_assert_no_forbidden_tables` fails the seed if a later
-change breaks the rule. Cloning a preview branch, or copying this schema
-between branches, would put one environment's credentials in another.
-
-**Do not delete it while diagnosing a branch.** It looks unused, and removing
-it destroys the keys of everyone using that preview. A branch that is deleted
-and made again loses the stash with the rest of the database; that is expected,
-and a new key is then required.
+Budgets and credentials are not copied by approval sync. Keep the final sync
+outside migration conditionals, and keep fleet maintenance out of per-PR CI.
+Revocation reaches existing previews only when their next preparation or operator sync runs.
 
 ### Database Migrations
 
@@ -2668,14 +2597,12 @@ deploy; `modal-deploy.yml` (production) additionally orders the Vercel frontend
 after the backend, so a new frontend never reaches an old backend.
 
 Staging allows 400 worker containers and up to 400 starts per dispatcher poll.
-Its `STAGING_DATABASE_URL` GitHub secret remains a session-pool connection on
-port 5432 for migrations and bootstrap. Both staging workflows use
-`.github/scripts/staging/publish_runtime_db.py` to publish the same credentials
-on transaction-pool port 6543 to the `oddish-staging-db` Modal runtime secret.
-The runtime must not use session mode: its 20-connection pool rejected worker
-starts during the September 9 load test. Transaction pooling shares database
-backends across brief API and worker transactions; the 400-worker setting is
-an execution cap, not a claim of 400 simultaneous database transactions.
+It uses Neon main. Migrations use a direct Neon connection; Modal uses the
+pooled connection returned by Neon. `Staging Deploy` publishes that URL
+through `.github/scripts/staging/publish_runtime_db.py` to the
+`oddish-staging-db` Modal secret. Normal deploys do not use the old
+`STAGING_DATABASE_URL` GitHub secret. The 400-worker setting is an execution
+cap, not a claim of 400 simultaneous database transactions.
 
 ### Key Files
 

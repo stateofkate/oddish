@@ -1,7 +1,7 @@
 # Proposed CI and deployment architecture
 
-Status: proposal, September 21, 2026. The runner-consolidation changes in this
-worktree are an initial step. This document does not change repository rules,
+Status: proposal, September 21, 2026, with the Neon database update on
+September 24, 2026. This document does not change repository rules,
 deployment ownership, or release policy.
 
 The recommendation is to keep GitHub Actions, require deterministic code checks
@@ -29,16 +29,18 @@ deployment owner and one recorded result for a specific source commit.
   config and the effort suite. They need neither a browser nor Clerk login.
 - The signed-in suite signs in repeatedly even for many cases that replace the
   API responses. The workflow gates the entire suite on Clerk credentials.
-- Vercel starts preview builds on push. GitHub then updates branch-specific
-  configuration and inspects the existing build, requesting another if the
-  configuration differs. `redeploy_vercel.py` explicitly handles this race.
-- Preview preparation rotates the database password on every run. It can restore
-  a production schema snapshot, sample production rows, preserve selected preview
-  rows, and repair failed upgrades. `find_last_deploys.py` reconstructs previous
-  successful component deployments from workflow job and step names.
+- GitHub requests one cached Vercel preview build for the exact PR head commit,
+  including its public build and runtime settings. Vercel Git builds remain
+  enabled for staging only. Production keeps its existing deployment workflow.
+- Neon `main` holds staging. Each feature PR has one `pr-N` child branch and its
+  own backend and frontend, including frontend-only and documentation changes.
+  Deploys keep its data and password and apply pending migrations. Failed upgrades
+  stop the deploy; they do not reset the database. Every push deploys both apps
+  without selecting components from past workflow results.
 - The private CI image contains Python, Node, PostgreSQL clients, provider CLIs,
   cached packages, source copies, and two installed Python environments. Small
   checks pay for pulling/starting this image even when their work takes seconds.
+  Preview preparation and app deployment now use runner dependency caches instead.
 
 The observed dashboard run 35663417616 consumed about 28.5 minutes of elapsed
 runner execution across four jobs. These are execution timings, not a billing
@@ -56,7 +58,7 @@ Feature PR
   |      |
   |      +-- CI result: required before merge
   |
-  +-- Preview when requested / ready for visual review
+  +-- Preview for each feature PR
          configure -> deploy -> verify -> publish links
 
 Merge to staging
@@ -141,10 +143,9 @@ Use a small explicit path-to-package mapping, with tests for shared dependencies
 renames, lockfile changes, and workflow changes. Unknown changes select more work.
 Do not attempt individual-test dependency inference initially.
 
-PR test selection compares the proposed change with its base. Preview deployment
-selection compares the desired source with the last successfully deployed
-preview. Share path classification, not the assumption that these comparison
-bases are interchangeable. Backend changes may require frontend contract tests;
+PR test selection compares the proposed change with its base. Every feature PR
+deploys its own backend and frontend; path selection applies only to tests.
+Backend changes may require frontend contract tests;
 frontend request/response changes may require Python integration tests.
 
 Staging runs the complete local validation set before it is declared ready for
@@ -153,37 +154,27 @@ do not cancel a running migration, credential update, or schema restoration.
 
 ## Preview deployments
 
-Replace the mandatory preview deployment rule with required `CI` only after the
-new check is established. Keep automatic previews for UI/product PRs ready for
-review and an explicit request for backend or provider investigation. A draft,
-documentation edit, or isolated unit-test edit should not provision cloud services
-just to become mergeable. This is a repository-policy change, separate from the
-local consolidation patch.
+Keep a complete preview for every feature PR, including drafts and documentation
+edits. Each PR owns its Neon branch, backend, and frontend. Required code checks
+can be changed separately from this preview policy.
 
-GitHub should own creation of preview and staging Vercel deployments, as it
-already owns production. Configure the backend target first, request the build
-for an explicit commit, and record the returned deployment ID. Remove dependence
-on finding and repairing an automatically started build. Set up this path before
-disabling the corresponding Vercel Git triggers.
+GitHub now owns preview builds, with the backend target set in the request.
+Staging frontend ownership and its verification remain future work.
 
-For a PR preview, deploy all changed components from one declared source
-revision. Reused components must have unchanged relevant source/configuration.
-Current default Actions checkout and Vercel's explicit PR-head input can refer
-to different revisions; the new coordinator must make that choice explicit.
+For a PR preview, deploy both apps from the PR head revision. The checkout and
+Vercel build must use the same commit.
 
-Create an isolated preview database and its credential once, retain the credential
-in the existing per-preview secret, and rotate it on explicit reset or recovery.
-Reuse healthy branches and apply pending migrations. Default review data should
-be small, deterministic seed data. Preserve production-sample refresh and upgrade
-rehearsal as explicit operator tools until versioned fixtures cover their cases.
-Do not discard the current recovery machinery before its replacement is proven.
+The Neon flow now creates each preview database once from staging and keeps its
+credential in the per-preview secret. Pending migrations run on that same branch.
+The explicit `Preview Reset` workflow replaces a branch when an operator requests
+it. Git production `main` has no Neon branch. Small fixed test data remains an
+option for a later change; current preview data comes from staging.
 
 Publish a successful environment record only after verification, using existing
 GitHub deployment records/provider metadata. Include source revision, component
 deployment identifiers, and database migration heads. A frontend URL or the
 name of a successful workflow step alone is insufficient evidence that the
-current environment is healthy. This replaces job-history scraping without
-introducing another service or database.
+current environment is healthy.
 
 Fold posting preview links into the deployment's completion step. Keep close and
 stale-resource cleanup: previews can start real worker/provider resources, so
@@ -239,11 +230,11 @@ and maintenance that this design is trying to remove.
    jobs in the same rollout. Avoid leaving two permanent copies running.
 4. Make staging own frontend deployment and real smoke tests. Make promotion
    require that complete result; remove redundant main-push local tests.
-5. Give previews one deployment owner and an explicit lifecycle. Change automatic
-   preview policy, credential reuse, and seed strategy in separately reviewable
-   changes with their existing recovery and cleanup tests.
+5. Keep the complete per-PR preview and its data on each deploy. Review any change
+   to that policy, credential reuse, or seed strategy with recovery and cleanup
+   tests.
 
 References: `.github/workflows/pr-preview.yml`, `staging-deploy.yml`,
 `modal-deploy.yml`, `.github/scripts/promote/verify_promotion_target.sh`,
-`.github/scripts/preview/{find_last_deploys.py,redeploy_vercel.py,prepare_preview_database.sh,bootstrap_preview_db.py}`,
+`.github/scripts/preview/{redeploy_vercel.py,prepare_preview_database.sh,bootstrap_preview_db.py}`,
 `frontend/playwright*.config.ts`, and the live staging branch ruleset.
