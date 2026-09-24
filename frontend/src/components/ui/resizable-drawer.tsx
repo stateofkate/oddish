@@ -29,6 +29,8 @@ interface ResizableDrawerProps {
   maximized?: boolean;
   onMaximizedChange?: (maximized: boolean) => void;
   onResizeEnd?: () => void;
+  /** Positions the maximize/close cluster to line up with the child's header. */
+  chromeClassName?: string;
 }
 
 /** Viewport width, or null until mounted (there is no window on the server). */
@@ -57,6 +59,7 @@ export function ResizableDrawer({
   maximized: controlledMaximized,
   onMaximizedChange,
   onResizeEnd,
+  chromeClassName,
 }: ResizableDrawerProps) {
   const [internalWidth, setInternalWidth] = React.useState(defaultWidth);
   const width = controlledWidth ?? internalWidth;
@@ -189,7 +192,12 @@ export function ResizableDrawer({
         </div>
 
         {/* Top right buttons */}
-        <div className="absolute top-4 right-4 z-10 flex items-center gap-1">
+        <div
+          className={cn(
+            "absolute top-4 right-4 z-10 flex items-center gap-1",
+            chromeClassName
+          )}
+        >
           {/* Maximize / restore button */}
           <Button
             type="button"

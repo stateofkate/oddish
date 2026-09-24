@@ -157,13 +157,13 @@ export function TaskVerdictBadge({
       : p.detail;
   const rejectionDetail =
     shownDetail && p.isGood === false && variant !== "summary" ? (
-      <details className="mt-2 text-sm">
-        <summary className="cursor-pointer">Rejection reason</summary>
+      <div className="mt-2 text-sm">
+        <p>Rejection reason</p>
         <AnalysisProse
           text={shownDetail}
           className="text-muted-foreground mt-2"
         />
-      </details>
+      </div>
     ) : null;
   const verdict = task.verdict ?? null;
   const showRunButton = onRunJudge != null && !p.pending && !isRunning;

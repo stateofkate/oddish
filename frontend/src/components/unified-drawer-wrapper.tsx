@@ -226,6 +226,8 @@ export function UnifiedDrawerWrapper({
       maximized={layout.maximized}
       onMaximizedChange={(maximized) => onLayoutChange({ maximized })}
       onResizeEnd={onLayoutCommit}
+      // Center the chrome on the task-definition header (h-10 sm:h-12).
+      chromeClassName={taskOnlyActive ? "top-1 sm:top-2" : undefined}
     >
       {layoutSaveError && (
         <div
