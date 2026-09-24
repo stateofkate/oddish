@@ -48,14 +48,7 @@ def _fake_settings(**keys) -> types.SimpleNamespace:
 def _force_direct(
     monkeypatch, settings, *, enabled: bool, ambient_key: str | None
 ) -> None:
-    """Drive the real direct-API predicate the bundle now defers to.
-
-    ``agent_config._claude_code_forces_direct_api`` reads the settings singleton
-    and an ambient ANTHROPIC_API_KEY. The flag is set on the injected fake too,
-    because in production ``_issue_job_credentials`` passes that same singleton
-    -- and because a fake without the attribute would let a predicate that
-    ignores the ambient-key guard pass these tests for the wrong reason.
-    """
+    """Vary legacy ambient inputs while checking the explicit provider route."""
     from oddish.config import settings as real_settings
 
     monkeypatch.setattr(real_settings, "claude_code_force_direct_api", enabled)
@@ -167,10 +160,8 @@ def test_scoped_model_env_openai_only_carries_openai() -> None:
     assert "ANTHROPIC_API_KEY" not in env
 
 
-def test_scoped_model_env_litellm_claude_scopes_anthropic_key() -> None:
-    # A Bedrock-classified Claude model on a non-claude-code (litellm) agent runs
-    # as anthropic/<id>, so the scoped bundle must carry ANTHROPIC_API_KEY, not
-    # the CLAUDE_CODE_USE_BEDROCK routing flag it can't use.
+def test_scoped_model_env_litellm_bedrock_uses_aws_route() -> None:
+    # A Bedrock-classified LiteLLM trial uses AWS, not an Anthropic key.
     settings = _fake_settings(anthropic_api_key="sk-ant")
     settings.get_provider_for_trial = lambda agent, model: "bedrock"
     env = job_tokens.scoped_model_env(
@@ -178,7 +169,7 @@ def test_scoped_model_env_litellm_claude_scopes_anthropic_key() -> None:
         model="global.anthropic.claude-opus-4-8",
         settings=settings,
     )
-    assert env == {"ANTHROPIC_API_KEY": "sk-ant"}
+    assert env == {"CLAUDE_CODE_USE_BEDROCK": "1"}
 
 
 def test_scoped_model_env_meta_only_carries_meta_key() -> None:
@@ -236,42 +227,36 @@ def test_scoped_model_env_claude_code_bedrock_uses_routing_flag(monkeypatch) -> 
     assert env == {"CLAUDE_CODE_USE_BEDROCK": "1"}
 
 
-def test_scoped_model_env_claude_code_force_direct_scopes_anthropic_key(
+def test_scoped_model_env_explicit_anthropic_scopes_anthropic_key(
     monkeypatch,
 ) -> None:
-    # Under the force-direct mitigation the runner blanks the Bedrock env and
-    # rewrites the model to the direct Anthropic id. A bundle carrying the
-    # routing flag would be merged into the agent env after that blanking and
-    # send the CLI to Bedrock with an id only api.anthropic.com resolves, so
-    # scope the key the trial actually authenticates with.
+    # The canonical Anthropic route scopes the matching API key.
     settings = _fake_settings(anthropic_api_key="sk-ant")
     _force_direct(monkeypatch, settings, enabled=True, ambient_key="sk-ant")
-    settings.get_provider_for_trial = lambda agent, model: "bedrock"
+    settings.get_provider_for_trial = lambda agent, model: "anthropic"
     env = job_tokens.scoped_model_env(
         agent="claude-code",
-        model="global.anthropic.claude-opus-5",
+        model="anthropic/claude-opus-5",
         settings=settings,
     )
     assert env == {"ANTHROPIC_API_KEY": "sk-ant"}
 
 
 def test_scoped_model_env_probe_scopes_anthropic_key_with_flag_off(monkeypatch) -> None:
-    # A probe is routed to the direct Anthropic API even when
-    # claude_code_force_direct_api is off, so the bundle must follow it there
-    # rather than shipping the Bedrock routing flag the runner just blanked.
+    # An explicit Anthropic probe stays direct when the bare-ID flag is off.
     settings = _fake_settings(anthropic_api_key="sk-ant")
     _force_direct(monkeypatch, settings, enabled=False, ambient_key="sk-ant")
-    settings.get_provider_for_trial = lambda agent, model: "bedrock"
+    settings.get_provider_for_trial = lambda agent, model: "anthropic"
     env = job_tokens.scoped_model_env(
         agent="claude-code",
-        model="global.anthropic.claude-opus-5",
+        model="anthropic/claude-opus-5",
         settings=settings,
         is_probe=True,
     )
     assert env == {"ANTHROPIC_API_KEY": "sk-ant"}
 
 
-def test_build_bundle_forwards_is_probe_to_the_scoped_env(monkeypatch) -> None:
+def test_build_bundle_keeps_bedrock_for_probe(monkeypatch) -> None:
     settings = _fake_settings(anthropic_api_key="sk-ant")
     _force_direct(monkeypatch, settings, enabled=False, ambient_key="sk-ant")
     settings.get_provider_for_trial = lambda agent, model: "bedrock"
@@ -283,19 +268,13 @@ def test_build_bundle_forwards_is_probe_to_the_scoped_env(monkeypatch) -> None:
         now=_now(),
         is_probe=True,
     )
-    assert bundle.model_env == {"ANTHROPIC_API_KEY": "sk-ant"}
+    assert bundle.model_env == {"CLAUDE_CODE_USE_BEDROCK": "1"}
 
 
 def test_scoped_model_env_keeps_bedrock_when_no_ambient_anthropic_key(
     monkeypatch,
 ) -> None:
-    """No ambient key means the runner never leaves Bedrock, so nor does the bundle.
-
-    ``_claude_code_forces_direct_api`` returns False when ANTHROPIC_API_KEY is
-    absent from the process environment, whatever the force-direct setting says.
-    Scoping the Anthropic key here would drop CLAUDE_CODE_USE_BEDROCK while the
-    agent stayed on Bedrock.
-    """
+    """A native Bedrock id keeps its bundle route even without ambient keys."""
     settings = _fake_settings(anthropic_api_key="sk-ant")
     _force_direct(monkeypatch, settings, enabled=True, ambient_key=None)
     settings.get_provider_for_trial = lambda agent, model: "bedrock"
@@ -307,17 +286,10 @@ def test_scoped_model_env_keeps_bedrock_when_no_ambient_anthropic_key(
     assert env == {"CLAUDE_CODE_USE_BEDROCK": "1"}
 
 
-def test_scoped_model_env_byok_key_surfaces_for_the_routing_check(
+def test_scoped_model_env_bedrock_ignores_byok_anthropic_key(
     monkeypatch,
 ) -> None:
-    """A BYOK Anthropic key must reach the bundle's routing check.
-
-    The runner surfaces the user's key into the environment before it asks
-    ``_claude_code_forces_direct_api``, and blanks Bedrock whenever one is
-    present. A bundle built from the bare worker environment -- no platform
-    key -- would keep the Bedrock routing flag, and that flag is merged into
-    the agent env last, so the user's key would be ignored.
-    """
+    """A Bedrock bundle cannot be changed by an Anthropic BYOK overlay."""
     settings = _fake_settings(anthropic_api_key=None)
     _force_direct(monkeypatch, settings, enabled=True, ambient_key=None)
     settings.get_provider_for_trial = lambda agent, model: "bedrock"
@@ -327,8 +299,7 @@ def test_scoped_model_env_byok_key_surfaces_for_the_routing_check(
         settings=settings,
         byok_env={"ANTHROPIC_API_KEY": "sk-user"},
     )
-    assert "CLAUDE_CODE_USE_BEDROCK" not in env
-    assert env == {}
+    assert env == {"CLAUDE_CODE_USE_BEDROCK": "1"}
 
 
 def test_surfaced_anthropic_env_matches_the_runner_cases(monkeypatch) -> None:
@@ -345,12 +316,15 @@ def test_surfaced_anthropic_env_matches_the_runner_cases(monkeypatch) -> None:
         model="anthropic-hdo/claude-opus-5",
         agent_env={"ANTHROPIC_API_KEY": "sk-user"},
     ) == {"ANTHROPIC_API_KEY": "sk-hdo"}
-    # claude-code with a BYOK key: the user's key.
-    assert surfaced(
-        agent="claude-code",
-        model="global.anthropic.claude-opus-5",
-        agent_env={"ANTHROPIC_API_KEY": "sk-user"},
-    ) == {"ANTHROPIC_API_KEY": "sk-user"}
+    # An explicit Bedrock route never surfaces a competing Anthropic key.
+    assert (
+        surfaced(
+            agent="claude-code",
+            model="global.anthropic.claude-opus-5",
+            agent_env={"ANTHROPIC_API_KEY": "sk-user"},
+        )
+        == {}
+    )
     # claude-code without one: nothing surfaced.
     assert (
         surfaced(
@@ -374,7 +348,7 @@ def test_surfaced_anthropic_env_matches_the_runner_cases(monkeypatch) -> None:
 def test_scoped_model_env_single_llm_keeps_bedrock_under_force_direct(
     monkeypatch,
 ) -> None:
-    # The mitigation is claude-code only; SingleLLMAgent still invokes Bedrock.
+    # A native Bedrock id still invokes Bedrock on SingleLLMAgent.
     settings = _fake_settings(anthropic_api_key="sk-ant")
     _force_direct(monkeypatch, settings, enabled=True, ambient_key="sk-ant")
     settings.get_provider_for_trial = lambda agent, model: "bedrock"

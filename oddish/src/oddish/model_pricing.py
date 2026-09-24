@@ -218,6 +218,15 @@ def _litellm_candidates(model_name: str) -> list[str]:
             if candidate not in candidates:
                 candidates.append(candidate)
 
+    from oddish.config import looks_like_bedrock_model_id
+
+    # Persisted Bedrock IDs omit LiteLLM's provider prefix. Prefer that
+    # provider's catalog entry before falling back to a generic Claude rate.
+    if looks_like_bedrock_model_id(model_name) and not model_name.startswith(
+        "bedrock/"
+    ):
+        add_with_variants(f"bedrock/{model_name}")
+
     parts = [part for part in model_name.split("/") if part]
     for start in range(len(parts)):
         suffix_parts = parts[start:]

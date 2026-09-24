@@ -23,6 +23,28 @@ _META_CONFIG_PATH = "/tmp/oddish-meta-mini-swe-agent.yaml"
 _GEOMETRIC_CONFIG_PATH = "/tmp/oddish-geometric-mini-swe-agent.yaml"
 _META_API_DOMAIN = "api.ai.meta.com"
 _TASK_FLAG = "--task="
+_AWS_PROVIDER_CHAIN_ENV = (
+    "AWS_BEARER_TOKEN_BEDROCK",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "AWS_REGION",
+    "AWS_REGION_NAME",
+    "AWS_DEFAULT_REGION",
+    "AWS_PROFILE",
+    "AWS_SHARED_CREDENTIALS_FILE",
+    "AWS_CONFIG_FILE",
+    "AWS_ROLE_ARN",
+    "AWS_WEB_IDENTITY_TOKEN_FILE",
+    "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+    "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+    "AWS_CONTAINER_AUTHORIZATION_TOKEN",
+    "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE",
+    "AWS_EC2_METADATA_DISABLED",
+    "AWS_SDK_LOAD_CONFIG",
+    "AWS_CA_BUNDLE",
+)
+_AWS_CHAIN_GUARD = "__oddish_aws_credential_chain__"
 # litellm >= 1.92 imports its proxy/MCP handler chain (fastapi, orjson, ...) from
 # completion() whenever ``tools`` is set, and mini-swe-agent always sends
 # ``tools=[BASH_TOOL]`` (minisweagent.models.litellm_model). Those deps are not in
@@ -97,6 +119,21 @@ def _slugify_session_part(value: str) -> str:
 class OddishMiniSweAgent(MiniSweAgent):
     _oddish_config_path = _CONFIG_PATH
 
+    def _oddish_uses_bedrock(self) -> bool:
+        return (self.model_name or "").lower().startswith("bedrock/")
+
+    def _get_env(self, key: str) -> str | None:
+        value = super()._get_env(key)
+        if not self._oddish_uses_bedrock():
+            return value
+        if key == "MSWEA_API_KEY" and not value:
+            # LiteLLM treats its Bedrock api_key as a Bedrock bearer token.
+            return super()._get_env("AWS_BEARER_TOKEN_BEDROCK") or value
+        if key == "AWS_ACCESS_KEY_ID" and not value:
+            # Defer Harbor's one-key check until exec_as_agent resolves the chain.
+            return _AWS_CHAIN_GUARD
+        return value
+
     def _oddish_config_yaml(self, task: str | None) -> str:
         return "model:\n  model_kwargs:\n" + _SKIP_MCP_HANDLER_YAML
 
@@ -145,6 +182,18 @@ class OddishMiniSweAgent(MiniSweAgent):
         cwd=None,
         timeout_sec=None,
     ):
+        if self._oddish_uses_bedrock():
+            env = dict(env or {})
+            if env.get("AWS_ACCESS_KEY_ID") == _AWS_CHAIN_GUARD:
+                del env["AWS_ACCESS_KEY_ID"]
+            from oddish.workers.queue.job_tokens import bedrock_sandbox_env
+
+            chain = {}
+            for key in _AWS_PROVIDER_CHAIN_ENV:
+                value = super()._get_env(key)
+                if value:
+                    chain[key] = value
+            env.update(bedrock_sandbox_env(chain))
         if "mini-swe-agent --yolo " in command:
             command, task = self._oddish_take_task(command)
             await self._oddish_write_config(environment, env, task)

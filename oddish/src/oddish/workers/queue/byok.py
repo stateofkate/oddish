@@ -58,18 +58,6 @@ def byok_resolver_registered() -> bool:
     return _RESOLVER is not None
 
 
-def harbor_config_is_ephemeral(harbor_config: dict | None) -> bool:
-    """Whether BYOK must stay out of an out-of-process Harbor trial.
-
-    The ephemeral child builds its agent from the raw trial model without the
-    direct/Bedrock normalization a user key needs. Its agent env is passed
-    through a private temporary payload that is deleted as soon as the child
-    reads it, but resolving BYOK would still claim a funding path the child
-    cannot honor.
-    """
-    return bool((harbor_config or {}).get("variant_id") == "ephemeral")
-
-
 async def resolve_byok(
     *,
     owner_user_id: str | None,
@@ -97,31 +85,9 @@ async def resolve_byok(
 
 
 def uses_direct_anthropic(agent: str, model: str | None, *, settings: Any) -> bool:
-    """Whether the trial reaches the direct Anthropic API, so an injected
-    ``ANTHROPIC_API_KEY`` actually takes effect.
-
-    Oddish canonicalizes claude models to a Bedrock runtime id, so
-    ``get_provider_for_trial`` reports "bedrock" for them. Only claude-code
-    reroutes such a trial to the direct Anthropic API: the harbor runner
-    surfaces the user key in the worker's ambient env and blanks the baked-in
-    Bedrock creds for claude-code alone, so the direct-vs-Bedrock decision
-    (which reads ``os.environ``) picks the direct transport. Any other agent
-    stays on real Bedrock, which authenticates with AWS SigV4 creds an API key
-    can't serve -- so a user key only takes effect for claude-code, and the
-    resolver must not claim eligibility it can't deliver.
-
-    A provider that is already direct-Anthropic (not the Bedrock reroute) works
-    for any agent, since the key rides in the agent env.
-    """
+    """Whether the resolved trial route can spend an Anthropic API key."""
     provider = (settings.get_provider_for_trial(agent, model) or "").lower()
-    if provider in _ANTHROPIC_PROVIDERS:
-        return True
-    is_claude_code = "claude-code" in (agent or "").strip().lower()
-    return (
-        is_claude_code
-        and provider == "bedrock"
-        and bool(getattr(settings, "claude_code_force_direct_api", False))
-    )
+    return provider in _ANTHROPIC_PROVIDERS
 
 
 def merge_byok_env(

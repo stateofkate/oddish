@@ -646,6 +646,49 @@ queue. Both mutation commands read the setting back and fail if the stored
 override does not match. These hosted endpoints require an admin key in the
 configured operator organization. Use `--api-url`/`-u` to target another API.
 
+## Claude provider selection
+
+The submitted model selects the provider for Claude Code and LiteLLM agents:
+
+| Input | Stored model and queue key | Provider |
+| --- | --- | --- |
+| `anthropic/claude-opus-4-8` | `anthropic/claude-opus-4-8` | Anthropic |
+| `claude/claude-opus-4-8` | `anthropic/claude-opus-4-8` | Anthropic |
+| `bedrock/global.anthropic.claude-opus-4-8` | `global.anthropic.claude-opus-4-8` | Bedrock |
+| Native Bedrock profile, foundation ID, or ARN | Canonical native Bedrock ID | Bedrock |
+
+Prefix-free `claude-*` uses `ODDISH_CLAUDE_CODE_FORCE_DIRECT_API` at submission:
+`1` (the default) chooses Anthropic; `0` chooses Bedrock. The stored choice
+survives worker restarts, retries, and later flag changes. An Anthropic key,
+including BYOK, never redirects an explicit Bedrock submission. Missing keys
+fail on the selected provider. Direct Anthropic BYOK also reaches separate
+Harbor child processes. `anthropic-hdo/`, Vertex, and OpenRouter retain
+their separate routes. The optional QA gateway does not intercept ordinary
+Anthropic or Bedrock routes; its separately opted-in HDO behavior is retained.
+
+Anthropic and Bedrock have independent model queues and concurrency limits.
+Existing Bedrock overrides remain Bedrock overrides. Configure Anthropic
+limits separately, for example:
+
+```bash
+oddish admin concurrency set anthropic/claude-opus-4-8 10
+oddish admin concurrency get global.anthropic.claude-opus-4-8
+```
+
+This changes the previous meaning of `anthropic/` and `claude/` submissions,
+which were stored as Bedrock IDs. Current and older CLI request fields remain
+accepted; there is no database migration. Historical rows retain their stored
+identity because their original prefix cannot be recovered.
+
+For rollout, first validate actual Anthropic and Bedrock calls in preview,
+including current AWS credentials, for Claude Code, a LiteLLM agent, and the
+Harbor child process. Then pause submissions and drain **all nonterminal Claude
+work**, including blocked trials and scheduled retries. Deploy matching API and
+workers, configure the new Anthropic limits, and resume submissions. Verify
+paired trials, authentication errors, queue progress, funding, and costs.
+Before rollback, pause and drain newly queued work as well: old workers would
+reinterpret Anthropic-prefixed models. Do not rewrite historical rows.
+
 ## Stream Live Logs
 
 Use `oddish logs` to stream a **running** trial's transcript (agent messages,

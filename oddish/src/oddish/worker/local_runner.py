@@ -30,9 +30,11 @@ from sqlalchemy import and_, exists, select, update
 
 from oddish.config import (
     ZAI_DEFAULT_BASE_URL,
+    claude_model_provider,
     is_zai_model,
     settings,
     to_anthropic_api_model_id,
+    to_bedrock_model_id,
     zai_bare_model_id,
 )
 from oddish.db import (
@@ -221,8 +223,6 @@ async def _watchdog_task(trial_name: str) -> None:
     await _start_watchdog(container_name)
 
 
-_BEDROCK_REGION_PREFIXES = ("global.", "us.", "eu.", "apac.", "apn.")
-
 # Cap how long a local probe agent may run. Shared with the cloud runner so dev
 # and prod cap probes identically; see ``oddish.task_timeouts`` for the full
 # rationale. Overridable via ODDISH_PROBE_AGENT_TIMEOUT_SEC.
@@ -292,17 +292,13 @@ def _verifier_reward_for_result(result: object) -> float | None:
 def _bedrock_agent_env(model_name: str | None) -> dict[str, str]:
     """Env that lets Claude Code invoke a Bedrock-routed model in local dev.
 
-    Returns ``{}`` for non-Bedrock models. For a ``global.anthropic.*`` (or
-    other region-profile) id, sets ``CLAUDE_CODE_USE_BEDROCK`` and forwards the
+    Returns ``{}`` for non-Bedrock models. For a Bedrock profile or ARN,
+    sets ``CLAUDE_CODE_USE_BEDROCK`` and forwards the
     host's AWS creds into the agent container, defaulting the region. The
     ambient ``ANTHROPIC_API_KEY`` is blanked so the Bedrock route wins (same
     move as the OpenRouter path in the cloud worker).
     """
-    model_lc = (model_name or "").strip().lower()
-    is_bedrock = ".anthropic." in model_lc and any(
-        model_lc.startswith(p) for p in _BEDROCK_REGION_PREFIXES
-    )
-    if not is_bedrock:
+    if claude_model_provider(model_name) != "bedrock":
         return {}
 
     env: dict[str, str] = {"CLAUDE_CODE_USE_BEDROCK": "1"}
@@ -627,7 +623,7 @@ async def _run_harbor_trial(trial_id: str) -> None:
 
         harbor_config = refresh_stable_variant_pin(trial) or {}
         agent_name = trial.agent
-        model_name = trial.model
+        model_name = settings.model_for_stored_trial(trial.agent, trial.model, trial.provider)
         trial_org_id = trial.org_id
         extra_instructions = harbor_config.get("extra_instructions")
         probe_scope = harbor_config.get("probe_scope", "task")
@@ -639,8 +635,8 @@ async def _run_harbor_trial(trial_id: str) -> None:
         )
 
     byok_resolution = None
-    if byok.byok_resolver_registered() and not byok.harbor_config_is_ephemeral(
-        harbor_config
+    if byok.byok_resolver_registered() and byok.uses_direct_anthropic(
+        agent_name, model_name, settings=settings
     ):
         byok_resolution = await byok.resolve_byok(
             owner_user_id=owner_user_id,
@@ -741,20 +737,41 @@ async def _run_harbor_trial(trial_id: str) -> None:
                 trial_id,
             )
 
-    direct_anthropic = bool(
-        byok_env
-        and "claude-code" in agent_name.strip().lower()
-        and byok_env.get("ANTHROPIC_API_KEY", "").strip()
+    from oddish.workers.harbor.agent_config import (
+        _claude_transport_env,
+        _selected_claude_model,
+        surfaced_anthropic_env,
     )
+
+    resolved_model = _selected_claude_model(agent_name, model_name)
+    claude_route = claude_model_provider(resolved_model)
+    is_claude_code = "claude-code" in agent_name.strip().lower()
+    runtime_model = resolved_model
+    if is_claude_code and claude_route == "anthropic":
+        runtime_model = to_anthropic_api_model_id(resolved_model)
+    elif is_claude_code and claude_route == "bedrock":
+        runtime_model = to_bedrock_model_id(resolved_model)
+    elif claude_route == "bedrock":
+        runtime_model = f"bedrock/{to_bedrock_model_id(resolved_model)}"
     agent_config = AgentConfig(
         name=agent_name,
-        model_name=(
-            to_anthropic_api_model_id(model_name) if direct_anthropic else model_name
-        ),
+        model_name=runtime_model,
         override_timeout_sec=_PROBE_AGENT_TIMEOUT_SEC,
         skills=agent_skill_paths,
     )
-    bedrock_env = None if direct_anthropic else _bedrock_agent_env(model_name)
+    if (
+        is_claude_code
+        and claude_route == "bedrock"
+        and (runtime_model or "").startswith("arn:")
+    ):
+        agent_config.name = None
+        agent_config.import_path = "oddish.workers.agents.claude_code:OddishClaudeCode"
+    elif agent_name == "mini-swe-agent":
+        agent_config.name = None
+        agent_config.import_path = (
+            "oddish.workers.agents.mini_swe_agent:OddishMiniSweAgent"
+        )
+    bedrock_env = _bedrock_agent_env(resolved_model)
     if bedrock_env:
         agent_config.env = {**(agent_config.env or {}), **bedrock_env}
     zai_env = _zai_agent_env(model_name)
@@ -762,6 +779,17 @@ async def _run_harbor_trial(trial_id: str) -> None:
         agent_config.env = {**(agent_config.env or {}), **zai_env}
     if byok_env:
         agent_config.env = {**(agent_config.env or {}), **byok_env}
+    agent_config.env = {
+        **(agent_config.env or {}),
+        **surfaced_anthropic_env(
+            agent=agent_name, model=resolved_model, agent_env=byok_env
+        ),
+    }
+    if claude_route:
+        agent_config.env = {
+            **(agent_config.env or {}),
+            **_claude_transport_env(resolved_model, requested_model=model_name),
+        }
 
     # Probe trials get read-only oddish CLI creds + network egress so the
     # oddish-query CLI staged into the sandbox can reach the backend. Local
@@ -773,7 +801,7 @@ async def _run_harbor_trial(trial_id: str) -> None:
         # subagents have a model (mirrors the cloud path in agent_config.py);
         # setdefault so an explicit config value still wins.
         probe_agent_env = dict(agent_config.env or {})
-        probe_agent_env.setdefault("CLAUDE_CODE_SUBAGENT_MODEL", model_name)
+        probe_agent_env.setdefault("CLAUDE_CODE_SUBAGENT_MODEL", runtime_model)
         probe_agent_env.update(probe_env)
         probe_agent_env["ODDISH_PROBE_TASK_ID"] = task_db_id
         if task_version is not None:

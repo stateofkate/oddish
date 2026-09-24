@@ -107,6 +107,7 @@ def steps_settings(monkeypatch):
         "settings",
         SimpleNamespace(
             harbor_environment="modal",
+            model_for_stored_trial=lambda agent, model, provider: model,
             normalize_trial_model=lambda agent, model: f"{agent}/{model}",
             get_queue_key_for_trial=lambda agent, model: f"queue:{agent}",
         ),
@@ -350,3 +351,21 @@ def test_settlement_never_calls_the_starter():
     assert "prepare_trial_run" not in source
     assert not hasattr(settle, "start_trial_attempt")
     assert not hasattr(settle, "prepare_trial_run")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("flag", [False, True])
+@pytest.mark.parametrize("provider", ["anthropic", "bedrock"])
+async def test_legacy_claude_attempt_preserves_row_and_uses_stored_provider(monkeypatch, flag, provider):
+    from oddish.config import settings
+    monkeypatch.setattr(settings, "claude_code_force_direct_api", flag)
+    trial = _trial(agent="claude-code", model="claude-opus-4-8", provider=provider, queue_key="historical-queue")
+    session = _Session(_rows())
+    await trial_steps.start_trial_attempt(session, trial, worker_id="w", queue_slot=0)
+    prepared = await trial_steps.load_trial_context(session, trial)
+    assert trial.model == "claude-opus-4-8"
+    assert trial.provider == provider
+    assert trial.queue_key == "historical-queue"
+    assert settings.get_provider_for_trial(prepared.trial_agent, prepared.trial_model) == provider
+    from oddish.workers.queue.byok import uses_direct_anthropic
+    assert uses_direct_anthropic(prepared.trial_agent, prepared.trial_model, settings=settings) == (provider == "anthropic")

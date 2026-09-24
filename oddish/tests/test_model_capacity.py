@@ -209,7 +209,7 @@ def test_bedrock_uses_weighted_output_accounting():
         id="aws",
         quota_group="aws:account:region:sonnet",
         provider="bedrock",
-        model="global.anthropic.claude-sonnet-5",
+        model="anthropic-hdo/claude-sonnet-5",
         key_env="AWS_KEY",
         region="us-east-2",
         requests_per_minute=100,
@@ -253,7 +253,7 @@ def test_unrelated_trials_are_unchanged(monkeypatch, change):
     args = dict(
         kind="qa",
         agent="claude-code",
-        model="global.anthropic.claude-sonnet-5",
+        model="anthropic-hdo/claude-sonnet-5",
         byok_env=None,
         harbor_config={},
     )

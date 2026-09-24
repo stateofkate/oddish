@@ -41,6 +41,7 @@ from oddish.config import (
     BEDROCK_ENV_VARS,
     OPENAI_PROVIDER_OPENAI,
     infer_model_provider_prefix,
+    is_anthropic_hdo_model,
     settings,
 )
 from oddish.costs.modal_cost import (
@@ -66,7 +67,8 @@ from oddish.worker.probe_staging import stage_org_skills
 from oddish.workers.agents.network import normalize_domain_or_url
 from .agent_config import (
     _build_agent_config,
-    _claude_code_forces_direct_api,
+    _claude_transport_env,
+    _selected_claude_model,
     _apply_antigravity_cli_oddish_wrapper,
     _apply_gemini_cli_oddish_wrapper,
     _apply_cursor_cli_oddish_wrapper,
@@ -1509,8 +1511,8 @@ def _claude_code_environment_hosts(agent_config: HarborAgentConfig) -> list[str]
     """Hosts the claude-code CLI needs across install *and* run.
 
     Harbor derives the agent-phase allowlist from the provider prefix on
-    ``model_name``, but force-direct-API routing strips that prefix to the bare
-    Anthropic id the CLI requires -- leaving Harbor nothing to resolve, so a
+    ``model_name``, but Claude Code receives a bare Anthropic API id -- leaving
+    Harbor nothing to resolve, so a
     closed-internet trial reaches the installer CDN and then dies on ECONNRESET
     at its first API call. Resolve the model endpoint here instead.
     """
@@ -1977,10 +1979,8 @@ def uses_probe_routing(*, harbor_config: dict | None, trial_kind: str | None) ->
     Operator probes (``harbor_config.mode == "probe"``) and analysis kinds
     ``qa``, ``qa_eval``, and ``audit`` share these rules; ``summarize`` does not
     unless explicitly configured as an operator probe. Sharing routing does
-    not change a trial's kind or its stored ``is_probe`` flag. Claude Code's
-    direct-API choice also requires an available Anthropic key, as checked by
-    ``_claude_code_forces_direct_api``. Execution and job credential selection
-    use this helper so they agree on that routing input.
+    not change a trial's kind or its stored ``is_probe`` flag. The canonical
+    model chooses Claude's transport for every trial kind.
     """
     # Imported here for the same reason the caller below does: the analysis
     # module imports back into the worker package.
@@ -2263,19 +2263,16 @@ async def _run_harbor_trial_async_impl(
                     **(vertex_ai.redaction_env if vertex_ai is not None else {}),
                 }
             )
-        # A BYOK user key arrives in the agent env, but claude-code's
-        # direct-vs-Bedrock routing reads os.environ -- both to pick the model
-        # id (in _build_agent_config) and to blank Bedrock creds (below). Surface
-        # the user key as ambient for the build + run so the trial routes to the
-        # direct Anthropic API even on a worker with no platform key; the agent
-        # then authenticates with the user's key.
+        # A direct Anthropic route needs its selected key ambient for Harbor's
+        # process-level credential lookup. The canonical model decides the
+        # transport even when another provider's credential is present.
         #
         # ``anthropic-hdo/<model>`` is the same idea with the platform
         # ANTHROPIC_HDO_API_KEY: overwrite ambient ANTHROPIC_API_KEY so routing
         # and auth both use the HDO credential instead of Bedrock / the default
         # Anthropic key. HDO wins over BYOK when the model prefix opts in.
         byok_anthropic_env = surfaced_anthropic_env(
-            agent=agent, model=model, agent_env=extra_agent_env
+            agent=agent, model=openai_model, agent_env=extra_agent_env
         )
 
         # The Vertex process env must be ambient for the WHOLE config build, not
@@ -2562,9 +2559,15 @@ async def _run_harbor_trial_async_impl(
         config = JobConfig(**job_config_kwargs)
 
         runtime_env = dict(openai_env)
-        # Keep the BYOK key ambient for Job.create/run too, so Harbor's own
-        # os.environ-based Bedrock-mode check agrees with the direct model id.
+        # Keep the selected key ambient for Job.create/run and apply the
+        # canonical route selectors after credential overlays.
         runtime_env.update(byok_anthropic_env)
+        runtime_env.update(
+            _claude_transport_env(
+                _selected_claude_model(agent, openai_model),
+                requested_model=openai_model,
+            )
+        )
         # Same idea for Google: the platform key is published as GEMINI_API_KEY
         # (what gemini-cli reads), but agents built on the Vercel AI SDK read
         # GOOGLE_GENERATIVE_AI_API_KEY. Harbor's opencode agent forwards the
@@ -2581,13 +2584,10 @@ async def _run_harbor_trial_async_impl(
             # blanks the baked Bedrock flags for Harbor's os.environ check.
             runtime_env.update(vertex_ai.process_env)
         is_claude_code = "claude-code" in (agent or "").strip().lower()
-        if is_claude_code and (
-            byok_anthropic_env or _claude_code_forces_direct_api(probe_routing)
-        ):
+        if is_claude_code and is_anthropic_hdo_model(openai_model):
             # Harbor's _is_bedrock_mode() reads os.environ, and the Modal image
             # bakes in Bedrock credentials. Blank them when claude-code runs
-            # against the direct Anthropic API -- platform force-direct, or a
-            # BYOK user key.
+            # against HDO's direct Anthropic API.
             runtime_env.update({var: "" for var in BEDROCK_ENV_VARS})
         with _temporary_env(runtime_env):
             job = await Job.create(config)

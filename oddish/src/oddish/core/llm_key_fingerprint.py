@@ -65,6 +65,8 @@ def platform_key_hash_for_provider(provider: str | None) -> str | None:
             raw = settings.anthropic_hdo_api_key or os.environ.get(
                 "ANTHROPIC_HDO_API_KEY"
             )
+        elif provider == "anthropic":
+            raw = settings.anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY")
         elif provider == "azure":
             raw = settings.azure_openai_api_key or os.environ.get(
                 "AZURE_OPENAI_API_KEY"
@@ -97,7 +99,7 @@ def trial_llm_key_hash(
     if byok_env and provider:
         variable = provider_key_var(provider)
         raw = byok_env.get(variable) if variable else None
-        if not raw and provider in {"anthropic", "bedrock"}:
+        if not raw and provider == "anthropic":
             raw = byok_env.get("ANTHROPIC_API_KEY")
         raw = (raw or "").strip()
         if raw:

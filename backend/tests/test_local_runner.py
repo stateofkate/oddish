@@ -27,6 +27,7 @@ from oddish.db import (
     get_session,
 )
 from oddish.db.models import task_experiments
+from oddish.config import settings
 from oddish.core.llm_key_fingerprint import hash_llm_key
 from oddish.workers.queue import byok
 
@@ -112,8 +113,8 @@ async def seeded_trial_id(tmp_path):
 @pytest.mark.asyncio
 async def test_run_trial_locally_dry_run_marks_success(monkeypatch, seeded_trial_id):
     """Dry-run path should QUEUED -> RUNNING -> SUCCESS and set timestamps."""
-    platform_key = "bedrock-local-platform"
-    monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", platform_key)
+    platform_key = "anthropic-local-platform"
+    monkeypatch.setenv("ANTHROPIC_API_KEY", platform_key)
     await run_trial_locally(seeded_trial_id, dry_run=True)
 
     async with get_session() as session:
@@ -174,11 +175,16 @@ async def test_local_api_lifespan_runs_canonical_queue_worker(monkeypatch, tmp_p
     assert worker_cancelled == [True]
 
 
+@pytest.mark.parametrize("key_source", ["byok", "settings"])
+@pytest.mark.parametrize("agent_name", ["claude-code", "mini-swe-agent"])
 @pytest.mark.asyncio
 async def test_local_harbor_run_injects_and_stamps_byok_before_agent_work(
-    monkeypatch, seeded_probe_trial_with_task_dir
+    monkeypatch, seeded_probe_trial_with_task_dir, key_source, agent_name
 ):
     trial_id, _ = seeded_probe_trial_with_task_dir
+    async with get_session() as session:
+        trial = await session.get(TrialModel, trial_id)
+        trial.agent = agent_name
     captured: dict[str, object] = {}
     user_key = "sk-ant-local-user"
 
@@ -186,6 +192,7 @@ async def test_local_harbor_run_injects_and_stamps_byok_before_agent_work(
         def __init__(self, cfg, **_kwargs):
             captured["agent_env"] = dict(cfg.agent.env or {})
             captured["model_name"] = cfg.agent.model_name
+            captured["agent_config"] = cfg.agent
             self.result = MagicMock()
             self.result.verifier_result = MagicMock(rewards={"reward": 0.0})
             self.result.agent_result = MagicMock()
@@ -225,7 +232,12 @@ async def test_local_harbor_run_injects_and_stamps_byok_before_agent_work(
     monkeypatch.setattr(
         "oddish.worker.local_runner.run_probe_analyzer", fake_probe_analyzer
     )
-    byok.register_byok_resolver(resolve_byok)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("MSWEA_API_KEY", raising=False)
+    if key_source == "byok":
+        byok.register_byok_resolver(resolve_byok)
+    else:
+        monkeypatch.setattr(settings, "anthropic_api_key", user_key)
     try:
         await _run_harbor_trial(trial_id)
     finally:
@@ -234,10 +246,96 @@ async def test_local_harbor_run_injects_and_stamps_byok_before_agent_work(
     expected_hash = hash_llm_key(user_key)
     assert captured["hash_during_run"] == expected_hash
     assert captured["agent_env"]["ANTHROPIC_API_KEY"] == user_key
-    assert captured["model_name"] == "claude-sonnet-4-5"
+    assert captured["model_name"] == (
+        "claude-sonnet-4-5" if agent_name == "claude-code"
+        else "anthropic/claude-sonnet-4-5"
+    )
+    if agent_name == "mini-swe-agent" and key_source == "settings":
+        from harbor.agents.factory import AgentFactory
+        from harbor.agents.installed.mini_swe_agent import MiniSweAgent
+
+        calls = []
+
+        async def capture(self, _environment, *, command, env=None, **_kwargs):
+            calls.append((command, {**(env or {}), **self.extra_env}))
+
+        monkeypatch.setattr(MiniSweAgent, "exec_as_agent", capture)
+        agent = AgentFactory.create_agent_from_config(
+            captured["agent_config"], Path("/tmp")
+        )
+        await agent.run("hello", object(), object())
+        assert "--model=anthropic/claude-sonnet-4-5" in calls[-1][0]
+        assert calls[-1][1]["ANTHROPIC_API_KEY"] == user_key
     async with get_session() as session:
         trial = await session.get(TrialModel, trial_id)
         assert trial.llm_key_hash == expected_hash
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "agent_name,model,provider,expected_model,expected_import",
+    [
+        (
+            "claude-code",
+            "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/AbCd123",
+            "bedrock",
+            "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/AbCd123",
+            "oddish.workers.agents.claude_code:OddishClaudeCode",
+        ),
+        (
+            "mini-swe-agent",
+            "bedrock/global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+            "bedrock",
+            "bedrock/global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+            "oddish.workers.agents.mini_swe_agent:OddishMiniSweAgent",
+        ),
+    ],
+)
+async def test_local_bedrock_runtime_uses_oddish_agent_adapter(
+    monkeypatch,
+    seeded_probe_trial_with_task_dir,
+    agent_name,
+    model,
+    provider,
+    expected_model,
+    expected_import,
+):
+    trial_id, _ = seeded_probe_trial_with_task_dir
+    async with get_session() as session:
+        trial = await session.get(TrialModel, trial_id)
+        trial.agent = agent_name
+        trial.model = model
+        trial.provider = provider
+        trial.harbor_config = {}
+    captured = {}
+
+    class FakeTrial:
+        def __init__(self, cfg):
+            captured["agent"] = cfg.agent
+            self.result = MagicMock()
+            self.result.verifier_result = MagicMock(rewards={"reward": 0.0})
+            self.result.agent_result = MagicMock()
+            self.result.agent_result.is_empty.return_value = True
+            self.result.model_dump = lambda mode=None: {}
+
+        @classmethod
+        async def create(cls, cfg):
+            return cls(cfg)
+
+        def add_hook(self, *_args):
+            pass
+
+        async def run(self):
+            return self.result
+
+    monkeypatch.setattr("oddish.worker.local_runner.Trial", FakeTrial)
+    monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "test-bedrock-token")
+    await _run_harbor_trial(trial_id)
+    agent = captured["agent"]
+    assert agent.model_name == expected_model
+    assert agent.import_path == expected_import
+    assert agent.env["ANTHROPIC_API_KEY"] == ""
+    assert agent.env["ANTHROPIC_MODEL"] == model.removeprefix("bedrock/")
 
 
 @pytest_asyncio.fixture

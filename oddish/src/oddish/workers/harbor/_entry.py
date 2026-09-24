@@ -18,9 +18,7 @@ _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 if sys.path and os.path.abspath(sys.path[0] or "") == _THIS_DIR:
     sys.path.pop(0)
 
-ClaudeCode: Any = importlib.import_module(
-    "harbor.agents.installed.claude_code"
-).ClaudeCode
+importlib.import_module("harbor.agents.installed.claude_code")
 
 # ``uv run --no-project --with <harbor pin>`` deliberately creates an isolated
 # Harbor overlay, so the parent worker's installed ``oddish`` distribution and
@@ -42,6 +40,10 @@ for _fallback_path in _fallback_paths:
         raise RuntimeError(f"Oddish child fallback path is missing: {_fallback_path!r}")
     if _fallback_path not in sys.path:
         sys.path.append(_fallback_path)
+
+OddishClaudeCode: Any = importlib.import_module(
+    "oddish.workers.agents.claude_code"
+).OddishClaudeCode
 
 logger = logging.getLogger("oddish.harbor_entry")
 
@@ -163,7 +165,7 @@ def _make_hook(probe_task_dir: str | None, probe_harness_dir: str | None):
     return _hook
 
 
-class _ProbeClaudeCode(ClaudeCode):  # type: ignore[misc, valid-type]
+class _ProbeClaudeCode(OddishClaudeCode):  # type: ignore[misc, valid-type]
     """Claude Code that installs override Harbor in the sandbox."""
 
     def __init__(
@@ -244,6 +246,26 @@ def _build_job_config(payload: dict[str, Any]):
             **dict(agent_kwargs.get("kwargs") or {}),
             "harbor_requirement": agent_harbor_requirement,
         }
+    elif (
+        agent_kwargs.get("name") in {"claude-code", "kimi-claude-code"}
+        and str(agent_kwargs.get("model_name") or "").startswith("arn:")
+        and not agent_kwargs.get("import_path")
+    ):
+        # Stock Harbor splits the slash inside Bedrock ARNs as a provider
+        # delimiter when recording the trial result. Use the same wrapper as
+        # in-process Claude Code so the command and metadata share one model.
+        agent_kwargs["name"] = None
+        agent_kwargs["import_path"] = (
+            "oddish.workers.agents.claude_code:OddishClaudeCode"
+        )
+    elif (
+        agent_kwargs.get("name") == "mini-swe-agent"
+        and not agent_kwargs.get("import_path")
+    ):
+        agent_kwargs["name"] = None
+        agent_kwargs["import_path"] = (
+            "oddish.workers.agents.mini_swe_agent:OddishMiniSweAgent"
+        )
     agent_config = AgentConfig.model_validate(agent_kwargs)
 
     kwargs: dict[str, Any] = {

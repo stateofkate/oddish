@@ -16,6 +16,7 @@ from oddish.config import (
     OPENAI_PROVIDER_OPENAI,
     ZAI_DEFAULT_BASE_URL,
     anthropic_hdo_bare_model_id,
+    claude_model_provider,
     fireworks_api_model_id,
     fireworks_bare_model_id,
     is_anthropic_hdo_model,
@@ -28,7 +29,6 @@ from oddish.config import (
     is_xai_model,
     is_xai_public_model,
     is_zai_model,
-    looks_like_bedrock_model_id,
     require_geometric_served_model_id,
     to_geometric_model_id,
     to_meta_model_id,
@@ -114,25 +114,24 @@ def _is_claude_code_agent(agent_config: AgentConfig) -> bool:
     return "claude-code" in (agent_config.name or "").strip().lower()
 
 
-def _is_single_llm_agent(agent_config: AgentConfig) -> bool:
-    return agent_config.import_path == _SINGLE_LLM_IMPORT_PATH
-
-
 def _is_kimi_claude_code_agent(agent_config: AgentConfig) -> bool:
     return (agent_config.name or "").strip().lower() == _KIMI_CLAUDE_CODE_AGENT
 
 
 def _prepare_kimi_claude_code_agent(agent_config: AgentConfig) -> None:
-    """Apply vendor kwargs and moonshot-prefix the caller-supplied model."""
+    """Apply vendor kwargs and Moonshot's prefix, preserving Claude/Vertex routes."""
     if not _is_kimi_claude_code_agent(agent_config):
         return
 
     model = (agent_config.model_name or "").strip()
-    # An explicit ``vertex_ai/`` id keeps its provider: rewriting it to
-    # ``moonshot/`` here would silently execute on Moonshot while the stored
-    # provider and queue say Vertex. The harness then decides what to do with
-    # the Vertex profile, like every other agent.
-    if model and not is_vertex_ai_model(model):
+    # Explicit Vertex and Claude routes keep their provider. Rewriting them
+    # to Moonshot would disagree with the stored provider and queue.
+    if (
+        model
+        and not is_vertex_ai_model(model)
+        and not claude_model_provider(model)
+        and not is_anthropic_hdo_model(model)
+    ):
         bare = (
             moonshot_bare_model_id(model)
             if is_moonshot_model(model)
@@ -152,15 +151,7 @@ def _is_mini_swe_agent(agent_config: AgentConfig) -> bool:
 
 
 def _to_litellm_claude_model_id(model: str | None) -> str | None:
-    """Provider-prefix a Claude id for litellm-based (non claude-code) agents.
-
-    claude-code consumes the bare Bedrock inference-profile id via its own
-    InvokeModel transport; every other Harbor agent (mini-swe, ...) runs the
-    model through litellm, which requires a ``provider/model`` id. Route Claude
-    to the direct Anthropic API (``ANTHROPIC_API_KEY``, which Harbor forwards
-    into the agent sandbox for ``anthropic/`` models) as ``anthropic/<api-id>``.
-    Non-Claude and already-prefixed ids pass through unchanged.
-    """
+    """Provider-prefix a legacy bare Claude id for LiteLLM agents."""
     api_id = to_anthropic_api_model_id(model)
     if not api_id or "/" in api_id:
         return api_id
@@ -655,46 +646,70 @@ def _apply_claude_code_probe_subagent_model(
     agent_config.env = env
 
 
-def _agent_uses_bedrock() -> bool:
-    """Mirror Harbor's claude-code Bedrock-mode detection."""
-    if os.environ.get("CLAUDE_CODE_USE_BEDROCK", "").strip() == "1":
-        return True
-    if os.environ.get("AWS_BEARER_TOKEN_BEDROCK", "").strip():
-        return True
-    return False
-
-
 def surfaced_anthropic_env(
     *, agent: str | None, model: str | None, agent_env: Mapping[str, str] | None
 ) -> dict[str, str]:
-    """The Anthropic credential a trial's routing check must see as ambient.
+    """Expose the chosen direct Anthropic key to the agent and worker scope.
 
-    ``_claude_code_forces_direct_api`` reads ``os.environ``, so a credential
-    that only arrives in the agent env has to be surfaced there before the
-    routing question is asked. An ``anthropic-hdo/`` model overwrites the
-    ambient key with the platform HDO credential; a claude-code trial carrying
-    a BYOK ``ANTHROPIC_API_KEY`` surfaces the user's key. HDO wins over BYOK
-    when the model prefix opts in.
-
-    The runner applies this around ``_build_agent_config``. Job-scoped
-    credential scoping applies it around its own routing check, so the bundle
-    and the agent answer the same question under the same view.
+    HDO takes its dedicated platform key; other direct Anthropic routes use
+    BYOK, then the configured platform key, then an ambient key. Bedrock
+    routes never surface an Anthropic key.
     """
     env: dict[str, str] = {}
     if is_anthropic_hdo_model(model):
         env["ANTHROPIC_API_KEY"] = _resolve_anthropic_hdo_api_key()
-    elif "claude-code" in (agent or "").strip().lower():
-        byok_key = (agent_env or {}).get("ANTHROPIC_API_KEY")
-        if byok_key:
-            env["ANTHROPIC_API_KEY"] = byok_key
+    elif claude_model_provider(
+        _selected_claude_model(agent or "claude-code", model)
+    ) == "anthropic":
+        key = (
+            (agent_env or {}).get("ANTHROPIC_API_KEY")
+            or settings.anthropic_api_key
+            or os.environ.get("ANTHROPIC_API_KEY")
+        )
+        if key:
+            env["ANTHROPIC_API_KEY"] = key
     return env
 
 
-def _claude_code_forces_direct_api(is_probe: bool) -> bool:
-    """Whether a claude-code agent must use the direct Anthropic API over Bedrock."""
-    if not os.environ.get("ANTHROPIC_API_KEY", "").strip():
-        return False
-    return is_probe or settings.claude_code_force_direct_api
+def _selected_claude_model(agent: str, model: str | None) -> str | None:
+    """Resolve bare Claude ids once while leaving other vendors untouched."""
+    if claude_model_provider(model) or (model or "").lower().startswith("claude-"):
+        return settings.normalize_trial_model(agent, model)
+    return model
+
+
+def _claude_transport_env(
+    model: str | None, *, requested_model: str | None = None
+) -> dict[str, str]:
+    """Selectors that pin a canonical Claude model to its chosen transport."""
+    provider = claude_model_provider(model)
+    if provider == "anthropic":
+        env = {
+            "ANTHROPIC_MODEL": to_anthropic_api_model_id(model) or "",
+            "CLAUDE_CODE_USE_BEDROCK": "",
+            "AWS_BEARER_TOKEN_BEDROCK": "",
+            "CLAUDE_CODE_USE_VERTEX": "",
+            "ANTHROPIC_AUTH_TOKEN": "",
+            "CLAUDE_CODE_OAUTH_TOKEN": "",
+            "CLAUDE_FORCE_OAUTH": "0",
+        }
+        if claude_model_provider(requested_model) == "anthropic":
+            env["ANTHROPIC_BASE_URL"] = ""
+        return env
+    if provider == "bedrock":
+        return {
+            # Harbor strips everything before the first slash, including the
+            # slash inside an ARN. Agent env wins over its per-exec default.
+            "ANTHROPIC_MODEL": to_bedrock_model_id(model) or "",
+            "CLAUDE_CODE_USE_BEDROCK": "1",
+            "ANTHROPIC_API_KEY": "",
+            "ANTHROPIC_AUTH_TOKEN": "",
+            "ANTHROPIC_BASE_URL": "",
+            "CLAUDE_CODE_USE_VERTEX": "",
+            "CLAUDE_CODE_OAUTH_TOKEN": "",
+            "CLAUDE_FORCE_OAUTH": "0",
+        }
+    return {}
 
 
 def _apply_probe_oddish_creds(
@@ -732,11 +747,11 @@ def _build_routed_agent_config(
 
     Shapes ``model_name``, ``env``, and ``kwargs`` only; ``name`` and
     ``import_path`` are left exactly as submitted. That boundary is what lets
-    the out-of-process ephemeral path share this: the child runs its own Harbor,
-    which has none of the Oddish wrapper agent classes ``_build_agent_config``
-    installs afterwards, but it needs the same provider routing an in-process
-    trial gets. Which dispatch path ran a trial is an Oddish scheduling detail,
-    so it must never decide which endpoint the agent talks to.
+    the out-of-process ephemeral path share this: the child runs its own Harbor
+    and selects the required Oddish adapters in its entrypoint, but needs the
+    same provider routing an in-process trial gets. Which dispatch path ran a
+    trial is an Oddish scheduling detail, so it must never decide which endpoint
+    the agent talks to.
     """
     gateway_env = _gateway_env(probe_oddish_env)
     raw_agent_config = raw_harbor_config.get("agent_config")
@@ -793,6 +808,10 @@ def _build_routed_agent_config(
     # Before provider canonicalization: moonshot-prefix the model + vendor kwargs.
     _prepare_kimi_claude_code_agent(agent_config)
 
+    requested = agent_config.model_name
+    agent_config.model_name = _selected_claude_model(agent, requested)
+    claude_route = claude_model_provider(agent_config.model_name)
+
     if is_fireworks_model(agent_config.model_name):
         agent_config.model_name = to_fireworks_model_id(agent_config.model_name)
     elif is_meta_model(agent_config.model_name):
@@ -839,13 +858,18 @@ def _build_routed_agent_config(
             agent_config.env = _merge_vertex_ai_env(
                 agent_config.env, settings.vertex_ai_config(), agent_config.model_name
             )
-    elif _is_single_llm_agent(agent_config) and looks_like_bedrock_model_id(
-        agent_config.model_name
-    ):
-        # This host-side agent calls LiteLLM directly. Preserve the stored
-        # Bedrock route and its queue/concurrency bucket; LiteLLM requires the
-        # provider prefix that claude-code's own Bedrock transport omits.
-        agent_config.model_name = f"bedrock/{agent_config.model_name}"
+    elif claude_route == "bedrock":
+        bedrock_id = to_bedrock_model_id(agent_config.model_name)
+        agent_config.model_name = (
+            bedrock_id
+            if _is_claude_code_agent(agent_config)
+            else f"bedrock/{bedrock_id}"
+        )
+    elif claude_route == "anthropic":
+        api_id = to_anthropic_api_model_id(agent_config.model_name)
+        agent_config.model_name = (
+            api_id if _is_claude_code_agent(agent_config) else f"anthropic/{api_id}"
+        )
     elif not _is_claude_code_agent(agent_config):
         # litellm-based agents need a "provider/model" id; claude-code is the
         # only agent that consumes the bare Bedrock inference-profile id.
@@ -858,13 +882,6 @@ def _build_routed_agent_config(
             agent_config.model_name = _to_ai_sdk_gemini_model_id(
                 agent_config.model_name
             )
-    elif _claude_code_forces_direct_api(is_probe):
-        agent_config.model_name = to_anthropic_api_model_id(agent_config.model_name)
-    elif _agent_uses_bedrock():
-        agent_config.model_name = to_bedrock_model_id(agent_config.model_name)
-    else:
-        agent_config.model_name = to_anthropic_api_model_id(agent_config.model_name)
-
     _apply_claude_code_openrouter_env(agent_config)
     _apply_claude_code_fireworks_env(agent_config)
     _apply_claude_code_zai_env(agent_config)
@@ -872,6 +889,14 @@ def _build_routed_agent_config(
     _apply_claude_code_minimax_env(agent_config)
     _apply_claude_code_moonshot_env(agent_config)
     _apply_claude_code_probe_subagent_model(agent_config, is_probe)
+
+    if claude_route:
+        agent_config.env = {
+            **(agent_config.env or {}),
+            **_claude_transport_env(
+                _selected_claude_model(agent, requested), requested_model=requested
+            ),
+        }
 
     return agent_config
 
@@ -948,6 +973,16 @@ def _build_agent_config(
     if gateway_env:
         agent_config.env = {**agent_config.env, **gateway_env}
         agent_config.model_name = gateway_env["ANTHROPIC_MODEL"]
+    else:
+        _, requested = _trial_requested_model(
+            agent=agent, model=model, raw_harbor_config=raw_harbor_config
+        )
+        agent_config.env = {
+            **agent_config.env,
+            **_claude_transport_env(
+                _selected_claude_model(agent, requested), requested_model=requested
+            ),
+        }
 
     return agent_config
 

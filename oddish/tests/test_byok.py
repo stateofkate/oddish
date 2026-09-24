@@ -20,13 +20,10 @@ def test_uses_direct_anthropic_for_claude_code_when_forced_direct():
     assert byok.uses_direct_anthropic("claude-code", "claude-opus-4-8", settings=s)
 
 
-def test_uses_direct_anthropic_false_for_non_claude_code_bedrock_claude():
-    # Claude canonicalizes to a Bedrock id; only claude-code reroutes it to the
-    # direct API, so another agent can't use a user key and is not eligible --
-    # otherwise the resolver would inject a key the runner never surfaces.
+def test_uses_direct_anthropic_for_bare_claude_with_flag_enabled():
     s = _settings(claude_code_force_direct_api=True)
-    assert not byok.uses_direct_anthropic("terminus-2", "claude-opus-4-8", settings=s)
-    assert not byok.uses_direct_anthropic("codex", "claude-opus-4-8", settings=s)
+    assert byok.uses_direct_anthropic("terminus-2", "claude-opus-4-8", settings=s)
+    assert byok.uses_direct_anthropic("codex", "claude-opus-4-8", settings=s)
 
 
 def test_uses_direct_anthropic_false_for_real_bedrock():
@@ -58,7 +55,6 @@ async def test_resolve_byok_no_resolver_returns_none():
         )
         is None
     )
-
 
 @pytest.mark.asyncio
 async def test_resolve_byok_calls_registered_resolver():
@@ -103,14 +99,3 @@ async def test_resolve_byok_resolver_crash_fails_open():
         )
         is None
     )
-
-
-def test_harbor_config_is_ephemeral_gates_byok():
-    """BYOK is skipped for ephemeral trials, so the user key never reaches the
-    out-of-process child (where it can't route and would be persisted)."""
-    from oddish.workers.queue.byok import harbor_config_is_ephemeral
-
-    assert harbor_config_is_ephemeral({"variant_id": "ephemeral"}) is True
-    assert harbor_config_is_ephemeral({"variant_id": "default"}) is False
-    assert harbor_config_is_ephemeral({}) is False
-    assert harbor_config_is_ephemeral(None) is False

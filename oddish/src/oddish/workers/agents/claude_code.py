@@ -33,6 +33,7 @@ from harbor.agents.installed.base import BaseEnvironment
 from harbor.agents.installed.claude_code import ClaudeCode
 from harbor.environments.base import ExecResult
 
+from oddish.config import claude_model_provider
 from oddish.core.harbor_source import harbor_sandbox_requirement
 
 logger = logging.getLogger(__name__)
@@ -122,6 +123,16 @@ class OddishClaudeCode(ClaudeCode):
     """Capture successful sessions so later task steps can resume them."""
 
     _resume_session_id: str | None
+
+    def _init_model_info(self) -> None:
+        super()._init_model_info()
+        if (self.model_name or "").startswith("arn:") and claude_model_provider(
+            self.model_name
+        ) == "bedrock":
+            # Harbor treats any slash as a provider separator. In a Bedrock
+            # ARN it separates the resource kind from its identifier.
+            self._parsed_model_provider = "bedrock"
+            self._parsed_model_name = self.model_name
 
     async def _exec(
         self,

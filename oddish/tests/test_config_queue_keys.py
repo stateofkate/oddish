@@ -92,17 +92,11 @@ def test_model_concurrency_overrides_can_override_nop_oracle_queue(monkeypatch):
     assert settings.get_model_concurrency("default") == 3
 
 
-def test_claude_trial_model_is_persisted_as_bedrock_id(monkeypatch):
-    settings = _settings(monkeypatch, clear_openai_env=False)
-
+def test_bare_claude_uses_configured_default_but_explicit_prefix_wins(monkeypatch):
+    settings = _settings(monkeypatch, claude_code_force_direct_api=False)
     expected = "global.anthropic.claude-sonnet-4-6"
-
     assert (
         settings.normalize_trial_model("claude-code", "claude-sonnet-4-6") == expected
-    )
-    assert (
-        settings.normalize_trial_model("claude-code", "anthropic/claude-sonnet-4-6")
-        == expected
     )
     assert (
         settings.get_provider_for_trial("claude-code", "claude-sonnet-4-6") == "bedrock"
@@ -110,145 +104,65 @@ def test_claude_trial_model_is_persisted_as_bedrock_id(monkeypatch):
     assert (
         settings.get_queue_key_for_trial("claude-code", "claude-sonnet-4-6") == expected
     )
+    assert (
+        settings.normalize_trial_model("claude-code", "anthropic/claude-sonnet-4-6")
+        == "anthropic/claude-sonnet-4-6"
+    )
     assert settings.get_provider_for_trial("claude-code", None) == "bedrock"
 
 
-def test_default_analysis_model_uses_global_sonnet_5(monkeypatch):
+def test_default_analysis_model_uses_configured_claude_default(monkeypatch):
     monkeypatch.delenv("ODDISH_ANALYSIS_MODEL", raising=False)
-    settings = _settings(monkeypatch, clear_openai_env=False)
-
+    settings = _settings(monkeypatch, claude_code_force_direct_api=True)
     assert settings.analysis_model == "claude-sonnet-5"
+    assert settings.get_qa_queue_key() == "anthropic/claude-sonnet-5"
+    settings.claude_code_force_direct_api = False
     assert settings.get_qa_queue_key() == "global.anthropic.claude-sonnet-5"
 
 
-def test_anthropic_hdo_prefix_stays_off_bedrock_queue(monkeypatch):
-    settings = _settings(monkeypatch, clear_openai_env=False)
-
+def test_anthropic_hdo_prefix_has_a_separate_queue(monkeypatch):
+    settings = _settings(monkeypatch, claude_code_force_direct_api=True)
     expected = "anthropic-hdo/claude-sonnet-4-6"
-
-    assert (
-        settings.normalize_trial_model("claude-code", "anthropic-hdo/claude-sonnet-4-6")
-        == expected
-    )
-    assert (
-        settings.get_provider_for_trial(
-            "claude-code", "anthropic-hdo/claude-sonnet-4-6"
-        )
-        == "anthropic-hdo"
-    )
-    assert (
-        settings.get_queue_key_for_trial(
-            "claude-code", "anthropic-hdo/claude-sonnet-4-6"
-        )
-        == expected
-    )
-    # Bare Claude ids still take the Bedrock path — HDO is prefix-opt-in only.
+    assert settings.normalize_trial_model("claude-code", expected) == expected
+    assert settings.get_provider_for_trial("claude-code", expected) == "anthropic-hdo"
+    assert settings.get_queue_key_for_trial("claude-code", expected) == expected
     assert (
         settings.normalize_trial_model("claude-code", "claude-sonnet-4-6")
-        == "global.anthropic.claude-sonnet-4-6"
+        == "anthropic/claude-sonnet-4-6"
     )
 
 
 @pytest.mark.parametrize(
-    "model",
+    "alias,api_id,bedrock_id",
     [
-        "claude-opus-5-5",
-        "claude-opus-5.5",
-        "anthropic/claude-opus-5-5",
-        "anthropic/claude-opus-5.5",
-        "global.anthropic.claude-opus-5-5",
-        "bedrock/global.anthropic.claude-opus-5-5",
+        ("claude-opus-4-8", "claude-opus-4-8", "global.anthropic.claude-opus-4-8"),
+        ("claude-opus-4.8", "claude-opus-4-8", "global.anthropic.claude-opus-4-8"),
+        (
+            "claude-sonnet-4.6",
+            "claude-sonnet-4-6",
+            "global.anthropic.claude-sonnet-4-6",
+        ),
+        ("claude-opus-5-5", "claude-opus-5-5", "global.anthropic.claude-opus-5-5"),
+        ("claude-opus-5.5", "claude-opus-5-5", "global.anthropic.claude-opus-5-5"),
+        ("claude-fable-5", "claude-fable-5", "global.anthropic.claude-fable-5"),
+        ("claude-fable-5-1", "claude-fable-5-1", "global.anthropic.claude-fable-5-1"),
     ],
 )
-def test_opus_5_5_normalizes_for_storage_and_anthropic_requests(monkeypatch, model):
-    settings = _settings(monkeypatch, clear_openai_env=False)
-    stored_model = settings.normalize_trial_model("claude-code", model)
-
-    assert stored_model == "global.anthropic.claude-opus-5-5"
-    assert settings.get_queue_key_for_trial("claude-code", model) == stored_model
-    assert to_anthropic_api_model_id(stored_model) == "claude-opus-5-5"
-    assert to_anthropic_api_model_id(f"bedrock/{stored_model}") == "claude-opus-5-5"
-
-
-def test_opus_4_8_maps_to_global_inference_profile(monkeypatch):
-    settings = _settings(monkeypatch, clear_openai_env=False)
-
-    # Opus 4.8's invokable Bedrock id is the "global." cross-region inference
-    # profile (the bare "anthropic.claude-opus-4-8" foundation-model id is not
-    # invokable on-demand via the legacy InvokeModel API Claude Code uses).
-    expected = "global.anthropic.claude-opus-4-8"
-
-    assert settings.normalize_trial_model("claude-code", "claude-opus-4-8") == expected
+def test_claude_aliases_keep_the_selected_provider(
+    monkeypatch, alias, api_id, bedrock_id
+):
+    settings = _settings(monkeypatch, claude_code_force_direct_api=True)
+    assert settings.normalize_trial_model("claude-code", alias) == f"anthropic/{api_id}"
     assert (
-        settings.normalize_trial_model("claude-code", "anthropic/claude-opus-4-8")
-        == expected
-    )
-    assert settings.normalize_queue_key("claude-opus-4-8") == expected
-    assert settings.normalize_queue_key("anthropic/claude-opus-4-8") == expected
-
-
-def test_dotted_marketing_spelling_maps_to_global_inference_profile(monkeypatch):
-    settings = _settings(monkeypatch, clear_openai_env=False)
-
-    # The marketing spelling uses a dotted minor version ("claude-opus-4.8"),
-    # but the Bedrock table is keyed by the canonical dashed id
-    # ("claude-opus-4-8"). The dotted alias must resolve rather than raising
-    # (an unmapped Claude id surfaces as a 500 at trial submit).
-    assert (
-        settings.normalize_trial_model("claude-code", "claude-opus-4.8")
-        == "global.anthropic.claude-opus-4-8"
+        settings.normalize_trial_model("claude-code", f"anthropic/{alias}")
+        == f"anthropic/{api_id}"
     )
     assert (
-        settings.normalize_trial_model("claude-code", "anthropic/claude-opus-4.8")
-        == "global.anthropic.claude-opus-4-8"
+        settings.normalize_trial_model("claude-code", f"bedrock/{alias}") == bedrock_id
     )
-    assert (
-        settings.normalize_trial_model("claude-code", "claude-sonnet-4.6")
-        == "global.anthropic.claude-sonnet-4-6"
-    )
-
-
-def test_fable_5_maps_to_global_inference_profile(monkeypatch):
-    settings = _settings(monkeypatch, clear_openai_env=False)
-
-    # Fable 5's invokable Bedrock id is the "global." cross-region inference
-    # profile, dateless and without a version suffix (same shape as Opus 4.8).
-    # Note the id is "claude-fable-5", NOT "claude-fable-v5" — Bedrock rejects
-    # the latter with "The provided model identifier is invalid".
-    expected = "global.anthropic.claude-fable-5"
-
-    assert settings.normalize_trial_model("claude-code", "claude-fable-5") == expected
-    assert (
-        settings.normalize_trial_model("claude-code", "anthropic/claude-fable-5")
-        == expected
-    )
-    assert settings.normalize_queue_key("claude-fable-5") == expected
-    assert settings.normalize_queue_key("anthropic/claude-fable-5") == expected
-
-
-def test_fable_5_1_maps_to_global_inference_profile(monkeypatch):
-    settings = _settings(monkeypatch, clear_openai_env=False)
-
-    expected = "global.anthropic.claude-fable-5-1"
-
-    assert settings.normalize_trial_model("claude-code", "claude-fable-5-1") == expected
-    assert (
-        settings.normalize_trial_model("claude-code", "anthropic/claude-fable-5-1")
-        == expected
-    )
-    assert settings.normalize_queue_key("claude-fable-5-1") == expected
-    assert settings.normalize_queue_key("anthropic/claude-fable-5-1") == expected
-    assert settings.normalize_queue_key(expected) == expected
-
-
-def test_bedrock_queue_key_normalization_collapses_aliases(monkeypatch):
-    settings = _settings(monkeypatch, clear_openai_env=False)
-
-    expected = "global.anthropic.claude-sonnet-4-6"
-
-    assert settings.normalize_queue_key("claude-sonnet-4-6") == expected
-    assert settings.normalize_queue_key("anthropic/claude-sonnet-4-6") == expected
-    assert settings.normalize_queue_key(f"bedrock/{expected}") == expected
+    assert settings.normalize_queue_key(f"anthropic/{alias}") == f"anthropic/{api_id}"
+    assert settings.normalize_queue_key(f"bedrock/{alias}") == bedrock_id
+    assert settings.normalize_queue_key(bedrock_id) == bedrock_id
 
 
 def test_openrouter_claude_model_routes_through_openrouter(monkeypatch):
@@ -615,7 +529,7 @@ def test_glm_queue_key_has_independent_concurrency(monkeypatch):
 
 def test_legacy_unmapped_claude_queue_key_does_not_break_reads(monkeypatch):
     settings = _settings(monkeypatch, clear_openai_env=False)
-    legacy_key = "anthropic/claude-sonnet-4-6-20250514"
+    legacy_key = "bedrock/claude-sonnet-4-6-20250514"
 
     assert settings.normalize_queue_key(legacy_key) == legacy_key
     with pytest.raises(ValueError):

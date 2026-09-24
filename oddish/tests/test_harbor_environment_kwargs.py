@@ -201,20 +201,17 @@ def test_claude_code_openrouter_agent_config_preserves_explicit_base_and_token(
 def test_non_openrouter_claude_code_agent_config_does_not_add_openrouter_env(
     monkeypatch,
 ) -> None:
-    # This test is about openrouter env injection, not Bedrock vs direct routing;
-    # pin the force-direct mitigation off and the Bedrock env on so the incidental
-    # model-id assertion exercises the Bedrock branch deterministically.
-    monkeypatch.setattr(harbor_runner.settings, "claude_code_force_direct_api", False)
-    monkeypatch.setenv("CLAUDE_CODE_USE_BEDROCK", "1")
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "openrouter-token")
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://openrouter.ai/api")
     agent_config = harbor_runner._build_agent_config(
         agent="claude-code",
-        model="claude-opus-4-8",
+        model="bedrock/claude-opus-4-8",
         raw_harbor_config={},
     )
 
     assert agent_config.model_name == "global.anthropic.claude-opus-4-8"
-    assert "ANTHROPIC_AUTH_TOKEN" not in agent_config.env
-    assert "ANTHROPIC_BASE_URL" not in agent_config.env
+    assert agent_config.env["ANTHROPIC_AUTH_TOKEN"] == ""
+    assert agent_config.env["ANTHROPIC_BASE_URL"] == ""
 
 
 def test_claude_code_glm_agent_config_sets_zai_anthropic_skin_env(
@@ -795,9 +792,11 @@ def test_claude_code_glm_agent_config_preserves_explicit_env(monkeypatch) -> Non
 def test_harbor_runner_passes_environment_kwargs_to_job_config(
     monkeypatch,
     tmp_path: Path,
+    make_task,
 ) -> None:
-    task_path = tmp_path / "task"
-    task_path.mkdir()
+    task_path = make_task()
+    with (task_path / "task.toml").open("a") as task_config:
+        task_config.write("build_timeout_sec = 120\n")
     jobs_dir = tmp_path / "jobs"
     seen: dict[str, dict] = {}
 
@@ -815,11 +814,6 @@ def test_harbor_runner_passes_environment_kwargs_to_job_config(
             (self.job_dir / "result.json").write_text("{}\n", encoding="utf-8")
             return object()
 
-    monkeypatch.setattr(
-        harbor_runner, "validate_task_timeout_config", lambda path: None
-    )
-    monkeypatch.setattr(harbor_runner, "_build_agent_config", lambda **kwargs: object())
-    monkeypatch.setattr(harbor_runner, "TaskConfig", lambda path: path)
     monkeypatch.setattr(harbor_runner, "JobConfig", lambda **kwargs: kwargs)
     monkeypatch.setattr(harbor_runner, "Job", _FakeJob)
     monkeypatch.setattr(

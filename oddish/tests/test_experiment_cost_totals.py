@@ -67,6 +67,7 @@ def _trial(
     *,
     agent: str = "codex",
     model: str = "gpt-5.5",
+    provider: str = "openai",
     cost_usd: float | None = None,
     input_tokens: int | None = None,
     output_tokens: int | None = None,
@@ -84,7 +85,7 @@ def _trial(
         experiment_id=experiment.id,
         org_id=_ORG,
         agent=agent,
-        provider="openai",
+        provider=provider,
         queue_key=f"openai/{model}",
         model=model,
         status=TrialStatus.SUCCESS,
@@ -98,6 +99,53 @@ def _trial(
         superseded_by_trial_id=superseded_by_trial_id,
         created_at=utcnow(),
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("force_direct", [False, True])
+async def test_estimated_claude_cost_uses_stored_provider(
+    session, monkeypatch, force_direct
+):
+    """Historical bare Claude rows keep their persisted pricing route."""
+    task, experiment = await _fixture(session, f"claude-provider-{force_direct}")
+    session.add_all(
+        [
+            _trial(
+                task,
+                experiment,
+                agent="claude-code",
+                model="claude-opus-4-8",
+                provider=provider,
+                input_tokens=1_000,
+            )
+            for provider in ("anthropic", "bedrock")
+        ]
+    )
+    await session.flush()
+
+    priced_models: list[str] = []
+
+    def fixed_price(model, *_tokens):
+        priced_models.append(model)
+        return {
+            "anthropic/claude-opus-4-8": 1.0,
+            "global.anthropic.claude-opus-4-8": 2.0,
+        }[model]
+
+    monkeypatch.setattr(settings, "claude_code_force_direct_api", force_direct)
+    monkeypatch.setattr(
+        "oddish.core.endpoints.experiment_cost.estimate_cost_usd", fixed_price
+    )
+
+    totals = await get_experiment_cost_totals(
+        session, experiment_id=experiment.id, org_id=_ORG
+    )
+
+    assert totals.cost_usd == 3.0
+    assert set(priced_models) == {
+        "anthropic/claude-opus-4-8",
+        "global.anthropic.claude-opus-4-8",
+    }
 
 
 async def _fixture(session, slug: str) -> tuple[TaskModel, ExperimentModel]:
@@ -123,7 +171,8 @@ def _client_side_sum(trials: list[TrialModel]) -> float:
     total = 0.0
     for trial in trials:
         cost, _estimated = _resolve_trial_cost(
-            trial, settings.normalize_trial_model(trial.agent, trial.model)
+            trial,
+            settings.model_for_stored_trial(trial.agent, trial.model, trial.provider),
         )
         if cost is not None:
             total += cost

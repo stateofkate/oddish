@@ -11,6 +11,7 @@ classifiers and default base URLs.
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -265,6 +266,7 @@ _AGENT_BASE_URL_OVERRIDE_KEYS: dict[str, tuple[str, ...]] = {
 }
 
 _DEFAULT_BEDROCK_REGION = "us-east-1"
+_AWS_REGION_RE = re.compile(r"[a-z]+(?:-[a-z0-9]+)+-\d+")
 _BEDROCK_STS_DOMAINS = ("sts.amazonaws.com",)
 
 
@@ -284,18 +286,26 @@ def bedrock_domains_for_model(
     small_model_region: str | None = None,
 ) -> list[str]:
     region = (region or _DEFAULT_BEDROCK_REGION).strip().lower()
+    if not _AWS_REGION_RE.fullmatch(region):
+        region = _DEFAULT_BEDROCK_REGION
+    suffix = "amazonaws.com.cn" if region.startswith("cn-") else "amazonaws.com"
     domains = [
-        f"bedrock-runtime.{region}.amazonaws.com",
-        f"bedrock.{region}.amazonaws.com",
+        f"bedrock-runtime.{region}.{suffix}",
+        f"bedrock.{region}.{suffix}",
+        f"sts.{region}.{suffix}",
         *_BEDROCK_STS_DOMAINS,
     ]
-    if small_model_region and small_model_region.lower() != region:
+    if (
+        small_model_region
+        and _AWS_REGION_RE.fullmatch(small_model_region.lower())
+        and small_model_region.lower() != region
+    ):
         small = small_model_region.strip().lower()
         domains.extend(
             [f"bedrock-runtime.{small}.amazonaws.com", f"bedrock.{small}.amazonaws.com"]
         )
 
-    tail = (model_name or "").split("/", 1)[-1].lower()
+    tail = (model_name or "").lower().removeprefix("bedrock/")
     extras: set[str] = set()
     regions: tuple[str, ...]
     if tail.startswith(("us.", "global.")):
@@ -306,9 +316,17 @@ def bedrock_domains_for_model(
         regions = ("ap-northeast-1", "ap-southeast-2")
     else:
         regions = ()
+    arn_parts = tail.split(":", 5)
+    if len(arn_parts) == 6 and arn_parts[0] == "arn" and arn_parts[2] == "bedrock":
+        regions = (*regions, arn_parts[3])
     for extra_region in regions:
-        extras.add(f"bedrock-runtime.{extra_region}.amazonaws.com")
-        extras.add(f"bedrock.{extra_region}.amazonaws.com")
+        if not _AWS_REGION_RE.fullmatch(extra_region):
+            continue
+        extra_suffix = (
+            "amazonaws.com.cn" if extra_region.startswith("cn-") else "amazonaws.com"
+        )
+        extras.add(f"bedrock-runtime.{extra_region}.{extra_suffix}")
+        extras.add(f"bedrock.{extra_region}.{extra_suffix}")
     return sorted(set(domains) | extras)
 
 
@@ -440,6 +458,16 @@ def outbound_hosts_for_model(
     extra_env = (agent_kwargs or {}).get("extra_env")
     if isinstance(extra_env, dict):
         hosts.extend(_hosts_from_env(extra_env))
+    region_env = {
+        **(agent_env or {}),
+        **(extra_env if isinstance(extra_env, dict) else {}),
+    }
+    bedrock_region = (
+        region_env.get("AWS_REGION")
+        or region_env.get("AWS_DEFAULT_REGION")
+        or os.environ.get("AWS_REGION")
+        or os.environ.get("AWS_DEFAULT_REGION")
+    )
 
     # Canonicalize a bare id to ``provider/model`` (opt-in; restricted-Compose
     # host inference only) so the provider classifiers and prefix switch below
@@ -455,7 +483,7 @@ def outbound_hosts_for_model(
             _bare_provider = infer_model_provider_prefix(model_name)
             if _bare_provider:
                 model_name = f"{_bare_provider}/{model_name}"
-        else:
+        elif not looks_like_bedrock_model_id(model_name):
             # An ALIAS prefix must resolve the same host as the canonical
             # provider it normalizes to. The transport-key map keys off the
             # canonical name (``claude/`` -> anthropic, ``palm/`` -> gemini,
@@ -521,7 +549,17 @@ def outbound_hosts_for_model(
             marked = _vertex_hosts_from_env(extra_env)
         hosts.extend(marked if marked is not None else _vertex_default_hosts())
     elif _looks_like_bedrock_model(model_name):
-        hosts.extend(bedrock_domains_for_model(model_name=model_name))
+        hosts.extend(
+            bedrock_domains_for_model(model_name=model_name, region=bedrock_region)
+        )
+        # LiteLLM gives AWS_REGION_NAME precedence; Claude Code uses AWS_REGION.
+        sdk_region = region_env.get("AWS_REGION_NAME") or os.environ.get(
+            "AWS_REGION_NAME"
+        )
+        if sdk_region and sdk_region != bedrock_region:
+            hosts.extend(
+                bedrock_domains_for_model(model_name=model_name, region=sdk_region)
+            )
     elif model_name:
         raw = model_name.strip().lower()
         head = raw.split("/", 1)[0] if "/" in raw else ""
@@ -559,10 +597,11 @@ def outbound_hosts_for_model(
         elif head == "cursor":
             hosts.extend(_CURSOR_RUNTIME_HOSTS)
         elif head == "bedrock":
-            hosts.extend(bedrock_domains_for_model(model_name=model_name))
+            hosts.extend(
+                bedrock_domains_for_model(model_name=model_name, region=bedrock_region)
+            )
         elif not head and not hosts and raw.startswith("claude-"):
-            # Force-direct-API routing strips the provider prefix so claude-code
-            # gets the bare Anthropic id it requires, which otherwise leaves the
+            # Claude Code gets the bare Anthropic id it requires, which leaves the
             # restricted-network allowlist with no model host to resolve. A
             # routed base URL above still wins.
             hosts.extend(_ANTHROPIC_HOSTS)

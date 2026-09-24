@@ -24,6 +24,7 @@ from thunder_sandbox import CapacityError
 from oddish.config import (
     BEDROCK_ENV_VARS,
     anthropic_hdo_bare_model_id,
+    claude_model_provider,
     is_anthropic_hdo_model,
     is_vertex_ai_model,
     is_xai_public_model,
@@ -42,9 +43,10 @@ from oddish.workers.agents.claude_code import _pinned_harbor_requirement
 from .agent_config import (
     _anthropic_hdo_credential_env,
     _build_routed_agent_config,
-    _claude_code_forces_direct_api,
+    _claude_transport_env,
     _gateway_env,
     _is_claude_code_agent,
+    _selected_claude_model,
     _temporary_env,
     _trial_requested_model,
     _trial_uses_openai_provider,
@@ -132,20 +134,20 @@ def _claude_code_on_direct_anthropic(
     them is what let a Bedrock inference-profile id reach api.anthropic.com.
     """
     return "claude-code" in (agent or "").strip().lower() and (
-        is_anthropic_hdo_model(model) or _claude_code_forces_direct_api(is_probe)
+        is_anthropic_hdo_model(model)
+        or claude_model_provider(_selected_claude_model(agent, model)) == "anthropic"
     )
 
 
 def _child_model_name(*, agent: str, model: str | None, is_probe: bool) -> str | None:
     """Resolve the model id for the transport the child will actually use.
 
-    A direct Anthropic request needs ``claude-opus-5`` instead of the stored
-    Bedrock id ``global.anthropic.claude-opus-5`` or the account-selecting
-    prefix in ``anthropic-hdo/claude-opus-5``. Only the child request changes;
-    the trial keeps its stored model identity.
+    A direct Anthropic request needs the bare API id instead of the stored
+    ``anthropic/`` prefix or the account-selecting ``anthropic-hdo/`` prefix.
+    Only the client spelling changes; the trial keeps its stored model identity.
     """
     if not _claude_code_on_direct_anthropic(agent, model, is_probe):
-        return model
+        return _selected_claude_model(agent, model)
     if is_anthropic_hdo_model(model):
         model = anthropic_hdo_bare_model_id(model or "")
     return to_anthropic_api_model_id(model)
@@ -164,7 +166,12 @@ def _runtime_env_overrides(
     env: dict[str, str] = {}
     if uses_openai:
         env.update(settings.get_openai_agent_env(model=openai_model))
-    if _claude_code_on_direct_anthropic(agent, model, is_probe):
+    env.update(
+        _claude_transport_env(
+            _selected_claude_model(agent, openai_model), requested_model=openai_model
+        )
+    )
+    if _claude_code_on_direct_anthropic(agent, openai_model, is_probe):
         env.update({var: "" for var in BEDROCK_ENV_VARS})
     if is_vertex_ai_model(openai_model):
         # The child's agent env: keep the baked Bedrock flags blank for Harbor's
@@ -199,8 +206,8 @@ def _child_agent_config(
     platform credentials -- lives in ``agent_config.env``, which *routed* already
     carries from the same builder the in-process path uses. Only ``env`` and
     ``kwargs`` are projected onto the submitted dict: the child resolves ``name``
-    and ``import_path`` against its own Harbor, which has none of Oddish's
-    wrapper agent classes, and every other submitted field crosses unchanged.
+    and ``import_path`` against its own Harbor and selects the required Oddish
+    adapters in its entrypoint. Every other submitted field crosses unchanged.
 
     The shaped env stays the *base* layer of the child's merge, which keeps the
     in-process precedence intact -- a submitted agent env and the worker's
@@ -238,9 +245,8 @@ def _child_model_id(routed: AgentConfig, *, model: str | None) -> str | None:
     ``google/`` prefixes with the harness. Taking the builder's own answer keeps
     that decision in one place.
 
-    claude-code is excluded. Its Bedrock and direct-Anthropic ids are a separate
-    decision owned by the child's model normalization, so this returns the
-    submitted id and lets that own the field.
+    For Claude Code, the parent has already converted the selected route to
+    its client spelling via ``_child_model_name``; preserve that prepared id.
     """
     if _is_claude_code_agent(routed):
         return model
@@ -268,6 +274,12 @@ def _child_extra_agent_env(
         return env
     env.update(anthropic_env or {})
     env.update(_anthropic_hdo_credential_env(model))
+    if not is_anthropic_hdo_model(model):
+        env.update(
+            _claude_transport_env(
+                _selected_claude_model("claude-code", model), requested_model=model
+            )
+        )
     if is_vertex_ai_model(model):
         # The child merges this layer last: carry the Vertex profile's
         # assignments in it so a bundle or probe value cannot restore a
@@ -349,16 +361,15 @@ def _build_payload(
             environment_config.kwargs = DaytonaBackend().harbor_env_kwargs(
                 dict(environment_config.kwargs)
             )
-    # Both the routed build and the runtime env ask
-    # ``_claude_code_forces_direct_api``, which reads ``os.environ``. The
-    # in-process runner surfaces the trial's own Anthropic credential there
-    # first; without it a worker holding only Bedrock credentials answers the
-    # routing question for an HDO trial as if the key did not exist. The same
-    # credential is then shipped to the child, so its own routing checks and its
-    # agent see the trial's key, with HDO precedence over a user-supplied key.
-    # ``_temporary_env`` restores the worker environment before any child work.
+    # Surface the selected Anthropic credential during config construction and
+    # ship it to the child. The model's canonical provider owns the transport;
+    # credentials do not change it. HDO keeps its separate key precedence.
+    # ``_temporary_env`` restores the worker environment before child work.
+    _, requested_model = _trial_requested_model(
+        agent=agent, model=model, raw_harbor_config=raw_harbor_config
+    )
     anthropic_env = surfaced_anthropic_env(
-        agent=agent, model=model, agent_env=extra_agent_env
+        agent=agent, model=requested_model, agent_env=extra_agent_env
     )
     with _temporary_env(anthropic_env):
         routed = _build_routed_agent_config(
@@ -380,7 +391,9 @@ def _build_payload(
         # wrapper, so neither is asked under the bare worker environment.
         child_model = _child_model_id(
             routed,
-            model=_child_model_name(agent=agent, model=model, is_probe=is_probe),
+            model=_child_model_name(
+                agent=agent, model=requested_model, is_probe=is_probe
+            ),
         )
     agent_config = _child_agent_config(
         routed, raw_harbor_config=raw_harbor_config, is_probe=is_probe
@@ -388,9 +401,6 @@ def _build_payload(
     # The effective requested model (falls back to the stored agent_config
     # when the trial row carries no model): the id the routed builder
     # installed the provider profile for.
-    _, requested_model = _trial_requested_model(
-        agent=agent, model=model, raw_harbor_config=raw_harbor_config
-    )
     child_extra_env = _child_extra_agent_env(
         model=requested_model,
         extra_agent_env=extra_agent_env,

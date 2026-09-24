@@ -16,7 +16,7 @@ def submission():
     return TaskSweepSubmission(
         task_id="unmapped-claude-task",
         configs=[
-            AgentModelPair(agent="claude-code", model="anthropic/claude-unmapped-test")
+            AgentModelPair(agent="claude-code", model="bedrock/claude-unmapped-test")
         ],
     )
 
@@ -27,7 +27,16 @@ def test_unmapped_model_is_a_client_error(existing_counts):
         build_trial_specs_from_sweep(submission(), existing_counts=existing_counts)
     assert caught.value.status_code == 404
     assert "No Bedrock model id mapping" in caught.value.detail
-    assert "anthropic/claude-unmapped-test" in caught.value.detail
+    assert "bedrock/claude-unmapped-test" in caught.value.detail
+
+
+@pytest.mark.parametrize("existing_counts", [None, {}], ids=["create", "top-up"])
+def test_anthropic_sweep_does_not_require_bedrock_mapping(existing_counts):
+    payload = submission()
+    payload.configs[0].model = "anthropic/claude-unmapped-test"
+    specs = build_trial_specs_from_sweep(payload, existing_counts=existing_counts)
+    assert specs
+    assert all(spec.model == "anthropic/claude-unmapped-test" for spec in specs)
 
 
 @pytest.mark.asyncio

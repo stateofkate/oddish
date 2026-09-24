@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from collections import Counter
 
 import pytest
 
@@ -47,14 +48,14 @@ async def test_effective_limits_prefer_database_override():
 
 @pytest.mark.asyncio
 async def test_effective_limits_are_keyed_by_the_callers_queue_key():
-    raw = "anthropic/claude-haiku-4-5-20251001"
+    raw = "claude/claude-haiku-4-5-20251001"
     assert settings.normalize_queue_key(raw) != raw, "picked a key that isn't rewritten"
 
     limits = await get_effective_model_concurrency_limits(_Session(), (raw,))
 
     assert raw in limits and limits[raw] > 0
     plan = build_spawn_plan(
-        queued_by_org_queue={("org1", raw, "default", "default"): 5},
+        queued_by_org_queue={("org1", raw, "default", "default", 0): 5},
         running_by_queue={},
         concurrency_limits=limits,
         max_workers=10,
@@ -74,7 +75,9 @@ async def test_zero_override_is_an_off_switch():
 
     assert limits["minimax/minimax-m3"] == 0
     plan = build_spawn_plan(
-        queued_by_org_queue={("org1", "minimax/minimax-m3", "default", "default"): 5},
+        queued_by_org_queue={
+            ("org1", "minimax/minimax-m3", "default", "default", 0): 5
+        },
         running_by_queue={},
         concurrency_limits=limits,
         max_workers=10,
@@ -115,3 +118,36 @@ async def test_set_and_clear_override():
     key = await set_model_concurrency_override(session, "MiniMax/MiniMax-M3", None)
     assert key == "minimax/minimax-m3"
     assert "DELETE FROM model_concurrency_overrides" in session.calls[1][0]
+
+
+@pytest.mark.asyncio
+async def test_claude_routes_have_independent_dispatch_capacity():
+    direct = settings.get_queue_key_for_trial(
+        "claude-code", "anthropic/claude-opus-4-8"
+    )
+    bedrock = settings.get_queue_key_for_trial(
+        "claude-code", "bedrock/global.anthropic.claude-opus-4-8"
+    )
+    assert direct != bedrock
+    for direct_limit in (0, 2):
+        limits = await get_effective_model_concurrency_limits(
+            _Session(
+                [
+                    SimpleNamespace(queue_key=direct, concurrency_limit=direct_limit),
+                    SimpleNamespace(queue_key=bedrock, concurrency_limit=3),
+                ]
+            ),
+            (direct, bedrock),
+        )
+        plan = build_spawn_plan(
+            queued_by_org_queue={
+                ("org1", direct, "default", "default", False): 5,
+                ("org1", bedrock, "default", "default", False): 5,
+            },
+            running_by_queue={},
+            concurrency_limits=limits,
+            max_workers=10,
+        )
+        counts = Counter(unit.queue_key for unit in plan)
+        assert counts[direct] == direct_limit
+        assert counts[bedrock] == 3

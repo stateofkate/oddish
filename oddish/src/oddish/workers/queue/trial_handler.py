@@ -626,7 +626,9 @@ def _settle_trial_metering(
     trial.cache_tokens = outcome.cache_tokens
     trial.cache_write_tokens = outcome.cache_write_tokens
     trial.output_tokens = outcome.output_tokens
-    provider = settings.get_provider_for_trial(getattr(trial, "agent", ""), trial.model)
+    provider = getattr(trial, "provider", None) or settings.get_provider_for_trial(
+        getattr(trial, "agent", ""), trial.model
+    )
     native_cost_trusted = is_native_cost_trusted(
         agent=getattr(trial, "agent", None),
         provider=provider,
@@ -1794,8 +1796,8 @@ async def claim_funding_key(
     this attempt. ``(False, None)`` means the attempt was superseded. Shared by
     the worker path and the monitor launcher."""
     byok_resolution = None
-    if byok.byok_resolver_registered() and not byok.harbor_config_is_ephemeral(
-        prepared_trial.trial_harbor_config
+    if byok.byok_resolver_registered() and byok.uses_direct_anthropic(
+        prepared_trial.trial_agent, prepared_trial.trial_model, settings=settings
     ):
         byok_resolution = await byok.resolve_byok(
             owner_user_id=prepared_trial.created_by_user_id,

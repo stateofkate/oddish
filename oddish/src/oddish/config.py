@@ -123,7 +123,6 @@ _PROVIDER_ONLY_QUEUE_ALIASES: set[str] = {
     "default",
 }
 
-# Analysis (QA + audit) trials run claude-code on Sonnet via Bedrock.
 ANALYSIS_MODEL = "claude-sonnet-5"
 # Model for the probe transcript summarizer -- the one direct LLM call that
 # remains outside the trial pipeline. Kept separate from ANALYSIS_MODEL
@@ -971,6 +970,9 @@ class VertexAiConfig:
     api_key: str | None
 
 
+_BEDROCK_ARN_RE = re.compile(r"^arn:aws(?:-[a-z-]+)?:bedrock:", re.IGNORECASE)
+
+
 def looks_like_bedrock_model_id(model: str | None) -> bool:
     """Return True if *model* is a Bedrock-style id that should route through AWS.
 
@@ -981,10 +983,15 @@ def looks_like_bedrock_model_id(model: str | None) -> bool:
     """
     if not model:
         return False
-    tail = model.split("/", 1)[-1].strip().lower()
+    tail = model.strip().lower()
+    if tail.startswith("bedrock/"):
+        tail = tail.split("/", 1)[1]
+    elif "/" in tail and not _BEDROCK_ARN_RE.match(tail):
+        # A different explicit provider wins, even around a Bedrock-shaped id.
+        return False
     if not tail:
         return False
-    if tail.startswith("arn:aws:bedrock:"):
+    if _BEDROCK_ARN_RE.match(tail):
         return True
     if tail.startswith("anthropic."):
         return True
@@ -995,10 +1002,18 @@ def looks_like_bedrock_model_id(model: str | None) -> bool:
     return False
 
 
+def claude_model_provider(model: str | None) -> str | None:
+    """Explicit Claude transport, without credentials or bare-model defaults."""
+    raw = (model or "").strip().lower()
+    head, separator, _ = raw.partition("/")
+    if separator and head in {"anthropic", "claude"}:
+        return "anthropic"
+    if (separator and head == "bedrock") or looks_like_bedrock_model_id(raw):
+        return "bedrock"
+    return None
+
+
 # Anthropic-style Claude model ids mapped to their invokable AWS Bedrock ids.
-# Oddish stores default Claude routes as Bedrock ids and reverses this table
-# when calling Anthropic directly. Claude Code's Bedrock InvokeModel API accepts
-# cross-region inference profile ids (a "global."/"us."/... prefix) or ARNs — bare
 # "anthropic.claude-..." foundation-model ids are NOT invokable on-demand.
 # So every value below is a "global." inference profile id, except the two
 # legacy Opus models that have no global profile (they use "us.").
@@ -1054,9 +1069,9 @@ _ANTHROPIC_TO_BEDROCK_MODEL_IDS: dict[str, str] = {
 def to_bedrock_model_id(model: str | None) -> str | None:
     """Normalize any Claude model reference to an invokable AWS Bedrock id.
 
-    Oddish stores default Claude routes as Bedrock ids, even when execution
-    uses Anthropic directly. Claude Code's Bedrock InvokeModel API accepts
-    directly invokable ids: ARNs and cross-region inference profile ids
+    This conversion is for the Bedrock route. Claude Code invokes
+    Bedrock via the legacy InvokeModel API, which only accepts ids that are
+    directly invokable: ARNs and cross-region inference profile ids
     (``global.``/``us.``/``eu.``/... prefixed). Bare ``anthropic.claude-...``
     foundation-model ids are NOT invokable on-demand, so they get re-resolved
     through the mapping table like any other Claude reference.
@@ -1090,7 +1105,7 @@ def to_bedrock_model_id(model: str | None) -> str | None:
     lowered = stripped.lower()
 
     # ARNs and cross-region inference profile ids are already invokable as-is.
-    if lowered.startswith("arn:aws:bedrock:"):
+    if _BEDROCK_ARN_RE.match(stripped):
         return stripped
     if any(lowered.startswith(p) for p in _BEDROCK_REGION_PREFIXES) and (
         ".anthropic." in lowered
@@ -1133,7 +1148,7 @@ def to_bedrock_model_id(model: str | None) -> str | None:
     if bedrock_id is None:
         raise ValueError(
             f"No Bedrock model id mapping for Claude model {model!r}. "
-            "oddish runs Claude through AWS Bedrock only — add an entry to "
+            "Use anthropic/<api-id> for the direct API, or add an entry to "
             "_ANTHROPIC_TO_BEDROCK_MODEL_IDS in oddish.config."
         )
     return bedrock_id
@@ -1171,31 +1186,20 @@ def to_anthropic_api_model_id(model: str | None) -> str | None:
     if stripped.lower().startswith("bedrock/"):
         stripped = stripped.split("/", 1)[1]
 
+    if stripped.lower().startswith(("anthropic/", "claude/")):
+        stripped = stripped.split("/", 1)[1]
+
     # Known Bedrock inference-profile / foundation-model id -> plain API id.
     mapped = _BEDROCK_TO_ANTHROPIC_MODEL_IDS.get(stripped.lower())
     if mapped:
         return mapped
 
-    # Strip an "anthropic/"/"claude/" provider prefix to expose a bare API id;
-    # any other provider prefix is a deliberate transport choice -- pass through.
-    provider_prefix, bare = split_provider_model_name(stripped)
-    if provider_prefix and provider_prefix.strip().lower() in {"anthropic", "claude"}:
-        return bare
+    if stripped.lower().startswith("anthropic.claude-"):
+        return to_anthropic_api_model_id(to_bedrock_model_id(stripped))
+
+    if stripped.lower().startswith("claude-"):
+        return re.sub(r"(?<=\d)\.(?=\d)", "-", stripped.lower())
     return stripped
-
-
-def _to_bedrock_model_id_if_known(model: str) -> str:
-    """Best-effort Bedrock canonicalization for read-side legacy metadata.
-
-    New trial creation calls ``to_bedrock_model_id`` through
-    ``normalize_trial_model`` and remains strict. Queue/admin/dashboard reads
-    may encounter historical queue keys with unmapped Claude aliases; those
-    should remain visible instead of breaking the whole response.
-    """
-    try:
-        return to_bedrock_model_id(model) or model
-    except ValueError:
-        return model
 
 
 def normalize_model_id(model: str | None) -> str | None:
@@ -1207,7 +1211,16 @@ def normalize_model_id(model: str | None) -> str | None:
     if model is None:
         return None
 
-    stripped = model.strip().lower()
+    raw = model.strip()
+    if _BEDROCK_ARN_RE.match(raw):
+        return raw
+    if raw.lower().startswith("bedrock/") and _BEDROCK_ARN_RE.match(
+        raw.split("/", 1)[1]
+    ):
+        return "bedrock/" + raw.split("/", 1)[1]
+    stripped = raw.lower()
+    if stripped in {"anthropic/", "claude/", "bedrock/"}:
+        return stripped  # Keep the missing model visible to admission validation.
     if not stripped:
         return None
 
@@ -1561,13 +1574,6 @@ class Settings(BaseSettings):
     # the corresponding migration rolls out.
     modal_cost_tracking: bool = True
 
-    # Incident mitigation (2026-06): the workers' Bedrock credentials cannot run
-    # inference -- the bearer token returns 400 "Operation not allowed" and the
-    # SigV4 keys are rejected -- so every Bedrock claude-code call fails. While
-    # this is set, route ALL claude-code (not just probes) to the direct Anthropic
-    # API (ANTHROPIC_API_KEY) via _claude_code_forces_direct_api(). Set
-    # ODDISH_CLAUDE_CODE_FORCE_DIRECT_API=0 to restore Bedrock routing once the
-    # credentials are fixed.
     claude_code_force_direct_api: bool = True
     # Opt-in per-request QA routing. Pool quotas are explicit deployment config;
     # workers never infer independent capacity from the number of API keys.
@@ -2248,25 +2254,26 @@ class Settings(BaseSettings):
         """Canonicalize trial model input for storage/routing.
 
         ``strict=True`` (default, the live create/queue/execute path) raises for
-        a Claude model with no Bedrock runtime id. ``strict=False`` is for
-        read-side rendering/cost/notify over already-stored trials: an imported
-        legacy model (e.g. ``claude-3-5-sonnet-20241022``) has no Bedrock id and
-        never executes, so fall back to the un-collapsed model rather than 500
-        the page.
+        a Bedrock request with no runtime id. ``strict=False`` is for
+        read-side rendering/cost/notify over already-stored trials. Preserve
+        historical bare Claude ids rather than infer their original provider
+        from today's admission flag; unsupported legacy ids must still render.
 
         - Treat '-', 'none', 'null', empty, etc as missing.
         - For nop/oracle, always force the model to the single canonical
           ``nop_oracle`` id (same string as the queue key) so the stored model,
           the queue key, and the concurrency bucket all agree -- one id, no
           model/queue drift in bookkeeping.
-        - Canonicalize Claude models to their Bedrock runtime id, since Oddish
-          runs Claude through Bedrock and persists the same id it executes.
+        - Keep Claude's selected transport in its canonical stored model.
         - Otherwise return cleaned model (or None if missing).
         """
         cleaned = normalize_model_id(model)
 
         if is_nop_oracle_agent(agent):
             return NOP_ORACLE_QUEUE_KEY
+
+        if not strict and cleaned and cleaned.startswith("claude-"):
+            return cleaned
 
         # GLM/z.ai, MiniMax, and Moonshot/Kimi models run on the claude-code
         # harness but route to their own direct endpoints, not Bedrock.
@@ -2311,26 +2318,49 @@ class Settings(BaseSettings):
         if is_vertex_ai_model(cleaned):
             return to_vertex_ai_model_id(cleaned)
 
-        if strict:
-            return to_bedrock_model_id(cleaned)
+        return self._normalize_claude_model(cleaned, strict=strict)
+
+    def model_for_stored_trial(
+        self, agent: str, model: str | None, provider: str | None
+    ) -> str | None:
+        """Execution spelling for a stored row; never infer its historical prefix."""
+        if model and model.strip().lower().startswith("claude-"):
+            if provider not in {"anthropic", "bedrock", "anthropic-hdo"}:
+                raise ValueError("Stored bare Claude model has no explicit provider; resubmit with a provider prefix")
+            return self.normalize_trial_model(agent, f"{provider}/{model.strip()}")
+        return model
+
+    def _normalize_claude_model(self, model: str | None, *, strict: bool) -> str | None:
+        provider = claude_model_provider(model)
+        if provider is None and model and model.lower().startswith("claude-"):
+            provider = "anthropic" if self.claude_code_force_direct_api else "bedrock"
+        if provider is None:
+            return model
         try:
-            return to_bedrock_model_id(cleaned)
+            if model and model.endswith("/"):
+                raise ValueError(f"Missing model id in {model!r}")
+            if provider == "anthropic":
+                return f"anthropic/{to_anthropic_api_model_id(model)}"
+            return to_bedrock_model_id(model)
         except ValueError:
-            return cleaned
+            if strict:
+                raise
+            return model
 
     def normalize_queue_key(self, model: str) -> str:
         """Normalize queue keys.
 
-        Claude aliases collapse to the same Bedrock id that is persisted on the
-        trial, so queueing/concurrency and execution use one model id. For other
-        bare model inputs, infer a provider prefix as before.
+        Claude queues preserve the selected transport and use the same canonical
+        model as stored trials. Historical unknown Bedrock IDs remain readable.
         """
         normalized = model.strip().lower().replace(" ", "_")
+        if _BEDROCK_ARN_RE.match(normalized.removeprefix("bedrock/")):
+            normalized = normalize_model_id(model) or "default"
         if not normalized or normalized in _MODEL_ABSENT_ALIASES:
             return "default"
         if normalized in _PROVIDER_ONLY_QUEUE_ALIASES:
             return "default"
-        normalized = _to_bedrock_model_id_if_known(normalized)
+        normalized = self._normalize_claude_model(normalized, strict=False) or "default"
         if looks_like_bedrock_model_id(normalized):
             return normalized
         # Alias prefixes (``vertex/``, ``google-vertex/``) must land on the same

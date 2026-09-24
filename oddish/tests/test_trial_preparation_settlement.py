@@ -6,12 +6,105 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from harbor.models.environment_type import EnvironmentType
+from harbor.models.trial.config import EnvironmentConfig
 
 from oddish.config import settings
+from oddish.core.llm_key_fingerprint import hash_llm_key
 from oddish.core.harbor_artifacts import THUNDER_CAPACITY_UNAVAILABLE_CODE
 from oddish.db import TrialStatus
 from oddish.workers.harbor.outcome import HarborOutcome
 from oddish.workers.queue import trial_handler
+from oddish.workers.queue import byok
+from oddish.workers.harbor.ephemeral import _build_payload
+from oddish.workers.harbor._entry import _build_job_config
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "model,expects_byok",
+    [
+        ("anthropic/claude-sonnet-4-5", True),
+        ("bedrock/global.anthropic.claude-sonnet-4-5-20250929-v1:0", False),
+    ],
+)
+async def test_ephemeral_prepare_resolves_byok_only_for_direct_route(
+    tmp_path, monkeypatch, model, expects_byok
+):
+    prepared = trial_handler.PreparedTrialRun(
+        task_path=str(tmp_path),
+        task_s3_key=None,
+        task_id="task-1",
+        trial_agent="claude-code",
+        trial_model=model,
+        trial_environment="docker",
+        trial_harbor_config={"variant_id": "ephemeral"},
+        org_id="org-1",
+        created_by_user_id="user-1",
+    )
+    seen = []
+
+    async def resolve(**kwargs):
+        seen.append(kwargs)
+        return byok.ByokResolution(env={"ANTHROPIC_API_KEY": "user-ant"})
+
+    @asynccontextmanager
+    async def fake_session():
+        class Session:
+            async def execute(self, statement):
+                seen.append(statement.compile().params["llm_key_hash"])
+                return SimpleNamespace(rowcount=1)
+
+        yield Session()
+
+    async def prepare_task(**_kwargs):
+        return trial_handler.PreparedTrialTask(
+            task_path=tmp_path,
+            temp_task_dir=None,
+            resolved_task_s3_key=None,
+            probe_extra_instructions=None,
+            probe_agent_env=None,
+            probe_key_id=None,
+        )
+
+    monkeypatch.setattr(trial_handler, "get_session", fake_session)
+    monkeypatch.setattr(trial_handler, "_prepare_trial_task", prepare_task)
+    monkeypatch.setattr(trial_handler, "judge_costs_enabled", lambda _path: False)
+    monkeypatch.setattr(trial_handler, "capture_sandbox_resources", lambda *_args: None)
+    monkeypatch.setattr(
+        trial_handler, "capture_verifier_resources", lambda *_args: None
+    )
+    monkeypatch.setattr(settings, "harbor_jobs_dir", str(tmp_path / "jobs"))
+    byok.register_byok_resolver(resolve)
+    try:
+        attempt = await trial_handler._prepare_claimed_trial_attempt(
+            trial_id="trial-1",
+            prepared_trial=prepared,
+            worker_id=None,
+            worker_job_id=None,
+            worker_job_attempt=None,
+        )
+    finally:
+        byok.clear_byok_resolver()
+    assert attempt is not None
+    assert attempt.byok_env == (
+        {"ANTHROPIC_API_KEY": "user-ant"} if expects_byok else None
+    )
+    assert len(seen) == (2 if expects_byok else 1)
+    assert seen[-1] == (hash_llm_key("user-ant") if expects_byok else None)
+    payload = _build_payload(
+        task_path=tmp_path,
+        jobs_dir=tmp_path / "jobs",
+        outcome_path=tmp_path / "outcome.json",
+        agent="claude-code",
+        model=model,
+        environment_config=EnvironmentConfig(type=EnvironmentType.DOCKER),
+        raw_harbor_config=prepared.trial_harbor_config or {},
+        is_probe=False,
+        extra_agent_env=attempt.byok_env,
+    )
+    child_env = _build_job_config(payload).agents[0].env
+    assert child_env["ANTHROPIC_API_KEY"] == ("user-ant" if expects_byok else "")
 
 
 @pytest.mark.asyncio
@@ -245,9 +338,11 @@ async def test_run_trial_job_keeps_successful_upload_when_analysis_validation_fa
         task_s3_key="tasks/task-1/v1.tar.gz",
         task_id="task-1",
         trial_agent="claude-code" if gateway_enabled else "single-llm",
-        trial_model="anthropic/claude-sonnet-5"
-        if gateway_enabled
-        else "anthropic/claude-sonnet-4-6",
+        trial_model=(
+            "anthropic-hdo/claude-sonnet-5"
+            if gateway_enabled
+            else "anthropic/claude-sonnet-4-6"
+        ),
         trial_environment="docker",
         trial_harbor_config={"extra_instructions": "classify the task"},
         trial_kind="qa",

@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 from sqlalchemy import update
 
 from oddish.config import (
+    claude_model_provider,
     to_anthropic_api_model_id,
     anthropic_hdo_bare_model_id,
 )
@@ -31,6 +32,7 @@ def is_gateway_trial(
     return (
         kind in {"qa", "audit", "qa_eval"}
         and agent == "claude-code"
+        and claude_model_provider(model) not in {"anthropic", "bedrock"}
         and to_anthropic_api_model_id(anthropic_hdo_bare_model_id(model or ""))
         == GATEWAY_MODEL
         and not byok_env

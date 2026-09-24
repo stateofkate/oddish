@@ -27,6 +27,9 @@ on:
       - "oddish/src/**"
       - "oddish/tests/startup/**"
       - "oddish/tests/test_config_queue_keys.py"
+      - "oddish/tests/test_claude*"
+      - "oddish/tests/test_harbor_environment_kwargs.py"
+      - "oddish/tests/test_model_concurrency_overrides.py"
       - "oddish/tests/test_deliver*"
       - "oddish/pyproject.toml"
       - "oddish/uv.lock"
@@ -40,6 +43,9 @@ on:
       - "oddish/src/**"
       - "oddish/tests/startup/**"
       - "oddish/tests/test_config_queue_keys.py"
+      - "oddish/tests/test_claude*"
+      - "oddish/tests/test_harbor_environment_kwargs.py"
+      - "oddish/tests/test_model_concurrency_overrides.py"
       - "oddish/tests/test_deliver*"
       - "oddish/pyproject.toml"
       - "oddish/uv.lock"
@@ -96,6 +102,10 @@ jobs:
           uv run pytest
           ../oddish/tests/startup
           ../oddish/tests/test_config_queue_keys.py
+          ../oddish/tests/test_claude_routing.py
+          ../oddish/tests/test_claude_transport.py
+          ../oddish/tests/test_harbor_environment_kwargs.py
+          ../oddish/tests/test_model_concurrency_overrides.py
           ../oddish/tests/test_curated_model_submit.py -v
 
       - name: Test and benchmark preview relationship updates
@@ -108,6 +118,11 @@ jobs:
           ODDISH_E2E: "1"
           ODDISH_DATABASE_URL: postgresql+asyncpg://oddish:oddish@127.0.0.1:5432/oddish
         run: uv run pytest tests/e2e -v
+
+      - name: Check Claude submission and retry persistence
+        env:
+          ODDISH_DATABASE_URL: postgresql+asyncpg://oddish:oddish@127.0.0.1:5432/oddish
+        run: uv run pytest ../oddish/tests/test_claude_persistence.py -v
 
   delivery:
     # The staging push already tests this exact commit; promotion is fast-forward.

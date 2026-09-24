@@ -358,7 +358,7 @@ async def test_gateway_auth_is_bound_to_a_live_worker(monkeypatch, change):
         org_id="org",
         kind="qa",
         agent="claude-code",
-        model="global.anthropic.claude-sonnet-5",
+        model="anthropic-hdo/claude-sonnet-5",
         harbor_config={},
     )
 

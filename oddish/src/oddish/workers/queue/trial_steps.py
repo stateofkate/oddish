@@ -277,12 +277,15 @@ async def start_trial_attempt(
         task.started_at = utcnow()
 
     trial_agent = trial.agent
-    trial_model = settings.normalize_trial_model(trial_agent, trial.model)
-    if trial.model != trial_model:
-        trial.model = trial_model
-    canonical_queue_key = settings.get_queue_key_for_trial(trial_agent, trial_model)
-    if trial.queue_key != canonical_queue_key:
-        trial.queue_key = canonical_queue_key
+    # Historical bare rows retain their identity and queue. Their persisted
+    # provider selects only the execution spelling in load_trial_context.
+    if not (trial.model or "").strip().lower().startswith("claude-"):
+        trial_model = settings.normalize_trial_model(trial_agent, trial.model)
+        if trial.model != trial_model:
+            trial.model = trial_model
+        canonical_queue_key = settings.get_queue_key_for_trial(trial_agent, trial_model)
+        if trial.queue_key != canonical_queue_key:
+            trial.queue_key = canonical_queue_key
     refresh_stable_variant_pin(trial)
     trial.current_worker_id = worker_id
     trial.current_queue_slot = queue_slot
@@ -336,7 +339,9 @@ async def load_trial_context(
         task_s3_key=task_s3_key,
         task_id=task_id,
         trial_agent=trial.agent,
-        trial_model=trial.model,
+        trial_model=settings.model_for_stored_trial(
+            trial.agent, trial.model, getattr(trial, "provider", None)
+        ),
         trial_environment=trial.environment,
         trial_harbor_config=trial.harbor_config,
         fallback_from_environment=fallback_from_environment,

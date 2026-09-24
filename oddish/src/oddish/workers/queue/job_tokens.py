@@ -101,41 +101,29 @@ _AMBIENT_PROVIDER_KEYS: dict[str, tuple[str, ...]] = {
 _CURSOR_AUTH_ENV = ("CURSOR_API_KEY",)
 
 
-def _agent_is_claude_code(agent: str | None) -> bool:
-    """Mirror ``agent_config._is_claude_code_agent`` by agent name."""
-    return "claude-code" in (agent or "").strip().lower()
+def bedrock_sandbox_env(ambient: Mapping[str, str]) -> dict[str, str]:
+    """Resolve host-only AWS sources before crossing the sandbox boundary."""
+    env = {name: ambient[name] for name in _BEDROCK_AUTH_ENV if ambient.get(name)}
+    if env.get("AWS_BEARER_TOKEN_BEDROCK") or (env.get("AWS_ACCESS_KEY_ID") and env.get("AWS_SECRET_ACCESS_KEY")):
+        return env
+    sources = ("AWS_PROFILE", "AWS_SHARED_CREDENTIALS_FILE", "AWS_CONFIG_FILE", "AWS_WEB_IDENTITY_TOKEN_FILE", "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", "AWS_CONTAINER_CREDENTIALS_FULL_URI")
+    if not any(ambient.get(name) for name in sources):
+        return env
+    import boto3
+    from oddish.workers.harbor.agent_config import _temporary_env
 
-
-def _agent_invokes_bedrock(agent: str | None) -> bool:
-    return _agent_is_claude_code(agent) or (agent or "").strip().lower() == "single-llm"
-
-
-def _forced_to_direct_api(
-    is_probe: bool,
-    *,
-    agent: str,
-    model: str | None,
-    byok_env: Mapping[str, str] | None,
-) -> bool:
-    """Defer to the predicate that actually selects the transport.
-
-    ``agent_config._claude_code_forces_direct_api`` gates on an ambient
-    ``ANTHROPIC_API_KEY`` as well as the probe flag and the force-direct
-    setting. The runner asks it with any BYOK or HDO credential surfaced into
-    the environment first, so ask it under that same view here: a bundle built
-    from the bare worker environment would keep a Bedrock routing flag that the
-    runner is about to blank. Restating any part of this has drifted before,
-    so call the shared pieces.
-    """
-    from oddish.workers.harbor.agent_config import (
-        _claude_code_forces_direct_api,
-        _temporary_env,
-        surfaced_anthropic_env,
-    )
-
-    surfaced = surfaced_anthropic_env(agent=agent, model=model, agent_env=byok_env)
-    with _temporary_env(surfaced):
-        return _claude_code_forces_direct_api(is_probe)
+    with _temporary_env(dict(ambient)):
+        session = boto3.Session()
+        credentials = session.get_credentials()
+        if credentials is None:
+            raise ValueError("Bedrock credentials could not be resolved on the worker")
+        frozen = credentials.get_frozen_credentials()
+        env.update(AWS_ACCESS_KEY_ID=frozen.access_key, AWS_SECRET_ACCESS_KEY=frozen.secret_key)
+        if frozen.token:
+            env["AWS_SESSION_TOKEN"] = frozen.token
+        if session.region_name:
+            env.setdefault("AWS_DEFAULT_REGION", session.region_name)
+    return env
 
 
 def scoped_model_env(
@@ -199,38 +187,13 @@ def scoped_model_env(
         key = getattr(settings, "anthropic_hdo_api_key", None)
         return {"ANTHROPIC_API_KEY": key} if key else {}
     if provider == "bedrock":
-        # Non-claude-code (litellm) agents run a Bedrock-classified Claude model
-        # over the direct Anthropic API as ``anthropic/<id>`` (see
-        # _to_litellm_claude_model_id), so scope the matching ANTHROPIC_API_KEY
-        # rather than the Bedrock routing flag they can't use.
-        #
-        # claude-code under claude_code_force_direct_api is the same case: the
-        # runner blanks the Bedrock env and rewrites the model to the direct
-        # Anthropic id, so a bundle carrying the routing flag would contradict
-        # the transport the trial was already routed to. The flag is merged into
-        # the agent env after that blanking, which would leave the CLI asking
-        # Bedrock for an id only api.anthropic.com knows. Scope the key the
-        # trial will actually authenticate with instead.
-        if not _agent_invokes_bedrock(agent) or (
-            _agent_is_claude_code(agent)
-            and _forced_to_direct_api(
-                is_probe, agent=agent, model=model, byok_env=byok_env
-            )
-        ):
-            key = getattr(settings, "anthropic_api_key", None)
-            return {"ANTHROPIC_API_KEY": key} if key else {}
-        # SingleLLMAgent invokes Bedrock with AWS credentials, not a single API
-        # key; scoping those needs STS (a future enhancement). Carry the
-        # routing flag; on the worker the AWS chain is ambient (dual-read), and
-        # for the monitor sandbox the same names are selected from the caller's
-        # environment so the route authenticates exactly as it did.
+        # Bedrock keeps its selected transport for every agent. The monitor
+        # sandbox has no worker ambient environment, so copy only the AWS
+        # credential-chain names it needs; the existing worker path passes no
+        # ``ambient`` mapping and continues using its own credential chain.
         return {
             "CLAUDE_CODE_USE_BEDROCK": "1",
-            **{
-                name: value
-                for name in _BEDROCK_AUTH_ENV
-                if (value := (ambient or {}).get(name))
-            },
+            **bedrock_sandbox_env(ambient or {}),
         }
     if provider == "gemini":
         key = getattr(settings, "gemini_api_key", None)

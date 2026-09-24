@@ -240,8 +240,10 @@ def cli(base_url: str, api_key: str, *args: str) -> subprocess.CompletedProcess:
         "ODDISH_API_URL": base_url,
         "ODDISH_API_KEY": api_key,
     }
+    # Exercise an installed release against the checkout's server when requested.
+    executable = os.environ.get("ODDISH_E2E_CLI")
     return subprocess.run(
-        ["uv", "run", "oddish", *args],
+        [executable, *args] if executable else ["uv", "run", "oddish", *args],
         cwd=str(_BACKEND_DIR),
         env=env,
         capture_output=True,

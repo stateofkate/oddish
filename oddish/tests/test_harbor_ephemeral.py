@@ -301,7 +301,7 @@ def test_build_payload_carries_extra_agent_env():
         is_probe=True,
         extra_agent_env={"ODDISH_API_KEY": "secret-mint"},
     )
-    assert payload["extra_agent_env"] == {"ODDISH_API_KEY": "secret-mint"}
+    assert payload["extra_agent_env"]["ODDISH_API_KEY"] == "secret-mint"
 
 
 def test_build_payload_routes_public_xai_for_stock_child(monkeypatch):
@@ -809,13 +809,7 @@ async def test_ephemeral_builder_failure_still_removes_the_patched_task_copy(
 def test_ephemeral_hdo_trial_blanks_bedrock_without_an_ambient_platform_key(
     monkeypatch,
 ):
-    """The routing question must be asked under the credential the trial supplies.
-
-    `_claude_code_forces_direct_api` reads `os.environ`, and the in-process runner
-    surfaces the HDO key there before asking. Without that, a worker holding only
-    Bedrock credentials answers "no" and the child keeps its Bedrock route while
-    authenticating with the HDO key.
-    """
+    """The HDO route selects its own key and clears competing Bedrock selectors."""
     monkeypatch.setattr(harbor_ephemeral.settings, "anthropic_hdo_api_key", None)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.setenv("ANTHROPIC_HDO_API_KEY", "hdo-secret")
@@ -943,7 +937,8 @@ def test_child_applies_submitted_agent_config(tmp_path):
         }
     )
     agent_config = config.agents[0]
-    assert agent_config.name == "mini-swe-agent"
+    assert agent_config.name is None
+    assert agent_config.import_path == "oddish.workers.agents.mini_swe_agent:OddishMiniSweAgent"
     assert agent_config.model_name == "openrouter/tencent/hy3"
     assert agent_config.env == {"UV_HTTP_RETRIES": "8"}
     assert agent_config.extra_allowed_hosts == ["astral.sh", "pypi.org"]
@@ -1708,14 +1703,7 @@ async def test_upload_probe_assets_fails_when_qa_submission_contract_is_missing(
 def test_build_payload_normalizes_claude_model_when_bedrock_is_blanked(
     monkeypatch, api_model
 ):
-    """A claude-code trial forced to the direct Anthropic API must not carry a
-    Bedrock inference-profile id.
-
-    Oddish stores every Claude trial under its Bedrock id
-    (``global.anthropic.claude-opus-5``), which exists only on Bedrock. Blanking
-    ``BEDROCK_ENV_VARS`` moves the child onto api.anthropic.com, whose ids are a
-    different namespace, so the two must change together.
-    """
+    """An explicit Anthropic child carries the API ID and clears Bedrock mode."""
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
     monkeypatch.setattr(harbor_ephemeral.settings, "claude_code_force_direct_api", True)
     payload = _build_payload(
@@ -1723,7 +1711,7 @@ def test_build_payload_normalizes_claude_model_when_bedrock_is_blanked(
         jobs_dir=Path("/tmp/jobs"),
         outcome_path=Path("/tmp/jobs/outcome.json"),
         agent="claude-code",
-        model=f"global.anthropic.{api_model}",
+        model=f"anthropic/{api_model}",
         environment=EnvironmentType.DOCKER,
         raw_harbor_config=dict(_EPHEMERAL_HC),
         is_probe=False,
@@ -1759,7 +1747,7 @@ def test_build_payload_keeps_bedrock_model_when_bedrock_stays_on(
         is_probe=False,
     )
 
-    assert "CLAUDE_CODE_USE_BEDROCK" not in payload["runtime_env"]
+    assert payload["runtime_env"]["CLAUDE_CODE_USE_BEDROCK"] == "1"
     assert payload["model"] == f"global.anthropic.{api_model}"
 
 
@@ -1783,7 +1771,8 @@ def test_build_payload_leaves_non_claude_agents_alone(monkeypatch):
 
 
 @pytest.mark.parametrize("api_model", ["claude-opus-5", "claude-opus-5-5"])
-def test_dispatch_paths_agree_on_the_claude_model_id(monkeypatch, api_model):
+@pytest.mark.parametrize("route", ["anthropic", "bedrock"])
+def test_dispatch_paths_agree_on_the_claude_model_id(monkeypatch, api_model, route):
     """Both dispatch paths must hand Claude Code the same model id.
 
     The in-process path normalizes in ``_build_agent_config`` and the ephemeral
@@ -1795,7 +1784,12 @@ def test_dispatch_paths_agree_on_the_claude_model_id(monkeypatch, api_model):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
     monkeypatch.setattr(harbor_ephemeral.settings, "claude_code_force_direct_api", True)
     agent = "claude-code"
-    model = f"global.anthropic.{api_model}"
+    model = (
+        f"anthropic/{api_model}"
+        if route == "anthropic"
+        else f"global.anthropic.{api_model}"
+    )
+    expected = api_model if route == "anthropic" else f"global.anthropic.{api_model}"
 
     in_process = _build_agent_config(
         agent=agent,
@@ -1814,15 +1808,15 @@ def test_dispatch_paths_agree_on_the_claude_model_id(monkeypatch, api_model):
         is_probe=False,
     )
 
-    assert payload["model"] == in_process.model_name == api_model
+    assert payload["model"] == in_process.model_name == expected
 
 
 @pytest.mark.parametrize(
     "force_direct,is_probe", [(True, False), (False, True), (False, False)]
 )
-def test_payload_routes_with_trial_anthropic_key(monkeypatch, force_direct, is_probe):
-    from oddish.config import BEDROCK_ENV_VARS
-
+def test_payload_bedrock_route_ignores_trial_anthropic_key(
+    monkeypatch, force_direct, is_probe
+):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.setenv("CLAUDE_CODE_USE_BEDROCK", "1")
     monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "test-bedrock-token")
@@ -1852,16 +1846,12 @@ def test_payload_routes_with_trial_anthropic_key(monkeypatch, force_direct, is_p
         "ANTHROPIC_API_KEY": "test-user-key",
         "ODDISH_API_KEY": "test-read-key",
     }
-    assert child_agent.env["ANTHROPIC_API_KEY"] == "test-user-key"
+    assert child_agent.env["ANTHROPIC_API_KEY"] == ""
     assert child_agent.env["ODDISH_API_KEY"] == "test-read-key"
-    if force_direct or is_probe:
-        assert child_agent.model_name == "claude-opus-5"
-        assert all(payload["runtime_env"][name] == "" for name in BEDROCK_ENV_VARS)
-        assert all(child_agent.env[name] == "" for name in BEDROCK_ENV_VARS)
-    else:
-        assert child_agent.model_name == "global.anthropic.claude-opus-5"
-        assert "CLAUDE_CODE_USE_BEDROCK" not in payload["runtime_env"]
-    assert payload["runtime_env"]["ANTHROPIC_API_KEY"] == "test-user-key"
+    assert child_agent.model_name == "global.anthropic.claude-opus-5"
+    assert child_agent.env["CLAUDE_CODE_USE_BEDROCK"] == "1"
+    assert payload["runtime_env"]["CLAUDE_CODE_USE_BEDROCK"] == "1"
+    assert payload["runtime_env"]["ANTHROPIC_API_KEY"] == ""
 
 
 @pytest.mark.parametrize("force_direct", [True, False])

@@ -1525,21 +1525,33 @@ Keep these routing rules in sync with `oddish/src/oddish/config.py` and
   slots forever; an inventory failure never authorizes this finalization.
   Inventory and termination failures stay visible in logs/metrics while the rest
   of queue cleanup continues.
-- Claude Code currently prefers the direct Anthropic API whenever
-  `ANTHROPIC_API_KEY` is available because
-  `ODDISH_CLAUDE_CODE_FORCE_DIRECT_API` defaults to `1`. Set the flag to `0`
-  to restore the Modal image's Bedrock route (`CLAUDE_CODE_USE_BEDROCK=1`).
-  Bedrock model aliases must normalize to an invokable inference profile
-  (`global.` / `us.` / ARN) via `to_bedrock_model_id`. Opus 5.5 aliases use
-  `global.anthropic.claude-opus-5-5` for storage and queueing; the reverse
-  mapping supplies `claude-opus-5-5` to direct Anthropic requests. The separate
-  `anthropic-hdo/<model>` prefix always uses `ANTHROPIC_HDO_API_KEY` and blanks
-  Bedrock routing for that trial.
-  The ephemeral Claude Code runner applies this credential precedence when building
-  its child payload: routing sees the trial's Anthropic key, and HDO wins over
-  user and worker keys even when the HDO key is missing. The child receives
-  the selected key and matching model/Bedrock settings through the private
-  payload. Temporary worker-environment changes end before the child starts.
+- Claude routing is selected by the model before persistence. `anthropic/<id>`
+  and `claude/<id>` store `anthropic/<API-id>` and select Anthropic;
+  `bedrock/<id>` and native Bedrock IDs store an invokable native ID and select
+  Bedrock. Preserve ARN resource paths and case. Share classification through
+  `config.claude_model_provider` and Settings normalization; queue keys and
+  provider selection must agree with the stored model. Anthropic IDs do not
+  need an entry in the Bedrock alias table.
+  Only prefix-free `claude-*` inputs use `ODDISH_CLAUDE_CODE_FORCE_DIRECT_API`
+  (default `1`: Anthropic; `0`: Bedrock). Canonical models are stable across
+  reads and retries; workers must not choose a provider from their flags or
+  available keys. At client boundaries, Claude Code uses a bare Anthropic API
+  ID while LiteLLM uses `anthropic/` or `bedrock/` explicitly.
+  Enforce credential selectors after BYOK, job-token, and child-payload merges.
+  Anthropic BYOK cannot redirect or fund Bedrock work; Bedrock retains its AWS
+  credential chain and blanks Anthropic selectors. Missing credentials fail
+  on the selected route. The Oddish Mini SWE adapter forwards the full AWS
+  environment and supports Bedrock bearer credentials; Harbor's single-key
+  guard alone is insufficient. Pin complete Bedrock ARNs in the final agent
+  environment because Harbor otherwise splits their resource path as a provider
+  prefix. Restricted-network hosts follow the AWS/SDK/ARN region and validate
+  region syntax before building domains. Direct Anthropic child trials support
+  BYOK with the same funding attribution as the normal runner.
+  `anthropic-hdo/` retains its separate key and opt-in
+  gateway behavior; explicit ordinary Anthropic/Bedrock routes bypass the QA
+  gateway's mixed provider pool. See DOCS.md for the drain-before-deploy and
+  drain-before-rollback requirements. Never infer prefixes for historical rows
+  or transfer existing Bedrock concurrency overrides to Anthropic queues.
 - OpenAI-family jobs default to Azure OpenAI. Use
   `ODDISH_OPENAI_PROVIDER=openai` plus `OPENAI_API_KEY` only when intentionally
   routing to public OpenAI.

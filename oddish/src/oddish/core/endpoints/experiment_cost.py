@@ -58,8 +58,8 @@ runtime reported no native cost, and the API fills that in at read time from
 token counts x the pricing table (``_resolve_trial_cost``). So a bare
 ``SUM(cost_usd)`` would silently drop every estimated trial.
 
-Instead we group by ``(agent, model, billed, owned)`` -- the key
-``settings.normalize_trial_model`` prices on, split by ownership -- and, for
+Instead we group by ``(agent, model, provider, billed, owned)`` -- the key
+``settings.model_for_stored_trial`` prices on, split by ownership -- and, for
 the NULL-cost rows, sum token counts rather than dollars. ``estimate_cost_usd`` is linear in tokens
 for a fixed model, and its only per-row non-linearities are reproduced in SQL:
 
@@ -153,7 +153,7 @@ def _sum_when(condition, value):
 def experiment_cost_groups_select(
     experiment_id: str, *, org_id: str | None = None
 ) -> Select:
-    """One row per ``(agent, model, billed, owned)`` bucket of the member trials.
+    """One row per ``(agent, model, provider, billed, owned)`` member bucket.
 
     Membership is the only filter: a trial counts iff it is homed in this
     experiment or gathered into it -- ``experiment_trial_scope``, the same
@@ -179,6 +179,7 @@ def experiment_cost_groups_select(
         select(
             trial.agent.label("agent"),
             trial.model.label("model"),
+            trial.provider.label("provider"),
             billed.label("billed"),
             owned.label("owned"),
             excluded.label("excluded"),
@@ -201,12 +202,14 @@ def experiment_cost_groups_select(
         )
         .select_from(trial)
         .where(*scope.member_predicates())
-        .group_by(trial.agent, trial.model, billed, owned, excluded)
+        .group_by(trial.agent, trial.model, trial.provider, billed, owned, excluded)
         .execution_options(include_deleted=True)
     )
 
 
-def _estimated_group_cost(agent: str | None, model: str | None, row) -> float | None:
+def _estimated_group_cost(
+    agent: str | None, model: str | None, provider: str | None, row
+) -> float | None:
     """Price one group's pooled token totals, or ``None`` if the model has no
     pricing (matching ``_resolve_trial_cost``, which yields no cost there)."""
     if not row.estimated_count:
@@ -215,7 +218,7 @@ def _estimated_group_cost(agent: str | None, model: str | None, row) -> float | 
         # ``or model``: _resolve_trial_cost prices with ``model_name or
         # trial.model``, falling back to the raw string when normalization
         # returns None. Mirror it so the two never diverge.
-        settings.normalize_trial_model(agent, model) or model,
+        settings.model_for_stored_trial(agent or "", model, provider) or model,
         # Re-derives ``uncached_input_tokens`` under estimate_cost_usd's own
         # clamp, which is a no-op on an already-clamped total.
         row.uncached_input_tokens + row.cached_tokens + row.cache_write_tokens,
@@ -243,7 +246,7 @@ def fold_experiment_cost_groups(rows) -> ExperimentCostTotals:
         priced: list[tuple[float, int, bool]] = []
         if row.native_count:
             priced.append((float(row.native_cost_usd), row.native_count, False))
-        estimated = _estimated_group_cost(row.agent, row.model, row)
+        estimated = _estimated_group_cost(row.agent, row.model, row.provider, row)
         if estimated is not None:
             priced.append((estimated, row.estimated_count, True))
 
