@@ -21,7 +21,7 @@ from pathlib import Path
 _BUILDKIT_ONLY = re.compile(
     r"^\s*#\s*syntax\s*="
     r"|^\s*RUN\s+(?:--\w+\S*\s+)*--(?:mount|network|security)\b"
-    r"|^\s*(?:COPY|ADD)\s+(?:--\w+\S*\s+)*--(?:link|checksum|exclude|parents)\b"
+    r"|^\s*(?:COPY|ADD)\s+(?:--\w+\S*\s+)*--(?:link|checksum|chmod|exclude|parents)\b"
     r"|^\s*(?:RUN|COPY|ADD)\b.*<<-?['\"]?\w+['\"]?\s*$",
     re.IGNORECASE | re.MULTILINE,
 )

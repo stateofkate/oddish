@@ -24,6 +24,9 @@ SYNTAX = "# syntax=docker/dockerfile:1.7\nFROM node:22\nRUN --network=none codex
         "FROM x\nRUN --mount=type=secret,id=tok --network=none true\n",
         "FROM x\nCOPY --link a b\n",
         "FROM x\nADD --checksum=sha256:abc https://e/x /x\n",
+        # Production, vx-static-decoding: the classic builder refused --chmod.
+        "FROM x\nCOPY --chown=agent:agent --chmod=0644 decode.py /logs/decode.py\n",
+        "FROM x\nADD --chmod=755 run.sh /run.sh\n",
         "FROM x\nRUN <<EOF\napt-get update\nEOF\n",
     ],
 )
