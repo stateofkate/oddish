@@ -79,7 +79,7 @@ class _Starter:
     def __init__(self, image="im-warm", error=None):
         self.image, self.error, self.calls = image, error, []
 
-    async def build_warm_image(self, *, image, request, size=None):
+    async def build_warm_image(self, *, image, request, size=None, observer=None):
         self.calls.append((image, request))
         self.sizes = [*getattr(self, "sizes", []), size]
         if self.error:
@@ -250,7 +250,7 @@ async def test_a_cancelled_warm_up_is_not_left_warming(store, monkeypatch):
     warming = asyncio.Event()
 
     class _Hangs(_Starter):
-        async def build_warm_image(self, *, image, request, size=None):
+        async def build_warm_image(self, *, image, request, size=None, observer=None):
             warming.set()
             await asyncio.Event().wait()  # until the launch is cancelled
 
@@ -401,7 +401,7 @@ async def test_a_failed_warm_up_leaves_another_launchs_snapshot(store):
     the one that fails must not drop the snapshot the other just made ready."""
 
     class _LosesTheRace(_Starter):
-        async def build_warm_image(self, *, image, request, size=None):
+        async def build_warm_image(self, *, image, request, size=None, observer=None):
             store[("modal", _KEY)] = cache.CacheEntry(
                 state=cache.CacheState.READY, image="im-other"
             )
@@ -444,7 +444,7 @@ async def test_each_warm_up_try_signs_its_own_task_links(store):
         return WarmSource(identity=_SOURCE.identity, request=request)
 
     class _FailsOnce(_Starter):
-        async def build_warm_image(self, *, image, request, size=None):
+        async def build_warm_image(self, *, image, request, size=None, observer=None):
             self.error = None if self.calls else RuntimeError("provider down")
             return await super().build_warm_image(image=image, request=request)
 

@@ -31,6 +31,7 @@ from oddish.workers.launcher.providers.base import (
     SandboxState,
     StatusReply,
     WarmImageUnusable,
+    WarmUpObserver,
     monitor_start,
     warm_up_lifetime_seconds,
 )
@@ -235,6 +236,7 @@ class DaytonaStarter:
         image: str,
         request: WarmRequest,
         size: SandboxSize | None = None,
+        observer: WarmUpObserver | None = None,
     ) -> str | None:
         """Pull the task's images in a sandbox that holds no secrets, snapshot
         its disk and return ``snapshot:<name>``. ``None``: nothing to pull.
@@ -259,6 +261,8 @@ class DaytonaStarter:
             )
             timing.enter("exec_s")
             try:
+                if observer is not None:
+                    await observer.started(sandbox.id)
                 pulled = await sandbox.process.exec(
                     f"{ENTRYPOINT} warm", timeout=WARM_UP_SECONDS
                 )
@@ -277,7 +281,11 @@ class DaytonaStarter:
                 timing.stop()
                 return f"{SNAPSHOT_PREFIX}{snapshot}"
             finally:
-                await client.delete(sandbox)  # only the sandbox created above
+                try:
+                    await client.delete(sandbox)  # only the sandbox created above
+                finally:
+                    if observer is not None:
+                        await observer.ended()
 
     async def delete_warm_image(self, image: str) -> None:
         """Delete the snapshot behind a cached ``snapshot:<name>``; Daytona keeps

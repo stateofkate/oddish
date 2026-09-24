@@ -33,6 +33,11 @@ from oddish.db.pg_errors import is_missing_table
 log = logging.getLogger(__name__)
 _missing_table_logged = False
 
+AGENT_SANDBOX = "agent_sandbox"
+# The monitor path's image warm-up: a sandbox of its own, billed at the
+# trial's size, priced like the agent sandbox and kept apart by role.
+WARMUP_SANDBOX = "warmup_sandbox"
+
 
 @dataclass(frozen=True)
 class WorkerBillingSpec:
@@ -252,7 +257,10 @@ async def transition_agent_sandbox(
     external_id: str,
     resources: SpanResources,
     observed_at: datetime,
+    component_role: str = AGENT_SANDBOX,
 ) -> None:
+    """Open a sandbox span, closing any this attempt still has open in the
+    same role (a harbor retry replaced its sandbox)."""
     if not settings.modal_cost_tracking:
         return
     try:
@@ -265,7 +273,7 @@ async def transition_agent_sandbox(
                         .where(
                             ModalCostSpanModel.worker_job_id == worker_job_id,
                             ModalCostSpanModel.worker_job_attempt == worker_job_attempt,
-                            ModalCostSpanModel.component_role == "agent_sandbox",
+                            ModalCostSpanModel.component_role == component_role,
                         )
                         .with_for_update()
                     )
@@ -290,7 +298,7 @@ async def transition_agent_sandbox(
                     worker_job_id=worker_job_id,
                     worker_job_attempt=worker_job_attempt,
                     attempt=attempt,
-                    component_role="agent_sandbox",
+                    component_role=component_role,
                     span_ordinal=max((row.span_ordinal for row in existing), default=-1)
                     + 1,
                     provider=provider,
@@ -310,6 +318,7 @@ async def close_agent_sandboxes(
     *,
     finished_at: datetime,
     basis: str | None = None,
+    component_role: str = AGENT_SANDBOX,
 ) -> None:
     if not settings.modal_cost_tracking:
         return
@@ -322,7 +331,7 @@ async def close_agent_sandboxes(
                         select(ModalCostSpanModel).where(
                             ModalCostSpanModel.worker_job_id == worker_job_id,
                             ModalCostSpanModel.worker_job_attempt == worker_job_attempt,
-                            ModalCostSpanModel.component_role == "agent_sandbox",
+                            ModalCostSpanModel.component_role == component_role,
                             ModalCostSpanModel.finished_at.is_(None),
                         )
                     )

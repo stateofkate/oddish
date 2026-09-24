@@ -34,6 +34,7 @@ from oddish.workers.launcher.providers.base import (
     WARM_IMAGE_READY_SECONDS,
     MonitorSandboxStarter,
     SandboxSize,
+    WarmUpObserver,
     warm_up_lifetime_seconds,
 )
 
@@ -240,12 +241,14 @@ async def resolve(
     has_registry_login: bool,
     size: SandboxSize | None = None,
     fresh_source: Callable[[], Awaitable[WarmSource | None]] | None = None,
+    observer: WarmUpObserver | None = None,
 ) -> Resolved:
     """The image to boot, its cache key if it came from the cache, and how.
 
     A run with a private registry login is never cached: the login must not
     end up inside a snapshot other runs boot from. A warm-up another launch
-    is running is waited for, and a warm-up here is tried twice.
+    is running is waited for, and a warm-up here is tried twice. ``observer``
+    hears each warm-up sandbox this launch runs, so each one is priced.
     """
     if (
         not warm_source
@@ -306,6 +309,7 @@ async def resolve(
                         image=monitor_image,
                         request=await _request(warm_source, fresh_source),
                         size=size,
+                        observer=observer,
                     )
                     timing.emit("snapshot" if image else "nothing_to_warm")
                     break

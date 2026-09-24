@@ -258,15 +258,33 @@ def launch_deadline_default_seconds() -> int:
     )
 
 
+class WarmUpObserver(Protocol):
+    """Told when a warm-up's own sandbox starts and ends, so the launcher can
+    price it (``launcher.costs.WarmUpSpan``). Neither call raises."""
+
+    async def started(self, external_id: str) -> None:
+        """The warm-up sandbox exists: ``external_id`` is the provider's id."""
+
+    async def ended(self) -> None:
+        """The warm-up sandbox is gone, however the warm-up ended."""
+
+
 class WarmImageBuilder(Protocol):
     """Optional capability. A provider without it never uses the warm-image cache."""
 
     async def build_warm_image(
-        self, *, image: str, request: WarmRequest, size: SandboxSize | None = None
+        self,
+        *,
+        image: str,
+        request: WarmRequest,
+        size: SandboxSize | None = None,
+        observer: WarmUpObserver | None = None,
     ) -> str | None:
         """Pull the task's images in a secret-free sandbox, snapshot its disk and
         return a reference ``start`` can boot from. ``None``: the task names no
-        image to pull. Raises when the warm-up failed, so it is tried again."""
+        image to pull. Raises when the warm-up failed, so it is tried again.
+        ``observer`` hears ``started`` once the sandbox exists and ``ended``
+        after it is removed, on every exit, a failure or cancel included."""
 
     async def delete_warm_image(self, image: str) -> None:
         """Optional. Delete a snapshot the cache has dropped or replaced, on a

@@ -7,10 +7,14 @@ closes it, through the same recorder and ``settle_compute_costs``.
 
 Spans are keyed by job and attempt in the database. Only what the ledger cannot
 hold (the provider and the verifier's resources) rides on the job's payload.
+
+A launch that warms the image cache runs one more billed sandbox first:
+``WarmUpSpan`` prices it as a ``warmup_sandbox`` span of the same attempt.
 """
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import asdict, fields
 from decimal import Decimal
 from typing import Any
@@ -19,7 +23,11 @@ from sqlalchemy import literal, update
 from sqlalchemy.dialects.postgresql import JSONB
 
 from oddish.costs.modal_cost import SpanResources
-from oddish.costs.recorder import transition_agent_sandbox
+from oddish.costs.recorder import (
+    WARMUP_SANDBOX,
+    close_agent_sandboxes,
+    transition_agent_sandbox,
+)
 from oddish.db import WorkerJobModel, WorkerJobStatus, get_session
 from oddish.db.models import utcnow
 from oddish.workers.console import console
@@ -134,3 +142,53 @@ def cost_state_for_settle(
         # The outer sandbox is stopped at settlement, so that is when it ends.
         terminal_at=utcnow(),
     )
+
+
+class WarmUpSpan:
+    """The provider's ``WarmUpObserver`` for one launch: each warm-up sandbox
+    it runs is a ``warmup_sandbox`` span of the triggering trial attempt, at
+    the trial sandbox's provisioned resources (the warm-up runs at that size),
+    through the same recorder as the trial's own span. Not fenced on
+    ownership: the warm-up was billed whoever owns the job now. Best effort,
+    as the recorder is."""
+
+    def __init__(
+        self,
+        *,
+        job_id: str,
+        job_attempt: int,
+        trial_id: str,
+        prepared: PreparedTrialRun,
+        provider: str,
+        resources: SpanResources,
+    ) -> None:
+        self.job_id, self.job_attempt = job_id, job_attempt
+        self.trial_id, self.prepared = trial_id, prepared
+        self.provider, self.resources = provider, resources
+
+    async def started(self, external_id: str) -> None:
+        await transition_agent_sandbox(
+            worker_job_id=self.job_id,
+            worker_job_attempt=self.job_attempt,
+            trial_id=self.trial_id,
+            attempt=self.prepared.trial_attempt,
+            experiment_id=self.prepared.experiment_id or None,
+            org_id=self.prepared.org_id,
+            billed_user_id=self.prepared.billed_user_id,
+            provider=self.provider,
+            external_id=external_id,
+            resources=self.resources,
+            observed_at=utcnow(),
+            component_role=WARMUP_SANDBOX,
+        )
+
+    async def ended(self) -> None:
+        # Shielded: a cancelled launch still closes the span it is leaving.
+        await asyncio.shield(
+            close_agent_sandboxes(
+                self.job_id,
+                self.job_attempt,
+                finished_at=utcnow(),
+                component_role=WARMUP_SANDBOX,
+            )
+        )

@@ -18,6 +18,7 @@ from oddish.workers.launcher.providers.base import (
     SandboxSize,
     SandboxState,
     StatusReply,
+    WarmUpObserver,
     monitor_start,
     warm_up_lifetime_seconds,
 )
@@ -140,7 +141,12 @@ class ModalStarter:
         return size.model_copy(update={"memory_mb": _memory_mb(size), "headroom_mb": 0})
 
     async def build_warm_image(
-        self, *, image: str, request: WarmRequest, size: SandboxSize | None = None
+        self,
+        *,
+        image: str,
+        request: WarmRequest,
+        size: SandboxSize | None = None,
+        observer: WarmUpObserver | None = None,
     ) -> str | None:
         """Pull the task's images in a sandbox that holds no secrets, snapshot
         its disk and return the snapshot id. ``None``: nothing to pull.
@@ -167,6 +173,8 @@ class ModalStarter:
         )
         timing.enter("exec_s")
         try:
+            if observer is not None:
+                await observer.started(sandbox.object_id)
             process = await sandbox.exec.aio(ENTRYPOINT, "warm")
             timing.read_phases(await _read_output(process))
             code = await process.wait.aio()
@@ -182,7 +190,11 @@ class ModalStarter:
             timing.stop()
             return snapshot.object_id
         finally:
-            await sandbox.terminate.aio()  # only the sandbox created above
+            try:
+                await sandbox.terminate.aio()  # only the sandbox created above
+            finally:
+                if observer is not None:
+                    await observer.ended()
 
     async def stop(self, external_id: str) -> None:
         import modal

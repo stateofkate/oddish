@@ -81,7 +81,7 @@ async def test_a_failed_warm_up_is_not_cached_as_empty(monkeypatch):
         provider = SandboxProvider.MODAL
         calls = 0
 
-        async def build_warm_image(self, *, image, request, size=None):
+        async def build_warm_image(self, *, image, request, size=None, observer=None):
             self.calls += 1
             if self.calls == 1:
                 raise MonitorSandboxError("warm-up exited 1")
@@ -213,7 +213,7 @@ async def test_sizes_differing_only_in_gpu_are_different_snapshots(monkeypatch):
     class _Warm:
         provider = SandboxProvider.DAYTONA
 
-        async def build_warm_image(self, *, image, request, size=None):
+        async def build_warm_image(self, *, image, request, size=None, observer=None):
             return f"snapshot:{size.gpu_type}x{size.gpu_count}"
 
     source = WarmSource(

@@ -665,6 +665,15 @@ async def launch_monitor_attempt(
             registry_credentials=registry_credentials,
         )
 
+        warm_up_span = monitor_costs.WarmUpSpan(
+            job_id=job.id,
+            job_attempt=job.attempts,
+            trial_id=trial_id,
+            prepared=prepared,
+            provider=str(starter.provider),
+            resources=resources,
+        )
+
         async def _lookup() -> monitor_image_cache.Resolved:
             nonlocal warm_s
             looking = monotonic()
@@ -676,6 +685,7 @@ async def launch_monitor_attempt(
                     has_registry_login=bool(registry_credentials),
                     size=size,
                     fresh_source=lambda: warm_source_for_trial(trial_id, job.id),
+                    observer=warm_up_span,
                 )
             finally:
                 warm_s += monotonic() - looking

@@ -1477,8 +1477,9 @@ class ModalCostSpanModel(TimestampedMixin, Base):
 
     Compute sibling of ``analysis_costs`` (LLM spend): a span is one billable
     container — the Modal worker function babysitting a job
-    (``worker_function``), the harbor agent sandbox (``agent_sandbox``), or a
-    separate verifier sandbox (``verifier_sandbox``). Scope columns are plain
+    (``worker_function``), the harbor agent sandbox (``agent_sandbox``), a
+    separate verifier sandbox (``verifier_sandbox``), or the monitor path's
+    image warm-up sandbox (``warmup_sandbox``). Scope columns are plain
     indexed strings with no FKs (clone of ``analysis_costs``). ``finished_at``
     is NULL while the span is open; every close is a CAS update
     (``UPDATE ... SET finished_at = ... WHERE id = ... AND finished_at IS
@@ -1562,7 +1563,7 @@ class ModalCostSpanModel(TimestampedMixin, Base):
     # ``trials.attempts`` at span open — informational only (worker spans for
     # non-trial jobs have no trial attempt at all).
     attempt: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    # "worker_function" | "agent_sandbox" | "verifier_sandbox"
+    # "worker_function" | "agent_sandbox" | "verifier_sandbox" | "warmup_sandbox"
     component_role: Mapped[str] = mapped_column(String(32), nullable=False)
     span_ordinal: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     provider: Mapped[str] = mapped_column(String(32), nullable=False)

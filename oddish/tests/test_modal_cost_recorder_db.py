@@ -382,3 +382,105 @@ async def test_candidate_attempt_cost_uses_its_cpu_and_scalar_memory(memory_mb):
         assert base.cpu_request == 1 and base.mem_request_mb == 3072
     finally:
         await _remove(ids)
+
+
+# The report's query: warm-up spend per task version, from the trial that
+# triggered each warm-up.
+WARMUP_COST_PER_TASK_VERSION = """
+SELECT t.task_version_id, count(*) AS warmups, sum(c.cost_usd) AS warmup_usd
+FROM modal_costs c JOIN trials t ON t.id = c.trial_id
+WHERE c.component_role = 'warmup_sandbox' AND c.deleted_at IS NULL
+GROUP BY t.task_version_id
+"""
+
+
+@requires_db
+@pytest.mark.asyncio
+async def test_warm_up_spans_are_priced_per_trial_and_task_version(monkeypatch):
+    from sqlalchemy import text
+
+    from oddish.db import TaskVersionModel, init_db
+    from oddish.workers.launcher import costs as monitor_costs
+
+    await init_db()
+    ids = await _seed()
+    experiment_id, task_id, trial_id, worker_job_id = ids
+    version_id = f"{task_id}-v1"
+    t0 = datetime(2026, 9, 24, tzinfo=timezone.utc)
+    clock = iter(t0 + timedelta(seconds=s) for s in (0, 60, 90, 390, 400))
+    monkeypatch.setattr(monitor_costs, "utcnow", lambda: next(clock))
+    try:
+        async with get_session() as session:
+            session.add(
+                TaskVersionModel(
+                    id=version_id, task_id=task_id, version=1, task_path="/tmp/v1"
+                )
+            )
+            await session.flush()
+            await session.execute(
+                update(TrialModel)
+                .where(TrialModel.id == trial_id)
+                .values(task_version_id=version_id)
+            )
+        prepared = SimpleNamespace(
+            trial_attempt=2, experiment_id=experiment_id, org_id="org-modal",
+            billed_user_id="user-modal",
+        )  # fmt: skip
+        span = monitor_costs.WarmUpSpan(
+            job_id=worker_job_id, job_attempt=3, trial_id=trial_id,
+            prepared=prepared, provider="modal", resources=_sandbox_resources(),
+        )  # fmt: skip
+        # A failed warm-up (60 s), then its retry (300 s), each its own span.
+        await span.started(f"sb-warm-{worker_job_id}-1")
+        await span.ended()
+        await span.started(f"sb-warm-{worker_job_id}-2")
+        await span.ended()
+        # The trial's own sandbox is a separate role, left alone by the close.
+        await transition_agent_sandbox(
+            worker_job_id=worker_job_id, worker_job_attempt=3, trial_id=trial_id,
+            attempt=2, experiment_id=experiment_id, org_id="org-modal",
+            billed_user_id="user-modal", provider="modal",
+            external_id=f"sb-{worker_job_id}", resources=_sandbox_resources(),
+            observed_at=next(clock),
+        )  # fmt: skip
+
+        async with get_session() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(ModalCostSpanModel)
+                        .where(ModalCostSpanModel.worker_job_id == worker_job_id)
+                        .order_by(
+                            ModalCostSpanModel.component_role,
+                            ModalCostSpanModel.span_ordinal,
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            per_version = (
+                await session.execute(text(WARMUP_COST_PER_TASK_VERSION))
+            ).all()
+        agent, *warmups = rows
+        assert agent.component_role == "agent_sandbox" and agent.finished_at is None
+        assert [w.component_role for w in warmups] == ["warmup_sandbox"] * 2
+        assert [w.span_ordinal for w in warmups] == [0, 1]
+        assert [w.external_id for w in warmups] == [
+            f"sb-warm-{worker_job_id}-1",
+            f"sb-warm-{worker_job_id}-2",
+        ]
+        assert [(w.finished_at - w.started_at).seconds for w in warmups] == [60, 300]
+        for w in warmups:
+            assert (w.trial_id, w.worker_job_attempt, w.attempt) == (trial_id, 3, 2)
+            assert (w.experiment_id, w.billed_user_id) == (experiment_id, "user-modal")
+            assert w.cost_usd is not None and w.cost_usd > 0
+        # 2 cores and 4 GiB of Modal sandbox per second, stored at 6 places.
+        per_sec = 2 * Decimal("0.00003942") + 4 * Decimal("0.00000667")
+        priced = [(s * per_sec).quantize(Decimal("0.000001")) for s in (60, 300)]
+        assert [w.cost_usd for w in warmups] == priced
+        expected = sum(priced)
+        mine = [r for r in per_version if r.task_version_id == version_id]
+        assert [(r.warmups, r.warmup_usd) for r in mine] == [(2, expected)]
+    finally:
+        await _remove(ids)

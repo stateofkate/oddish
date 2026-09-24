@@ -682,3 +682,50 @@ async def test_modal_sandbox_state_that_cannot_be_asked_raises(monkeypatch):
 
     with pytest.raises(monitor_sandbox.MonitorSandboxError, match="modal down"):
         await ModalStarter().sandbox_state("sb-1")
+
+
+# --- the warm-up sandbox's cost span --------------------------------------------
+
+
+class _WarmUpObserver:
+    def __init__(self):
+        self.events: list[tuple] = []
+
+    async def started(self, external_id):
+        self.events.append(("started", external_id))
+
+    async def ended(self):
+        self.events.append(("ended",))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ending", ["success", "failure", "cancel"])
+async def test_a_daytona_warm_up_opens_and_always_ends_its_span(
+    fake_daytona, monkeypatch, ending
+):
+    import asyncio
+
+    from oddish.mon.contract import WarmRequest
+
+    if ending == "failure":
+        monkeypatch.setattr(_Process, "warm_exit_code", 1)
+    if ending == "cancel":
+
+        async def _cancelled(self, command, timeout=None):
+            raise asyncio.CancelledError
+
+        monkeypatch.setattr(_Process, "exec", _cancelled)
+    observer = _WarmUpObserver()
+    warm = daytona_starter.DaytonaStarter().build_warm_image(
+        image="/oddish/mon.Dockerfile", request=WarmRequest(), observer=observer
+    )
+    if ending == "success":
+        assert (await warm).startswith(daytona_starter.SNAPSHOT_PREFIX)
+    else:
+        failed = ending == "failure"
+        with pytest.raises(
+            monitor_sandbox.MonitorSandboxError if failed else asyncio.CancelledError
+        ):
+            await warm
+    assert observer.events == [("started", "dt-123"), ("ended",)]
+    assert fake_daytona.deleted == ["dt-123"]
