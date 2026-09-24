@@ -197,6 +197,15 @@ def _build_job_config(payload: dict[str, Any]):
             "oddish.workers.agents.mini_swe_agent:OddishMiniSweAgent"
         )
     agent_config = AgentConfig.model_validate(agent_kwargs)
+    if payload.get("runtime_model"):
+        # The id the harness runs when it differs from the stored model (the
+        # Meta harness id for a ``meta-public/`` trial). _run patches Harbor's
+        # AgentFactory before it builds this config, so the factory builds the
+        # agent with this id while the job config and the result keep the
+        # stored one.
+        from oddish.workers.harbor.restricted_network import set_runtime_model_name
+
+        set_runtime_model_name(agent_config, payload["runtime_model"])
 
     kwargs: dict[str, Any] = {
         "tasks": [TaskConfig(path=Path(payload["task_path"]))],

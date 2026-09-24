@@ -12,9 +12,14 @@ test leaks nothing -- connections are opened and closed per use.
 
 from __future__ import annotations
 
+import asyncio
+import subprocess
 import sys
+import types
+import warnings
+from collections.abc import Awaitable, Callable, Iterator
 from pathlib import Path
-from typing import Callable
+from typing import Any
 
 import pytest
 import pytest_asyncio
@@ -140,3 +145,90 @@ def make_task(tmp_path: Path) -> Callable[..., Path]:
         return task_dir
 
     return _make
+
+
+@pytest.fixture
+def docker_kernel_probe(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
+    """Stub Harbor's Docker kernel probe and record each call.
+
+    Outside Linux, Harbor's Docker environment probes the host kernel with a
+    real ``docker container run``, cached per process, when a task restricts
+    its network. Replacing the attribute bypasses that cache; the stub answers
+    as Linux does, and monkeypatch restores the real probe after the test.
+    """
+    from harbor.environments.docker.docker import DockerEnvironment
+
+    calls: list[bool] = []
+
+    def _probe() -> bool:
+        calls.append(True)
+        return True
+
+    monkeypatch.setattr(
+        DockerEnvironment, "_egress_control_kernel_support", staticmethod(_probe)
+    )
+    return calls
+
+
+@pytest.fixture
+def construct_harbor_trial(
+    docker_kernel_probe: list[bool],
+) -> Iterator[Callable[..., Awaitable[tuple[Any, Any]]]]:
+    """Build Harbor's own Job and its only Trial from a JobConfig, offline.
+
+    Runs Harbor's real trial-config and Trial construction (the Trial builds
+    its agent with ``AgentFactory.create_agent_from_config`` and writes its
+    lock) and the Trial's result init, which writes the trial's config.json.
+    Nothing starts an environment: the Docker kernel probe is stubbed, and a
+    subprocess the Docker environment module starts during construction
+    fails the test. The log handlers the Job and the Trial attach are closed
+    at teardown.
+    """
+    from harbor.environments.docker import docker as docker_environment
+
+    close_handlers: list[Callable[[], None]] = []
+    started: list[Any] = []
+
+    def _tripwire(*args: Any, **kwargs: Any) -> Any:
+        started.append(args)
+        raise RuntimeError("Harbor's Docker environment started a subprocess")
+
+    def _tripwired(module: Any, *names: str) -> Any:
+        stand_in = types.SimpleNamespace(**vars(module))
+        for name in names:
+            setattr(stand_in, name, _tripwire)
+        return stand_in
+
+    async def _construct(job_config: Any) -> tuple[Any, Any]:
+        from harbor import Job
+        from harbor.trial.trial import Trial
+
+        with pytest.MonkeyPatch.context() as patch:
+            # Only the Docker environment module's own references change.
+            patch.setattr(
+                docker_environment, "subprocess", _tripwired(subprocess, "run", "Popen")
+            )
+            patch.setattr(
+                docker_environment,
+                "asyncio",
+                _tripwired(
+                    asyncio, "create_subprocess_exec", "create_subprocess_shell"
+                ),
+            )
+            job = await Job.create(job_config)
+            close_handlers.append(job._close_logger_handlers)
+            # The configs Job.run submits to its trial queue.
+            [trial_config] = job._remaining_trial_configs
+            trial = await Trial.create(trial_config)
+            close_handlers.append(trial._close_logger_handler)
+            with warnings.catch_warnings():
+                # Harbor's own result init reads its deprecated Task.checksum.
+                warnings.filterwarnings("ignore", "Task.checksum", DeprecationWarning)
+                trial._init_result()
+        # Harbor swallows some subprocess errors, so check the record too.
+        assert not started, f"Harbor's Docker environment ran {started}"
+        return job, trial
+
+    yield _construct
+    for close in reversed(close_handlers):
+        close()

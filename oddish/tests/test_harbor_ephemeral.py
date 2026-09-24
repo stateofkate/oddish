@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import sys
 import tempfile
 import textwrap
@@ -20,6 +21,7 @@ from oddish.workers.harbor.model_hosts import (
 from harbor.models.environment_type import EnvironmentType
 from harbor.models.trial.config import EnvironmentConfig
 from harbor.trial.hooks import TrialEvent
+from harbor.utils.env import resolve_env_vars
 
 from oddish.core.harbor_source import harbor_git_requirement
 from oddish.runtime.backends.daytona import DaytonaBackend
@@ -38,6 +40,7 @@ from oddish.workers.harbor.ephemeral import (
     run_ephemeral_harbor_trial,
 )
 from oddish.workers.harbor.outcome import HarborOutcome
+from oddish.workers.harbor.restricted_network import RUNTIME_MODEL_NAME_ATTR
 
 _EPHEMERAL_HC = {
     "variant_id": "ephemeral",
@@ -314,6 +317,224 @@ def test_build_payload_public_xai_fails_closed_without_public_key(monkeypatch):
             outcome_path=Path("/tmp/jobs/outcome.json"),
             agent="grok-build",
             model="xai-public/grok-4.7",
+            environment_config=EnvironmentConfig(type=EnvironmentType.DOCKER),
+            raw_harbor_config=dict(_EPHEMERAL_HC),
+        )
+
+
+@pytest.mark.parametrize("agent", ["muse-code", "tbh"])
+def test_build_payload_hands_public_meta_child_the_harness_model(monkeypatch, agent):
+    from oddish.config import settings as oddish_settings
+
+    monkeypatch.setattr(oddish_settings, "meta_public_api_key", None)
+    monkeypatch.setenv("META_API_KEY", "internal-meta-key")
+    monkeypatch.setenv("META_PUBLIC_API_KEY", "public-meta-key")
+
+    payload = _build_payload(
+        task_path=Path("/tmp/task"),
+        jobs_dir=Path("/tmp/jobs"),
+        outcome_path=Path("/tmp/jobs/outcome.json"),
+        agent=agent,
+        model="meta-public/muse-spark-1.3",
+        environment_config=EnvironmentConfig(type=EnvironmentType.DOCKER),
+        raw_harbor_config=dict(_EPHEMERAL_HC),
+    )
+
+    # Harbor stores the public id; the harness runs the Meta id.
+    assert payload["model"] == "meta-public/muse-spark-1.3"
+    assert payload["runtime_model"] == "meta/muse-spark-1.3"
+    # The payload file names the key; the child resolves it from its own env.
+    assert "public-meta-key" not in json.dumps(payload)
+    child_agent = _build_job_config(payload).agents[0]
+    assert child_agent.model_name == "meta-public/muse-spark-1.3"
+    assert getattr(child_agent, RUNTIME_MODEL_NAME_ATTR) == "meta/muse-spark-1.3"
+    stored = child_agent.model_dump(mode="json")
+    assert stored["model_name"] == "meta-public/muse-spark-1.3"
+    assert RUNTIME_MODEL_NAME_ATTR not in stored
+    assert "meta/muse-spark-1.3" not in json.dumps(stored)
+    assert child_agent.env["META_API_KEY"] == "${META_PUBLIC_API_KEY}"
+    resolved = resolve_env_vars(child_agent.env)
+    assert resolved["META_API_KEY"] == "public-meta-key"
+    assert resolved["META_PUBLIC_API_KEY"] == "public-meta-key"
+    assert "internal-meta-key" not in resolved.values()
+
+
+@pytest.mark.parametrize("agent", ["muse-code", "tbh"])
+def test_public_meta_child_agent_runs_the_meta_id_and_reports_the_public_model(
+    monkeypatch, tmp_path, agent
+):
+    from harbor.agents.factory import AgentFactory
+
+    from oddish.config import settings as oddish_settings
+    from oddish.workers.harbor.patches import (
+        _patch_restricted_network_runtime_fields,
+    )
+
+    monkeypatch.setattr(oddish_settings, "meta_public_api_key", None)
+    monkeypatch.setenv("META_API_KEY", "internal-meta-key")
+    monkeypatch.setenv("META_PUBLIC_API_KEY", "public-meta-key")
+    # tbh refuses to construct without a build to install.
+    monkeypatch.setenv("TBH_DOWNLOAD_URL", "https://tbh.example.test/tbh.tar.gz")
+    payload = _build_payload(
+        task_path=tmp_path / "task",
+        jobs_dir=tmp_path / "jobs",
+        outcome_path=tmp_path / "jobs" / "outcome.json",
+        agent=agent,
+        model="meta-public/muse-spark-1.3",
+        environment_config=EnvironmentConfig(type=EnvironmentType.DOCKER),
+        raw_harbor_config=dict(_EPHEMERAL_HC),
+    )
+    # The child applies Oddish's Harbor patches before it builds its JobConfig.
+    _patch_restricted_network_runtime_fields()
+
+    running = AgentFactory.create_agent_from_config(
+        _build_job_config(payload).agents[0], tmp_path
+    )
+
+    assert running.model_name == "meta/muse-spark-1.3"
+    model_info = running.to_agent_info().model_info
+    assert model_info is not None
+    assert (model_info.provider, model_info.name) == ("meta-public", "muse-spark-1.3")
+    assert "internal-meta-key" not in running.extra_env.values()
+
+
+@pytest.mark.parametrize("agent", ["muse-code", "tbh"])
+def test_public_meta_child_harbor_trial_runs_the_meta_id_and_stores_the_public_model(
+    monkeypatch, tmp_path, make_task, construct_harbor_trial, agent
+):
+    # The child's JobConfig through Harbor's own Job and Trial construction,
+    # with nothing stubbed, after the patch the child applies before it builds
+    # that config.
+    from oddish.cli.api import trial_result_to_import_spec
+    from oddish.config import settings as oddish_settings
+    from oddish.workers.harbor.patches import (
+        _patch_restricted_network_runtime_fields,
+    )
+
+    monkeypatch.setattr(oddish_settings, "meta_public_api_key", None)
+    monkeypatch.setenv("META_API_KEY", "internal-meta-key")
+    monkeypatch.setenv("META_PUBLIC_API_KEY", "public-meta-key")
+    # tbh refuses to construct without a build to install.
+    monkeypatch.setenv("TBH_DOWNLOAD_URL", "https://tbh.example.test/tbh.tar.gz")
+    payload = _build_payload(
+        task_path=make_task(),
+        jobs_dir=tmp_path / "jobs",
+        outcome_path=tmp_path / "outcome.json",
+        agent=agent,
+        model="meta-public/muse-spark-1.3",
+        environment_config=EnvironmentConfig(type=EnvironmentType.DOCKER),
+        raw_harbor_config=dict(_EPHEMERAL_HC),
+    )
+    _patch_restricted_network_runtime_fields()
+
+    job, trial = asyncio.run(construct_harbor_trial(_build_job_config(payload)))
+
+    # The harness runs the Meta id.
+    assert trial.agent.model_name == "meta/muse-spark-1.3"
+    # The trial config, the trial's config.json and lock, the result and the
+    # job config keep the public id.
+    assert trial.config.agent.model_name == "meta-public/muse-spark-1.3"
+    trial_config_json = trial.paths.config_path.read_text(encoding="utf-8")
+    stored_agent = json.loads(trial_config_json)["agent"]
+    assert stored_agent["model_name"] == "meta-public/muse-spark-1.3"
+    trial_lock_json = trial.paths.lock_path.read_text(encoding="utf-8")
+    locked_agent = json.loads(trial_lock_json)["agent"]
+    assert locked_agent["model_name"] == "meta-public/muse-spark-1.3"
+    result_json = trial.result.model_dump_json()
+    result = json.loads(result_json)
+    assert result["config"]["agent"]["model_name"] == "meta-public/muse-spark-1.3"
+    assert result["agent_info"]["model_info"] == {
+        "name": "muse-spark-1.3",
+        "provider": "meta-public",
+    }
+    job_config_json = job.config.model_dump_json(indent=4, exclude_defaults=True)
+    job_agents = json.loads(job_config_json)["agents"]
+    assert job_agents[0]["model_name"] == "meta-public/muse-spark-1.3"
+    for stored in (trial_config_json, trial_lock_json, result_json, job_config_json):
+        assert "meta/muse-spark-1.3" not in stored
+        assert RUNTIME_MODEL_NAME_ATTR not in stored
+    # So re-importing the downloaded trial files it under the public route.
+    imported = trial_result_to_import_spec(trial.result)
+    assert imported["model"] == "meta-public/muse-spark-1.3"
+
+
+@pytest.mark.parametrize(
+    ("agent", "model", "child_model"),
+    [
+        ("muse-code", "meta/goofy_glacier135", "meta/goofy_glacier135"),
+        ("grok-build", "xai-public/grok-4.7", "grok-4.7"),
+        ("nop", None, None),
+    ],
+)
+def test_build_payload_adds_no_runtime_model_off_the_public_meta_route(
+    monkeypatch, agent, model, child_model
+):
+    monkeypatch.setenv("META_API_KEY", "internal-meta-key")
+    monkeypatch.setenv("XAI_PUBLIC_API_KEY", "public-xai-key")
+
+    payload = _build_payload(
+        task_path=Path("/tmp/task"),
+        jobs_dir=Path("/tmp/jobs"),
+        outcome_path=Path("/tmp/jobs/outcome.json"),
+        agent=agent,
+        model=model,
+        environment_config=EnvironmentConfig(type=EnvironmentType.DOCKER),
+        raw_harbor_config=dict(_EPHEMERAL_HC),
+    )
+
+    assert payload["model"] == child_model
+    assert "runtime_model" not in payload
+    assert not hasattr(_build_job_config(payload).agents[0], RUNTIME_MODEL_NAME_ATTR)
+
+
+def test_build_payload_public_meta_bundle_resolves_to_the_public_key(monkeypatch):
+    # The job-scoped bundle is the child's last env layer, over the binding.
+    from oddish.config import settings as oddish_settings
+
+    monkeypatch.setattr(oddish_settings, "meta_public_api_key", None)
+    monkeypatch.setenv("META_API_KEY", "internal-meta-key")
+    monkeypatch.setenv("META_PUBLIC_API_KEY", "public-meta-key")
+
+    payload = _build_payload(
+        task_path=Path("/tmp/task"),
+        jobs_dir=Path("/tmp/jobs"),
+        outcome_path=Path("/tmp/jobs/outcome.json"),
+        agent="muse-code",
+        model="meta-public/muse-spark-1.3",
+        environment_config=EnvironmentConfig(type=EnvironmentType.DOCKER),
+        raw_harbor_config=dict(_EPHEMERAL_HC),
+        extra_agent_env={
+            "META_PUBLIC_API_KEY": "public-meta-key",
+            "META_API_KEY": "public-meta-key",
+            "MSWEA_API_KEY": "public-meta-key",
+        },
+    )
+
+    child_agent = _build_job_config(payload).agents[0]
+    assert child_agent.model_name == "meta-public/muse-spark-1.3"
+    assert getattr(child_agent, RUNTIME_MODEL_NAME_ATTR) == "meta/muse-spark-1.3"
+    resolved = resolve_env_vars(child_agent.env)
+    assert resolved["META_API_KEY"] == "public-meta-key"
+    assert "internal-meta-key" not in resolved.values()
+
+
+def test_build_payload_public_meta_fails_closed_without_public_key(monkeypatch):
+    from oddish.config import settings as oddish_settings
+
+    monkeypatch.setattr(oddish_settings, "meta_public_api_key", None)
+    monkeypatch.delenv("META_PUBLIC_API_KEY", raising=False)
+    monkeypatch.setenv("META_API_KEY", "internal-meta-key")
+
+    with pytest.raises(
+        ValueError,
+        match=re.escape("meta-public model requires META_PUBLIC_API_KEY on the worker"),
+    ):
+        _build_payload(
+            task_path=Path("/tmp/task"),
+            jobs_dir=Path("/tmp/jobs"),
+            outcome_path=Path("/tmp/jobs/outcome.json"),
+            agent="muse-code",
+            model="meta-public/muse-spark-1.3",
             environment_config=EnvironmentConfig(type=EnvironmentType.DOCKER),
             raw_harbor_config=dict(_EPHEMERAL_HC),
         )

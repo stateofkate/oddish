@@ -106,3 +106,31 @@ def test_without_an_ambient_env_the_process_env_is_used(scoped, monkeypatch):
     )
 
     assert json.loads(env[AGENT_ENV_VAR])["CURSOR_API_KEY"] == "from-process"
+
+
+def test_a_public_meta_sandbox_gets_only_the_public_key(monkeypatch):
+    # Real scoping: the launcher's worker holds both Meta keys, and the
+    # sandbox must get the public one under the Meta names, never the internal.
+    monkeypatch.setattr(launch_env.settings, "meta_api_key", "internal-key")
+    monkeypatch.setattr(launch_env.settings, "meta_public_api_key", "public-key")
+    monkeypatch.setenv("META_API_KEY", "internal-key")
+    monkeypatch.setenv("META_PUBLIC_API_KEY", "public-key")
+    prepared = SimpleNamespace(
+        trial_agent="muse-code",
+        trial_model="meta-public/muse-spark-1.3",
+        trial_harbor_config={"agent_config": {"name": "muse-code"}},
+    )
+
+    env = launch_env.build_sandbox_env(
+        prepared,
+        api_url="https://api.test",
+        credential="tok",
+        byok_env=None,
+        judge_env={},
+        ambient={"META_API_KEY": "internal-key", "META_PUBLIC_API_KEY": "public-key"},
+    )
+
+    agent_env = json.loads(env[AGENT_ENV_VAR])
+    assert agent_env["META_API_KEY"] == "public-key"
+    assert agent_env["META_PUBLIC_API_KEY"] == "public-key"
+    assert "internal-key" not in json.dumps(env)

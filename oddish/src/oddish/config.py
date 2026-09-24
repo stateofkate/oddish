@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import Enum
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import (
@@ -745,6 +745,67 @@ def to_meta_model_id(model: str | None) -> str | None:
     return f"{META_PROVIDER}/{meta_bare_model_id(model)}"
 
 
+# Public Meta models: the same Meta hosts and harnesses as ``meta/``, authorised
+# with a separate public key (META_PUBLIC_API_KEY) instead of the internal one.
+META_PUBLIC_PROVIDER = "meta-public"
+
+
+def is_meta_public_model(model: str | None) -> bool:
+    """Return True for the separate public-key Meta route."""
+    if not model:
+        return False
+    provider_prefix, _ = split_provider_model_name(model.strip().lower())
+    return provider_prefix == META_PUBLIC_PROVIDER
+
+
+def meta_public_bare_model_id(model: str) -> str:
+    """Strip the ``meta-public/`` routing prefix from a public Meta model."""
+    raw = model.strip()
+    if not is_meta_public_model(raw):
+        return raw
+    _, bare = split_provider_model_name(raw)
+    return str(bare).strip()
+
+
+def to_meta_public_model_id(model: str | None) -> str | None:
+    """Canonicalize a public Meta model reference to ``meta-public/<bare-id>``."""
+    if not is_meta_public_model(model):
+        return model
+    assert model is not None
+    return f"{META_PUBLIC_PROVIDER}/{meta_public_bare_model_id(model)}"
+
+
+def meta_harness_model_id(model: str | None) -> str | None:
+    """The id a Meta harness parses: ``meta-public/<id>`` becomes ``meta/<id>``.
+
+    Oddish keeps the ``meta-public/`` identity through its own routing so every
+    provider-keyed table sees the public route; only the Harbor handoff uses
+    this form. Every other model is returned unchanged.
+    """
+    if not is_meta_public_model(model):
+        return model
+    assert model is not None
+    return f"{META_PROVIDER}/{meta_public_bare_model_id(model)}"
+
+
+def resolve_meta_public_api_key(settings_obj: Any) -> str | None:
+    """The public Meta key: Settings first (a self-hosted ``.env``), then the env.
+
+    The one resolver for the agent binding, the job-scoped bundle and the key
+    fingerprint, so the three can never disagree. Blank values do not count. In
+    a monitor sandbox the entrypoint exports the scoped env before Settings
+    loads, so both sources hold the public key there.
+    """
+    for candidate in (
+        getattr(settings_obj, "meta_public_api_key", None),
+        os.environ.get("META_PUBLIC_API_KEY"),
+    ):
+        value = (candidate or "").strip()
+        if value:
+            return value
+    return None
+
+
 # Geometric-hosted OpenAI-compatible model routing. Geometric serves GLM-5.3
 # over its own /v1 endpoint, so trials run through Harbor's mini-swe-agent
 # harness (via litellm's ``openai/`` provider) rather than Oddish's Azure/OpenAI
@@ -1287,6 +1348,8 @@ _MODEL_PROVIDER_ALIASES: dict[str, str] = {
     "xai-public": XAI_PUBLIC_PROVIDER,
     # Meta OpenAI-compatible relay for mini-swe-agent evals.
     "meta": META_PROVIDER,
+    # Public Meta models on the separate public key (META_PUBLIC_API_KEY).
+    "meta-public": META_PUBLIC_PROVIDER,
     # Geometric's own OpenAI-compatible endpoint (GLM-5.3) for mini-swe-agent.
     "geometric": GEOMETRIC_PROVIDER,
     "gm": GEOMETRIC_PROVIDER,
@@ -1972,6 +2035,7 @@ class Settings(BaseSettings):
     )
     vertex_ai_api_key: SecretStr | None = Field(default=None, alias="VERTEX_AI_API_KEY")
     meta_api_key: str | None = Field(default=None, alias="META_API_KEY")
+    meta_public_api_key: str | None = Field(default=None, alias="META_PUBLIC_API_KEY")
     meta_base_url: str = Field(default=META_DEFAULT_BASE_URL, alias="META_BASE_URL")
     meta_eval_name: str | None = Field(default=None, alias="ODDISH_META_EVAL_NAME")
     meta_session_id: str | None = Field(default=None, alias="ODDISH_META_SESSION_ID")
@@ -2284,6 +2348,8 @@ class Settings(BaseSettings):
             return to_fireworks_model_id(cleaned)
         if is_meta_model(cleaned):
             return to_meta_model_id(cleaned)
+        if is_meta_public_model(cleaned):
+            return to_meta_public_model_id(cleaned)
         # Geometric before z.ai: an explicit ``geometric/``/``gm/`` prefix on a
         # GLM id must win over the bare-``glm`` z.ai fallback below.
         if is_geometric_model(cleaned):

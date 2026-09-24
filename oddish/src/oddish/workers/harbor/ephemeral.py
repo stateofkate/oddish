@@ -28,6 +28,7 @@ from oddish.config import (
     is_anthropic_hdo_model,
     is_vertex_ai_model,
     is_xai_public_model,
+    meta_harness_model_id,
     settings,
     to_anthropic_api_model_id,
     xai_public_bare_model_id,
@@ -374,6 +375,10 @@ def _build_payload(
         runtime_env=runtime_env,
         child_extra_env=child_extra_env,
     )
+    # The child's JobConfig keeps ``meta-public/<id>``, the id Harbor stores in
+    # the job config and the result. The Meta harnesses parse ``meta/<id>``, so
+    # the child attaches it as the agent's worker-only runtime model.
+    runtime_model = meta_harness_model_id(child_model)
     # Google Vertex AI: the child applies this process env to its own
     # os.environ before Job.create (host-side harnesses, template resolution,
     # Harbor's Bedrock check) and registers the sandbox upload hook itself. It
@@ -445,7 +450,7 @@ def _build_payload(
             )
         )
 
-    return {
+    payload: dict[str, Any] = {
         "task_path": str(task_path),
         "jobs_dir": str(jobs_dir),
         "outcome_path": str(outcome_path),
@@ -476,6 +481,9 @@ def _build_payload(
         "extra_agent_env": child_extra_env,
         "vertex_ai": vertex_ai_payload,
     }
+    if runtime_model != child_model:
+        payload["runtime_model"] = runtime_model
+    return payload
 
 
 def _bridge_event(data: dict[str, Any], *, trial_id: str | None) -> SimpleNamespace:

@@ -381,6 +381,12 @@ that key to the CLI as `XAI_API_KEY` only inside the trial sandbox; it does not
 fall back to the private `XAI_API_KEY` / `XAI_API_KEYS` credentials. Keep the
 public key out of the private key pool. Both routes call `api.x.ai`.
 
+Public Meta model trials use `meta-public/<model-id>` and read the separate
+`META_PUBLIC_API_KEY` variable from `oddish-prod`. The Oddish routing layer passes
+that key to the harness as `META_API_KEY` (and `MSWEA_API_KEY` /
+`OPENAI_API_KEY` for mini-swe-agent) only inside the trial; it never falls back to
+the internal `META_API_KEY`. Both routes call the same Meta endpoints.
+
 ### Cycling workers after a secret change
 
 Modal injects secrets at container start, so running containers keep the old

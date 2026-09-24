@@ -147,10 +147,12 @@ def _patch_thunder_exception_metadata(*, require_thunder: bool = False) -> None:
 def _patch_restricted_network_runtime_fields() -> None:
     """Teach Harbor to consume Oddish's non-serialized runtime fields.
 
-    The fields are attached only to restricted Daytona Compose AgentConfig
-    instances. Public, single-container, Modal, Kubernetes, and local Docker
-    configs never carry them, so their behavior remains byte-for-byte the
-    upstream path.
+    Runtime allowed hosts ride only on restricted Daytona Compose configs. A
+    runtime model rides on the Azure OpenAI deployment of those configs, on
+    Fireworks mini-swe-agent configs in process, and on every ``meta-public/``
+    config in process and in the override-Harbor child. The factory builds the
+    agent with the runtime model and reports the submitted one. A config
+    without either field takes the upstream path unchanged.
     """
     from harbor.agents.factory import AgentFactory
     from harbor.trial import network_policy as network_policy_module

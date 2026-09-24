@@ -29,6 +29,7 @@ from oddish.config import (
     is_fireworks_model,
     is_geometric_model,
     is_meta_model,
+    is_meta_public_model,
     is_minimax_model,
     is_moonshot_model,
     is_vertex_ai_model,
@@ -528,7 +529,7 @@ def outbound_hosts_for_model(
             hosts.append(host)
     elif is_xai_model(model_name) or is_xai_public_model(model_name):
         hosts.extend(_XAI_HOSTS)
-    elif is_meta_model(model_name):
+    elif is_meta_model(model_name) or is_meta_public_model(model_name):
         host = _default_host(settings.meta_base_url or META_DEFAULT_BASE_URL)
         if host:
             hosts.append(host)

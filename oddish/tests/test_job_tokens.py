@@ -36,6 +36,7 @@ def _fake_settings(**keys) -> types.SimpleNamespace:
         openai_api_key=None,
         gemini_api_key=None,
         meta_api_key=None,
+        meta_public_api_key=None,
         geometric_api_key=None,
     )
     base.update(keys)
@@ -71,6 +72,8 @@ def _provider_of(model: str) -> str:
         return "openai"
     if "gemini" in m:
         return "gemini"
+    if m.startswith("meta-public/"):
+        return "meta-public"
     if m.startswith("meta/"):
         return "meta"
     if m.startswith("geometric/"):
@@ -182,6 +185,39 @@ def test_scoped_model_env_meta_only_carries_meta_key() -> None:
         agent="mini-swe-agent", model="meta/llama-eval-model", settings=settings
     )
     assert env == {"META_API_KEY": "meta-key", "MSWEA_API_KEY": "meta-key"}
+
+
+def test_scoped_model_env_public_meta_carries_only_the_public_key() -> None:
+    settings = _fake_settings(
+        meta_api_key="meta-internal", meta_public_api_key="meta-public-key"
+    )
+    env = job_tokens.scoped_model_env(
+        agent="muse-code", model="meta-public/muse-spark-1.3", settings=settings
+    )
+    assert env == {
+        "META_PUBLIC_API_KEY": "meta-public-key",
+        "META_API_KEY": "meta-public-key",
+        "MSWEA_API_KEY": "meta-public-key",
+    }
+
+
+def test_scoped_model_env_internal_meta_never_carries_the_public_key() -> None:
+    settings = _fake_settings(
+        meta_api_key="meta-internal", meta_public_api_key="meta-public-key"
+    )
+    env = job_tokens.scoped_model_env(
+        agent="muse-code", model="meta/goofy_glacier135", settings=settings
+    )
+    assert env == {"META_API_KEY": "meta-internal", "MSWEA_API_KEY": "meta-internal"}
+
+
+def test_scoped_model_env_public_meta_without_key_is_empty(monkeypatch) -> None:
+    monkeypatch.delenv("META_PUBLIC_API_KEY", raising=False)
+    settings = _fake_settings(meta_api_key="meta-internal")
+    env = job_tokens.scoped_model_env(
+        agent="muse-code", model="meta-public/muse-spark-1.3", settings=settings
+    )
+    assert env == {}
 
 
 def test_scoped_model_env_geometric_only_carries_geometric_key() -> None:

@@ -166,7 +166,11 @@ def set_runtime_allowed_hosts(
 
 
 def set_runtime_model_name(agent_config: AgentConfig, model_name: str) -> None:
-    """Attach a worker-only provider deployment without serializing it."""
+    """Attach the worker-only model id the agent runs, without serializing it.
+
+    Harbor's patched ``AgentFactory`` builds the agent with this id, while the
+    config's ``model_name`` stays in the stored config and the reported model.
+    """
     object.__setattr__(agent_config, RUNTIME_MODEL_NAME_ATTR, model_name)
 
 
@@ -464,6 +468,7 @@ def _model_transport_base_url_keys(model_name: str | None) -> tuple[str, ...]:
         "azure": _OPENAI_BASE_URL_KEYS,
         "azure_openai": _OPENAI_BASE_URL_KEYS,
         "meta": ("META_BASE_URL", *_OPENAI_BASE_URL_KEYS),
+        "meta-public": ("META_BASE_URL", *_OPENAI_BASE_URL_KEYS),
         "geometric": ("GEOMETRIC_BASE_URL", *_OPENAI_BASE_URL_KEYS),
         "openrouter": ("OPENROUTER_BASE_URL",),
         "fireworks": ("FIREWORKS_BASE_URL",),

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
 import sys
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -11,10 +12,17 @@ from oddish.config import (
     GEOMETRIC_DEFAULT_BASE_URL,
     NOP_ORACLE_QUEUE_KEY,
     Settings,
+    infer_model_provider_prefix,
+    is_meta_model,
+    is_meta_public_model,
+    meta_harness_model_id,
+    meta_public_bare_model_id,
     normalize_model_id,
     require_geometric_served_model_id,
+    resolve_meta_public_api_key,
     to_anthropic_api_model_id,
-)  # noqa: E402
+    to_meta_public_model_id,
+)
 
 
 def _settings(monkeypatch, *, clear_openai_env: bool = True, **kwargs) -> Settings:
@@ -302,6 +310,61 @@ def test_meta_model_routes_to_meta_for_mini_swe_agent(monkeypatch):
     assert settings.get_provider_for_trial("mini-swe-agent", model) == "meta"
     assert settings.get_queue_key_for_trial("mini-swe-agent", model) == model
     assert settings.normalize_queue_key(model) == model
+
+
+def test_meta_public_model_keeps_its_own_provider_identity(monkeypatch):
+    settings = _settings(monkeypatch, clear_openai_env=False)
+    model = "meta-public/muse-spark-1.3"
+
+    assert normalize_model_id(" Meta-Public / Muse Spark 1.3 ") == model
+    for agent in ("muse-code", "tbh", "mini-swe-agent"):
+        assert settings.normalize_trial_model(agent, model) == model
+        assert settings.get_provider_for_trial(agent, model) == "meta-public"
+        assert settings.get_queue_key_for_trial(agent, model) == model
+    assert settings.normalize_queue_key(model) == model
+    assert infer_model_provider_prefix(model) == "meta-public"
+
+
+def test_meta_public_prefix_is_not_the_internal_meta_route():
+    assert is_meta_public_model("meta-public/muse-spark-1.3")
+    assert is_meta_public_model("META-PUBLIC/muse-spark-1.3")
+    assert not is_meta_model("meta-public/muse-spark-1.3")
+    assert not is_meta_public_model("meta/goofy_glacier135")
+    assert not is_meta_public_model(None)
+    assert meta_public_bare_model_id("meta-public/muse-spark-1.3") == "muse-spark-1.3"
+    assert (
+        to_meta_public_model_id("META-PUBLIC/muse-spark-1.3")
+        == "meta-public/muse-spark-1.3"
+    )
+
+
+def test_meta_harness_model_id_maps_only_the_public_route():
+    assert meta_harness_model_id("meta-public/muse-spark-1.3") == "meta/muse-spark-1.3"
+    assert meta_harness_model_id("meta/goofy_glacier135") == "meta/goofy_glacier135"
+    assert meta_harness_model_id("xai-public/grok-4.7") == "xai-public/grok-4.7"
+    assert meta_harness_model_id(None) is None
+
+
+def test_meta_public_api_key_is_a_settings_field(monkeypatch):
+    monkeypatch.setenv("META_PUBLIC_API_KEY", "public-key")
+    settings = _settings(monkeypatch, clear_openai_env=False)
+
+    assert settings.meta_public_api_key == "public-key"
+
+
+def test_resolve_meta_public_api_key_prefers_settings_then_env(monkeypatch):
+    monkeypatch.setenv("META_PUBLIC_API_KEY", "env-key")
+
+    def resolve(value):
+        return resolve_meta_public_api_key(SimpleNamespace(meta_public_api_key=value))
+
+    assert resolve("settings-key") == "settings-key"
+    assert resolve(None) == "env-key"
+    assert resolve("   ") == "env-key"
+    monkeypatch.setenv("META_PUBLIC_API_KEY", "   ")
+    assert resolve(None) is None
+    monkeypatch.delenv("META_PUBLIC_API_KEY")
+    assert resolve(None) is None
 
 
 def test_meta_agent_env_includes_configured_session_controls(monkeypatch):

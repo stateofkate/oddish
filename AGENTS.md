@@ -1587,9 +1587,10 @@ Keep these routing rules in sync with `oddish/src/oddish/config.py` and
   routing to public OpenAI.
 - z.ai, MiniMax, Moonshot/Kimi, Fireworks, xAI, Meta, Geometric, and Anthropic
   HDO each have explicit canonical provider prefixes and queue keys: `zai/`,
-  `minimax/`, `moonshot/`, `fireworks/`, `xai/`, `meta/`, `geometric/`, and
-  `anthropic-hdo/`. Add or change provider aliases in `config.py`, then update
-  env injection in the Harbor runner and the network allowlist notes.
+  `minimax/`, `moonshot/`, `fireworks/`, `xai/`, `meta/`, `meta-public/`,
+  `geometric/`, and `anthropic-hdo/`. Add or change provider aliases in
+  `config.py`, then update env injection in the Harbor runner and the network
+  allowlist notes.
 - Google Vertex AI is the `vertex_ai/<model>` provider (aliases `vertex/`,
   `vertex-ai/`, `google-vertex/`) for Gemini and Claude alike; the bare id
   passes through untouched. It is agent-agnostic: `workers/harbor/vertex_ai.py`
@@ -1720,13 +1721,14 @@ Keep these routing rules in sync with `oddish/src/oddish/config.py` and
 - Provider secrets are referenced by env var name (`AWS_BEARER_TOKEN_BEDROCK`,
   `ANTHROPIC_HDO_API_KEY`, `ZAI_API_KEY`, `MINIMAX_API_KEY`, `MOONSHOT_API_KEY`,
   `FIREWORKS_API_KEY`, `XAI_API_KEY`, `XAI_PUBLIC_API_KEY`, `META_API_KEY`,
-  `VERTEX_AI_CREDENTIALS_JSON`, `VERTEX_AI_API_KEY`) and must not be persisted
-  on trial rows. The Vertex service-account JSON never enters an agent env at
-  all: only the sandbox file path does, and Harbor's env serializer would
-  redact a literal under a CREDENTIAL-named key anyway. The uploaded file is
-  readable inside the trial sandbox, the same trust boundary as the plaintext
-  provider keys every trial carries in its env, so the deployment guidance is
-  a dedicated, minimally scoped service account (see `SELF_HOSTING.md`).
+  `META_PUBLIC_API_KEY`, `VERTEX_AI_CREDENTIALS_JSON`, `VERTEX_AI_API_KEY`) and
+  must not be persisted on trial rows. The Vertex service-account JSON never
+  enters an agent env at all: only the sandbox file path does, and Harbor's env
+  serializer would redact a literal under a CREDENTIAL-named key anyway. The
+  uploaded file is readable inside the trial sandbox, the same trust boundary as
+  the plaintext provider keys every trial carries in its env, so the deployment
+  guidance is a dedicated, minimally scoped service account (see
+  `SELF_HOSTING.md`).
 - `grok-build` selects credentials by model prefix: `xai/<id>` keeps the
   existing private `XAI_API_KEYS` pool (or `XAI_API_KEY` fallback), while
   `xai-public/<id>` requires `XAI_PUBLIC_API_KEY`. Both send the bare `<id>`
@@ -1737,6 +1739,24 @@ Keep these routing rules in sync with `oddish/src/oddish/config.py` and
   The prefixes are distinct provider and queue identities; public-key
   fingerprinting and job-scoped credentials follow that identity. Do not mix
   public and private keys in `XAI_API_KEYS`.
+- Meta has two routes on the same hosts. `meta/<id>` uses `META_API_KEY`
+  (internal models); `meta-public/<id>` uses `META_PUBLIC_API_KEY` (public
+  models). The prefixes are distinct provider and queue identities, and the
+  agent config keeps `meta-public/<id>` through Oddish routing so the key,
+  host, transport and credential-fold tables all see the public route. For
+  public trials `resolve_meta_public_api_key` (Settings, then the process env;
+  shared with the job-scoped bundle and the key fingerprint) resolves the key.
+  The routing step binds `META_API_KEY` and `META_PUBLIC_API_KEY` (plus
+  `MSWEA_API_KEY` and `OPENAI_API_KEY` for mini-swe-agent) to a
+  `${META_PUBLIC_API_KEY}` template when the worker env holds the key, or to the
+  Settings value otherwise. The binding replaces any submitted value for those
+  names. Harbor's stored config and result keep `meta-public/<id>`; the harness
+  receives `meta/<id>` as its worker-only runtime model, in process and in the
+  override-Harbor child. Re-importing a downloaded public job directory with
+  `oddish upload --task` therefore files it under `meta-public/`. Oddish never
+  binds the internal key into a public trial. Meta mini-swe-agent cannot run in
+  the override-Harbor child on either route (the child selects the generic
+  mini-swe wrapper).
 - `grok-build` (xAI) writes a Grok CLI config whose `[model.*]` blocks pin an
   `api_backend`. Upstream Harbor hardcodes `responses` (`POST /v1/responses`),
   but not every xAI model is served there — some (e.g. newer/unreleased models)

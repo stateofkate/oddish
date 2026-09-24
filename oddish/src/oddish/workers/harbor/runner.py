@@ -42,6 +42,7 @@ from oddish.config import (
     OPENAI_PROVIDER_OPENAI,
     infer_model_provider_prefix,
     is_anthropic_hdo_model,
+    meta_harness_model_id,
     settings,
 )
 from oddish.costs.modal_cost import (
@@ -305,6 +306,10 @@ _PROVIDER_RUNTIME_SECRET_KEYS: dict[str, tuple[str, ...]] = {
     "xai": ("XAI_API_KEY", "XAI_API_KEYS"),
     "xai-public": ("XAI_PUBLIC_API_KEY",),
     "meta": ("META_API_KEY", "OPENAI_API_KEY"),
+    # The public Meta route folds only the public key from the process env, so
+    # the internal META_API_KEY and any OpenAI-family key never enter its
+    # runtime transport env.
+    "meta-public": ("META_PUBLIC_API_KEY",),
     "geometric": ("GEOMETRIC_API_KEY", "OPENAI_API_KEY"),
     "fireworks": ("FIREWORKS_API_KEY",),
     "deepseek": ("DEEPSEEK_API_KEY",),
@@ -1939,6 +1944,26 @@ async def run_harbor_trial_async(
         )
 
 
+def _harness_agent_config(agent_config: HarborAgentConfig) -> HarborAgentConfig:
+    """The agent config Harbor runs, with Oddish routing ids mapped for harnesses.
+
+    Oddish keeps ``meta-public/<id>`` through its routing so every provider-keyed
+    table sees the public route. The Meta harnesses parse ``meta/<id>``, so a
+    public Meta config goes to Harbor as a copy that keeps ``meta-public/<id>``
+    as its model (the id Harbor stores in the job config and the result) and
+    carries ``meta/<id>`` as its worker-only runtime model, which Harbor's
+    patched ``AgentFactory`` builds the harness with. Any other config is
+    returned as is, including stand-ins without a model.
+    """
+    model_name = getattr(agent_config, "model_name", None)
+    harness_model = meta_harness_model_id(model_name)
+    if harness_model is None or harness_model == model_name:
+        return agent_config
+    harness_config = agent_config.model_copy()
+    set_runtime_model_name(harness_config, harness_model)
+    return harness_config
+
+
 async def _run_harbor_trial_async_impl(
     task_path: Path,
     agent: str,
@@ -2443,7 +2468,7 @@ async def _run_harbor_trial_async_impl(
         verifier_config = configure_trusted_trajectory(effective_task_path, hc.verifier)
         job_config_kwargs: dict[str, Any] = {
             "tasks": [TaskConfig(path=effective_task_path)],
-            "agents": [agent_config],
+            "agents": [_harness_agent_config(agent_config)],
             "environment": env_config,
             "verifier": verifier_config,
             "artifacts": hc.artifacts,

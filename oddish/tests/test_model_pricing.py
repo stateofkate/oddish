@@ -57,6 +57,12 @@ def test_public_xai_route_uses_xai_catalog_pricing() -> None:
     assert "xai/grok-4.7" in candidates
 
 
+def test_public_meta_route_uses_meta_catalog_pricing() -> None:
+    candidates = _litellm_candidates("meta-public/muse-spark-1.3")
+    assert candidates[0] == "meta-public/muse-spark-1.3"
+    assert "meta/muse-spark-1.3" in candidates
+
+
 def test_has_pricing_covers_latest_frontier_models() -> None:
     """2026-era models released after the initial pricing table shipped."""
     # Anthropic — Opus 4.6 / 4.7 and Sonnet 4.6 share the 4.5 rate card.

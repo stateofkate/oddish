@@ -1050,6 +1050,16 @@ def test_provider_aliases_resolve_transport_keys():
     assert _model_transport_base_url_keys("moonshotai/kimi") == ("MOONSHOT_BASE_URL",)
 
 
+def test_public_meta_model_consumes_the_meta_transport_keys():
+    from oddish.workers.harbor.restricted_network import (
+        _model_transport_base_url_keys,
+    )
+
+    public_keys = _model_transport_base_url_keys("meta-public/muse-spark-1.3")
+    assert "META_BASE_URL" in public_keys
+    assert public_keys == _model_transport_base_url_keys("meta/muse-spark-1.3")
+
+
 def test_grok_profile_falls_back_to_xai_host():
     # grok-build always fronts xAI; the profile must never leave an empty
     # allowlist even when the model's transport route is not explicitly resolved.

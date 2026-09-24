@@ -23,6 +23,7 @@ from oddish.config import (
     is_fireworks_model,
     is_geometric_model,
     is_meta_model,
+    is_meta_public_model,
     is_minimax_model,
     is_moonshot_model,
     is_vertex_ai_model,
@@ -30,8 +31,10 @@ from oddish.config import (
     is_xai_public_model,
     is_zai_model,
     require_geometric_served_model_id,
+    resolve_meta_public_api_key,
     to_geometric_model_id,
     to_meta_model_id,
+    to_meta_public_model_id,
     minimax_api_model_id,
     minimax_bare_model_id,
     moonshot_bare_model_id,
@@ -542,7 +545,10 @@ def _apply_meta_mini_swe_agent(agent_config: AgentConfig) -> None:
         return
     if not _is_mini_swe_agent(agent_config):
         return
-    if not is_meta_model(agent_config.model_name):
+    if not (
+        is_meta_model(agent_config.model_name)
+        or is_meta_public_model(agent_config.model_name)
+    ):
         return
 
     agent_config.name = None
@@ -559,6 +565,45 @@ def _apply_meta_mini_swe_agent(agent_config: AgentConfig) -> None:
     # (see harbor MiniSweAgent.run). When the caller does not set it, effort
     # stays unset (vendor default), so other sampling params are untouched.
     agent_config.kwargs = dict(agent_config.kwargs or {})
+
+
+# The names the Meta harnesses authenticate with. muse-code and tbh read
+# META_API_KEY (tbh during setup, for ``tbh auth set``). The public-key name is
+# set too, so a submitted value cannot sit unused next to the platform key.
+# mini-swe-agent reads MSWEA_API_KEY and, through LiteLLM's ``openai/``
+# provider, OPENAI_API_KEY, so only it receives those two: no other harness
+# sends the Meta key to OpenAI.
+_META_API_KEY_NAMES = ("META_API_KEY", "META_PUBLIC_API_KEY")
+_META_MINI_SWE_KEY_NAMES = ("MSWEA_API_KEY", "OPENAI_API_KEY")
+
+
+def _apply_meta_public_route(agent_config: AgentConfig) -> None:
+    """Bind the Meta harness credential names to the public Meta key.
+
+    The binding is forced, not defaulted: on a worker the ambient
+    ``META_API_KEY`` is the internal key, Harbor prefers the agent env over
+    the process env, and the mini-swe-agent defaults template its two names to
+    ``${META_API_KEY}``. When the process env holds the resolved key, the names
+    get the ``${META_PUBLIC_API_KEY}`` template, which keeps the key out of
+    Harbor's stored configs and payloads; a key from a self-hosted ``.env``
+    reaches Settings only, so it is bound as the value itself.
+    """
+    if not is_meta_public_model(agent_config.model_name):
+        return
+    public_key = resolve_meta_public_api_key(settings)
+    if not public_key:
+        raise ValueError("meta-public model requires META_PUBLIC_API_KEY on the worker")
+    bound = (
+        "${META_PUBLIC_API_KEY}"
+        if os.environ.get("META_PUBLIC_API_KEY") == public_key
+        else public_key
+    )
+    names = _META_API_KEY_NAMES
+    if _is_mini_swe_agent(agent_config):
+        names += _META_MINI_SWE_KEY_NAMES
+    env = dict(agent_config.env or {})
+    env.update({name: bound for name in names})
+    agent_config.env = env
 
 
 def _apply_geometric_mini_swe_agent(agent_config: AgentConfig) -> None:
@@ -753,6 +798,8 @@ def _build_routed_agent_config(
 
     # Before provider canonicalization: moonshot-prefix the model + vendor kwargs.
     _prepare_kimi_claude_code_agent(agent_config)
+    # Before the mini-swe-agent defaults and the extra agent env are layered on.
+    _apply_meta_public_route(agent_config)
 
     requested = agent_config.model_name
     agent_config.model_name = _selected_claude_model(agent, requested)
@@ -762,6 +809,8 @@ def _build_routed_agent_config(
         agent_config.model_name = to_fireworks_model_id(agent_config.model_name)
     elif is_meta_model(agent_config.model_name):
         agent_config.model_name = to_meta_model_id(agent_config.model_name)
+    elif is_meta_public_model(agent_config.model_name):
+        agent_config.model_name = to_meta_public_model_id(agent_config.model_name)
     elif is_geometric_model(agent_config.model_name):
         # Before z.ai: an explicit geometric/ (or gm/) prefix on a GLM id
         # must win over the bare-``glm`` z.ai fallback below.

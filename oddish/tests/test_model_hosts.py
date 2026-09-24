@@ -146,6 +146,12 @@ def test_muse_code_gets_the_meta_service_host_like_tbh():
     assert agent_runtime_hosts(agent_name="MUSE-CODE") == ["api.meta.ai"]
 
 
+def test_public_meta_model_uses_the_meta_api_host():
+    public_hosts = outbound_hosts_for_model("meta-public/muse-spark-1.3")
+    assert public_hosts
+    assert public_hosts == outbound_hosts_for_model("meta/muse-spark-1.3")
+
+
 def test_muse_code_custom_endpoint_is_added_alongside_the_default():
     assert agent_runtime_hosts(
         agent_name="muse-code",

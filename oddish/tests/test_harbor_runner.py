@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import sys
 from builtins import ExceptionGroup
 from collections import namedtuple
@@ -947,6 +948,27 @@ def test_mini_swe_provider_credentials_enter_redaction_map(monkeypatch):
 
     env, reps = redactions("fireworks/glm-5p2")
     assert reps.get("fireworks-secret") == "[REDACTED]"
+
+
+def test_public_meta_fold_carries_only_the_public_key(monkeypatch):
+    # The fold feeds redaction and host inference. For the public route it must
+    # carry the public key and never pull in the ambient internal or OpenAI key.
+    monkeypatch.setenv("META_API_KEY", "meta-internal-secret")
+    monkeypatch.setenv("META_PUBLIC_API_KEY", "meta-public-secret")
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-secret")
+
+    env = harbor_runner._resolved_runtime_transport_env(
+        {},
+        agent_config=HarborAgentConfig(
+            name="muse-code", model_name="meta-public/muse-spark-1.3"
+        ),
+    )
+
+    assert env.get("META_PUBLIC_API_KEY") == "meta-public-secret"
+    assert "META_API_KEY" not in env
+    assert "OPENAI_API_KEY" not in env
+    replacements = harbor_runner._runtime_transport_redactions(env)
+    assert replacements["meta-public-secret"] == "[REDACTED]"
 
 
 def test_cursor_ambient_api_key_enters_redaction_map(monkeypatch):
@@ -2744,6 +2766,547 @@ def test_build_agent_config_mini_swe_meta_uses_meta_wrapper(monkeypatch):
         agent_config.import_path
         == "oddish.workers.agents.mini_swe_agent:OddishMetaMiniSweAgent"
     )
+
+
+_PUBLIC_META_KEY_NAMES = ("META_API_KEY", "META_PUBLIC_API_KEY")
+_META_HARNESS_KEY_NAMES = (*_PUBLIC_META_KEY_NAMES, "MSWEA_API_KEY", "OPENAI_API_KEY")
+_PUBLIC_META_KEY_TEMPLATE = "${META_PUBLIC_API_KEY}"
+_PUBLIC_META_KEY_ERROR = "meta-public model requires META_PUBLIC_API_KEY on the worker"
+
+
+@pytest.mark.parametrize(
+    ("agent", "bound_names"),
+    [
+        ("muse-code", _PUBLIC_META_KEY_NAMES),
+        ("tbh", _PUBLIC_META_KEY_NAMES),
+        ("mini-swe-agent", _META_HARNESS_KEY_NAMES),
+    ],
+)
+def test_build_agent_config_binds_the_public_meta_key(monkeypatch, agent, bound_names):
+    monkeypatch.setattr(harbor_runner.settings, "openai_provider", "openai")
+    monkeypatch.setattr(harbor_runner.settings, "meta_public_api_key", None)
+    monkeypatch.setenv("META_API_KEY", "internal-key")
+    monkeypatch.setenv("META_PUBLIC_API_KEY", "public-key")
+
+    agent_config = harbor_runner._build_agent_config(
+        agent=agent, model="meta-public/muse-spark-1.3", raw_harbor_config={}
+    )
+
+    assert agent_config.model_name == "meta-public/muse-spark-1.3"
+    # Resolved the way Harbor resolves it, so a ``${META_API_KEY}`` template
+    # (the worker's internal key) would show up here.
+    resolved = harbor_runner.resolve_env_vars(agent_config.env)
+    for name in bound_names:
+        assert agent_config.env[name] == _PUBLIC_META_KEY_TEMPLATE
+        assert resolved[name] == "public-key"
+    # Only mini-swe-agent reads the OpenAI-family names; no other harness
+    # receives the Meta key under them.
+    for name in set(_META_HARNESS_KEY_NAMES) - set(bound_names):
+        assert name not in agent_config.env
+    assert "internal-key" not in resolved.values()
+
+
+@pytest.mark.parametrize(
+    ("settings_key", "env_key", "bound"),
+    [
+        # The worker env holds the key, so the config names it instead.
+        (None, "public-key", _PUBLIC_META_KEY_TEMPLATE),
+        # A worker's Settings loaded the same key from its env.
+        ("public-key", "public-key", _PUBLIC_META_KEY_TEMPLATE),
+        # A self-hosted .env reaches Settings only: no env value to name.
+        ("settings-key", None, "settings-key"),
+        # The resolver picks Settings; the template would resolve the env's key.
+        ("settings-key", "env-key", "settings-key"),
+        # The template resolves the raw env value, not the resolver's stripped one.
+        (None, " public-key ", "public-key"),
+    ],
+)
+def test_public_meta_binding_is_a_template_only_for_the_env_key(
+    monkeypatch, settings_key, env_key, bound
+):
+    monkeypatch.setattr(harbor_runner.settings, "openai_provider", "openai")
+    monkeypatch.setattr(harbor_runner.settings, "meta_public_api_key", settings_key)
+    if env_key is None:
+        monkeypatch.delenv("META_PUBLIC_API_KEY", raising=False)
+    else:
+        monkeypatch.setenv("META_PUBLIC_API_KEY", env_key)
+    monkeypatch.setenv("META_API_KEY", "internal-key")
+
+    agent_config = harbor_runner._build_agent_config(
+        agent="mini-swe-agent", model="meta-public/muse-spark-1.3", raw_harbor_config={}
+    )
+
+    assert {agent_config.env[name] for name in _META_HARNESS_KEY_NAMES} == {bound}
+
+
+@pytest.mark.parametrize("agent", ["muse-code", "tbh", "mini-swe-agent"])
+def test_public_meta_config_persists_no_key_material(monkeypatch, agent):
+    # Harbor writes this dump into the trial's config.json, where a bound
+    # literal would persist as a masked fragment of the key.
+    monkeypatch.setattr(harbor_runner.settings, "openai_provider", "openai")
+    monkeypatch.setattr(harbor_runner.settings, "meta_public_api_key", None)
+    monkeypatch.setenv("META_API_KEY", "internal-key")
+    monkeypatch.setenv("META_PUBLIC_API_KEY", "public-key")
+
+    agent_config = harbor_runner._build_agent_config(
+        agent=agent, model="meta-public/muse-spark-1.3", raw_harbor_config={}
+    )
+    persisted = agent_config.model_dump(mode="json")["env"]
+
+    assert [v for v in persisted.values() if "****" in v or "public-key" in v] == []
+    for name in _PUBLIC_META_KEY_NAMES:
+        assert persisted[name] == _PUBLIC_META_KEY_TEMPLATE
+
+
+def test_public_meta_key_can_come_from_settings_alone(monkeypatch):
+    # A self-hosted .env reaches Settings but never os.environ.
+    monkeypatch.setattr(harbor_runner.settings, "meta_public_api_key", "settings-key")
+    monkeypatch.delenv("META_PUBLIC_API_KEY", raising=False)
+    monkeypatch.setenv("META_API_KEY", "internal-key")
+
+    agent_config = harbor_runner._build_agent_config(
+        agent="muse-code", model="meta-public/muse-spark-1.3", raw_harbor_config={}
+    )
+
+    assert agent_config.env["META_API_KEY"] == "settings-key"
+
+
+def test_public_meta_key_in_a_sandbox_env_without_the_internal_key(monkeypatch):
+    # The monitor sandbox holds only the scoped public key.
+    monkeypatch.setattr(harbor_runner.settings, "meta_public_api_key", None)
+    monkeypatch.delenv("META_API_KEY", raising=False)
+    monkeypatch.setenv("META_PUBLIC_API_KEY", "sandbox-public-key")
+
+    agent_config = harbor_runner._build_agent_config(
+        agent="tbh", model="meta-public/muse-spark-1.3", raw_harbor_config={}
+    )
+
+    resolved = harbor_runner.resolve_env_vars(agent_config.env)
+    assert resolved["META_API_KEY"] == "sandbox-public-key"
+
+
+def test_public_meta_bundle_env_keeps_the_public_key(monkeypatch):
+    # With job-scoped tokens on, the worker passes the bundle as extra env,
+    # which the builder applies after the binding.
+    monkeypatch.setattr(harbor_runner.settings, "meta_public_api_key", None)
+    monkeypatch.setenv("META_API_KEY", "internal-key")
+    monkeypatch.setenv("META_PUBLIC_API_KEY", "public-key")
+
+    agent_config = harbor_runner._build_agent_config(
+        agent="muse-code",
+        model="meta-public/muse-spark-1.3",
+        raw_harbor_config={},
+        probe_oddish_env={
+            "META_PUBLIC_API_KEY": "public-key",
+            "META_API_KEY": "public-key",
+            "MSWEA_API_KEY": "public-key",
+        },
+    )
+
+    assert agent_config.env["META_API_KEY"] == "public-key"
+    assert (
+        "internal-key" not in harbor_runner.resolve_env_vars(agent_config.env).values()
+    )
+
+
+def test_public_meta_binding_bundle_and_fingerprint_agree(monkeypatch):
+    monkeypatch.setattr(harbor_runner.settings, "openai_provider", "openai")
+    # Conflicting sentinels: the shared resolver must pick one value for the
+    # binding, the job-scoped bundle and the fingerprint alike.
+    from oddish.core.llm_key_fingerprint import (
+        hash_llm_key,
+        platform_key_hash_for_provider,
+    )
+    from oddish.workers.queue import job_tokens
+
+    monkeypatch.setattr(harbor_runner.settings, "meta_public_api_key", "settings-key")
+    monkeypatch.setenv("META_PUBLIC_API_KEY", "env-key")
+    monkeypatch.setenv("META_API_KEY", "internal-key")
+
+    bundle = job_tokens.scoped_model_env(
+        agent="mini-swe-agent",
+        model="meta-public/muse-spark-1.3",
+        settings=harbor_runner.settings,
+    )
+    agent_config = harbor_runner._build_agent_config(
+        agent="mini-swe-agent",
+        model="meta-public/muse-spark-1.3",
+        raw_harbor_config={},
+        probe_oddish_env=bundle,
+    )
+
+    assert bundle["META_PUBLIC_API_KEY"] == "settings-key"
+    assert {agent_config.env[name] for name in _META_HARNESS_KEY_NAMES} == {
+        "settings-key"
+    }
+    assert platform_key_hash_for_provider("meta-public") == hash_llm_key("settings-key")
+
+
+def test_build_agent_config_routes_public_meta_mini_swe_to_meta_wrapper(monkeypatch):
+    monkeypatch.setattr(harbor_runner.settings, "openai_provider", "openai")
+    monkeypatch.setattr(harbor_runner.settings, "meta_public_api_key", "public-key")
+    monkeypatch.delenv("META_PUBLIC_API_KEY", raising=False)
+
+    agent_config = harbor_runner._build_agent_config(
+        agent="mini-swe-agent",
+        model="meta-public/muse-spark-1.3",
+        raw_harbor_config={},
+    )
+
+    assert (
+        agent_config.import_path
+        == "oddish.workers.agents.mini_swe_agent:OddishMetaMiniSweAgent"
+    )
+    assert agent_config.env["OPENAI_BASE_URL"].startswith("https://")
+
+
+@pytest.mark.parametrize(
+    ("name", "submitted"),
+    [
+        ("META_API_KEY", "${META_API_KEY}"),
+        ("META_PUBLIC_API_KEY", "${OTHER_META_KEY}"),
+    ],
+)
+def test_public_meta_binding_overrides_a_submitted_key(monkeypatch, name, submitted):
+    monkeypatch.setattr(harbor_runner.settings, "meta_public_api_key", "public-key")
+    monkeypatch.delenv("META_PUBLIC_API_KEY", raising=False)
+
+    agent_config = harbor_runner._build_agent_config(
+        agent="muse-code",
+        model="meta-public/muse-spark-1.3",
+        raw_harbor_config={"agent_config": {"env": {name: submitted}}},
+    )
+
+    assert agent_config.env[name] == "public-key"
+
+
+def test_public_meta_route_requires_the_public_key(monkeypatch):
+    monkeypatch.setattr(harbor_runner.settings, "meta_public_api_key", None)
+    monkeypatch.delenv("META_PUBLIC_API_KEY", raising=False)
+    monkeypatch.setenv("META_API_KEY", "internal-key")
+
+    with pytest.raises(ValueError, match=re.escape(_PUBLIC_META_KEY_ERROR)):
+        harbor_runner._build_agent_config(
+            agent="muse-code", model="meta-public/muse-spark-1.3", raw_harbor_config={}
+        )
+
+
+@pytest.mark.parametrize("agent", ["muse-code", "tbh", "mini-swe-agent"])
+def test_build_agent_config_keeps_the_internal_meta_route(monkeypatch, agent):
+    monkeypatch.setattr(harbor_runner.settings, "openai_provider", "openai")
+    monkeypatch.setenv("META_API_KEY", "internal-key")
+    monkeypatch.setenv("META_PUBLIC_API_KEY", "public-key")
+
+    agent_config = harbor_runner._build_agent_config(
+        agent=agent, model="meta/goofy_glacier135", raw_harbor_config={}
+    )
+
+    assert agent_config.model_name == "meta/goofy_glacier135"
+    resolved = harbor_runner.resolve_env_vars(agent_config.env or {})
+    assert "public-key" not in resolved.values()
+    if agent == "mini-swe-agent":
+        # The internal route keeps its runtime templates on the internal key.
+        assert agent_config.env["MSWEA_API_KEY"] == "${META_API_KEY}"
+        assert agent_config.env["OPENAI_API_KEY"] == "${META_API_KEY}"
+        assert resolved["OPENAI_API_KEY"] == "internal-key"
+
+
+@pytest.mark.parametrize("shape", ["kube-chart", "compose"])
+def test_public_meta_restricted_bridges_match_meta_without_the_internal_key(
+    monkeypatch, tmp_path, shape
+):
+    # Both bridges resolve the agent env and the worker's credential fold for
+    # the agent's profile: the public route must open the same Meta host as
+    # meta/ and resolve no internal key on the way.
+    from oddish.workers.harbor import restricted_network
+
+    monkeypatch.setattr(harbor_runner.settings, "openai_provider", "openai")
+    monkeypatch.setattr(harbor_runner.settings, "meta_public_api_key", None)
+    monkeypatch.setenv("META_API_KEY", "internal-key")
+    monkeypatch.setenv("META_PUBLIC_API_KEY", "public-key")
+    resolved_envs: list[dict[str, str]] = []
+    profile_for_config = restricted_network.restricted_network_profile_for_config
+
+    def _capture(agent_config, *, resolved_env):
+        resolved_envs.append(dict(resolved_env))
+        return profile_for_config(agent_config, resolved_env=resolved_env)
+
+    # The kube-chart bridge calls the runner's import, Compose the module's own.
+    for module in (harbor_runner, restricted_network):
+        monkeypatch.setattr(module, "restricted_network_profile_for_config", _capture)
+    task_path = (
+        _write_kube_network_policy_task(tmp_path)
+        if shape == "kube-chart"
+        else _write_network_policy_task(tmp_path, compose=True)
+    )
+    hosts: dict[str, set[str]] = {}
+    for model in ("meta/muse-spark-1.3", "meta-public/muse-spark-1.3"):
+        resolved_envs.clear()
+        environment_config = HarborEnvironmentConfig(type=EnvironmentType.DAYTONA)
+        profile = harbor_runner._apply_restricted_agent_network_defaults(
+            task_path=task_path,
+            environment_config=environment_config,
+            agent_config=harbor_runner._build_agent_config(
+                agent="mini-swe-agent", model=model, raw_harbor_config={}
+            ),
+        )
+        hosts[model] = set(
+            profile.outbound_hosts
+            if profile is not None
+            else environment_config.kwargs["helm_values"]["agentEgressProxy"][
+                "runtimeAllowedHosts"
+            ].split(";")
+        )
+
+    assert hosts["meta-public/muse-spark-1.3"] == hosts["meta/muse-spark-1.3"]
+    meta_hosts = harbor_runner.outbound_hosts_for_model("meta/muse-spark-1.3")
+    assert set(meta_hosts) <= hosts["meta/muse-spark-1.3"]
+    # The public route ran last, so these are the envs it resolved.
+    assert resolved_envs
+    for resolved_env in resolved_envs:
+        assert "public-key" in resolved_env.values()
+        assert "internal-key" not in resolved_env.values()
+
+
+def test_harness_agent_config_hands_meta_harnesses_a_meta_id():
+    agent_config = HarborAgentConfig(
+        name="muse-code",
+        model_name="meta-public/muse-spark-1.3",
+        env={"META_API_KEY": "public-key"},
+    )
+
+    harness = harbor_runner._harness_agent_config(agent_config)
+
+    # Harbor stores the public id; the harness runs the Meta id.
+    assert harness.model_name == "meta-public/muse-spark-1.3"
+    assert getattr(harness, RUNTIME_MODEL_NAME_ATTR) == "meta/muse-spark-1.3"
+    assert harness.env == {"META_API_KEY": "public-key"}
+    # The routed config that Oddish keeps using gets no runtime model.
+    assert agent_config.model_name == "meta-public/muse-spark-1.3"
+    assert not hasattr(agent_config, RUNTIME_MODEL_NAME_ATTR)
+    stored = harness.model_dump(mode="json")
+    assert stored["model_name"] == "meta-public/muse-spark-1.3"
+    assert RUNTIME_MODEL_NAME_ATTR not in stored
+    assert "meta/muse-spark-1.3" not in json.dumps(stored)
+
+
+def test_harness_agent_config_keeps_the_runtime_allowed_hosts():
+    from oddish.workers.harbor.restricted_network import set_runtime_allowed_hosts
+
+    agent_config = HarborAgentConfig(
+        name="muse-code", model_name="meta-public/muse-spark-1.3"
+    )
+    set_runtime_allowed_hosts(agent_config, ("api.ai.meta.com",))
+
+    harness = harbor_runner._harness_agent_config(agent_config)
+
+    assert harness.model_name == "meta-public/muse-spark-1.3"
+    assert getattr(harness, RUNTIME_MODEL_NAME_ATTR) == "meta/muse-spark-1.3"
+    assert getattr(harness, RUNTIME_ALLOWED_HOSTS_ATTR) == ("api.ai.meta.com",)
+
+
+@pytest.mark.parametrize(
+    ("name", "model_name"),
+    [
+        ("muse-code", "meta/goofy_glacier135"),
+        ("grok-build", "xai-public/grok-4.7"),
+        ("codex", "openai/gpt-5.5"),
+        ("nop", None),
+    ],
+)
+def test_harness_agent_config_leaves_other_models_alone(name, model_name):
+    agent_config = HarborAgentConfig(name=name, model_name=model_name)
+
+    assert harbor_runner._harness_agent_config(agent_config) is agent_config
+    assert not hasattr(agent_config, RUNTIME_MODEL_NAME_ATTR)
+
+
+@pytest.mark.parametrize("agent", ["muse-code", "tbh", "mini-swe-agent"])
+def test_patched_factory_runs_the_meta_id_and_reports_the_public_model(
+    monkeypatch, tmp_path, agent
+):
+    # The in-process chain: routing, the handoff, then Harbor's patched factory.
+    from harbor.agents.factory import AgentFactory
+
+    from oddish.workers.harbor.patches import (
+        _patch_restricted_network_runtime_fields,
+    )
+
+    monkeypatch.setattr(harbor_runner.settings, "openai_provider", "openai")
+    monkeypatch.setattr(harbor_runner.settings, "meta_public_api_key", None)
+    monkeypatch.setenv("META_API_KEY", "internal-key")
+    monkeypatch.setenv("META_PUBLIC_API_KEY", "public-key")
+    # tbh refuses to construct without a build to install.
+    monkeypatch.setenv("TBH_DOWNLOAD_URL", "https://tbh.example.test/tbh.tar.gz")
+    _patch_restricted_network_runtime_fields()
+    harness = harbor_runner._harness_agent_config(
+        harbor_runner._build_agent_config(
+            agent=agent, model="meta-public/muse-spark-1.3", raw_harbor_config={}
+        )
+    )
+
+    running = AgentFactory.create_agent_from_config(harness, tmp_path)
+
+    assert running.model_name == "meta/muse-spark-1.3"
+    model_info = running.to_agent_info().model_info
+    assert model_info is not None
+    assert (model_info.provider, model_info.name) == ("meta-public", "muse-spark-1.3")
+    assert harness.model_name == "meta-public/muse-spark-1.3"
+    assert "public-key" in running.extra_env.values()
+    assert "internal-key" not in running.extra_env.values()
+
+
+@pytest.mark.parametrize("agent", ["muse-code", "tbh", "mini-swe-agent"])
+def test_harbor_trial_runs_the_meta_id_and_stores_the_public_model(
+    monkeypatch, tmp_path, make_task, construct_harbor_trial, docker_kernel_probe, agent
+):
+    # Harbor's own Job and Trial construction from the JobConfig that Oddish
+    # hands over, with nothing stubbed: Harbor derives the trial config, and
+    # the Trial builds the agent through the patched AgentFactory.
+    from harbor import JobConfig
+    from harbor.models.trial.config import TaskConfig as HarborTaskConfig
+
+    from oddish.cli.api import trial_result_to_import_spec
+    from oddish.workers.harbor.patches import (
+        _patch_restricted_network_runtime_fields,
+    )
+
+    monkeypatch.setattr(harbor_runner.settings, "openai_provider", "openai")
+    monkeypatch.setattr(harbor_runner.settings, "meta_public_api_key", None)
+    monkeypatch.setenv("META_API_KEY", "internal-key")
+    monkeypatch.setenv("META_PUBLIC_API_KEY", "public-key")
+    # tbh refuses to construct without a build to install.
+    monkeypatch.setenv("TBH_DOWNLOAD_URL", "https://tbh.example.test/tbh.tar.gz")
+    _patch_restricted_network_runtime_fields()
+    harness = harbor_runner._harness_agent_config(
+        harbor_runner._build_agent_config(
+            agent=agent, model="meta-public/muse-spark-1.3", raw_harbor_config={}
+        )
+    )
+
+    job, trial = asyncio.run(
+        construct_harbor_trial(
+            JobConfig(
+                tasks=[HarborTaskConfig(path=make_task())],
+                agents=[harness],
+                environment=HarborEnvironmentConfig(type=EnvironmentType.DOCKER),
+                jobs_dir=tmp_path / "jobs",
+            )
+        )
+    )
+
+    # The harness runs the Meta id.
+    assert trial.agent.model_name == "meta/muse-spark-1.3"
+    # The trial config, the trial's config.json and lock, the result and the
+    # job config keep the public id.
+    assert trial.config.agent.model_name == "meta-public/muse-spark-1.3"
+    trial_config_json = trial.paths.config_path.read_text(encoding="utf-8")
+    stored_agent = json.loads(trial_config_json)["agent"]
+    assert stored_agent["model_name"] == "meta-public/muse-spark-1.3"
+    trial_lock_json = trial.paths.lock_path.read_text(encoding="utf-8")
+    locked_agent = json.loads(trial_lock_json)["agent"]
+    assert locked_agent["model_name"] == "meta-public/muse-spark-1.3"
+    result_json = trial.result.model_dump_json()
+    result = json.loads(result_json)
+    assert result["config"]["agent"]["model_name"] == "meta-public/muse-spark-1.3"
+    assert result["agent_info"]["model_info"] == {
+        "name": "muse-spark-1.3",
+        "provider": "meta-public",
+    }
+    job_config_json = job.config.model_dump_json(indent=4, exclude_defaults=True)
+    job_agents = json.loads(job_config_json)["agents"]
+    assert job_agents[0]["model_name"] == "meta-public/muse-spark-1.3"
+    for stored in (trial_config_json, trial_lock_json, result_json, job_config_json):
+        assert "meta/muse-spark-1.3" not in stored
+        assert RUNTIME_MODEL_NAME_ATTR not in stored
+    # So re-importing the downloaded trial files it under the public route.
+    imported = trial_result_to_import_spec(trial.result)
+    assert imported["model"] == "meta-public/muse-spark-1.3"
+    # The task's no-network baseline sends Harbor to its Docker kernel probe
+    # outside Linux, where the stub answers instead of a real container run.
+    assert bool(docker_kernel_probe) is (sys.platform != "linux")
+
+
+def test_harness_agent_config_accepts_a_stand_in_without_a_model():
+    # Existing runner tests stub _build_agent_config with SimpleNamespace(kwargs={}).
+    stand_in = SimpleNamespace(kwargs={})
+
+    assert harbor_runner._harness_agent_config(stand_in) is stand_in
+
+
+def test_run_harbor_trial_async_hands_harbor_the_public_meta_harness_model(
+    monkeypatch, tmp_path
+):
+    # Mirrors test_run_harbor_trial_async_skips_temp_root_preflight_without_task_patch,
+    # but captures the real JobConfig, so this pins the handoff wiring and the
+    # config Harbor stores for the job.
+    task_path = tmp_path / "task"
+    task_path.mkdir()
+    (task_path / "task.toml").write_text("", encoding="utf-8")
+    jobs_dir = tmp_path / "jobs"
+    captured: dict[str, object] = {}
+    routed = HarborAgentConfig(
+        name="muse-code",
+        model_name="meta-public/muse-spark-1.3",
+        env={"META_API_KEY": "public-key"},
+    )
+
+    class _FakeJob:
+        def __init__(self, config):
+            self.job_dir = config.jobs_dir / "job-1"
+
+        @classmethod
+        async def create(cls, config):
+            captured["config"] = config
+            return cls(config)
+
+        async def run(self):
+            self.job_dir.mkdir(parents=True, exist_ok=True)
+            (self.job_dir / "result.json").write_text("{}\n", encoding="utf-8")
+            return object()
+
+    monkeypatch.setattr(
+        harbor_runner, "_check_local_storage_preflight", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        harbor_runner, "validate_task_timeout_config", lambda path: None
+    )
+    monkeypatch.setattr(harbor_runner, "_build_agent_config", lambda **kwargs: routed)
+    monkeypatch.setattr(harbor_runner, "Job", _FakeJob)
+    monkeypatch.setattr(
+        harbor_runner,
+        "_extract_outcome_from_job_result",
+        lambda **kwargs: harbor_runner.HarborOutcome(
+            reward=1.0,
+            error=None,
+            exit_code=0,
+            duration_sec=kwargs["duration_sec"],
+            job_result_path=kwargs["job_result_path"],
+            job_dir=kwargs["job_dir"],
+        ),
+    )
+
+    outcome = asyncio.run(
+        harbor_runner.run_harbor_trial_async(
+            task_path=task_path,
+            agent="muse-code",
+            model="meta-public/muse-spark-1.3",
+            jobs_dir=jobs_dir,
+        )
+    )
+
+    assert outcome.error is None
+    config = captured["config"]
+    [agent] = config.agents
+    # Harbor stores the public id and runs the Meta id.
+    assert agent.model_name == "meta-public/muse-spark-1.3"
+    assert getattr(agent, RUNTIME_MODEL_NAME_ATTR) == "meta/muse-spark-1.3"
+    stored = config.model_dump(mode="json")
+    assert stored["agents"][0]["model_name"] == "meta-public/muse-spark-1.3"
+    assert RUNTIME_MODEL_NAME_ATTR not in stored["agents"][0]
+    assert "meta/muse-spark-1.3" not in json.dumps(stored)
+    assert routed.model_name == "meta-public/muse-spark-1.3"
+    assert not hasattr(routed, RUNTIME_MODEL_NAME_ATTR)
 
 
 def test_build_agent_config_claude_uses_bedrock_id_in_bedrock_mode(monkeypatch):
