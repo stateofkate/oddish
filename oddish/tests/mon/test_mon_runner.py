@@ -12,28 +12,8 @@ import pytest
 
 from oddish.mon import env, hooks, loops, runner
 from oddish.mon.client import AttemptGone, MonitorRejected
-from oddish.mon.contract import AttemptSpec
 from oddish.mon.exit_codes import EXIT_ACCEPTED, EXIT_STOPPED
 from oddish.workers.harbor import runner as harbor_runner
-
-
-def _spec(**overrides) -> AttemptSpec:
-    fields = dict(
-        trial_id="trial-1",
-        worker_job_id="job-1",
-        worker_job_attempt=2,
-        trial_attempt=1,
-        trial_kind="agent",
-        task_id="task-1",
-        task_name="hello",
-        agent="oracle",
-        model=None,
-        harbor_config=None,
-        org_id="org-1",
-        billed_user_id=None,
-    )
-    fields.update(overrides)
-    return AttemptSpec(**fields)
 
 
 MONITOR_ENV = env.MonitorEnv(
@@ -84,9 +64,10 @@ def _driver_seams() -> runner.seams.DriverSeams:
     return runner.seams.DriverSeams(persist=persist, quota=SimpleNamespace())
 
 
-def _task(tmp_path: Path, spec=None) -> runner.PreparedTask:
+@pytest.fixture
+def prepared_task(tmp_path, make_spec) -> runner.PreparedTask:
     return runner.PreparedTask(
-        spec=spec or _spec(),
+        spec=make_spec(),
         state=runner.seams.ControlState(),
         driver_seams=_driver_seams(),
         reporter=hooks.LifecycleReporter(_Client()),
@@ -102,7 +83,7 @@ def _task(tmp_path: Path, spec=None) -> runner.PreparedTask:
 
 @pytest.mark.asyncio
 async def test_prepare_task_fetches_the_task_and_stages_the_selected_skills(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, make_spec, offline_prepare_task
 ):
     phases = _status_log(monkeypatch)
     built: list = []
@@ -126,7 +107,6 @@ async def test_prepare_task_fetches_the_task_and_stages_the_selected_skills(
 
     monkeypatch.setattr(runner.task_fetch, "fetch_task", fetch_task)
     monkeypatch.setattr(runner.registry_login, "login", lambda auth: ["ghcr.io"])
-    monkeypatch.setattr(runner.builder, "env_for", lambda task_path: {})
     monkeypatch.setattr(runner.task_image, "reuse", reuse)
     monkeypatch.setattr(
         runner.resources, "with_reservation_semantics", lambda c: {**c, "pinned": True}
@@ -135,7 +115,7 @@ async def test_prepare_task_fetches_the_task_and_stages_the_selected_skills(
         runner, "materialize_skills", lambda skills, root: staged.append((skills, root))
     )
     client = _Client(skills=["bundle"])
-    spec = _spec(harbor_config={"skill_ids": ["s-1"]})
+    spec = make_spec(harbor_config={"skill_ids": ["s-1"]})
 
     task = await runner.prepare_task(client, spec, MONITOR_ENV)
 
@@ -151,8 +131,9 @@ async def test_prepare_task_fetches_the_task_and_stages_the_selected_skills(
 
 
 @pytest.mark.asyncio
-async def test_prepare_task_stages_no_skills_without_an_org(monkeypatch, tmp_path):
-    _status_log(monkeypatch)
+async def test_prepare_task_stages_no_skills_without_an_org(
+    monkeypatch, tmp_path, make_spec, offline_prepare_task
+):
     monkeypatch.setattr(
         runner.tempfile, "mkdtemp", lambda prefix, dir=None: str(tmp_path)
     )
@@ -161,20 +142,14 @@ async def test_prepare_task_stages_no_skills_without_an_org(monkeypatch, tmp_pat
     async def fetch_task(spec, task_dir):
         return Path(task_dir) / "task"
 
-    async def reuse(task_path, harbor_config):
-        return dict(harbor_config or {})
-
     monkeypatch.setattr(runner.task_fetch, "fetch_task", fetch_task)
-    monkeypatch.setattr(runner.registry_login, "login", lambda auth: [])
-    monkeypatch.setattr(runner.builder, "env_for", lambda task_path: {})
-    monkeypatch.setattr(runner.task_image, "reuse", reuse)
     monkeypatch.setattr(runner.resources, "with_reservation_semantics", lambda c: c)
 
     def _no_staging(*a):
         raise AssertionError("no skills should be staged")
 
     monkeypatch.setattr(runner, "materialize_skills", _no_staging)
-    spec = _spec(org_id=None, harbor_config={"skill_ids": ["s-1"]})
+    spec = make_spec(org_id=None, harbor_config={"skill_ids": ["s-1"]})
 
     task = await runner.prepare_task(_Client(), spec, MONITOR_ENV)
 
@@ -198,7 +173,7 @@ def _quiet_watchers(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_the_drivers_outcome_is_the_result_and_the_tail_is_flushed(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, prepared_task
 ):
     flushed = _quiet_watchers(monkeypatch)
     outcome = SimpleNamespace(reward=1.0)
@@ -209,23 +184,24 @@ async def test_the_drivers_outcome_is_the_result_and_the_tail_is_flushed(
         return outcome
 
     monkeypatch.setattr(harbor_runner, "run_harbor_trial_async", drive)
-    task = _task(tmp_path)
 
-    result = await runner.drive_with_watchers(_Client(), task, MONITOR_ENV)
+    result = await runner.drive_with_watchers(_Client(), prepared_task, MONITOR_ENV)
 
     assert result.outcome is outcome
     assert result.execution_error is None and result.retryable is True
     assert isinstance(result.stats, loops.LoopStats)
     assert flushed == ["trial-1"]
-    assert seen["task_path"] == task.task_path
+    assert seen["task_path"] == prepared_task.task_path
     assert seen["jobs_dir"] == tmp_path / "jobs"
     assert seen["trial_id"] == "trial-1" and seen["worker_job_id"] == "job-1"
     assert seen["extra_agent_env"] is None  # an empty agent env is not passed
-    assert seen["quota_seams"] is task.driver_seams.quota
+    assert seen["quota_seams"] is prepared_task.driver_seams.quota
 
 
 @pytest.mark.asyncio
-async def test_a_driver_crash_is_a_result_with_its_retryability(monkeypatch, tmp_path):
+async def test_a_driver_crash_is_a_result_with_its_retryability(
+    monkeypatch, prepared_task
+):
     _quiet_watchers(monkeypatch)
 
     async def drive(**kwargs):
@@ -234,7 +210,7 @@ async def test_a_driver_crash_is_a_result_with_its_retryability(monkeypatch, tmp
     monkeypatch.setattr(harbor_runner, "run_harbor_trial_async", drive)
     monkeypatch.setattr(harbor_runner, "is_retryable_execution_error", lambda e: False)
 
-    result = await runner.drive_with_watchers(_Client(), _task(tmp_path), MONITOR_ENV)
+    result = await runner.drive_with_watchers(_Client(), prepared_task, MONITOR_ENV)
 
     assert result.outcome is None
     assert result.execution_error == "RuntimeError: boom"
@@ -243,7 +219,7 @@ async def test_a_driver_crash_is_a_result_with_its_retryability(monkeypatch, tmp
 
 @pytest.mark.asyncio
 async def test_a_watcher_ending_first_cancels_the_driver_and_stops_the_trial(
-    monkeypatch, tmp_path
+    monkeypatch, prepared_task
 ):
     flushed = _quiet_watchers(monkeypatch)
     cancelled: list[bool] = []
@@ -263,23 +239,25 @@ async def test_a_watcher_ending_first_cancels_the_driver_and_stops_the_trial(
     monkeypatch.setattr(runner.loops, "control_loop", control_loop)
 
     with pytest.raises(loops.StopTrial, match="approval revoked"):
-        await runner.drive_with_watchers(_Client(), _task(tmp_path), MONITOR_ENV)
+        await runner.drive_with_watchers(_Client(), prepared_task, MONITOR_ENV)
 
     assert cancelled == [True]
     assert flushed == ["trial-1"]  # the tail is flushed on this exit too
 
 
 @pytest.mark.asyncio
-async def test_a_verdict_on_the_persist_tick_stops_the_driver(monkeypatch, tmp_path):
+async def test_a_verdict_on_the_persist_tick_stops_the_driver(
+    monkeypatch, prepared_task
+):
     """The live tail swallows what its persist tick raises; the runner's
     watcher on the control state stops the driver instead."""
     flushed = _quiet_watchers(monkeypatch)
-    task = _task(tmp_path)
     cancelled: list[bool] = []
 
     async def drive(**kwargs):
         await asyncio.sleep(0.01)
-        task.state.end(AttemptGone("410 on POST /events"))  # what the tick does
+        # What the persist tick does.
+        prepared_task.state.end(AttemptGone("410 on POST /events"))
         try:
             await asyncio.Event().wait()  # the tailer swallowed it; still driving
         except asyncio.CancelledError:
@@ -289,7 +267,7 @@ async def test_a_verdict_on_the_persist_tick_stops_the_driver(monkeypatch, tmp_p
     monkeypatch.setattr(harbor_runner, "run_harbor_trial_async", drive)
 
     with pytest.raises(loops.StopTrial, match="410 on POST /events"):
-        await runner.drive_with_watchers(_Client(), task, MONITOR_ENV)
+        await runner.drive_with_watchers(_Client(), prepared_task, MONITOR_ENV)
 
     assert cancelled == [True]
     assert flushed == ["trial-1"]
@@ -297,7 +275,7 @@ async def test_a_verdict_on_the_persist_tick_stops_the_driver(monkeypatch, tmp_p
 
 @pytest.mark.asyncio
 async def test_a_control_plane_verdict_from_the_driver_propagates(
-    monkeypatch, tmp_path
+    monkeypatch, prepared_task
 ):
     _quiet_watchers(monkeypatch)
 
@@ -307,7 +285,7 @@ async def test_a_control_plane_verdict_from_the_driver_propagates(
     monkeypatch.setattr(harbor_runner, "run_harbor_trial_async", drive)
 
     with pytest.raises(AttemptGone):
-        await runner.drive_with_watchers(_Client(), _task(tmp_path), MONITOR_ENV)
+        await runner.drive_with_watchers(_Client(), prepared_task, MONITOR_ENV)
 
 
 # --- report_until_accepted --------------------------------------------------
@@ -315,7 +293,7 @@ async def test_a_control_plane_verdict_from_the_driver_propagates(
 
 @pytest.mark.asyncio
 async def test_report_heartbeats_until_accepted_then_records_done(
-    monkeypatch, tmp_path
+    monkeypatch, prepared_task
 ):
     phases = _status_log(monkeypatch)
     beats: list[str] = []
@@ -329,13 +307,13 @@ async def test_report_heartbeats_until_accepted_then_records_done(
 
     reported: list[dict] = []
 
-    async def upload_and_report(client, outcome, **kwargs):
-        await asyncio.sleep(0)  # let the beat start, as a real upload would
+    async def report(client, outcome, **kwargs):
+        await asyncio.sleep(0)  # let the beat start, as a real post would
         reported.append({"outcome": outcome, **kwargs})
         return {}
 
     monkeypatch.setattr(runner.loops, "heartbeat_loop", heartbeat_loop)
-    monkeypatch.setattr(runner.artifacts, "upload_and_report", upload_and_report)
+    monkeypatch.setattr(runner.artifacts, "post_result", report)
     monkeypatch.setattr(runner, "_attach_monitor_log", lambda outcome: None)
     from oddish.mon import memstat
 
@@ -345,7 +323,7 @@ async def test_report_heartbeats_until_accepted_then_records_done(
         outcome=outcome, execution_error=None, retryable=True, stats=loops.LoopStats()
     )
 
-    await runner.report_until_accepted(_Client(), _task(tmp_path), result)
+    await runner.report_until_accepted(_Client(), prepared_task, result)
 
     assert phases == [("trial-1", "reporting"), ("trial-1", "done")]
     assert beats == ["cancelled"]
@@ -356,7 +334,9 @@ async def test_report_heartbeats_until_accepted_then_records_done(
 
 
 @pytest.mark.asyncio
-async def test_a_refused_result_leaves_the_status_at_reporting(monkeypatch, tmp_path):
+async def test_a_refused_result_leaves_the_status_at_reporting(
+    monkeypatch, prepared_task
+):
     phases = _status_log(monkeypatch)
     monkeypatch.setattr(runner.loops, "heartbeat_loop", _forever)
     monkeypatch.setattr(runner, "_attach_monitor_log", lambda outcome: None)
@@ -367,13 +347,13 @@ async def test_a_refused_result_leaves_the_status_at_reporting(monkeypatch, tmp_
     async def refused(client, outcome, **kwargs):
         raise MonitorRejected("newer attempt owns the row")
 
-    monkeypatch.setattr(runner.artifacts, "upload_and_report", refused)
+    monkeypatch.setattr(runner.artifacts, "post_result", refused)
     result = runner.DriveResult(
         outcome=None, execution_error="x", retryable=True, stats=loops.LoopStats()
     )
 
     with pytest.raises(MonitorRejected):
-        await runner.report_until_accepted(_Client(), _task(tmp_path), result)
+        await runner.report_until_accepted(_Client(), prepared_task, result)
 
     assert phases == [("trial-1", "reporting")]
 
@@ -405,9 +385,9 @@ def _wire_run(monkeypatch, client, *, prepare=None, drive=None, report=None):
 
 
 @pytest.mark.asyncio
-async def test_run_returns_accepted_and_closes_the_client(monkeypatch):
+async def test_run_returns_accepted_and_closes_the_client(monkeypatch, make_spec):
     phases = _status_log(monkeypatch)
-    client = _Client(attempt=_spec())
+    client = _Client(attempt=make_spec())
     _wire_run(monkeypatch, client)
 
     assert await runner.run() == EXIT_ACCEPTED
@@ -426,10 +406,10 @@ async def test_run_returns_accepted_and_closes_the_client(monkeypatch):
     ],
 )
 async def test_run_maps_every_control_plane_verdict_to_stopped(
-    monkeypatch, phase, verdict
+    monkeypatch, phase, verdict, make_spec
 ):
     phases = _status_log(monkeypatch)
-    client = _Client(attempt=verdict if phase == "attempt" else _spec())
+    client = _Client(attempt=verdict if phase == "attempt" else make_spec())
     _wire_run(
         monkeypatch,
         client,
@@ -445,9 +425,9 @@ async def test_run_maps_every_control_plane_verdict_to_stopped(
 
 
 @pytest.mark.asyncio
-async def test_run_lets_anything_else_raise_for_the_entrypoint(monkeypatch):
+async def test_run_lets_anything_else_raise_for_the_entrypoint(monkeypatch, make_spec):
     phases = _status_log(monkeypatch)
-    client = _Client(attempt=_spec())
+    client = _Client(attempt=make_spec())
     _wire_run(monkeypatch, client, drive=OSError("disk full"))
 
     with pytest.raises(OSError, match="disk full"):

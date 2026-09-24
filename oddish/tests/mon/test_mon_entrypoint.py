@@ -1,8 +1,10 @@
 """Exercise the real startup shell with stand-ins, without a local Docker daemon."""
 
+import contextlib
 import os
 from pathlib import Path
 import re
+import signal
 import subprocess
 import sys
 
@@ -42,7 +44,9 @@ def test_warm_boot_ignores_restored_runtime_and_waits_for_flush(
         path.write_text(f"#!{sys.executable}\n" + body)
         path.chmod(0o755)
 
-    executable("dockerd", """
+    executable(
+        "dockerd",
+        """
 import os, pathlib, signal, sys, time
 root = pathlib.Path(os.environ['PROOF_ROOT'])
 args = dict(a.split('=', 1) for a in sys.argv[1:])
@@ -58,19 +62,25 @@ signal.signal(signal.SIGTERM, stop)
 (root / 'ready').touch()
 while True:
     time.sleep(0.01)
-""")
-    executable("docker", """
+""",
+    )
+    executable(
+        "docker",
+        """
 import os, pathlib, sys
 sys.exit(0 if (pathlib.Path(os.environ['PROOF_ROOT']) / 'ready').exists() else 1)
-""")
+""",
+    )
     executable("python", "import os, sys\nsys.exit(int(os.environ['WARM_EXIT']))\n")
     env = {
-        **os.environ, "PATH": str(binaries) + os.pathsep + os.environ["PATH"],
-        "PROOF_ROOT": str(tmp_path), "WARM_EXIT": str(warm_exit),
+        **os.environ,
+        "PATH": str(binaries) + os.pathsep + os.environ["PATH"],
+        "PROOF_ROOT": str(tmp_path),
+        "WARM_EXIT": str(warm_exit),
         "DOCKERD_STOP_EXIT": str(dockerd_exit),
     }
     for _ in range(2):
-        result = subprocess.run(["sh", str(entry), "warm"], env=env, timeout=10)
+        result = _run(["sh", str(entry), "warm"], env=env, timeout=10)
         # The warm result is the exit code, whatever dockerd said on SIGTERM.
         assert result.returncode == warm_exit
         assert (tmp_path / "flushed").read_text() == "yes"
@@ -82,6 +92,8 @@ sys.exit(0 if (pathlib.Path(os.environ['PROOF_ROOT']) / 'ready').exists() else 1
     runtimes = (tmp_path / "runtime-paths").read_text().splitlines()
     assert len(set(runtimes)) == 2
     assert stale.read_text() == str(os.getpid())
+
+
 def _entry(tmp_path, *, docker_ready: bool, run_exit: int):
     """The real script with OS paths relocated, a dockerd stand-in that is or
     is never ready, and a ``python`` that records every invocation."""
@@ -129,9 +141,28 @@ def _python_calls(tmp_path):
     return (tmp_path / "python-calls").read_text().splitlines()
 
 
+def _run(args, *, env, timeout, capture_output=False):
+    """Run the script in a process group of its own, then stop what it left.
+
+    Outside warm mode it leaves dockerd running, as a sandbox does until it is
+    torn down; the stand-in would otherwise outlive the test. Killing the group
+    also reaches a stand-in that has not finished starting."""
+    pipe = subprocess.PIPE if capture_output else None
+    proc = subprocess.Popen(
+        args, env=env, stdout=pipe, stderr=pipe, start_new_session=True
+    )
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    finally:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(proc.pid, signal.SIGKILL)
+        proc.wait()
+    return subprocess.CompletedProcess(args, proc.returncode, stdout, stderr)
+
+
 def test_a_monitor_that_dies_reports_the_failed_start_and_keeps_its_exit_code(tmp_path):
     entry, env = _entry(tmp_path, docker_ready=True, run_exit=5)
-    result = subprocess.run(["sh", str(entry)], env=env, timeout=10)
+    result = _run(["sh", str(entry)], env=env, timeout=10)
     assert result.returncode == 5
     assert _python_calls(tmp_path) == [
         "-m oddish.mon run",
@@ -141,7 +172,7 @@ def test_a_monitor_that_dies_reports_the_failed_start_and_keeps_its_exit_code(tm
 
 def test_a_monitor_that_exits_cleanly_reports_nothing(tmp_path):
     entry, env = _entry(tmp_path, docker_ready=True, run_exit=0)
-    result = subprocess.run(["sh", str(entry), "run"], env=env, timeout=10)
+    result = _run(["sh", str(entry), "run"], env=env, timeout=10)
     assert result.returncode == 0
     assert _python_calls(tmp_path) == ["-m oddish.mon run"]
 
@@ -150,16 +181,14 @@ def test_a_monitor_stopped_by_the_control_plane_reports_nothing(tmp_path):
     from oddish.mon.exit_codes import EXIT_STOPPED
 
     entry, env = _entry(tmp_path, docker_ready=True, run_exit=EXIT_STOPPED)
-    result = subprocess.run(["sh", str(entry), "run"], env=env, timeout=10)
+    result = _run(["sh", str(entry), "run"], env=env, timeout=10)
     assert result.returncode == EXIT_STOPPED
     assert _python_calls(tmp_path) == ["-m oddish.mon run"]
 
 
 def test_a_docker_daemon_that_never_comes_up_is_reported_as_a_failed_start(tmp_path):
     entry, env = _entry(tmp_path, docker_ready=False, run_exit=0)
-    result = subprocess.run(
-        ["sh", str(entry)], env=env, timeout=30, capture_output=True
-    )
+    result = _run(["sh", str(entry)], env=env, timeout=30, capture_output=True)
     assert result.returncode == 1
     assert b"dockerd did not start" in result.stderr
     assert _python_calls(tmp_path) == ["-m oddish.mon startup-failed 1"]
@@ -168,9 +197,7 @@ def test_a_docker_daemon_that_never_comes_up_is_reported_as_a_failed_start(tmp_p
 def test_a_warm_up_sandbox_never_reports(tmp_path):
     # No credential in a warm-up sandbox: a failed warm exits with its code, quietly.
     entry, env = _entry(tmp_path, docker_ready=False, run_exit=0)
-    result = subprocess.run(
-        ["sh", str(entry), "warm"], env=env, timeout=30, capture_output=True
-    )
+    result = _run(["sh", str(entry), "warm"], env=env, timeout=30, capture_output=True)
     assert result.returncode == 1
     assert not (tmp_path / "python-calls").exists()
 
@@ -197,7 +224,7 @@ def test_the_status_file_says_whether_the_control_plane_knows_the_end(
         status_path.write_text("{not json")
     else:
         write_status(trial_id="trial-1", phase=phase, path=status_path)
-    result = subprocess.run(["sh", str(entry), "run"], env=env, timeout=10, check=False)
+    result = _run(["sh", str(entry), "run"], env=env, timeout=10)
     assert result.returncode == run_exit
     expected = ["-m oddish.mon run"]
     if reported:

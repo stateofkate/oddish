@@ -2,9 +2,10 @@
 
 The token travels only in the Authorization header, never in a URL or a log
 line. 410 means this attempt no longer owns the job and must stop; 401 means
-the credential is bad. Any other 4xx from our API is a refusal that retrying
-will not change. Everything else that fails (5xx, transport, an edge page) is
-an outage the caller retries.
+the credential is bad. Any other 4xx from our API is a refusal, not a verdict;
+only the result is retried through one, as a rollback or hotfix can lift it.
+Everything else that fails (5xx, transport, an edge page) is an outage the
+caller retries.
 """
 
 from __future__ import annotations
@@ -14,9 +15,14 @@ from typing import Any
 
 import httpx
 
-from oddish.mon.contract import AttemptSpec, ResultPayload
+from oddish.mon.contract import (
+    ArtifactUploadResponse,
+    AttemptSpec,
+    MonitorStats,
+    ResultPayload,
+)
 from oddish.mon.env import MonitorEnv
-from oddish.mon.status import write_status
+from oddish.mon.status import MonitorPhase, write_status
 from oddish.worker.skills_overlay import SkillBundle
 
 logger = logging.getLogger(__name__)
@@ -35,8 +41,9 @@ class ControlPlaneUnavailable(Exception):
 
 
 class ControlPlaneRefused(Exception):
-    """Our API refused the request with a 4xx other than 401/410. Not retried:
-    the control plane does not know how the attempt ended."""
+    """Our API refused the request with a 4xx other than 401/410. Not a
+    verdict: the control plane does not know how the attempt ended. Only the
+    result is retried through one, in the outage's window."""
 
 
 def _is_from_our_api(response: httpx.Response) -> bool:
@@ -91,7 +98,7 @@ class MonitorClient:
             # Recorded before anything else can fail: from here on the control
             # plane knows how the attempt ended, and the entrypoint must not
             # report it as a failed start even if this process is killed.
-            write_status(trial_id=self._trial_id, phase="stopped")
+            write_status(trial_id=self._trial_id, phase=MonitorPhase.STOPPED)
             if response.status_code == 410:
                 raise AttemptGone(response.text[:200])
             raise MonitorRejected("monitor credential refused")
@@ -163,8 +170,9 @@ class MonitorClient:
             },
         )
 
-    async def artifact_upload(self) -> dict[str, Any]:
-        return await self._call("POST", "/artifacts")
+    async def artifact_upload(self) -> ArtifactUploadResponse:
+        reply = await self._call("POST", "/artifacts")
+        return ArtifactUploadResponse.model_validate(reply)
 
     async def result(
         self,
@@ -173,7 +181,7 @@ class MonitorClient:
         archive_uploaded: bool,
         execution_error: str | None = None,
         retryable: bool = True,
-        monitor_stats: dict[str, int] | None = None,
+        monitor_stats: MonitorStats | None = None,
     ) -> dict[str, Any]:
         payload = ResultPayload(
             outcome=outcome,

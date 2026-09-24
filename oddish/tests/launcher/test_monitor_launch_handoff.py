@@ -17,7 +17,10 @@ import pytest
 from oddish.costs.modal_cost import SpanResources
 from oddish.workers.launcher import costs as monitor_costs
 from oddish.workers.launcher import launch as ml
+from oddish.workers.launcher.image_cache import Resolved
 from oddish.workers.queue import byok, job_tokens
+
+_COLD = Resolved("img", None, "cold")
 
 
 def _job():
@@ -79,7 +82,7 @@ def _stub_launch(
         return True
 
     async def _resolve(*a, **k):
-        return "img", None
+        return _COLD
 
     async def _start(_starter, job, image, env, size):
         starter.started.append(image)
@@ -270,7 +273,7 @@ async def test_a_pre_start_ownership_loss_ends_the_launch_without_create(monkeyp
 
     async def _slow_resolve(*a, **k):
         await asyncio.sleep(0.05)  # the beater runs, and reports the loss
-        return "img", None
+        return _COLD
 
     calls = _stub_launch(monkeypatch, starter, beat=_not_owned, resolve=_slow_resolve)
 

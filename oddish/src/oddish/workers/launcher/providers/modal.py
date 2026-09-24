@@ -3,31 +3,49 @@
 from __future__ import annotations
 
 import logging
+import math
 from pathlib import Path
 
 from oddish.mon.contract import NOTHING_TO_WARM, WARM_VAR, WarmRequest
 from oddish.workers.launcher.providers.base import (
+    ENTRYPOINT,
     WARM_IMAGE_TTL_SECONDS,
     WARM_UP_SECONDS,
+    CodeBundle,
     MonitorSandboxError,
     SandboxProvider,
     SandboxSize,
     StatusReply,
+    monitor_start,
     warm_up_lifetime_seconds,
 )
 
 logger = logging.getLogger(__name__)
-
 
 # Harbor's ``modal_exact_gpu_type`` names: Modal must not upgrade H100 to H200
 # or A100 40GB to 80GB, as on the worker path.
 _EXACT_GPU_TYPES = {"A100": "A100-40GB", "H100": "H100!"}
 
 
+def _memory_mb(size: SandboxSize) -> int:
+    """The VM's memory: the task's size and the headroom, plus the VM's own
+    share when there is headroom. A Modal VM shows its guest less memory than
+    it is given, and the guest kernel's share grows with the VM, so a flat
+    headroom shrinks what is left for the task as the task grows (see
+    ``monitor_modal_memory_headroom_percent``)."""
+    from oddish.config import settings
+
+    total = size.total_memory_mb
+    if size.headroom_mb <= 0:
+        return total
+    percent = settings.monitor_modal_memory_headroom_percent
+    return total + math.ceil(total * percent / 100)
+
+
 def _modal_size(size: SandboxSize | None) -> dict:
     # A task that pins nothing gets the Daytona floor, not Modal's SDK default.
     size = size or SandboxSize.default()
-    kwargs: dict = {"cpu": size.cpu, "memory": size.total_memory_mb}
+    kwargs: dict = {"cpu": size.cpu, "memory": _memory_mb(size)}
     if size.gpu_count:
         gpu = size.gpu_type or "any"
         gpu = _EXACT_GPU_TYPES.get(gpu.strip().upper(), gpu)
@@ -53,6 +71,7 @@ class ModalStarter:
         image: str,
         env: dict[str, str],
         size: SandboxSize | None = None,
+        bundle: CodeBundle | None = None,
     ) -> str:
         import modal
 
@@ -61,8 +80,9 @@ class ModalStarter:
         app = await modal.App.lookup.aio(
             settings.monitor_modal_app, create_if_missing=True
         )
+        command, env = monitor_start(env, bundle)
         sandbox = await modal.Sandbox.create.aio(
-            "/usr/local/bin/mon-entrypoint.sh",
+            *command,
             app=app,
             image=self._image(image),
             secrets=[modal.Secret.from_dict(env)],
@@ -104,9 +124,7 @@ class ModalStarter:
 
     def provisioned(self, size: SandboxSize) -> SandboxSize:
         # Modal allocates fractional CPU and MiB as asked.
-        return size.model_copy(
-            update={"memory_mb": size.total_memory_mb, "headroom_mb": 0}
-        )
+        return size.model_copy(update={"memory_mb": _memory_mb(size), "headroom_mb": 0})
 
     async def build_warm_image(
         self, *, image: str, request: WarmRequest, size: SandboxSize | None = None
@@ -133,7 +151,7 @@ class ModalStarter:
             **_modal_size(size),
         )
         try:
-            process = await sandbox.exec.aio("/usr/local/bin/mon-entrypoint.sh", "warm")
+            process = await sandbox.exec.aio(ENTRYPOINT, "warm")
             code = await process.wait.aio()
             if code == NOTHING_TO_WARM:
                 return None

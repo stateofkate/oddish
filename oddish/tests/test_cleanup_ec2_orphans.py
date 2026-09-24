@@ -231,7 +231,7 @@ def _patch_unrelated_cleanup_phases(
 
     terminated_targets: list[set[tuple[str, str]]] = []
 
-    async def terminate(targets: set[tuple[str, str]]) -> int:
+    async def terminate(targets: set[tuple[str, str]], failed=None) -> int:
         events.append("terminate")
         terminated_targets.append(set(targets))
         return termination_result
@@ -243,6 +243,7 @@ def _patch_unrelated_cleanup_phases(
     monkeypatch.setattr(cleanup, "_reap_stale_worker_jobs", reap)
     monkeypatch.setattr(cleanup, "_advance_running_tasks_to_analysis", zero)
     monkeypatch.setattr(cleanup, "_advance_legacy_analyzing_tasks", zero)
+
     async def heal_nothing(*_args, **_kwargs):
         return 0, []
 
@@ -262,6 +263,8 @@ def _patch_unrelated_cleanup_phases(
     monkeypatch.setattr(cleanup, "sweep_orphaned_tag_owners", zero)
     monkeypatch.setattr(cleanup, "_terminate_orphaned_sandboxes", terminate)
     monkeypatch.setattr(cleanup, "_terminate_orphaned_sandbox_runs", zero)
+    monkeypatch.setattr(cleanup, "check_stale_monitor_jobs", zero)
+    monkeypatch.setattr(cleanup, "retry_failed_teardowns", zero)
     monkeypatch.setattr(cleanup, "clear_terminal_trial_runtime_refs", zero)
     monkeypatch.setattr(cleanup, "purge_stale_trial_events", zero)
     monkeypatch.setattr(cleanup, "reconcile_compute_cost_spans", zero)

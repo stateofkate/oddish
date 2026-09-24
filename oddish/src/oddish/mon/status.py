@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from enum import StrEnum
 from pathlib import Path
 
 STATUS_PATH = Path(
@@ -16,9 +17,19 @@ STATUS_PATH = Path(
 )
 
 
+class MonitorPhase(StrEnum):
+    """The phases the monitor records itself. Between them, each Harbor hook
+    event is recorded under its own value."""
+
+    STARTING = "starting"
+    REPORTING = "reporting"
+    DONE = "done"  # the control plane accepted the result
+    STOPPED = "stopped"  # the control plane ended the attempt (410/401)
+
+
 # Phases after which the control plane knows how the attempt ended. Once one is
 # recorded, a later stage write (a Harbor hook still running) cannot replace it.
-TERMINAL_PHASES = ("done", "stopped")
+TERMINAL_PHASES = (MonitorPhase.DONE, MonitorPhase.STOPPED)
 
 
 def write_status(*, trial_id: str, phase: str, path: Path | None = None) -> None:

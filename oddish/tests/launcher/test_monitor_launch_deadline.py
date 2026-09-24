@@ -135,15 +135,23 @@ class _NoStopStarter:
 
 
 @pytest.mark.anyio
-async def test_a_launch_without_a_handle_is_gone_only_past_its_deadline(monkeypatch):
+async def test_a_launch_without_a_handle_is_gone_past_its_deadline_or_its_beat(
+    monkeypatch,
+):
     calls: list = []
     _fake_sessions(monkeypatch, calls)
     monkeypatch.setattr(monitor_sandbox, "get_starter", lambda p: _NoStopStarter())
 
-    # Token minted, image still resolving: no handle is no verdict.
+    # Token minted, the launcher still beating: no handle is no verdict.
     verdict = await check._check_one("job-4", 1, None, None, False, False)
     assert verdict == "unknown"
     assert calls[-1][1]["verdict"] == "unknown"
+
+    # The launcher stopped beating before create: nothing will create it.
+    verdict = await check._check_one(
+        "job-4", 1, None, None, False, False, heartbeat_stale=True
+    )
+    assert verdict == "gone"
 
     # Past the launch deadline the same row is gone.
     verdict = await check._check_one(

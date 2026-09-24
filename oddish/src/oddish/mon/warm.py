@@ -1,7 +1,9 @@
 """``python -m oddish.mon warm``: prepare task images before the disk is snapshotted.
 
 Runs in a warm-up sandbox that never holds a monitor token, a registry login or
-model keys, and never runs an agent. Its only input is where to fetch the task.
+model keys, and never runs an agent or starts a task container. Its only input
+is where to fetch the task. The fetched task stays in the snapshot when the
+request names its files, and every image a trial of it would build is built.
 """
 
 from __future__ import annotations
@@ -11,11 +13,10 @@ import logging
 import os
 import re
 import tempfile
-import tomllib
 from pathlib import Path
 
-from oddish.mon import task_fetch, task_image
-from oddish.mon.contract import NOTHING_TO_WARM, WARM_VAR, WarmRequest
+from oddish.mon import compose_build, task_fetch, task_image
+from oddish.mon.contract import NOTHING_TO_WARM, WARM_FAILED, WARM_VAR, WarmRequest
 
 logger = logging.getLogger(__name__)
 
@@ -32,13 +33,9 @@ def image_refs(task_dir: Path, docker_image: str | None = None) -> list[str]:
         return [docker_image]
     env_dir = task_dir / "environment"
     refs: list[str] = []
-    try:
-        config = tomllib.loads((task_dir / "task.toml").read_text())
-        declared = (config.get("environment") or {}).get("docker_image")
-        if declared:
-            return [str(declared)]
-    except (OSError, tomllib.TOMLDecodeError):
-        pass
+    config = task_image.task_config(task_dir)
+    if config is not None and config.environment.docker_image:
+        return [config.environment.docker_image]
     dockerfile = env_dir / "Dockerfile"
     if dockerfile.is_file():
         stages: set[str] = set()
@@ -74,21 +71,33 @@ async def _pull(ref: str) -> bool:
 
 
 async def run() -> int:
-    """0 when an image was built or pulled (worth a snapshot),
-    ``NOTHING_TO_WARM`` when the task names no image, 1 when pulls failed."""
+    """Fetch the task, build what a trial would build and pull what it would
+    pull: 0 when anything was built or pulled (worth a snapshot), otherwise
+    ``NOTHING_TO_WARM`` or ``WARM_FAILED``."""
     request = WarmRequest.model_validate_json(os.environ.pop(WARM_VAR, "") or "{}")
     with tempfile.TemporaryDirectory(prefix="oddish-mon-warm-") as tmp:
-        task_dir = await task_fetch.fetch_task(request, Path(tmp) / "task")
+        task_dir = await task_fetch.fetch_and_keep(request, Path(tmp) / "task")
+        sidecar = await compose_build.build_network_sidecar(task_dir)
         if not request.docker_image and await task_image.build(task_dir):
             return 0
         refs = image_refs(task_dir, request.docker_image)
-    if not refs:
+        # Pulled before the build, so the build uses the base images a trial
+        # finds in the snapshot; images Compose only runs are pulled here too.
+        pulled = [ref for ref in refs if await _pull(ref)]
+        built = (
+            compose_build.ComposeBuild.NOT_NEEDED
+            if request.docker_image
+            else await compose_build.build(task_dir)
+        )
+    if refs:
+        logger.info(
+            "warm-up pulled %d of %d image(s): %s",
+            len(pulled),
+            len(refs),
+            ", ".join(pulled),
+        )
+    if built is compose_build.ComposeBuild.BUILT or sidecar:
+        return 0
+    if not refs and built is compose_build.ComposeBuild.NOT_NEEDED:
         return NOTHING_TO_WARM
-    pulled = [ref for ref in refs if await _pull(ref)]
-    logger.info(
-        "warm-up pulled %d of %d image(s): %s",
-        len(pulled),
-        len(refs),
-        ", ".join(pulled),
-    )
-    return 0 if pulled else 1
+    return 0 if pulled else WARM_FAILED

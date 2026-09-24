@@ -4,25 +4,29 @@ from __future__ import annotations
 
 import dataclasses
 import io
+import logging
 import tarfile
 from pathlib import Path
 from typing import Any
 
 import httpx
 
-import logging
+from oddish.mon.client import (
+    ControlPlaneRefused,
+    ControlPlaneUnavailable,
+    MonitorClient,
+)
+from oddish.mon.contract import MonitorStats
 
-logger = logging.getLogger("oddish-mon")
-
-from oddish.mon.client import ControlPlaneRefused, ControlPlaneUnavailable, MonitorClient
+logger = logging.getLogger(__name__)
 
 # Sandbox-local paths mean nothing to the control plane.
-_LOCAL_ONLY_FIELDS = ("job_dir", "job_result_path")
+LOCAL_ONLY_FIELDS = ("job_dir", "job_result_path")
 
 
 def outcome_payload(outcome: Any) -> dict[str, Any]:
     data = dataclasses.asdict(outcome)
-    for name in _LOCAL_ONLY_FIELDS:
+    for name in LOCAL_ONLY_FIELDS:
         data.pop(name, None)
     return data
 
@@ -34,24 +38,18 @@ def archive_directory(directory: Path) -> bytes:
     return buffer.getvalue()
 
 
-async def upload_and_report(
+async def upload(
     client: MonitorClient,
     outcome: Any,
     *,
-    execution_error: str | None = None,
-    retryable: bool = True,
-    monitor_stats: dict[str, int] | None = None,
     fallback_dir: Path | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
-) -> dict[str, Any]:
-    """Upload the job directory if there is one, then post the result.
+) -> bool:
+    """Upload the job directory if there is one: True once storage has it.
 
     ``fallback_dir`` is uploaded when Harbor never made a job directory (a
     failure before the trial started), so such an attempt still leaves its
     monitor log behind.
-
-    ``outcome`` is ``None`` when the driver raised; ``execution_error`` then
-    says why, mirroring the worker's ``TrialExecutionResult``.
     """
     uploaded = False
     target = None
@@ -64,7 +62,9 @@ async def upload_and_report(
         except ControlPlaneRefused as exc:
             # A refused grant is the same fact as a refused upload: the files
             # cannot be stored, the verdict still can. Never a failed start.
-            logger.error("artifact grant refused (%s); reporting without artifacts", exc)
+            logger.error(
+                "artifact grant refused (%s); reporting without artifacts", exc
+            )
             target = None
     if target is not None:
         async with httpx.AsyncClient(timeout=600.0, transport=transport) as http:
@@ -72,9 +72,9 @@ async def upload_and_report(
             # will not get better by retrying.
             try:
                 response = await http.put(
-                    target["upload_url"],
+                    target.upload_url,
                     content=archive_directory(Path(job_dir)),
-                    headers=target.get("upload_headers") or {},
+                    headers=target.upload_headers,
                 )
             except httpx.TransportError as exc:
                 raise ControlPlaneUnavailable(f"upload: {type(exc).__name__}") from None
@@ -90,9 +90,24 @@ async def upload_and_report(
                 )
             else:
                 uploaded = True
+    return uploaded
+
+
+async def post_result(
+    client: MonitorClient,
+    outcome: Any,
+    *,
+    archive_uploaded: bool,
+    execution_error: str | None = None,
+    retryable: bool = True,
+    monitor_stats: MonitorStats | None = None,
+) -> dict[str, Any]:
+    """Post the result. ``outcome`` is ``None`` when the driver raised;
+    ``execution_error`` then says why, mirroring the worker's
+    ``TrialExecutionResult``."""
     return await client.result(
         outcome=outcome_payload(outcome) if outcome is not None else None,
-        archive_uploaded=uploaded,
+        archive_uploaded=archive_uploaded,
         execution_error=execution_error,
         retryable=retryable,
         monitor_stats=monitor_stats,

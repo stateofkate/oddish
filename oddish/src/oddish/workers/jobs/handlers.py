@@ -98,9 +98,10 @@ async def _monitor_routes(trial_id: str, attempt: int) -> bool:
         percent=settings.monitor_execution_sample_percent,
         fallback_after=settings.monitor_execution_fallback_after_attempts,
     )
-    console.print(
+    console.out(
         f"metric=monitor_route trial={trial_id} attempt={attempt} "
-        f"route={route.name} reason={route.reason}"
+        f"route={route.name} reason={route.reason}",
+        highlight=False,
     )
     return route.monitor and await _monitor_can_drive(trial_id)
 

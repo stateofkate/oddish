@@ -13,6 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 from oddish.workers.launcher import launch as ml
+from oddish.workers.launcher.image_cache import Resolved
 from oddish.workers.queue import job_tokens
 
 
@@ -67,7 +68,9 @@ async def test_launch_forwards_the_stored_harbor_config(monkeypatch):
     )
     monkeypatch.setattr(job_tokens, "scoped_model_env", _scoped)
     monkeypatch.setattr(
-        ml.monitor_image_cache, "resolve", lambda *a, **k: _val(("img", None))
+        ml.monitor_image_cache,
+        "resolve",
+        lambda *a, **k: _val(Resolved("img", None, "cold")),
     )
     monkeypatch.setattr(ml, "warm_source_for_trial", _noop)
     monkeypatch.setattr(ml, "_start", lambda *a, **k: _val("ext-1"))

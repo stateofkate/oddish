@@ -22,6 +22,7 @@ import pytest
 
 from oddish.db import WorkerJobStatus
 from oddish.workers.launcher import launch as ml
+from oddish.workers.launcher.image_cache import Resolved
 
 
 def _job():
@@ -61,7 +62,7 @@ class _Starter:
     def provisioned(self, size):
         return size
 
-    async def start(self, *, name, image, env, size):
+    async def start(self, *, name, image, env, size, bundle=None):
         self.started.append({"name": name, "image": image, "env": env, "size": size})
         return "ext-1"
 
@@ -111,7 +112,7 @@ class _Launch:
         async def _resolve(*args, **kwargs):
             # A warm-snapshot build or cold image pull spanning several beats.
             await asyncio.sleep(resolve_seconds)
-            return "img", None
+            return Resolved("img", None, "cold")
 
         async def _none(*args, **kwargs):
             return None
@@ -249,7 +250,7 @@ async def test_fail_launch_stops_the_sandbox_it_started_and_settles_the_attempt(
     revokes this attempt's token and settles a retryable failure."""
     launch = _Launch(monkeypatch, beat=_owned, resolve_seconds=0)
 
-    await ml.fail_launch(
+    outcome = await ml.fail_launch(
         RuntimeError("provider hiccup"),
         job=_job(),
         trial_id="trial-1",
@@ -257,9 +258,9 @@ async def test_fail_launch_stops_the_sandbox_it_started_and_settles_the_attempt(
         starter=launch.starter,
         external_id="ext-9",
         span_opened=False,
-        launch_started=0.0,
     )
 
+    assert outcome == "failed"
     assert launch.starter.stopped == ["ext-9"]
     assert launch.revoked == [("job-1", 1)]
     assert [s["execution"].execution_error for s in launch.settled] == [

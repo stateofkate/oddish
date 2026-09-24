@@ -31,6 +31,7 @@ __all__ = [
     "DISPATCHER_COMPONENT",
     "RECONCILER_COMPONENT",
     "record_queue_runtime_status",
+    "get_queue_runtime_status",
     "get_queue_runtime_statuses",
 ]
 
@@ -77,6 +78,18 @@ def _coerce_payload(raw: Any) -> dict[str, Any]:
             return {}
         return parsed if isinstance(parsed, dict) else {}
     return {}
+
+
+async def get_queue_runtime_status(component: str) -> dict[str, Any]:
+    """One component's payload, ``{}`` when it has none. Unlike the write, a
+    failed read raises: a caller that rewrites the payload must not mistake a
+    read it could not make for an empty one."""
+    async with get_session() as session:
+        raw = await session.scalar(
+            text("SELECT payload FROM queue_runtime_status WHERE component = :c"),
+            {"c": component},
+        )
+    return _coerce_payload(raw)
 
 
 async def get_queue_runtime_statuses(session) -> dict[str, dict[str, Any]]:

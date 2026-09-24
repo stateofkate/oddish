@@ -48,7 +48,7 @@ class FakeStarter:
     def provisioned(self, size):
         return size
 
-    async def start(self, *, name, image, env, size=None):
+    async def start(self, *, name, image, env, size=None, bundle=None):
         if self.fail_start:
             raise monitor_sandbox.MonitorSandboxError("provider refused")
         self.started.append(name)
@@ -80,9 +80,15 @@ async def _seed(**claim) -> ClaimedWorkerJob:
         await s.flush()
         s.add(
             TrialModel(
-                id=f"ta_{sfx}-0", name="b-0", task_id=f"ta_{sfx}",
-                experiment_id=f"ex_{sfx}", agent="oracle", model="nop_oracle",
-                provider="default", queue_key="b", origin=TrialOrigin.ODDISH,
+                id=f"ta_{sfx}-0",
+                name="b-0",
+                task_id=f"ta_{sfx}",
+                experiment_id=f"ex_{sfx}",
+                agent="oracle",
+                model="nop_oracle",
+                provider="default",
+                queue_key="b",
+                origin=TrialOrigin.ODDISH,
                 status=TrialStatus.QUEUED,
             )
         )
@@ -105,7 +111,9 @@ async def _seed(**claim) -> ClaimedWorkerJob:
 
 async def _rows(job):
     async with get_session() as s:
-        return await s.get(WorkerJobModel, job.id), await s.get(TrialModel, job.subject_id)
+        return await s.get(WorkerJobModel, job.id), await s.get(
+            TrialModel, job.subject_id
+        )
 
 
 async def _main() -> int:
@@ -128,10 +136,10 @@ async def _main() -> int:
     outcome = await monitor_launch.launch_monitor_attempt(job)
     row, trial = await _rows(job)
     checks["A_start_failure_is_not_a_handoff"] = outcome is None
-    checks["A_trial_left_for_retry_with_the_reason"] = (
-        trial.status in (TrialStatus.RETRYING, TrialStatus.FAILED)
-        and "Monitor launch failed" in (trial.error_message or "")
-    )
+    checks["A_trial_left_for_retry_with_the_reason"] = trial.status in (
+        TrialStatus.RETRYING,
+        TrialStatus.FAILED,
+    ) and "Monitor launch failed" in (trial.error_message or "")
     checks["A_token_revoked"] = row.monitor_token_revoked_at is not None
     checks["A_nothing_to_stop"] = STARTER.stopped == []
     STARTER.fail_start = False
@@ -159,7 +167,9 @@ async def _main() -> int:
             stale_after_minutes=15
         )
         async with get_session() as s:
-            return verdicts, (await s.get(WorkerJobModel, job_id)).monitor_status_check_count
+            return verdicts, (
+                await s.get(WorkerJobModel, job_id)
+            ).monitor_status_check_count
 
     # Fresh after the hand-off: nobody looks yet.
     verdicts, _ = await reconcile(row.id, [])
@@ -210,12 +220,11 @@ async def _main() -> int:
         agent_env.get("ANTHROPIC_API_KEY") == "sk-user-owned"
     )
     checks["D_the_launcher_stored_what_settlement_needs_to_close_costs"] = (
-        (row.payload or {}).get("monitor_cost", {}).get("provider") == "fake"
-    )
-    checks["D_the_launcher_stored_the_capacity_lease"] = (
-        (row.payload or {}).get(monitor_settle.CAPACITY_PAYLOAD_KEY)
-        == {"provider": "ec2", "slot": 0}
-    )
+        row.payload or {}
+    ).get("monitor_cost", {}).get("provider") == "fake"
+    checks["D_the_launcher_stored_the_capacity_lease"] = (row.payload or {}).get(
+        monitor_settle.CAPACITY_PAYLOAD_KEY
+    ) == {"provider": "ec2", "slot": 0}
     checks["D_job_still_running_under_the_launchers_id"] = (
         row.status == WorkerJobStatus.RUNNING and row.current_worker_id == "launcher-1"
     )
@@ -248,7 +257,9 @@ async def _main() -> int:
             stale_after_minutes=15
         )
         async with get_session() as s:
-            return verdicts, (await s.get(WorkerJobModel, row.id)).monitor_status_check_count
+            return verdicts, (
+                await s.get(WorkerJobModel, row.id)
+            ).monitor_status_check_count
 
     verdicts, count = await stale_and_check([(0, "{}")])
     checks["alive_keeps_the_attempt"] = verdicts.get("alive") == 1 and count == 0
@@ -312,7 +323,9 @@ async def _main() -> int:
         TrialStatus.RETRYING,
         TrialStatus.FAILED,
     ) and "Monitor launch failed" not in (trial.error_message or "")
-    checks["F_reclaimed_failure_revokes_no_token"] = row.monitor_token_revoked_at is None
+    checks["F_reclaimed_failure_revokes_no_token"] = (
+        row.monitor_token_revoked_at is None
+    )
     checks["F_row_still_the_newer_attempts"] = (
         row.status == WorkerJobStatus.RUNNING and row.attempts == 2
     )

@@ -1,6 +1,8 @@
-"""The warm-image cache: what to pull, how it is keyed, and that it can only help."""
+"""The warm-image cache: what to pull, how it is keyed, and what a launch boots."""
 
 from __future__ import annotations
+
+import asyncio
 
 import pytest
 
@@ -65,25 +67,7 @@ def test_a_task_with_nothing_to_pull(tmp_path):
     assert warm.image_refs(_task(tmp_path)) == []
 
 
-# --- the key ---------------------------------------------------------------
-
-
-def test_key_changes_with_provider_task_and_monitor_code(tmp_path):
-    cache.monitor_identity.cache_clear()
-    dockerfile = tmp_path / "mon.Dockerfile"
-    dockerfile.write_text("FROM python:3.13\n")
-    (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "a.py").write_text("x = 1\n")
-
-    base = cache.cache_key("modal", str(dockerfile), "task|v1|")
-    assert base == cache.cache_key("modal", str(dockerfile), "task|v1|")
-    assert base != cache.cache_key("daytona", str(dockerfile), "task|v1|")
-    assert base != cache.cache_key("modal", str(dockerfile), "task|v2|")
-
-    # New monitor code must never boot a snapshot taken from the old code.
-    (tmp_path / "src" / "a.py").write_text("x = 2\n")
-    cache.monitor_identity.cache_clear()
-    assert base != cache.cache_key("modal", str(dockerfile), "task|v1|")
+# The key: test_monitor_snapshot_key.py.
 
 
 # --- resolve: hit, miss, herd, failure --------------------------------------
@@ -139,28 +123,33 @@ _SOURCE = WarmSource(
 
 
 async def _resolve(starter, **overrides):
+    """(image, key, outcome): what to boot, and which way the cache went."""
     args = dict(
         monitor_image="/oddish/mon.Dockerfile",
         warm_source=_SOURCE,
         has_registry_login=False,
     )
-    return await cache.resolve(starter, **{**args, **overrides})
+    resolved = await cache.resolve(starter, **{**args, **overrides})
+    return resolved.image, resolved.key, resolved.outcome
 
 
 @pytest.mark.asyncio
 async def test_first_launch_warms_and_the_next_one_hits(store):
     starter = _Starter()
 
-    assert await _resolve(starter) == ("im-warm", next(iter(store))[1])
-    assert await _resolve(starter) == ("im-warm", next(iter(store))[1])
+    assert await _resolve(starter) == ("im-warm", next(iter(store))[1], "warmed")
+    assert await _resolve(starter) == ("im-warm", next(iter(store))[1], "hit")
 
     assert len(starter.calls) == 1  # warmed once
-    # The warm-up gets where the task is, never the cache identity or a secret.
+    # The warm-up gets where the task is and the name of those files (to keep
+    # them in the snapshot), never the cache identity or a secret.
     assert starter.calls[0][1] == _SOURCE.request
     assert set(WarmRequest.model_fields) == {
         "task_archive_url",
         "task_files",
         "docker_image",
+        "task_id",
+        "task_files_version",
     }
 
 
@@ -170,21 +159,58 @@ async def test_a_private_registry_login_is_never_cached(store):
     assert await _resolve(starter, has_registry_login=True) == (
         "/oddish/mon.Dockerfile",
         None,
+        "cold",
     )
     assert starter.calls == [] and store == {}
 
 
-@pytest.mark.asyncio
-async def test_concurrent_launches_do_not_all_warm(store):
-    starter = _Starter()
-    key = cache.cache_key("modal", "/oddish/mon.Dockerfile", _SOURCE.identity)
-    store[("modal", key)] = cache.CacheEntry(state=cache.CacheState.WARMING)
+_KEY = cache.cache_key("modal", "/oddish/mon.Dockerfile", _SOURCE.identity)
 
-    assert await _resolve(starter) == (
-        "/oddish/mon.Dockerfile",
-        None,
-    )  # cold, this once
-    assert starter.calls == []
+
+@pytest.mark.parametrize(
+    ("then", "resolved", "warmed_here"),
+    [
+        (cache.CacheEntry(state=cache.CacheState.READY, image="im-other"),
+         ("im-other", _KEY, "waited"), False),
+        (cache.CacheEntry(state=cache.CacheState.EMPTY),
+         ("/oddish/mon.Dockerfile", None, "cold"), False),
+        (cache.CacheEntry(state=cache.CacheState.INVALID),  # its warm-up failed
+         ("im-warm", _KEY, "warmed"), True),
+    ],
+)  # fmt: skip
+@pytest.mark.asyncio
+async def test_a_launch_waits_for_a_warm_up_in_flight(
+    store, monkeypatch, then, resolved, warmed_here
+):
+    """Not cold: another launch's snapshot boots, an empty task boots the plain
+    image, and a warm-up that ended without a snapshot is warmed here."""
+    starter = _Starter()
+    store[("modal", _KEY)] = cache.CacheEntry(state=cache.CacheState.WARMING)
+    monkeypatch.setattr(cache, "WAIT_POLL_SECONDS", 0)
+    read, reads = cache._read, []
+
+    async def _other_launch_finishes(provider, key):
+        reads.append(key)
+        if len(reads) == 2:  # by the first poll
+            store[("modal", _KEY)] = then
+        return await read(provider, key)
+
+    monkeypatch.setattr(cache, "_read", _other_launch_finishes)
+
+    assert await _resolve(starter) == resolved
+    assert bool(starter.calls) is warmed_here
+
+
+@pytest.mark.asyncio
+async def test_waiting_ends_at_the_cap_and_boots_the_plain_image(store, monkeypatch):
+    """A marker whose launch was killed outright stays WARMING until its TTL:
+    after the cap the launch runs, cold, rather than fail."""
+    store[("modal", _KEY)] = cache.CacheEntry(state=cache.CacheState.WARMING)
+    monkeypatch.setattr(cache, "WAIT_POLL_SECONDS", 0.01)
+    monkeypatch.setattr(cache, "MAX_WARM_WAIT_SECONDS", 0.05)
+
+    resolved = await asyncio.wait_for(_resolve(_Starter()), 5)  # never hangs
+    assert resolved == ("/oddish/mon.Dockerfile", None, "wait_expired")
 
 
 @pytest.mark.asyncio
@@ -202,15 +228,68 @@ async def test_an_abandoned_warm_up_is_retried(store):
 @pytest.mark.asyncio
 async def test_a_task_with_nothing_to_pull_is_remembered(store):
     starter = _Starter(image=None)
-    assert await _resolve(starter) == ("/oddish/mon.Dockerfile", None)
-    assert await _resolve(starter) == ("/oddish/mon.Dockerfile", None)
+    assert await _resolve(starter) == ("/oddish/mon.Dockerfile", None, "cold")
+    assert await _resolve(starter) == ("/oddish/mon.Dockerfile", None, "cold")
     assert len(starter.calls) == 1
 
 
 @pytest.mark.asyncio
-async def test_a_failing_warm_up_never_fails_the_launch(store):
+async def test_a_warm_up_failing_twice_boots_the_plain_image(store):
     starter = _Starter(error=RuntimeError("provider down"))
-    assert await _resolve(starter) == ("/oddish/mon.Dockerfile", None)
+    assert await _resolve(starter) == ("/oddish/mon.Dockerfile", None, "warm_failed")
+    assert len(starter.calls) == 2
+    # Not EMPTY and not left WARMING: the next launch warms again.
+    assert store[("modal", _KEY)].state is cache.CacheState.INVALID
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_warm_up_is_not_left_warming(store, monkeypatch):
+    """Seen on the PR-1853 preview: stopping the app mid-round cancelled launches
+    while they warmed and left their WARMING markers, which hold every other
+    launch of the task for MAX_WARM_WAIT_SECONDS."""
+    warming = asyncio.Event()
+
+    class _Hangs(_Starter):
+        async def build_warm_image(self, *, image, request, size=None):
+            warming.set()
+            await asyncio.Event().wait()  # until the launch is cancelled
+
+    launch = asyncio.create_task(_resolve(_Hangs()))
+    await warming.wait()
+    assert store[("modal", _KEY)].state is cache.CacheState.WARMING
+    launch.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await launch
+    assert store[("modal", _KEY)].state is cache.CacheState.INVALID
+
+    monkeypatch.setattr(cache, "MAX_WARM_WAIT_SECONDS", 0)  # no waiting
+    assert await _resolve(_Starter()) == ("im-warm", _KEY, "warmed")
+
+
+@pytest.mark.asyncio
+async def test_a_storage_error_after_the_warm_up_is_not_left_warming(
+    store, monkeypatch
+):
+    """Bugbot on #1853: the READY write failing left WARMING behind."""
+    write = cache._write
+
+    async def _ready_write_fails(provider, key, entry):
+        if entry.state is cache.CacheState.READY:
+            raise ConnectionError("bucket unreachable")
+        await write(provider, key, entry)
+
+    monkeypatch.setattr(cache, "_write", _ready_write_fails)
+    assert await _resolve(_Starter()) == ("/oddish/mon.Dockerfile", None, "error")
+    assert store[("modal", _KEY)].state is cache.CacheState.INVALID
+
+
+@pytest.mark.asyncio
+async def test_a_storage_error_boots_the_plain_image(store, monkeypatch):
+    async def _down(provider, key):
+        raise ConnectionError("bucket unreachable")
+
+    monkeypatch.setattr(cache, "_read", _down)
+    assert await _resolve(_Starter()) == ("/oddish/mon.Dockerfile", None, "error")
 
 
 @pytest.mark.asyncio
@@ -218,13 +297,13 @@ async def test_a_provider_without_snapshots_runs_cold(store):
     class _Plain:
         provider = SandboxProvider.DAYTONA  # a provider with no build_warm_image
 
-    assert await _resolve(_Plain()) == ("/oddish/mon.Dockerfile", None)
+    assert await _resolve(_Plain()) == ("/oddish/mon.Dockerfile", None, "cold")
 
 
 @pytest.mark.asyncio
 async def test_a_refused_snapshot_is_forgotten(store):
     starter = _Starter()
-    _, key = await _resolve(starter)
+    _, key, _ = await _resolve(starter)
     await cache.forget(starter, key)
     assert store[("modal", key)].state is cache.CacheState.INVALID
     assert (await _resolve(starter))[0] == "im-warm"  # warmed again
@@ -238,7 +317,7 @@ async def test_a_dropped_or_replaced_snapshot_is_deleted_where_the_provider_keep
     """Seen in review: Daytona snapshots were never deleted. After the serving
     window the cache warmed again beside the old one, and ``forget`` left it."""
     starter = _DeletingStarter(image="snapshot:one")
-    _, key = await _resolve(starter)
+    _, key, _ = await _resolve(starter)
     await cache.forget(starter, key)
     assert starter.deleted == ["snapshot:one"]
     assert store[("daytona", key)].state is cache.CacheState.INVALID
@@ -246,28 +325,28 @@ async def test_a_dropped_or_replaced_snapshot_is_deleted_where_the_provider_keep
     assert starter.deleted == ["snapshot:one"]
 
     starter.image = "snapshot:two"
-    assert await _resolve(starter) == ("snapshot:two", key)
+    assert await _resolve(starter) == ("snapshot:two", key, "warmed")
     store[("daytona", key)].at -= cache.WARM_IMAGE_READY_SECONDS + 1  # past serving
     starter.image = "snapshot:three"
-    assert await _resolve(starter) == ("snapshot:three", key)  # refreshed
+    assert await _resolve(starter) == ("snapshot:three", key, "warmed")  # refreshed
     assert starter.deleted == ["snapshot:one", "snapshot:two"]
 
     # A failed warm-up forgets a WARMING entry: no image, nothing to delete.
     store[("daytona", key)].at -= cache.WARM_IMAGE_READY_SECONDS + 1
     starter.error = RuntimeError("provider down")
-    assert await _resolve(starter) == ("/oddish/mon.Dockerfile", None)
+    assert await _resolve(starter) == ("/oddish/mon.Dockerfile", None, "warm_failed")
     assert starter.deleted == ["snapshot:one", "snapshot:two", "snapshot:three"]
 
 
 @pytest.mark.asyncio
 async def test_a_failed_snapshot_delete_never_fails_the_launch(store):
     starter = _DeletingStarter(image="snapshot:one", delete_error=RuntimeError("api"))
-    _, key = await _resolve(starter)
+    _, key, _ = await _resolve(starter)
     await cache.forget(starter, key)  # logged, not raised
     assert store[("daytona", key)].state is cache.CacheState.INVALID
     # Modal keeps no capability: its snapshots expire on their own TTL.
     plain = _Starter()
-    _, key = await _resolve(plain)
+    _, key, _ = await _resolve(plain)
     await cache.forget(plain, key)
     assert not hasattr(plain, "delete_warm_image")
 
@@ -285,8 +364,8 @@ async def test_a_different_size_is_a_different_snapshot(store):
 
     starter = _Starter()
     small, big = SandboxSize(cpu=1, memory_mb=2048), SandboxSize(cpu=4, memory_mb=16384)
-    _, key_small = await _resolve(starter, size=small)
-    _, key_big = await _resolve(starter, size=big)
+    _, key_small, _ = await _resolve(starter, size=small)
+    _, key_big, _ = await _resolve(starter, size=big)
     await _resolve(starter, size=big)
 
     assert key_small != key_big
@@ -314,3 +393,62 @@ async def test_a_cached_image_is_gone_only_when_the_provider_says_so():
         provider = "modal"
 
     assert await cache.image_is_gone(_Plain(), "im-abc") is False
+
+
+@pytest.mark.asyncio
+async def test_a_failed_warm_up_leaves_another_launchs_snapshot(store):
+    """Bugbot on #1853: two launches that both missed the marker warm together;
+    the one that fails must not drop the snapshot the other just made ready."""
+
+    class _LosesTheRace(_Starter):
+        async def build_warm_image(self, *, image, request, size=None):
+            store[("modal", _KEY)] = cache.CacheEntry(
+                state=cache.CacheState.READY, image="im-other"
+            )
+            raise RuntimeError("provider down")
+
+    assert (await _resolve(_LosesTheRace()))[2] == "warm_failed"
+    assert store[("modal", _KEY)].state is cache.CacheState.READY
+    assert await _resolve(_Starter()) == ("im-other", _KEY, "hit")
+
+
+@pytest.mark.asyncio
+async def test_a_cancel_during_the_warming_write_is_not_left_warming(
+    store, monkeypatch
+):
+    """Bugbot on #1853: a cancel while the WARMING write was in flight left it."""
+    write, landed = cache._write, asyncio.Event()
+
+    async def _slow_warming_write(provider, key, entry):
+        await write(provider, key, entry)
+        if entry.state is cache.CacheState.WARMING:
+            landed.set()
+            await asyncio.Event().wait()  # the write landed; the call is still open
+
+    monkeypatch.setattr(cache, "_write", _slow_warming_write)
+    launch = asyncio.create_task(_resolve(_Starter()))
+    await landed.wait()
+    launch.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await launch
+    assert store[("modal", _KEY)].state is cache.CacheState.INVALID
+
+
+@pytest.mark.asyncio
+async def test_each_warm_up_try_signs_its_own_task_links(store):
+    """Bugbot on #1853: the retry reused links signed before the first try."""
+    signed = iter(["https://signed-1", "https://signed-2"])
+
+    async def _fresh():
+        request = WarmRequest(task_archive_url=next(signed))
+        return WarmSource(identity=_SOURCE.identity, request=request)
+
+    class _FailsOnce(_Starter):
+        async def build_warm_image(self, *, image, request, size=None):
+            self.error = None if self.calls else RuntimeError("provider down")
+            return await super().build_warm_image(image=image, request=request)
+
+    starter = _FailsOnce()
+    assert (await _resolve(starter, fresh_source=_fresh))[2] == "warmed"
+    urls = [request.task_archive_url for _, request in starter.calls]
+    assert urls == ["https://signed-1", "https://signed-2"]

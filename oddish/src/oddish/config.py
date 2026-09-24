@@ -1894,11 +1894,26 @@ class Settings(BaseSettings):
     # Memory added to the OUTER monitor sandbox only, on top of the task's own
     # size, for the monitor and Docker daemons that share it. The task
     # container is unchanged. Priced in the sandbox cost span. On the worker
-    # path the task had its sandbox alone; here the monitor and dockerd idle
-    # at 486-703 MiB beside it (QA40, cgroup readings), and a task that fills
+    # path the task had its sandbox alone; here oddish-mon, dockerd and their
+    # helpers hold 434-755 MiB before the task starts (staging 23 Sep, Daytona
+    # cgroup, n=129, p99 735; flat in the task's size), and a task that fills
     # its own size (task 11, 4096 MB Erlang compile) has the monitor OOM-killed
-    # at 0 headroom and passes 4 of 4 at 1 GiB.
+    # at 0 headroom and passes 4 of 4 at 1 GiB. Daytona sizes in whole GiB, so
+    # any value up to 1024 is one GiB there.
     monitor_memory_headroom_mb: int = 1024
+    # Modal only: this percent of the sandbox's memory is added on top of the
+    # headroom, for the VM itself. The guest sees 56 MiB + 2.2% less than the
+    # VM is given (89 MiB at 3 GiB, 421 at 17 GiB), and its kernel and the
+    # monitor side use 605-1191 MiB, growing 1.4% of the VM (staging 23 Sep,
+    # n=179). A flat 1 GiB left 112 of 174 trials short of their own size at
+    # that use; 5% leaves every one at least 108 MiB. 0: the headroom alone.
+    # Why 5 (decided 24 Sep): the smallest whole percent that keeps every
+    # measured trial at its declared memory; at 4% the 8 and 16 GiB tasks fall
+    # short, and 3% (considered) leaves 8 GiB and larger tasks tens to ~200 MiB
+    # short. It costs about 1.4-2.1% more on Modal monitor sandboxes. Revisit
+    # with staging's measured peaks: lower it only if tasks stay clear of their
+    # declared memory.
+    monitor_modal_memory_headroom_percent: int = Field(5, ge=0)
     # The bound the long-lived worker's 12 h timeout used to give every attempt.
     # Enforced by the provider (sandbox timeout) and by the reconciler; it fits
     # inside the queue slot lease (12 h + 30 s).

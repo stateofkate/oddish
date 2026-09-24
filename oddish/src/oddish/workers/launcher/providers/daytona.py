@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import math
+import shlex
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -20,18 +21,20 @@ from pathlib import Path
 
 from oddish.mon.contract import NOTHING_TO_WARM, WARM_VAR, WarmRequest
 from oddish.workers.launcher.providers.base import (
+    ENTRYPOINT,
     WARM_UP_SECONDS,
+    CodeBundle,
     MonitorSandboxError,
     SandboxProvider,
     SandboxSize,
     StatusReply,
     WarmImageUnusable,
+    monitor_start,
     warm_up_lifetime_seconds,
 )
 
 logger = logging.getLogger(__name__)
 
-ENTRYPOINT = "/usr/local/bin/mon-entrypoint.sh"
 PYTHON = "/opt/oddish/.venv/bin/python"
 _RUNNING_STATES = {"started", "starting"}
 
@@ -149,19 +152,20 @@ def _create_params(
     )
 
 
-async def _start_monitor_once(sandbox) -> None:
+async def _start_monitor_once(sandbox, command: tuple[str, ...]) -> None:
     """The image has no ENTRYPOINT, so a sandbox boots idle whether it comes
     from the image or from a snapshot, and this is the only place the monitor
-    is started."""
+    is started (``monitor_start``'s command)."""
     await sandbox.process.exec(
-        f"nohup {ENTRYPOINT} > /var/log/oddish-mon-entry.log 2>&1 &", timeout=30
+        f"nohup {shlex.join(command)} > /var/log/oddish-mon-entry.log 2>&1 &",
+        timeout=30,
     )
 
 
 def _check_size(sandbox, image: str, size: SandboxSize | None) -> None:
     """A snapshot boots at its own size. If that is not the task's size the
-    launcher drops the cache entry and starts cold, so a task is never run in a
-    sandbox smaller than it asked for."""
+    launcher drops the cache entry and warms it again, so a task is never run
+    in a sandbox smaller than it asked for."""
     if size is None or not image.startswith(SNAPSHOT_PREFIX):
         return
     gpu_count = int(getattr(sandbox, "gpu", 0) or 0)
@@ -193,9 +197,11 @@ class DaytonaStarter:
         image: str,
         env: dict[str, str],
         size: SandboxSize | None = None,
+        bundle: CodeBundle | None = None,
     ) -> str:
         from oddish.config import settings
 
+        command, env = monitor_start(env, bundle)
         async with _client() as client:
             sandbox = await client.create(
                 _create_params(name=name, image=image, env=env, size=size),
@@ -203,7 +209,7 @@ class DaytonaStarter:
             )
             try:
                 _check_size(sandbox, image, size)
-                await _start_monitor_once(sandbox)
+                await _start_monitor_once(sandbox, command)
             except Exception:
                 await client.delete(sandbox)  # only the sandbox created above
                 raise

@@ -19,8 +19,9 @@ look identical in the GitHub interface but complete in opposite ways.
 If your branch is not literally `staging`, you are opening a feature PR.
 
 The E2E workflows (`E2E: Dashboard`, `E2E: Frontend fixtures`, `E2E: CLI
-smoke`) and the load_only and Harbor pin guards run on feature PRs and pushes to
-`staging`, not on pushes to `main`. Their jobs skip same-repository `staging` ->
+smoke`) and the load_only, Harbor pin and monitor contract guards run on feature
+PRs and pushes to `staging`, not on pushes to `main`.
+Their jobs skip same-repository `staging` ->
 `main` promotion PRs. Both of those would repeat tests the staging push already
 ran on the same commit, because promotion fast-forwards `main`. Review the
 staging push results for the pinned promotion commit; `/promote` still requires

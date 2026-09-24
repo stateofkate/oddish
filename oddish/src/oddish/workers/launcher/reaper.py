@@ -7,9 +7,12 @@ on the row; the reap then only takes monitor-owned jobs whose verdict allows it.
 Four observations, four actions:
   ALIVE         the monitor answers             -> keep, reset the count
   GONE          monitor exited / sandbox ended  -> reapable now
-  UNKNOWN       the provider cannot be reached  -> keep; never inferred dead
-  UNRESPONSIVE  sandbox is there, no answer     -> count it; reapable after
-                                                   ``UNRESPONSIVE_SWEEPS`` in a row
+                / no sandbox and a stale launch
+  UNKNOWN       the provider cannot be reached  -> keep; never inferred dead;
+                                                   the count stays as it is
+  UNRESPONSIVE  sandbox is there, no answer     -> count it; reapable at
+                                                   ``REAPABLE`` failed checks
+                                                   since the last answer or beat
 A job whose result was already accepted is settled instead, never reaped.
 
 The launcher hands off as soon as the sandbox exists and stops beating, so a
@@ -23,7 +26,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from enum import Enum
+from enum import StrEnum
 
 from sqlalchemy import text
 
@@ -47,7 +50,7 @@ PASS_CONCURRENCY = 10
 PASS_BUDGET_SECONDS = 180.0
 
 
-class Verdict(str, Enum):
+class Verdict(StrEnum):
     ALIVE = "alive"
     GONE = "gone"
     UNKNOWN = "unknown"
@@ -106,7 +109,11 @@ async def check_stale_monitor_jobs(*, stale_after_minutes: int) -> dict[str, int
                                AND monitor_acked_at IS NULL
                                AND claimed_at
                                    < NOW() - make_interval(secs => COALESCE(:launch_deadline, 0))
-                               AS past_launch_deadline
+                               AS past_launch_deadline,
+                           heartbeat_at IS NULL
+                               OR heartbeat_at
+                                  < NOW() - make_interval(mins => :stale_after_minutes)
+                               AS heartbeat_stale
                     FROM   worker_jobs
                     WHERE  status::text = 'RUNNING'
                       AND  monitor_token_hash IS NOT NULL
@@ -208,6 +215,7 @@ async def _check_one(
     has_result,
     past_deadline,
     past_launch_deadline=False,
+    heartbeat_stale=False,
 ) -> str:
     if not has_result and (past_deadline or past_launch_deadline):
         # The flags come from the batch select: a check-in or a result may have
@@ -238,9 +246,11 @@ async def _check_one(
     else:
         verdict = await observe(provider, external_id)
         if verdict is Verdict.GONE and not (provider and external_id):
-            # No handle yet: the launch may still be resolving its image or
-            # creating the sandbox. The deadlines above bound it, not this.
-            verdict = Verdict.UNKNOWN
+            # No handle. With a stale beat the launcher, which beats from claim
+            # to hand-off, is gone: nothing will create the sandbox. With a
+            # fresh one (a check-in the re-read found) the launch may still be
+            # creating it: no verdict; the deadlines above bound it.
+            verdict = Verdict.GONE if heartbeat_stale else Verdict.UNKNOWN
     async with get_session() as session:
         await session.execute(
             text(

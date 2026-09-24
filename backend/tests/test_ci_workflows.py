@@ -158,6 +158,7 @@ def test_both_migration_trees_are_checked_and_errors_fail(tmp_path, bad_tree, re
         "e2e-fixtures.yml",
         "load-only-guard.yml",
         "harbor-pin-guard.yml",
+        "monitor-contract-guard.yml",
     ],
 )
 @pytest.mark.parametrize(
@@ -197,6 +198,7 @@ def test_only_same_repository_promotion_skips_e2e(
         "e2e-fixtures.yml",
         "load-only-guard.yml",
         "harbor-pin-guard.yml",
+        "monitor-contract-guard.yml",
     ],
 )
 def test_main_pushes_do_not_repeat_staging_tests(workflow):

@@ -14,7 +14,12 @@ from oddish.config import settings
 from oddish.core.quota_pause import quota_pause_requested
 from oddish.db import TrialModel, get_read_session
 from oddish.db.storage import StorageClient, get_storage_client
-from oddish.mon.contract import MAX_EVENTS_PER_POST, AttemptSpec, ResultPayload
+from oddish.mon.contract import (
+    MAX_EVENTS_PER_POST,
+    ArtifactUploadResponse,
+    AttemptSpec,
+    ResultPayload,
+)
 from oddish.schemas import SkillFile
 from oddish.worker.probe_staging import load_org_skills
 from oddish.workers.harbor import live_tail_db
@@ -82,12 +87,6 @@ class EventsResponse(BaseModel):
     trial_finished: bool
     quota_checked: bool
     pause_requested: bool | None
-
-
-class ArtifactUploadResponse(BaseModel):
-    upload_url: str
-    upload_headers: dict[str, str]
-    archive_key: str
 
 
 class ResultResponse(BaseModel):
@@ -209,7 +208,8 @@ async def result(
     sandbox is about to go: an archive it says it uploaded but that storage
     does not show is recorded as not uploaded (settlement keeps the verdict
     and records the lost files), never refused. A refusal would have the
-    monitor exit failed and the finished trial re-run."""
+    monitor retry for about half an hour, then exit failed and the finished
+    trial re-run."""
     archive_key: str | None = None
     if body.archive_uploaded:
         archive_key = StorageClient._monitor_archive_key(

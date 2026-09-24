@@ -20,6 +20,7 @@ _PROOFS = [
     "_monitor_boundary_proof.py",
     "_monitor_retry_proof.py",
     "_monitor_budget_proof.py",
+    "_monitor_reaper_fixes_proof.py",
 ]
 
 
@@ -27,7 +28,7 @@ _PROOFS = [
 @pytest.mark.parametrize("proof_name", _PROOFS)
 def test_monitor_paths_against_postgres(proof_name: str) -> None:
     container = f"oddish-monitor-pg-{os.getpid()}"
-    subprocess.run(["docker", "rm", "-f", container], capture_output=True)
+    subprocess.run(["docker", "rm", "-fv", container], capture_output=True)
     run = subprocess.run(
         [
             "docker", "run", "-d", "--rm", "--name", container,
@@ -57,9 +58,9 @@ def test_monitor_paths_against_postgres(proof_name: str) -> None:
             text=True,
             env=env,
         )
-        assert proof.returncode == 0, (
-            f"proof failed\nstdout:\n{proof.stdout}\nstderr:\n{proof.stderr}"
-        )
+        assert (
+            proof.returncode == 0
+        ), f"proof failed\nstdout:\n{proof.stdout}\nstderr:\n{proof.stderr}"
         failed = [
             line
             for line in proof.stdout.splitlines()
@@ -67,4 +68,4 @@ def test_monitor_paths_against_postgres(proof_name: str) -> None:
         ]
         assert not failed, proof.stdout
     finally:
-        subprocess.run(["docker", "rm", "-f", container], capture_output=True)
+        subprocess.run(["docker", "rm", "-fv", container], capture_output=True)

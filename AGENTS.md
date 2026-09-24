@@ -1209,9 +1209,23 @@ Handler registration lives in `oddish.workers.jobs` (`registry.py`,
 The experimental monitor cache builds standard single-Dockerfile task images
 before snapshotting. Images use Harbor's environment content hash; restored
 monitors verify them locally and select Harbor's existing prebuilt-image path.
-Explicit force-build and image overrides take precedence. Compose, environment
-kwargs and symlink contexts keep the existing build path. Warm-up runs no agent
-or verifier and receives no model keys, registry login or attempt token.
+Explicit force-build and image overrides take precedence. Every other task
+Harbor builds (Compose, environment kwargs, symlink contexts) gets Harbor's own
+`docker compose build` in the warm-up (`oddish.mon.compose_build`): its
+`DockerEnvironment.start()` with every Compose command after the build refused,
+so no container starts. Same Compose files, overlays, build args and builder
+as the trial, so the trial's build is a layer-cache hit. Tasks whose network
+plan is not public also get Harbor's egress sidecar image. Warm-up runs no agent
+or verifier and receives no model keys, registry login or attempt token; task
+`${NAME}` env values it cannot resolve are left out of its build.
+
+The warm-up keeps the fetched task under
+`/var/lib/oddish-mon/tasks/<task_files_version>/task-<task id>-<prefix>` in the
+snapshot. `task_files_version` (`attempt.task_files_version`, on `AttemptSpec` and
+`WarmRequest`) hashes the pinned task version id and the storage keys fetched,
+so an in-place overwrite changes it; trials pinned to no version have none. The
+monitor uses the kept copy only when its spec names the same version, and
+fetches otherwise.
 
 Keep `/var/lib/docker` in the sandbox filesystem: a Dockerfile `VOLUME` there
 excludes the store from Daytona's snapshot. The warm entrypoint waits for Docker
@@ -1219,6 +1233,34 @@ to exit, and every boot allocates fresh Docker execution state. Integration
 checks must use fresh sandboxes and verify image/build identity, changed-input
 invalidation, task/verifier success and network policy. Track and delete
 experiment snapshots explicitly; this adds no fleet-wide retention policy.
+
+The snapshot key (`image_cache.snapshot_base_identity`) covers only what a
+snapshot holds: `mon.Dockerfile`, `scripts/mon-entrypoint.sh`, `pyproject.toml`,
+`uv.lock` and `WARM_RECIPE` (every file `python -m oddish.mon warm` imports),
+plus the task identity and size. The rest of the monitor's code is not in it,
+so snapshots survive code-only deploys. When the warm-up imports a new file,
+add it to `WARM_RECIPE`; `test_monitor_snapshot_key.py` fails until you do.
+When a change outside those files alters what a snapshot holds (a provider's
+`build_warm_image`, the warm request), bump `SNAPSHOT_EPOCH`. Every start from
+a cache key runs the launcher's own code: `launcher/code_bundle.py` uploads a
+deterministic tar.gz of `src`, the entrypoint, `pyproject.toml` and `uv.lock`,
+named by its sha256, and the provider runs `scripts/mon-boot.sh` as the start
+(Modal: the sandbox command; Daytona: the one start exec). The presigned URL
+and the sha256 go in the sandbox environment, never in the command. The script
+verifies the sha256, refuses a lock or pyproject that differs from the
+snapshot's, swaps `/opt/oddish/src`, installs the entrypoint and execs it once;
+on any failure it starts no monitor and the snapshot's own code reports a
+failed start. Cold starts and warm-ups do not use it.
+
+A launch never boots cold beside another launch's warm-up. A launch that finds
+a WARMING marker polls the entry every 10 s: READY boots the snapshot, EMPTY the
+plain image, and a marker gone or expired is warmed here. After
+`MAX_WARM_WAIT_SECONDS` (1800) it boots the plain image (`image=wait_expired`). A
+warm-up is tried twice, then the entry is INVALID and the launch boots the plain
+monitor image (`image=warm_failed`), still on the monitor route. A warm-up cut
+short (cancelled, or a storage error) also leaves the entry INVALID. A snapshot gone or unusable at create is
+forgotten and warmed again once, and boots with the code bundle. A storage error
+still boots the plain image.
 
 ### Trace context across queued work
 

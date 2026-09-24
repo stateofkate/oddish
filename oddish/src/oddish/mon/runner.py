@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shutil
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,22 +19,33 @@ from oddish.mon import (
     env,
     hooks,
     loops,
+    memstat,
     registry_login,
     resources,
     seams,
     task_fetch,
     task_image,
+    teardown,
 )
-from oddish.mon.client import AttemptGone, MonitorClient, MonitorRejected
+from oddish.mon.client import (
+    AttemptGone,
+    ControlPlaneRefused,
+    ControlPlaneUnavailable,
+    MonitorClient,
+    MonitorRejected,
+)
 from oddish.mon.contract import AttemptSpec
 from oddish.mon.exit_codes import EXIT_ACCEPTED, EXIT_STOPPED
-from oddish.mon.status import write_status
+from oddish.mon.status import MonitorPhase, write_status
 from oddish.worker.skills_overlay import materialize_skills
+from oddish.workers.harbor import live_tail
 
 logger = logging.getLogger(__name__)
 
-# The result is retried through an outage for about half an hour, then the
-# monitor exits EXIT_FAILED and the entrypoint reports the failed start.
+# The result is retried through an outage, or through our API's refusal (a
+# 4xx other than 410/401, which a rollback or hotfix can lift), for about half
+# an hour, then the monitor exits EXIT_FAILED and the entrypoint reports the
+# failed start.
 REPORT_RETRY_SECONDS = 5.0
 REPORT_ATTEMPTS = 360
 
@@ -44,8 +56,6 @@ _STOPPED_BY_CONTROL_PLANE = (AttemptGone, MonitorRejected, loops.StopTrial)
 
 async def _finish_live_tail(trial_id: str) -> None:
     """Flush and stop the live tailer for ``trial_id``; never raises."""
-    from oddish.workers.harbor import live_tail
-
     try:
         await live_tail.shutdown(trial_id)
     except Exception:
@@ -92,20 +102,17 @@ async def prepare_task(
         spec.model,
         spec.trial_kind,
     )
-    write_status(trial_id=spec.trial_id, phase="starting")
+    write_status(trial_id=spec.trial_id, phase=MonitorPhase.STARTING)
     state = seams.ControlState()
     driver_seams = seams.build(client, state)
 
     workdir = Path(tempfile.mkdtemp(prefix="oddish-mon-"))
-    # Named as the worker names it (storage.resolve_task_directory), so
-    # Harbor derives the same trial folder name on both paths.
-    task_dir = Path(tempfile.mkdtemp(prefix=f"task-{spec.task_id}-", dir=workdir))
-    task_path = await task_fetch.fetch_task(spec, task_dir)
+    task_path = await task_fetch.fetch_or_keep(spec, workdir)
 
     registries = registry_login.login(monitor_env.registry_auth)
     if registries:
         logger.info("registry login staged for: %s", ", ".join(registries))
-    logger.info("task fetched to %s; starting the driver", task_path)
+    logger.info("starting the driver")
 
     reporter = hooks.LifecycleReporter(client)
     # Harbor's compose build inherits our environment: on a cache miss the
@@ -230,12 +237,10 @@ async def report_until_accepted(
         getattr(result.outcome, "reward", None),
         result.execution_error or getattr(result.outcome, "error", None),
     )
-    from oddish.mon import memstat
-
     logger.info("%s at driver-finished", memstat.snapshot())
     logger.info("loop summary: %s", result.stats.summary())
     log_only_dir = _attach_monitor_log(result.outcome)
-    write_status(trial_id=spec.trial_id, phase="reporting")
+    write_status(trial_id=spec.trial_id, phase=MonitorPhase.REPORTING)
     # Keep the heartbeat alive while uploading, as the worker does.
     beat = asyncio.create_task(loops.heartbeat_loop(client, stats=result.stats))
     try:
@@ -254,7 +259,7 @@ async def report_until_accepted(
         beat.cancel()
         await asyncio.gather(beat, return_exceptions=True)
     logger.info("result accepted by the control plane; done")
-    write_status(trial_id=spec.trial_id, phase="done")
+    write_status(trial_id=spec.trial_id, phase=MonitorPhase.DONE)
 
 
 async def run() -> int:
@@ -272,12 +277,14 @@ async def run() -> int:
         spec = await client.attempt()
         trial_id = spec.trial_id
         task = await prepare_task(client, spec, monitor_env)
-        result = await drive_with_watchers(client, task, monitor_env)
+        # The sandbox dies after the result: Harbor's teardown kills at once.
+        with teardown.no_grace_period():
+            result = await drive_with_watchers(client, task, monitor_env)
         await report_until_accepted(client, task, result)
         return EXIT_ACCEPTED
     except _STOPPED_BY_CONTROL_PLANE as exc:
         logger.warning("the control plane stopped the attempt: %s", exc)
-        write_status(trial_id=trial_id, phase="stopped")
+        write_status(trial_id=trial_id, phase=MonitorPhase.STOPPED)
         return EXIT_STOPPED
     finally:
         await client.aclose()
@@ -330,16 +337,12 @@ def _attach_monitor_log(outcome) -> Path | None:
     The log is best effort: a copy that fails is a warning, and the result is
     reported without it (with no log at all, a finished trial must not turn
     into a failed start)."""
-    import shutil
-
     job_dir = getattr(outcome, "job_dir", None)
     log_path = Path(os.environ.get("ODDISH_MON_LOG_PATH", "/var/log/oddish-mon.log"))
     if not log_path.is_file():
         return None
     try:
         if job_dir is None or not Path(job_dir).is_dir():
-            import tempfile
-
             fallback = Path(tempfile.mkdtemp(prefix="oddish-mon-log-"))
             shutil.copyfile(log_path, fallback / "oddish-mon.log")
             return fallback
@@ -365,31 +368,45 @@ async def _deliver_result(
     retryable: bool = True,
     log_only_dir: Path | None = None,
 ) -> None:
-    """Retry an outage up to ``attempts`` times, then raise it. Anything else
-    (the control plane's verdict or refusal) is raised at once."""
-    from oddish.mon.client import ControlPlaneUnavailable
+    """Retry an outage or a refusal, ``attempts`` tries in all, then raise the
+    last one. Our API's 410/401 (the attempt is over) is raised at once.
 
+    The artifacts are uploaded until storage has them, then only the result
+    is posted again; the route derives the archive's key from the attempt.
+    Posting the result again is safe: a repeat of one already stored is
+    answered as a duplicate (``oddish.workers.launcher.result``), or with 410
+    once it is settled."""
+    archive_uploaded = False
     for attempt in range(1, attempts + 1):
         try:
             if reporter is not None:
                 # Stage events lost to an outage go first, so the trial shows
                 # its real last stage before the result settles it.
                 await reporter.flush()
-            await artifacts.upload_and_report(
+            if not archive_uploaded:
+                archive_uploaded = await artifacts.upload(
+                    client, outcome, fallback_dir=log_only_dir
+                )
+            await artifacts.post_result(
                 client,
                 outcome,
+                archive_uploaded=archive_uploaded,
                 execution_error=execution_error,
                 retryable=retryable,
-                monitor_stats=stats.as_dict() if stats else None,
-                fallback_dir=log_only_dir,
+                monitor_stats=stats.as_model() if stats else None,
             )
             return
-        except ControlPlaneUnavailable as exc:
+        except (ControlPlaneUnavailable, ControlPlaneRefused) as exc:
+            # A refusal is not a verdict: a rollback or hotfix within the
+            # window still saves the finished trial.
+            failure = (
+                "refused" if isinstance(exc, ControlPlaneRefused) else "not delivered"
+            )
             if attempt == attempts:
                 # __main__ logs the traceback and exits EXIT_FAILED.
-                logger.error("result not delivered after %d tries; giving up", attempts)
+                logger.error("result %s after %d tries; giving up", failure, attempts)
                 raise
             logger.warning(
-                "result not delivered (%d/%d), retrying: %s", attempt, attempts, exc
+                "result %s (%d/%d), retrying: %s", failure, attempt, attempts, exc
             )
             await asyncio.sleep(delay)

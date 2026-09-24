@@ -425,7 +425,10 @@ async def heartbeat_worker_job(
                 SET    heartbeat_at = NOW(),
                        heartbeat_failure_count = heartbeat_failure_count + $2,
                        last_heartbeat_error = $3,
-                       last_heartbeat_error_at = NOW()
+                       last_heartbeat_error_at = NOW(),
+                       -- A beat is an answer: the reaper's failed checks start
+                       -- over, so a later stale spell needs its own full count.
+                       monitor_status_check_count = NULL
                 WHERE  id = $1
                   AND  status::text = 'RUNNING'
                   AND  ($4::text IS NULL OR current_worker_id = $4)
@@ -439,7 +442,8 @@ async def heartbeat_worker_job(
             await connection.execute(
                 """
                 UPDATE worker_jobs
-                SET    heartbeat_at = NOW()
+                SET    heartbeat_at = NOW(),
+                       monitor_status_check_count = NULL  -- as above
                 WHERE  id = $1
                   AND  status::text = 'RUNNING'
                   AND  ($2::text IS NULL OR current_worker_id = $2)

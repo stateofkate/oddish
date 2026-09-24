@@ -1,0 +1,158 @@
+{
+  "lifecycle": {
+    "events": ["agent-end", "agent-start", "cancel", "end", "environment-provisioned", "environment-start", "start", "verification-start"],
+    "summary": {
+      "event": "end",
+      "result": {
+        "exception_info": {"exception_message": "timed out", "exception_type": "AgentTimeoutError", "provider_error_code": "rate_limit"},
+        "verifier_result": {"rewards": {"reward": 1.0}}
+      },
+      "timestamp": "2026-01-01T00:00:00+00:00"
+    }
+  },
+  "routes": {
+    "GET /monitor/attempt": {
+      "reply": {
+        "(body)": {"type": ["object"]},
+        "agent": {"type": ["string"]},
+        "billed_user_id": {"type": ["null", "string"]},
+        "harbor_config": {"type": ["null", "object"]},
+        "model": {"type": ["null", "string"]},
+        "org_id": {"type": ["null", "string"]},
+        "task_archive_url": {"type": ["null", "string"]},
+        "task_files": {"type": ["object"]},
+        "task_files_version": {"type": ["null", "string"]},
+        "task_files{}": {"type": ["string"]},
+        "task_id": {"type": ["string"]},
+        "task_name": {"type": ["string"]},
+        "trial_attempt": {"type": ["integer"]},
+        "trial_id": {"type": ["string"]},
+        "trial_kind": {"type": ["string"]},
+        "worker_job_attempt": {"type": ["integer"]},
+        "worker_job_id": {"type": ["string"]}
+      },
+      "request": null
+    },
+    "GET /monitor/control": {
+      "reply": {
+        "(body)": {"type": ["object"]},
+        "authorized": {"type": ["boolean"]},
+        "detail": {"type": ["null", "string"]},
+        "pause_requested": {"type": ["boolean"]}
+      },
+      "request": null
+    },
+    "GET /monitor/skills": {
+      "reply": {
+        "(body)": {"type": ["object"]},
+        "skills": {"type": ["array"]},
+        "skills[]": {"type": ["object"]},
+        "skills[].files": {"type": ["array"]},
+        "skills[].files[]": {"type": ["object"]},
+        "skills[].files[].content": {"type": ["string"]},
+        "skills[].files[].relative_path": {"type": ["string"]},
+        "skills[].name": {"type": ["string"]}
+      },
+      "request": null
+    },
+    "POST /monitor/artifacts": {
+      "reply": {
+        "(body)": {"type": ["object"]},
+        "archive_key": {"type": ["string"]},
+        "upload_headers": {"type": ["object"]},
+        "upload_headers{}": {"type": ["string"]},
+        "upload_url": {"type": ["string"]}
+      },
+      "request": null
+    },
+    "POST /monitor/events": {
+      "reply": {
+        "(body)": {"type": ["object"]},
+        "checkpoint_written": {"type": ["boolean"]},
+        "flushed": {"type": ["integer"]},
+        "pause_requested": {"type": ["boolean", "null"]},
+        "quota_checked": {"type": ["boolean"]},
+        "trial_finished": {"type": ["boolean"]}
+      },
+      "request": {
+        "(body)": {"required": true, "type": ["object"]},
+        "checkpoint": {"required": false, "type": ["null", "object"]},
+        "checkpoint.cache_tokens": {"required": false, "type": ["integer", "null"]},
+        "checkpoint.cache_write_tokens": {"required": false, "type": ["integer", "null"]},
+        "checkpoint.cost_usd": {"required": false, "type": ["null", "number"]},
+        "checkpoint.input_tokens": {"required": false, "type": ["integer", "null"]},
+        "checkpoint.output_tokens": {"required": false, "type": ["integer", "null"]},
+        "events": {"maxItems": 1000, "required": false, "type": ["array"]},
+        "events[]": {"required": true, "type": ["object"]},
+        "events[].kind": {"maxLength": 64, "required": true, "type": ["string"]},
+        "events[].payload": {"required": true, "type": ["object"]},
+        "events[].seq": {"minimum": 1.0, "required": true, "type": ["integer"]},
+        "trial_attempt": {"minimum": 0.0, "required": true, "type": ["integer"]}
+      }
+    },
+    "POST /monitor/heartbeat": {
+      "reply": {
+        "(body)": {"type": ["object"]},
+        "ok": {"type": ["boolean"]}
+      },
+      "request": {
+        "(body)": {"required": true, "type": ["object"]},
+        "pending_failure_count": {"minimum": 0.0, "required": false, "type": ["integer"]},
+        "pending_last_error": {"required": false, "type": ["null", "string"]}
+      }
+    },
+    "POST /monitor/lifecycle": {
+      "reply": {
+        "(body)": {"type": ["object"]},
+        "ok": {"type": ["boolean"]}
+      },
+      "request": {
+        "(body)": {"required": true, "type": ["object"]},
+        "summary": {"required": true, "type": ["object"]}
+      }
+    },
+    "POST /monitor/result": {
+      "reply": {
+        "(body)": {"type": ["object"]},
+        "accepted": {"type": ["boolean"]},
+        "duplicate": {"type": ["boolean"]}
+      },
+      "request": {
+        "(body)": {"required": true, "type": ["object"]},
+        "archive_uploaded": {"required": false, "type": ["boolean"]},
+        "execution_error": {"required": false, "type": ["null", "string"]},
+        "monitor_stats": {"required": false, "type": ["null", "object"]},
+        "monitor_stats.control_checks": {"minimum": 0.0, "required": false, "type": ["integer"]},
+        "monitor_stats.control_failed": {"minimum": 0.0, "required": false, "type": ["integer"]},
+        "monitor_stats.heartbeats_failed": {"minimum": 0.0, "required": false, "type": ["integer"]},
+        "monitor_stats.heartbeats_sent": {"minimum": 0.0, "required": false, "type": ["integer"]},
+        "outcome": {"required": false, "type": ["null", "object"]},
+        "outcome.cache_tokens": {"required": false, "type": ["integer", "null"]},
+        "outcome.cache_write_tokens": {"required": false, "type": ["integer", "null"]},
+        "outcome.cost_usd": {"required": false, "type": ["null", "number"]},
+        "outcome.duration_sec": {"required": true, "type": ["number"]},
+        "outcome.error": {"required": true, "type": ["null", "string"]},
+        "outcome.exception_type": {"required": false, "type": ["null", "string"]},
+        "outcome.exit_code": {"required": true, "type": ["integer"]},
+        "outcome.has_trajectory": {"required": false, "type": ["boolean"]},
+        "outcome.http_status": {"required": false, "type": ["integer", "null"]},
+        "outcome.input_tokens": {"required": false, "type": ["integer", "null"]},
+        "outcome.metrics": {"required": false, "type": ["null", "object"]},
+        "outcome.output_tokens": {"required": false, "type": ["integer", "null"]},
+        "outcome.phase_timing": {"required": false, "type": ["null", "object"]},
+        "outcome.provider_error_code": {"required": false, "type": ["null", "string"]},
+        "outcome.request_id": {"required": false, "type": ["null", "string"]},
+        "outcome.retry_after_seconds": {"required": false, "type": ["null", "number"]},
+        "outcome.reward": {"required": true, "type": ["null", "number"]},
+        "outcome.session_id": {"required": false, "type": ["null", "string"]},
+        "outcome.tool_counts": {"required": false, "type": ["null", "object"]},
+        "outcome.tool_counts{}": {"required": true, "type": ["integer"]},
+        "outcome.total_steps": {"required": false, "type": ["integer", "null"]},
+        "outcome.total_tool_calls": {"required": false, "type": ["integer", "null"]},
+        "outcome.trajectory_duration_seconds": {"required": false, "type": ["null", "number"]},
+        "outcome.verifier_summary": {"required": false, "type": ["null", "object"]},
+        "retryable": {"required": false, "type": ["boolean"]}
+      }
+    }
+  }
+}

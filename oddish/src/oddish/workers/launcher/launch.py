@@ -15,8 +15,9 @@ import asyncio
 import logging
 import os
 import shutil
-import time
 from collections.abc import Awaitable, Callable
+from enum import StrEnum
+from time import monotonic
 
 from sqlalchemy import exc as sa_exc
 from sqlalchemy import literal, select, update
@@ -32,12 +33,13 @@ from oddish.workers.harbor.runner import (
     capture_verifier_resources,
 )
 from oddish.workers.jobs.registry import JobOutcome
+from oddish.workers.launcher import code_bundle, launch_env
 from oddish.workers.launcher import costs as monitor_costs
 from oddish.workers.launcher import image_cache as monitor_image_cache
-from oddish.workers.launcher import launch_env
 from oddish.workers.launcher import token as monitor_token
 from oddish.workers.launcher.attempt import warm_source_for_trial
 from oddish.workers.launcher.heartbeat import record_monitor_heartbeat
+from oddish.workers.launcher.image_cache import ImageOutcome
 from oddish.workers.launcher.providers import base as monitor_sandbox
 from oddish.workers.launcher.settle import CAPACITY_PAYLOAD_KEY
 from oddish.workers.queue import judge_keys as verifier_secrets
@@ -57,6 +59,16 @@ logger = logging.getLogger(__name__)
 # once outside the sandbox (or None). Without it the sandbox builds the task
 # image itself, as compose tasks do today.
 ImageResolver = Callable[[str, int], Awaitable[str | None]]
+
+
+class LaunchOutcome(StrEnum):
+    """How a launch ended: its ``outcome=``."""
+
+    HANDED_OFF = "handed_off"  # the sandbox exists; the reconciler owns it
+    FAILED = "failed"  # settled here as a failed attempt
+    OWNERSHIP_LOST = "ownership_lost"  # a newer attempt owns the job
+    CANCELLED = "cancelled"  # the launcher went away mid-launch
+    SKIPPED = "skipped"  # nothing to run: settled or superseded
 
 
 async def _resolve_image(
@@ -194,14 +206,22 @@ def control_plane_url() -> str:
 
 
 async def _start_from_cache(
-    starter, job: ClaimedWorkerJob, image: str, cache_key: str | None, env: dict, size
+    starter,
+    job: ClaimedWorkerJob,
+    image: str,
+    cache_key: str | None,
+    env: dict,
+    size,
+    *,
+    rewarm: Callable[[], Awaitable[monitor_image_cache.Resolved]],
 ) -> str:
     """Start from the resolved image. When that image is a cached snapshot the
-    provider no longer has (expired, deleted), drop the entry and start cold,
-    exactly as without a cache. Any other failure is the launch's own failure:
-    the snapshot stays for the launches still booting from it."""
+    provider no longer has (expired, deleted) or cannot use, drop the entry and
+    warm it again once (``rewarm``) instead of starting cold. Any other failure
+    is the launch's own failure: the snapshot stays for the launches still
+    booting from it."""
     try:
-        return await _start(starter, job, image, env, size)
+        return await _start_image(starter, job, image, cache_key, env, size)
     except Exception as exc:
         if cache_key is None:
             raise
@@ -209,10 +229,26 @@ async def _start_from_cache(
         if not unusable and not await monitor_image_cache.image_is_gone(starter, image):
             raise
         logger.info(
-            "cached image %s is gone on %s; starting cold", image, starter.provider
+            "cached image %s is gone on %s; warming again", image, starter.provider
         )
         await monitor_image_cache.forget(starter, cache_key)
-        return await _start(starter, job, settings.monitor_image, env, size)
+        image, cache_key, _ = await rewarm()
+        return await _start_image(starter, job, image, cache_key, env, size)
+
+
+async def _start_image(
+    starter, job: ClaimedWorkerJob, image: str, cache_key: str | None, env: dict, size
+) -> str:
+    """A cached snapshot (``cache_key``) holds the monitor code it was warmed
+    with, possibly by an older deploy: it boots with the launcher's own code
+    instead (``code_bundle``). A bundle that cannot be prepared fails the
+    start; the older code never runs. Any other image starts as before, and so
+    does a snapshot of an image reference, which has no code to bundle."""
+    root = monitor_image_cache.source_root(settings.monitor_image)
+    if cache_key is None or root is None:
+        return await _start(starter, job, image, env, size)
+    bundle = await code_bundle.prepare(root)
+    return await _start(starter, job, image, env, size, bundle=bundle)
 
 
 async def _start(
@@ -221,10 +257,26 @@ async def _start(
     image: str,
     env: dict,
     size: monitor_sandbox.SandboxSize | None,
+    bundle: monitor_sandbox.CodeBundle | None = None,
 ) -> str:
-    return await starter.start(
-        name=f"oddish-mon-{job.id}-{job.attempts}", image=image, env=env, size=size
+    external_id = await starter.start(
+        name=f"oddish-mon-{job.id}-{job.attempts}",
+        image=image,
+        env=env,
+        size=size,
+        bundle=bundle,
     )
+    logger.info(
+        "metric=monitor_code code_source=%s bundle=%s job_id=%s attempt=%s "
+        "provider=%s external_id=%s",
+        "image" if bundle is None else "bundle",
+        None if bundle is None else bundle.sha256,
+        job.id,
+        job.attempts,
+        starter.provider,
+        external_id,
+    )
+    return external_id
 
 
 async def _task_facts(job: ClaimedWorkerJob, prepared, provider: str):
@@ -295,12 +347,11 @@ async def fail_launch(
     starter,
     external_id: str | None,
     span_opened: bool,
-    launch_started: float,
-) -> None:
-    """Stop what this launch started and settle the attempt as failed. A launch
-    that no longer owns its job (lost before create, or reaped and re-claimed
-    while it ran) leaves the token and the trial, which belong to the newer
-    attempt, alone."""
+) -> LaunchOutcome:
+    """Stop what this launch started and settle the attempt as failed, and
+    return the launch's outcome. A launch that no longer owns its job (lost
+    before create, or reaped and re-claimed while it ran) leaves the token and
+    the trial, which belong to the newer attempt, alone: ``OWNERSHIP_LOST``."""
     logger.exception("monitor launch failed for job=%s", job.id)
     if external_id is not None:
         try:
@@ -316,16 +367,8 @@ async def fail_launch(
         # Re-verify once, right before the writes that assume this attempt:
         # the launch may have outlived the stale-heartbeat reap.
         ownership_lost = not await _still_owns(job)
-    console.print(
-        f"metric=monitor_launch "
-        f"outcome={'ownership_lost' if ownership_lost else 'failed'} "
-        f"job_id={job.id} trial_id={trial_id} attempt={job.attempts} "
-        f"provider={starter.provider} external_id={external_id} "
-        f"error_type={type(exc).__name__} "
-        f"seconds={time.monotonic() - launch_started:.1f}"
-    )
     if ownership_lost:
-        return
+        return LaunchOutcome.OWNERSHIP_LOST
     await monitor_token.revoke_monitor_credential(job.id, attempt=job.attempts)
     await settle_trial_attempt(
         trial_id=trial_id,
@@ -338,6 +381,7 @@ async def fail_launch(
         worker_id=job.worker_id,
         worker_job_id=job.id,
     )
+    return LaunchOutcome.FAILED
 
 
 async def _after_cancelled_launch(
@@ -352,11 +396,6 @@ async def _after_cancelled_launch(
     sandbox we created, close its cost span and revoke this attempt's
     credential. Never raises an error; a cancel that lands during the teardown
     is re-raised only after all three steps ran."""
-    console.print(
-        "metric=monitor_launch outcome=cancelled "
-        f"job_id={job.id} trial_id={trial_id} attempt={job.attempts} "
-        f"provider={getattr(starter, 'provider', None)} external_id={external_id}"
-    )
 
     async def _teardown() -> None:
         if external_id is not None:
@@ -400,80 +439,95 @@ async def launch_monitor_attempt(
     image_resolver: ImageResolver | None = None,
 ) -> JobOutcome | None:
     """Returns a handoff, or ``None`` when the trial settled here instead
-    (nothing to run, or the launch failed and was settled as a failed attempt)."""
-    api_url = control_plane_url()
-    if not api_url:
-        raise RuntimeError(
-            "No control-plane URL for the monitor: set ODDISH_MONITOR_API_URL"
-        )
-    trial_id = job.subject_id
-    prepared = await prepare_trial_run(
-        trial_id=trial_id,
-        worker_id=job.worker_id,
-        queue_slot=job.queue_slot,
-        modal_function_call_id=job.modal_function_call_id,
-        fallback_from_environment=job.reroute_from_environment,
-    )
-    if prepared is None:
-        return None
+    (nothing to run, or the launch failed and was settled as a failed attempt).
 
-    provider = monitor_sandbox.provider_for_environment(prepared.trial_environment)
-    if provider is None:  # the handler's gate keeps these on the worker path
-        raise RuntimeError(
-            f"No monitor sandbox starter for {prepared.trial_environment!r}"
-        )
-    starter = monitor_sandbox.get_starter(provider)
-    external_id: str | None = None
-    span_opened = False
-    launch_started = time.monotonic()
-
-    # The heartbeat identity is known at claim time. Beat from here so the
-    # worker-job row stays fresh while the image resolves, the warm snapshot
-    # builds and the sandbox boots. Without this the row's heartbeat_at is left
-    # at claim time and the reaper kills a healthy launch whose image work runs
-    # past the stale threshold (seen on tasks whose image takes >15 min).
-    launch_attempt = monitor_token.MonitorAttempt(
-        job.id,
-        job.attempts,
-        job.worker_id,
-        trial_id=trial_id,
-        queue_slot=job.queue_slot,
-    )
-
-    # Only a False beat means the job is gone; any other beat failure is
-    # recorded and fails the launch of a job this worker still owns.
-    ownership_lost = False
-    beat_error: Exception | None = None
-
-    async def _heartbeat_during_launch() -> None:
-        nonlocal ownership_lost, beat_error
-        while True:
-            try:
-                owned = await record_monitor_heartbeat(launch_attempt)
-            except _TRANSIENT_DB_ERRORS:  # a missed beat must not fail launch
-                logger.warning("launch heartbeat failed for job=%s", job.id)
-            except Exception as exc:  # noqa: BLE001 - re-raised before create
-                # Anything else (a lost capacity lease included) is real: this
-                # launch must not go on to create, and settles as failed.
-                logger.warning(
-                    "launch heartbeat failed for job=%s: %s: %s",
-                    job.id,
-                    type(exc).__name__,
-                    exc,
-                )
-                beat_error = exc
-                return
-            else:
-                if owned is False:
-                    # Not cancelled mid-call: a provider create cut short could
-                    # leave a sandbox nobody knows. The launch checks the flag
-                    # once, right before create.
-                    ownership_lost = True
-                    return
-            await asyncio.sleep(_HEARTBEAT_SECONDS)
-
-    launch_heartbeat = asyncio.create_task(_heartbeat_during_launch())
+    However it ends, the launch prints one ``metric=monitor_launch`` line: the
+    image it booted (``resolve``'s outcome, ``gone`` when a cached snapshot had
+    to be warmed again, ``none`` before the lookup), the lookup with any wait or
+    warm-up (``warm_s``), the sandbox create with, for a snapshot boot, its
+    code bundle's preparation (``create_s``) and the whole launch
+    (``total_s``)."""
+    started = monotonic()
+    provider: str | None = None
+    launch_heartbeat: asyncio.Task | None = None
+    image_label, outcome = ImageOutcome.NONE, LaunchOutcome.FAILED
+    error_type: str | None = None
+    warm_s = create_s = 0.0
     try:
+        api_url = control_plane_url()
+        if not api_url:
+            raise RuntimeError(
+                "No control-plane URL for the monitor: set ODDISH_MONITOR_API_URL"
+            )
+        trial_id = job.subject_id
+        prepared = await prepare_trial_run(
+            trial_id=trial_id,
+            worker_id=job.worker_id,
+            queue_slot=job.queue_slot,
+            modal_function_call_id=job.modal_function_call_id,
+            fallback_from_environment=job.reroute_from_environment,
+        )
+        if prepared is None:
+            outcome = LaunchOutcome.SKIPPED
+            return None
+
+        provider = monitor_sandbox.provider_for_environment(prepared.trial_environment)
+        if provider is None:  # the handler's gate keeps these on the worker path
+            raise RuntimeError(
+                f"No monitor sandbox starter for {prepared.trial_environment!r}"
+            )
+        starter = monitor_sandbox.get_starter(provider)
+        external_id: str | None = None
+        span_opened = False
+
+        # The heartbeat identity is known at claim time. Beat from here so the
+        # worker-job row stays fresh while the image resolves, the warm
+        # snapshot builds and the sandbox boots. Without this the row's
+        # heartbeat_at is left at claim time and the reaper kills a healthy
+        # launch whose image work runs past the stale threshold (seen on tasks
+        # whose image takes >15 min).
+        launch_attempt = monitor_token.MonitorAttempt(
+            job.id,
+            job.attempts,
+            job.worker_id,
+            trial_id=trial_id,
+            queue_slot=job.queue_slot,
+        )
+
+        # Only a False beat means the job is gone; any other beat failure is
+        # recorded and fails the launch of a job this worker still owns.
+        ownership_lost = False
+        beat_error: Exception | None = None
+
+        async def _heartbeat_during_launch() -> None:
+            nonlocal ownership_lost, beat_error
+            while True:
+                try:
+                    owned = await record_monitor_heartbeat(launch_attempt)
+                except _TRANSIENT_DB_ERRORS:  # a missed beat must not fail launch
+                    logger.warning("launch heartbeat failed for job=%s", job.id)
+                except Exception as exc:  # noqa: BLE001 - re-raised before create
+                    # Anything else (a lost capacity lease included) is real:
+                    # this launch must not go on to create, and settles as
+                    # failed.
+                    logger.warning(
+                        "launch heartbeat failed for job=%s: %s: %s",
+                        job.id,
+                        type(exc).__name__,
+                        exc,
+                    )
+                    beat_error = exc
+                    return
+                else:
+                    if owned is False:
+                        # Not cancelled mid-call: a provider create cut short
+                        # could leave a sandbox nobody knows. The launch checks
+                        # the flag once, right before create.
+                        ownership_lost = True
+                        return
+                await asyncio.sleep(_HEARTBEAT_SECONDS)
+
+        launch_heartbeat = asyncio.create_task(_heartbeat_during_launch())
         await _resolve_image(
             job, prepared.task_id, prepared.task_version, image_resolver
         )
@@ -482,6 +536,7 @@ async def launch_monitor_attempt(
             trial_id=trial_id, prepared_trial=prepared, worker_id=job.worker_id
         )
         if not owned:
+            outcome = LaunchOutcome.SKIPPED
             return None  # superseded, as on the worker path
         resources, verifier_resources, judge_env = await _task_facts(
             job, prepared, provider
@@ -503,20 +558,47 @@ async def launch_monitor_attempt(
             judge_env=judge_env,
             registry_credentials=registry_credentials,
         )
-        image, cache_key = await monitor_image_cache.resolve(
-            starter,
-            monitor_image=settings.monitor_image,
-            warm_source=await warm_source_for_trial(trial_id, job.id),
-            has_registry_login=bool(registry_credentials),
-            size=size,
+
+        async def _lookup() -> monitor_image_cache.Resolved:
+            nonlocal warm_s
+            looking = monotonic()
+            try:
+                return await monitor_image_cache.resolve(
+                    starter,
+                    monitor_image=settings.monitor_image,
+                    warm_source=await warm_source_for_trial(trial_id, job.id),
+                    has_registry_login=bool(registry_credentials),
+                    size=size,
+                    fresh_source=lambda: warm_source_for_trial(trial_id, job.id),
+                )
+            finally:
+                warm_s += monotonic() - looking
+
+        def _raise_if_lost() -> None:
+            """Before each create: the beater never cuts one short."""
+            if ownership_lost:
+                raise MonitorLaunchOwnershipLost(
+                    f"job {job.id} attempt {job.attempts} no longer owns the run"
+                )
+            if beat_error is not None:
+                raise beat_error
+
+        async def _rewarm() -> monitor_image_cache.Resolved:
+            # The cached snapshot was gone at create: warm it again, then check
+            # the run is still ours before creating again, as before the first.
+            nonlocal image_label
+            image_label = ImageOutcome.GONE
+            again = await _lookup()
+            _raise_if_lost()
+            return again
+
+        image, cache_key, image_label = await _lookup()
+        _raise_if_lost()
+        creating, looked = monotonic(), warm_s
+        external_id = await _start_from_cache(
+            starter, job, image, cache_key, env, size, rewarm=_rewarm
         )
-        if ownership_lost:
-            raise MonitorLaunchOwnershipLost(
-                f"job {job.id} attempt {job.attempts} no longer owns the run"
-            )
-        if beat_error is not None:
-            raise beat_error
-        external_id = await _start_from_cache(starter, job, image, cache_key, env, size)
+        create_s = monotonic() - creating - (warm_s - looked)  # a re-warm is warm_s
         if not await _persist_handle(job, starter.provider, external_id):
             # Lost between the pre-start check and create: no row names this
             # sandbox, so the failure path stops it; no span was opened.
@@ -544,15 +626,7 @@ async def launch_monitor_attempt(
             raise MonitorLaunchOwnershipLost(
                 f"job {job.id} attempt {job.attempts} lost the run at hand-off"
             )
-        console.print(
-            "metric=monitor_launch outcome=handed_off "
-            f"job_id={job.id} trial_id={trial_id} attempt={job.attempts} "
-            f"provider={starter.provider} external_id={external_id} "
-            f"cpu={size.cpu if size else 'default'} "
-            f"memory_mb={size.memory_mb if size else 'default'} "
-            f"warm={cache_key is not None} "
-            f"seconds={time.monotonic() - launch_started:.1f}"
-        )
+        outcome = LaunchOutcome.HANDED_OFF
         return JobOutcome.handed_off()
     except asyncio.CancelledError:
         # The worker is going away before the hand-off: nothing recorded the
@@ -560,16 +634,21 @@ async def launch_monitor_attempt(
         # caller's cleanup. Do not leave the sandbox, its cost span and its
         # credential live behind that release; the reconciler's launch deadline
         # is the backstop.
-        await _after_cancelled_launch(
-            job=job,
-            trial_id=trial_id,
-            prepared=prepared,
-            starter=starter,
-            external_id=external_id,
-        )
+        outcome = LaunchOutcome.CANCELLED
+        if launch_heartbeat is not None:
+            await _after_cancelled_launch(
+                job=job,
+                trial_id=trial_id,
+                prepared=prepared,
+                starter=starter,
+                external_id=external_id,
+            )
         raise
     except Exception as exc:
-        await fail_launch(
+        error_type = type(exc).__name__
+        if launch_heartbeat is None:
+            raise  # nothing started yet: nothing to stop or settle
+        outcome = await fail_launch(
             exc,
             job=job,
             trial_id=trial_id,
@@ -577,14 +656,22 @@ async def launch_monitor_attempt(
             starter=starter,
             external_id=external_id,
             span_opened=span_opened,
-            launch_started=launch_started,
         )
         return None
     finally:
         # Stop the background beater on every exit (early return, handoff or
         # error). Cancelling an already-finished task is a no-op.
-        launch_heartbeat.cancel()
-        try:
-            await launch_heartbeat
-        except asyncio.CancelledError:
-            pass
+        if launch_heartbeat is not None:
+            launch_heartbeat.cancel()
+            try:
+                await launch_heartbeat
+            except asyncio.CancelledError:
+                pass
+        console.out(
+            f"metric=monitor_launch job_id={job.id} attempt={job.attempts} "
+            f"provider={provider or 'none'} image={image_label} "
+            f"warm_s={warm_s:.2f} create_s={create_s:.2f} "
+            f"total_s={monotonic() - started:.2f} outcome={outcome}"
+            + (f" error_type={error_type}" if outcome is LaunchOutcome.FAILED else ""),
+            highlight=False,
+        )

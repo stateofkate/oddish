@@ -180,7 +180,7 @@ async def test_start_passes_secrets_at_creation_and_starts_the_monitor_once(
     assert params.auto_stop_interval == settings.monitor_attempt_deadline_seconds // 60
     # Exactly one start, by the starter. Two monitors run the trial twice.
     (command,) = fake_daytona.sandbox.commands
-    assert daytona_starter.ENTRYPOINT in command
+    assert monitor_sandbox.ENTRYPOINT in command
 
 
 def test_the_image_never_starts_the_monitor_itself():
@@ -381,7 +381,7 @@ async def test_daytona_warms_at_the_tasks_size_without_secrets(fake_daytona):
     assert name.startswith(daytona_starter.SNAPSHOT_NAME_PREFIX)
     assert list(params.env_vars) == [WARM_VAR]  # no token, no model key
     # The warm command runs once; the monitor itself is never started here.
-    assert fake_daytona.sandbox.commands[0] == f"{daytona_starter.ENTRYPOINT} warm"
+    assert fake_daytona.sandbox.commands[0] == f"{monitor_sandbox.ENTRYPOINT} warm"
     assert not any("nohup" in c for c in fake_daytona.sandbox.commands)
     assert (params.resources.cpu, params.resources.memory) == (4, 16)
     assert fake_daytona.sandbox.snapshots == [name]
@@ -471,7 +471,7 @@ async def test_a_snapshot_boot_starts_the_monitor_the_same_way(fake_daytona):
         size=SandboxSize(cpu=1, memory_mb=3072),
     )  # fmt: skip
     (command,) = fake_daytona.sandbox.commands
-    assert command.startswith(f"nohup {daytona_starter.ENTRYPOINT}")
+    assert command.startswith(f"nohup {monitor_sandbox.ENTRYPOINT}")
     assert fake_daytona.deleted == []
 
 
@@ -511,3 +511,98 @@ async def test_daytona_says_whether_a_warm_snapshot_still_exists(
 
     monkeypatch.setattr(fake_daytona.snapshot, "get", _down)
     assert await starter.warm_image_exists("snapshot:oddish-mon-warm-abc") is None
+
+
+# --- a snapshot boot with the launcher's code -----------------------------------
+
+
+def _bundle():
+    from oddish.workers.launcher.providers.base import CodeBundle
+
+    # The real boot script: its quotes must reach the sandbox's shell intact.
+    script = (Path(__file__).resolve().parents[2] / "scripts/mon-boot.sh").read_text()
+    return CodeBundle(
+        sha256="ab" * 32,
+        url="https://bucket.test/b.tar.gz?X-Amz-Signature=secret",
+        boot_script=script,
+    )
+
+
+@pytest.mark.asyncio
+async def test_daytona_boots_a_snapshot_with_the_bundle_in_its_one_start_exec(
+    fake_daytona,
+):
+    import shlex
+
+    from oddish.mon.contract import BUNDLE_SHA256_VAR, BUNDLE_URL_VAR
+
+    bundle = _bundle()
+    await daytona_starter.DaytonaStarter().start(
+        name="n", image="snapshot:oddish-mon-warm-abc",
+        env={"ODDISH_MON_TOKEN": "j.1.t"}, bundle=bundle,
+    )  # fmt: skip
+    params, _ = fake_daytona.created[0]
+    # Where and which bundle: the creation slot, with the rest of the env.
+    assert params.env_vars == {
+        "ODDISH_MON_TOKEN": "j.1.t",
+        BUNDLE_URL_VAR: bundle.url,
+        BUNDLE_SHA256_VAR: bundle.sha256,
+    }
+    # Exactly one start, and it runs the boot script, which starts the monitor.
+    (command,) = fake_daytona.sandbox.commands
+    assert shlex.split(command) == [
+        "nohup", "sh", "-c", bundle.boot_script,
+        ">", "/var/log/oddish-mon-entry.log", "2>&1", "&",
+    ]  # fmt: skip
+    # Exec strings can be logged: neither the link nor its sha is in it.
+    assert "X-Amz-Signature" not in command and bundle.sha256 not in command
+
+
+@pytest.mark.asyncio
+async def test_daytona_starts_without_a_bundle_as_before(fake_daytona):
+    await daytona_starter.DaytonaStarter().start(
+        name="n", image="/oddish/mon.Dockerfile", env={"A": "1"}
+    )
+    params, _ = fake_daytona.created[0]
+    assert params.env_vars == {"A": "1"}
+    assert fake_daytona.sandbox.commands == [
+        f"nohup {monitor_sandbox.ENTRYPOINT} > /var/log/oddish-mon-entry.log 2>&1 &"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_modal_boots_a_snapshot_with_the_boot_script_as_its_command(
+    fake_modal,
+):
+    from oddish.mon.contract import BUNDLE_SHA256_VAR, BUNDLE_URL_VAR
+    from oddish.workers.launcher.providers.modal import ModalStarter
+
+    bundle = _bundle()
+    external_id = await ModalStarter().start(
+        name="n", image="im-snap", env={"ODDISH_MON_TOKEN": "j.1.t"}, bundle=bundle
+    )
+    assert external_id == "sb-1"
+    ((args, kwargs),) = fake_modal.created
+    assert args == ("sh", "-c", bundle.boot_script)
+    assert fake_modal.secrets == [
+        {
+            "ODDISH_MON_TOKEN": "j.1.t",
+            BUNDLE_URL_VAR: bundle.url,
+            BUNDLE_SHA256_VAR: bundle.sha256,
+        }
+    ]
+    assert kwargs["secrets"] == ["secret"]
+    assert kwargs["image"] == "im-snap"
+    assert "X-Amz-Signature" not in repr(args)
+
+
+@pytest.mark.asyncio
+async def test_modal_starts_without_a_bundle_as_before(fake_modal):
+    from oddish.workers.launcher.providers.modal import ModalStarter
+
+    await ModalStarter().start(name="n", image="/oddish/mon.Dockerfile", env={"A": "1"})
+    ((args, _),) = fake_modal.created
+    assert (
+        args == (monitor_sandbox.ENTRYPOINT,) == ("/usr/local/bin/mon-entrypoint.sh",)
+    )
+    assert fake_modal.secrets == [{"A": "1"}]

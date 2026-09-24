@@ -17,9 +17,13 @@ from enum import StrEnum
 from importlib import import_module
 from typing import Protocol
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from oddish.mon.contract import WarmRequest
+from oddish.mon.contract import BUNDLE_SHA256_VAR, BUNDLE_URL_VAR, WarmRequest
+
+# The monitor image's entrypoint: ``run`` (the default) starts the monitor,
+# ``warm`` a warm-up.
+ENTRYPOINT = "/usr/local/bin/mon-entrypoint.sh"
 
 
 class MonitorSandboxError(RuntimeError):
@@ -29,7 +33,7 @@ class MonitorSandboxError(RuntimeError):
 class WarmImageUnusable(MonitorSandboxError):
     """The cached snapshot exists but cannot serve this task (it booted at the
     wrong size, its layout no longer matches). The launcher drops the cache
-    entry and starts cold; a snapshot that is merely gone is reported by
+    entry and warms it again; a snapshot that is merely gone is reported by
     ``warm_image_exists`` instead."""
 
 
@@ -52,7 +56,8 @@ class SandboxSize(BaseModel, frozen=True):
     gpu_count: int = 0
     # Memory for the monitor and Docker daemons that share the sandbox with
     # the task's container, on top of ``memory_mb``. Each provider folds it
-    # into what it allocates (Daytona: up to its per-sandbox maximum).
+    # into what it allocates (Modal: plus a share of the VM for the VM itself;
+    # Daytona: in whole GiB, up to its per-sandbox maximum).
     headroom_mb: int = 0
 
     @property
@@ -127,6 +132,32 @@ class SandboxSize(BaseModel, frozen=True):
         )
 
 
+class CodeBundle(BaseModel, frozen=True):
+    """The launcher's own monitor code, for a sandbox booted from a warm
+    snapshot (``launcher.code_bundle``). The snapshot keeps the code it was
+    warmed with; ``boot_script`` swaps this code in and then starts the
+    entrypoint (``monitor_start``)."""
+
+    sha256: str
+    url: str = Field(repr=False)  # presigned: it carries a signature
+    boot_script: str = Field(repr=False)
+
+    def env(self) -> dict[str, str]:
+        return {BUNDLE_URL_VAR: self.url, BUNDLE_SHA256_VAR: self.sha256}
+
+
+def monitor_start(
+    env: dict[str, str], bundle: CodeBundle | None
+) -> tuple[tuple[str, ...], dict[str, str]]:
+    """The one command that starts the monitor, and the environment for the
+    provider's creation slot. With a bundle the command is its boot script,
+    which ends by starting the entrypoint, and the environment gains
+    ``bundle.env()``: a presigned URL never goes in a command."""
+    if bundle is None:
+        return (ENTRYPOINT,), env
+    return ("sh", "-c", bundle.boot_script), {**env, **bundle.env()}
+
+
 class StatusReply(BaseModel, frozen=True):
     """The answer to ``oddish-mon status`` run inside the sandbox."""
 
@@ -153,12 +184,15 @@ class MonitorSandboxStarter(Protocol):
         image: str,
         env: dict[str, str],
         size: SandboxSize | None = None,
+        bundle: CodeBundle | None = None,
     ) -> str:
         """Create the sandbox and return the handle used for status and teardown.
 
         The image's entrypoint is the monitor. A provider starts it exactly
-        once, by whatever means that provider runs an image's entrypoint
-        (Modal: the sandbox command; Daytona: the image ENTRYPOINT)."""
+        once, by whatever means that provider starts it (Modal: the sandbox
+        command; Daytona: one exec after create), with the command and
+        environment ``monitor_start`` gives. ``bundle`` is set only for a
+        cached snapshot."""
 
     def provisioned(self, size: SandboxSize) -> SandboxSize:
         """What this provider really allocates for ``size`` (it may round up)."""

@@ -7,8 +7,9 @@ import logging
 from dataclasses import asdict, dataclass
 
 from oddish.mon.client import AttemptGone, MonitorClient, MonitorRejected
+from oddish.mon.contract import MonitorStats
 from oddish.mon.seams import ControlState
-from oddish.mon.status import write_status
+from oddish.mon.status import MonitorPhase, write_status
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,9 @@ class LoopStats:
 
     def as_dict(self) -> dict[str, int]:
         return asdict(self)
+
+    def as_model(self) -> MonitorStats:
+        return MonitorStats(**self.as_dict())
 
     def summary(self) -> str:
         return " ".join(f"{key}={value}" for key, value in self.as_dict().items())
@@ -100,7 +104,7 @@ async def control_loop(
             if not answer.get("authorized", True):
                 # Recorded where it is learned, as the client records a
                 # 410/401: the tail flush that follows can outlast a kill.
-                write_status(trial_id=trial_id, phase="stopped")
+                write_status(trial_id=trial_id, phase=MonitorPhase.STOPPED)
                 raise StopTrial(
                     answer.get("detail") or "execution is no longer authorized"
                 )

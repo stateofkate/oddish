@@ -57,12 +57,14 @@ from oddish.runtime.ec2_orphans import (
     Ec2WorkerLiveness,
     decide_ec2_orphan,
 )
+from oddish.workers.launcher.reaper import REAPABLE, check_stale_monitor_jobs
 from oddish.workers.queue.thunder_fallback import emit_thunder_handoff_event
 from oddish.runtime.registry import get_backend
 from oddish.runtime.backends.thunder import (
     ThunderSandboxSnapshot,
     snapshot_thunder_sandboxes,
 )
+from oddish.workers.queue.pending_teardowns import retry_failed_teardowns
 from oddish.workers.queue.sandbox_capacity import cleanup_sandbox_capacity_leases
 from oddish.workers.queue.shared import console
 from oddish.workers.queue.worker_job_single_job import (
@@ -581,13 +583,13 @@ async def cleanup_orphaned_queue_state(
 
     # Provider calls, so before (and outside) the reconciliation transaction.
     try:
-        from oddish.workers.launcher.reaper import check_stale_monitor_jobs
-
         monitor_status_checks = await check_stale_monitor_jobs(
             stale_after_minutes=stale_after_minutes
         )
         if monitor_status_checks:
-            console.print(f"metric=monitor_status_check {monitor_status_checks}")
+            console.out(
+                f"metric=monitor_status_check {monitor_status_checks}", highlight=False
+            )
     except Exception as exc:
         console.print(
             "metric=monitor_status_check outcome=error "
@@ -734,14 +736,26 @@ async def cleanup_orphaned_queue_state(
             handoff=handoff,
             reason="teardown_confirmed",
         )
+    failed_teardowns: list[tuple[str, str]] = []
     worker_sandboxes_terminated = (
-        await _terminate_orphaned_sandboxes(worker_targets)
+        await _terminate_orphaned_sandboxes(worker_targets, failed=failed_teardowns)
         + thunder_sandboxes_terminated
     )
     # A reaped monitor attempt ended without a result, so settlement never
     # frees what its hand-off kept. Release it as settle does, after the commit
     # (the rows are locked until then) and after the sandbox teardown.
     await _release_reaped_monitor_attempts(monitor_releases)
+    # Its sandbox, if it would not stop, is stopped again on later sweeps.
+    try:
+        handles = {release["handle"] for release in monitor_releases}
+        await retry_failed_teardowns([t for t in failed_teardowns if t in handles])
+    except Exception as exc:  # noqa: BLE001 -- the next sweep retries
+        console.out(
+            "metric=monitor_teardown_retry outcome=error "
+            f"error_type={type(exc).__name__}",
+            highlight=False,
+        )
+        logger.exception("retrying failed monitor teardowns failed")
     if thunder_sandboxes_terminated:
         try:
             sandbox_capacity_leases_cleared += await cleanup_sandbox_capacity_leases()
@@ -1213,8 +1227,6 @@ async def _reap_stale_worker_jobs(
     monitor-driven attempt, what its hand-off kept (the queue slot and capacity
     lease under the pre-reap worker id); the caller releases them after commit.
     """
-    from oddish.workers.launcher.reaper import REAPABLE
-
     stale_candidates = (
         await session.execute(
             text(
@@ -1381,10 +1393,10 @@ async def _reap_stale_worker_jobs(
             worker_jobs_retried += 1
         else:
             worker_jobs_failed += 1
-        provider = row.get("provider")
-        external_id = row.get("external_id")
-        if provider and external_id:
-            worker_targets.add((str(provider), str(external_id)))
+        provider, external_id = row.get("provider"), row.get("external_id")
+        handle = (str(provider), str(external_id)) if provider and external_id else None
+        if handle is not None:
+            worker_targets.add(handle)
         if committed_trial_id is not None:
             reaped_trial_ids.append(committed_trial_id)
         if row.get("monitor_driven"):
@@ -1396,6 +1408,7 @@ async def _reap_stale_worker_jobs(
                     "slot": row["released_queue_slot"],
                     "worker_id": row["released_worker_id"],
                     "payload": row["payload"],
+                    "handle": handle,
                 }
             )
 
@@ -2461,11 +2474,15 @@ async def _reconcile_experiment_last_activity(session) -> int:
     )
 
 
-async def _terminate_orphaned_sandboxes(worker_targets: set[tuple[str, str]]) -> int:
+async def _terminate_orphaned_sandboxes(
+    worker_targets: set[tuple[str, str]],
+    failed: list[tuple[str, str]] | None = None,
+) -> int:
     """Kill the orphaned sandboxes whose workers crashed. Runs AFTER the outer
     commit: a rolled-back sweep must never leave RUNNING rows pointing at
     sandboxes we already destroyed. Best-effort and concurrent; the provider's
-    auto-stop / auto-delete TTL is the backstop.
+    auto-stop / auto-delete TTL is the backstop. Targets that did not stop are
+    appended to ``failed``.
     """
     if not worker_targets:
         return 0
@@ -2479,6 +2496,8 @@ async def _terminate_orphaned_sandboxes(worker_targets: set[tuple[str, str]]) ->
     )
     terminated = 0
     for (provider, external_id), result in zip(ordered_targets, results, strict=True):
+        if failed is not None and (isinstance(result, BaseException) or not result):
+            failed.append((provider, external_id))
         if isinstance(result, BaseException):
             console.print(
                 "metric=orphaned_sandbox_termination outcome=error "

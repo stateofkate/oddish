@@ -1,0 +1,123 @@
+name: Monitor Contract Guard
+
+# A trial's monitor keeps the code it started with for up to 12 hours while the
+# API it reports to is redeployed, so every /monitor request and reply format
+# may only grow (oddish/src/oddish/mon/contract.py). This job runs the contract
+# guard (backend/tests/test_monitor_contract.py, against the recorded snapshot),
+# the /monitor route tests, and the monitor and launcher unit tests. No other
+# workflow runs them. The real-Postgres proofs in oddish/tests/launcher are
+# underscore-prefixed files that pytest does not collect.
+
+on:
+  # The monitor, the launcher, the /monitor routes and their tests, plus the
+  # files the recorded contract is read from outside those (HarborOutcome,
+  # live_tail.PersistResult, SkillFile), the scripts and queue modules the
+  # tests run or inspect, and the dependency pins (Harbor's lifecycle events,
+  # FastAPI, pydantic).
+  pull_request:
+    paths:
+      - "oddish/src/oddish/mon/**"
+      - "oddish/src/oddish/workers/launcher/**"
+      - "oddish/src/oddish/workers/harbor/outcome.py"
+      - "oddish/src/oddish/workers/harbor/live_tail.py"
+      - "oddish/src/oddish/workers/queue/cleanup.py"
+      - "oddish/src/oddish/workers/queue/pending_teardowns.py"
+      - "oddish/src/oddish/workers/queue/worker_job_single_job.py"
+      - "oddish/src/oddish/schemas.py"
+      - "oddish/src/oddish/harbor-pin.toml"
+      - "oddish/scripts/mon-entrypoint.sh"
+      - "oddish/scripts/mon-boot.sh"
+      - "oddish/tests/mon/**"
+      - "oddish/tests/launcher/**"
+      - "oddish/pyproject.toml"
+      - "oddish/uv.lock"
+      - "backend/api/routers/monitor.py"
+      - "backend/scripts/monitor_contract.py"
+      - "backend/tests/test_monitor_contract.py"
+      - "backend/tests/test_monitor_endpoints.py"
+      - "backend/tests/fixtures/monitor_contract.json"
+      - "backend/pyproject.toml"
+      - "backend/uv.lock"
+      - ".github/workflows/monitor-contract-guard.yml"
+  # No main: it only fast-forwards to staging commits that already ran this.
+  push:
+    branches:
+      - staging
+    paths:
+      - "oddish/src/oddish/mon/**"
+      - "oddish/src/oddish/workers/launcher/**"
+      - "oddish/src/oddish/workers/harbor/outcome.py"
+      - "oddish/src/oddish/workers/harbor/live_tail.py"
+      - "oddish/src/oddish/workers/queue/cleanup.py"
+      - "oddish/src/oddish/workers/queue/pending_teardowns.py"
+      - "oddish/src/oddish/workers/queue/worker_job_single_job.py"
+      - "oddish/src/oddish/schemas.py"
+      - "oddish/src/oddish/harbor-pin.toml"
+      - "oddish/scripts/mon-entrypoint.sh"
+      - "oddish/scripts/mon-boot.sh"
+      - "oddish/tests/mon/**"
+      - "oddish/tests/launcher/**"
+      - "oddish/pyproject.toml"
+      - "oddish/uv.lock"
+      - "backend/api/routers/monitor.py"
+      - "backend/scripts/monitor_contract.py"
+      - "backend/tests/test_monitor_contract.py"
+      - "backend/tests/test_monitor_endpoints.py"
+      - "backend/tests/fixtures/monitor_contract.json"
+      - "backend/pyproject.toml"
+      - "backend/uv.lock"
+      - ".github/workflows/monitor-contract-guard.yml"
+
+concurrency:
+  group: monitor-contract-guard-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  guard:
+    # The staging push already tests this exact commit; promotion is fast-forward.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.base_ref != 'main' || github.head_ref != 'staging' ||
+      github.event.pull_request.head.repo.full_name != github.repository
+    name: Check /monitor formats and monitor tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+    # Python 3.13, uv, a warm uv cache, and pre-built backend and oddish venvs
+    # live in the base image, refreshed weekly by ci-base-image.yml.
+    container:
+      image: ghcr.io/abundant-ai/oddish-ci-base-private:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Sync backend dependencies
+        working-directory: backend
+        env:
+          UV_PROJECT_ENVIRONMENT: /opt/venvs/backend
+        run: uv sync --frozen
+
+      - name: Run the /monitor contract guard and route tests
+        working-directory: backend
+        env:
+          UV_PROJECT_ENVIRONMENT: /opt/venvs/backend
+        run: uv run pytest tests/test_monitor_contract.py tests/test_monitor_endpoints.py -q
+
+      # The image's oddish venv has the server extra; the monitor and launcher
+      # tests import the worker extra too (modal, thunder_sandbox).
+      - name: Sync oddish dependencies
+        working-directory: oddish
+        env:
+          UV_PROJECT_ENVIRONMENT: /opt/venvs/oddish
+        run: uv sync --frozen --extra worker
+
+      - name: Run the monitor and launcher unit tests
+        working-directory: oddish
+        env:
+          UV_PROJECT_ENVIRONMENT: /opt/venvs/oddish
+        run: uv run pytest tests/mon tests/launcher -q
