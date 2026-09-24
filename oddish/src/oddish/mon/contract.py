@@ -35,6 +35,9 @@ WARM_VAR = "ODDISH_MON_WARM"  # a WarmRequest as JSON, for ``oddish.mon warm``
 # nothing and every pull failed.
 NOTHING_TO_WARM = 3
 WARM_FAILED = 1
+# ``oddish.mon warm`` ends its output with ``metric=<this> fetch_s=.. build_s=..``;
+# the launcher reads it back for ``metric=monitor_warm_timing``.
+WARM_PHASES_METRIC = "monitor_warm_phases"
 
 # POST /monitor/events accepts at most this many events per request.
 MAX_EVENTS_PER_POST = 1000

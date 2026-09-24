@@ -17,6 +17,8 @@ import logging
 import os
 import shutil
 from collections.abc import Awaitable, Callable
+from contextlib import contextmanager
+from dataclasses import dataclass
 from enum import StrEnum
 from time import monotonic
 
@@ -275,6 +277,7 @@ async def _start_from_cache(
     size,
     *,
     rewarm: Callable[[], Awaitable[monitor_image_cache.Resolved]],
+    times: _StartTimes | None = None,
 ) -> str:
     """Start from the resolved image. When that image is a cached snapshot the
     provider no longer has (expired, deleted) or cannot use, drop the entry and
@@ -282,7 +285,9 @@ async def _start_from_cache(
     is the launch's own failure: the snapshot stays for the launches still
     booting from it."""
     try:
-        return await _start_image(starter, job, image, cache_key, env, size)
+        return await _start_image(
+            starter, job, image, cache_key, env, size, times=times
+        )
     except Exception as exc:
         if cache_key is None:
             raise
@@ -294,22 +299,52 @@ async def _start_from_cache(
         )
         await monitor_image_cache.forget(starter, cache_key)
         image, cache_key, _ = await rewarm()
-        return await _start_image(starter, job, image, cache_key, env, size)
+        return await _start_image(
+            starter, job, image, cache_key, env, size, times=times
+        )
+
+
+@dataclass
+class _StartTimes:
+    """Parts of ``create_s`` for ``metric=monitor_launch``, summed over both
+    starts when a gone snapshot is warmed again."""
+
+    bundle_s: float = 0.0  # code_bundle.prepare; 0 when there is no bundle
+    sandbox_create_s: float = 0.0  # the provider's start call
+
+    @contextmanager
+    def timing(self, part: str):
+        started = monotonic()
+        try:
+            yield
+        finally:
+            setattr(self, part, getattr(self, part) + monotonic() - started)
 
 
 async def _start_image(
-    starter, job: ClaimedWorkerJob, image: str, cache_key: str | None, env: dict, size
+    starter,
+    job: ClaimedWorkerJob,
+    image: str,
+    cache_key: str | None,
+    env: dict,
+    size,
+    *,
+    times: _StartTimes | None = None,
 ) -> str:
     """A cached snapshot (``cache_key``) holds the monitor code it was warmed
     with, possibly by an older deploy: it boots with the launcher's own code
     instead (``code_bundle``). A bundle that cannot be prepared fails the
     start; the older code never runs. Any other image starts as before, and so
     does a snapshot of an image reference, which has no code to bundle."""
+    times = times or _StartTimes()
     root = monitor_image_cache.source_root(settings.monitor_image)
     if cache_key is None or root is None:
-        return await _start(starter, job, image, env, size)
-    bundle = await code_bundle.prepare(root)
-    return await _start(starter, job, image, env, size, bundle=bundle)
+        with times.timing("sandbox_create_s"):
+            return await _start(starter, job, image, env, size)
+    with times.timing("bundle_s"):
+        bundle = await code_bundle.prepare(root)
+    with times.timing("sandbox_create_s"):
+        return await _start(starter, job, image, env, size, bundle=bundle)
 
 
 async def _start(
@@ -505,15 +540,25 @@ async def launch_monitor_attempt(
     However it ends, the launch prints one ``metric=monitor_launch`` line: the
     image it booted (``resolve``'s outcome, ``gone`` when a cached snapshot had
     to be warmed again, ``none`` before the lookup), the lookup with any wait or
-    warm-up (``warm_s``), the sandbox create with, for a snapshot boot, its
-    code bundle's preparation (``create_s``) and the whole launch
-    (``total_s``)."""
+    warm-up (``warm_s``), the sandbox create (``create_s``) and the whole launch
+    (``total_s``). ``create_s`` runs from the end of the lookup to the
+    sandbox's handle: the code bundle's preparation for a snapshot boot
+    (``bundle_s``, 0 when there is none) and the provider's start call
+    (``sandbox_create_s``; on Daytona it includes waiting for the sandbox to
+    start and the exec that starts the monitor), plus, for a snapshot that was
+    gone, the failed start and dropping the entry; the re-warm itself is
+    ``warm_s``. ``prep_s`` is everything before the lookup: preparing the
+    trial, the funding key, reading the task's facts (which downloads the task)
+    and minting the credential. What ``total_s`` has beyond ``prep_s``,
+    ``warm_s`` and ``create_s`` is recording the handle, opening the cost span
+    and the hand-off."""
     started = monotonic()
     provider: str | None = None
     launch_heartbeat: asyncio.Task | None = None
     image_label, outcome = ImageOutcome.NONE, LaunchOutcome.FAILED
     error_type: str | None = None
-    warm_s = create_s = 0.0
+    warm_s = create_s = prep_s = 0.0
+    start_times = _StartTimes()
     try:
         api_url = control_plane_url()
         if not api_url:
@@ -653,11 +698,12 @@ async def launch_monitor_attempt(
             _raise_if_lost()
             return again
 
+        prep_s = monotonic() - started
         image, cache_key, image_label = await _lookup()
         _raise_if_lost()
         creating, looked = monotonic(), warm_s
         external_id = await _start_from_cache(
-            starter, job, image, cache_key, env, size, rewarm=_rewarm
+            starter, job, image, cache_key, env, size, rewarm=_rewarm, times=start_times
         )
         create_s = monotonic() - creating - (warm_s - looked)  # a re-warm is warm_s
         if not await _persist_handle(job, starter.provider, external_id):
@@ -741,7 +787,9 @@ async def launch_monitor_attempt(
             f"metric=monitor_launch job_id={job.id} attempt={job.attempts} "
             f"provider={provider or 'none'} image={image_label} "
             f"warm_s={warm_s:.2f} create_s={create_s:.2f} "
-            f"total_s={monotonic() - started:.2f} outcome={outcome}"
+            f"total_s={monotonic() - started:.2f} outcome={outcome} "
+            f"prep_s={prep_s:.2f} bundle_s={start_times.bundle_s:.2f} "
+            f"sandbox_create_s={start_times.sandbox_create_s:.2f}"
             + (f" error_type={error_type}" if outcome is LaunchOutcome.FAILED else ""),
             highlight=False,
         )

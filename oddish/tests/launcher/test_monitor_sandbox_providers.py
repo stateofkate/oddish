@@ -94,11 +94,15 @@ class _Process:
         self._sandbox = sandbox
 
     warm_exit_code = 0
+    warm_output = ""
 
     async def exec(self, command, timeout=None):
         self._sandbox.commands.append(command)
-        code = self.warm_exit_code if command.endswith(" warm") else 0
-        return SimpleNamespace(exit_code=code, result='{"alive": true}')
+        if command.endswith(" warm"):
+            return SimpleNamespace(
+                exit_code=self.warm_exit_code, result=self.warm_output
+            )
+        return SimpleNamespace(exit_code=0, result='{"alive": true}')
 
 
 class _Sandbox:

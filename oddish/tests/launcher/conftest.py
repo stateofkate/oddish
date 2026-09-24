@@ -19,7 +19,7 @@ class _Aio:
 def fake_modal(monkeypatch):
     """Modal's SDK with no call leaving the process. ``Sandbox.create`` records
     ``(args, kwargs)`` in ``created`` and returns ``sandbox`` (``sb-1``), whose
-    ``exec`` exits ``exit_code``, whose ``snapshot_filesystem`` records its
+    ``exec`` prints ``output`` and exits ``exit_code``, whose ``snapshot_filesystem`` records its
     arguments in ``snapshots`` and returns ``im-warm``, and whose ``terminate``
     counts in ``terminated``. ``Secret.from_dict`` records each env in
     ``secrets``. ``ModalStarter._image`` passes the image through."""
@@ -28,14 +28,19 @@ def fake_modal(monkeypatch):
     from oddish.workers.launcher.providers.modal import ModalStarter
 
     fake = SimpleNamespace(
-        created=[], secrets=[], snapshots=[], terminated=0, exit_code=0
+        created=[], secrets=[], snapshots=[], terminated=0, exit_code=0, output=""
     )
 
     async def _wait():
         return fake.exit_code
 
+    async def _read():
+        return fake.output
+
     async def _exec(*args):
-        return SimpleNamespace(wait=_Aio(_wait))
+        return SimpleNamespace(
+            wait=_Aio(_wait), stdout=SimpleNamespace(read=_Aio(_read))
+        )
 
     async def _snapshot(**kwargs):
         fake.snapshots.append(kwargs)

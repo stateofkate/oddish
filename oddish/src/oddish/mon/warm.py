@@ -13,10 +13,17 @@ import logging
 import os
 import re
 import tempfile
+import time
 from pathlib import Path
 
 from oddish.mon import compose_build, task_fetch, task_image
-from oddish.mon.contract import NOTHING_TO_WARM, WARM_FAILED, WARM_VAR, WarmRequest
+from oddish.mon.contract import (
+    NOTHING_TO_WARM,
+    WARM_FAILED,
+    WARM_PHASES_METRIC,
+    WARM_VAR,
+    WarmRequest,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -75,8 +82,26 @@ async def run() -> int:
     pull: 0 when anything was built or pulled (worth a snapshot), otherwise
     ``NOTHING_TO_WARM`` or ``WARM_FAILED``."""
     request = WarmRequest.model_validate_json(os.environ.pop(WARM_VAR, "") or "{}")
+    started = time.monotonic()
+    fetched: list[float] = []  # when the fetch ended
+    try:
+        return await _warm(request, fetched)
+    finally:
+        # The launcher reads this last line from the warm-up's output, as it
+        # does the exit code, for metric=monitor_warm_timing.
+        ended = time.monotonic()
+        logger.info(
+            "metric=%s fetch_s=%.2f build_s=%.2f",
+            WARM_PHASES_METRIC,
+            (fetched[0] if fetched else ended) - started,
+            ended - fetched[0] if fetched else 0.0,
+        )
+
+
+async def _warm(request: WarmRequest, fetched: list[float]) -> int:
     with tempfile.TemporaryDirectory(prefix="oddish-mon-warm-") as tmp:
         task_dir = await task_fetch.fetch_and_keep(request, Path(tmp) / "task")
+        fetched.append(time.monotonic())
         sidecar = await compose_build.build_network_sidecar(task_dir)
         if not request.docker_image and await task_image.build(task_dir):
             return 0

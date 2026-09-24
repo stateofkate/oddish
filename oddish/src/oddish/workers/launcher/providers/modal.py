@@ -7,6 +7,7 @@ import math
 from pathlib import Path
 
 from oddish.mon.contract import NOTHING_TO_WARM, WARM_VAR, WarmRequest
+from oddish.workers.launcher import warm_timing
 from oddish.workers.launcher.providers.base import (
     ENTRYPOINT,
     WARM_IMAGE_TTL_SECONDS,
@@ -52,6 +53,17 @@ def _modal_size(size: SandboxSize | None) -> dict:
         gpu = _EXACT_GPU_TYPES.get(gpu.strip().upper(), gpu)
         kwargs["gpu"] = f"{gpu}:{size.gpu_count}" if size.gpu_count > 1 else gpu
     return kwargs
+
+
+async def _read_output(process) -> str:
+    """The warm-up's stdout, until it exits: its log, whose last line has the
+    in-sandbox phases (``warm_timing``). Best effort: a warm-up is never
+    failed for its log."""
+    try:
+        return await process.stdout.read.aio()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("could not read the warm-up's output: %s", exc)
+        return ""
 
 
 class ModalStarter:
@@ -138,6 +150,8 @@ class ModalStarter:
 
         from oddish.config import settings
 
+        timing = warm_timing.current()
+        timing.enter("create_s")
         app = await modal.App.lookup.aio(
             settings.monitor_modal_app, create_if_missing=True
         )
@@ -151,16 +165,21 @@ class ModalStarter:
             experimental_options={"vm_runtime": True},
             **_modal_size(size),
         )
+        timing.enter("exec_s")
         try:
             process = await sandbox.exec.aio(ENTRYPOINT, "warm")
+            timing.read_phases(await _read_output(process))
             code = await process.wait.aio()
+            timing.stop()
             if code == NOTHING_TO_WARM:
                 return None
             if code != 0:
                 raise MonitorSandboxError(f"warm-up exited {code}")
+            timing.enter("snapshot_s")
             snapshot = await sandbox.snapshot_filesystem.aio(
                 timeout=WARM_UP_SECONDS, ttl=WARM_IMAGE_TTL_SECONDS
             )
+            timing.stop()
             return snapshot.object_id
         finally:
             await sandbox.terminate.aio()  # only the sandbox created above

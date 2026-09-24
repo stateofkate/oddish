@@ -8,6 +8,7 @@ pulled by the warm-up, so every trial built its services in the billed sandbox.
 from __future__ import annotations
 
 import asyncio
+import logging
 import shutil
 from pathlib import Path
 from types import SimpleNamespace
@@ -358,6 +359,59 @@ async def test_warm_reports_nothing_to_warm_only_when_nothing_was_built_or_named
     # Bugbot on #1853: a failed build is not "nothing to warm", which the
     # launcher caches as EMPTY for good.
     assert await warm.run() == WARM_FAILED
+
+
+def _phases(caplog) -> list[dict[str, float]]:
+    return [
+        {k: float(v) for k, v in (f.split("=", 1) for f in r.getMessage().split()[1:])}
+        for r in caplog.records
+        if r.getMessage().startswith("metric=monitor_warm_phases ")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_warm_prints_how_long_it_fetched_and_built(
+    compose_task, docker, monkeypatch, tmp_path, caplog
+):
+    """The launcher reads this line from the warm-up's output for
+    ``metric=monitor_warm_timing``."""
+    caplog.set_level(logging.INFO)
+    _warm_request(monkeypatch, tmp_path, compose_task)
+    real_fetch = task_fetch.fetch_task
+
+    async def slow_fetch(spec, dest):
+        await asyncio.sleep(0.03)
+        return await real_fetch(spec, dest)
+
+    monkeypatch.setattr(task_fetch, "fetch_task", slow_fetch)
+
+    assert await warm.run() == 0
+
+    (line,) = _phases(caplog)
+    assert list(line) == ["fetch_s", "build_s"]
+    assert line["fetch_s"] >= 0.03 and line["build_s"] >= 0
+
+
+@pytest.mark.asyncio
+async def test_a_warm_up_that_fails_still_prints_its_phases(
+    tmp_path, monkeypatch, caplog
+):
+    caplog.set_level(logging.INFO)
+    monkeypatch.setenv(
+        WARM_VAR, WarmRequest(task_archive_url="https://x").model_dump_json()
+    )
+
+    async def fetch_fails(request, dest):
+        await asyncio.sleep(0.02)
+        raise RuntimeError("403 fetching the task")
+
+    monkeypatch.setattr(task_fetch, "fetch_and_keep", fetch_fails)
+
+    with pytest.raises(RuntimeError, match="403"):
+        await warm.run()
+
+    (line,) = _phases(caplog)
+    assert line["fetch_s"] >= 0.02 and line["build_s"] == 0
 
 
 # --- a restricted task's egress sidecar ---------------------------------------

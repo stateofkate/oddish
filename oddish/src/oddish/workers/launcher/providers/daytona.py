@@ -20,6 +20,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from oddish.mon.contract import NOTHING_TO_WARM, WARM_VAR, WarmRequest
+from oddish.workers.launcher import warm_timing
 from oddish.workers.launcher.providers.base import (
     ENTRYPOINT,
     WARM_UP_SECONDS,
@@ -243,7 +244,9 @@ class DaytonaStarter:
         from oddish.config import settings
 
         snapshot = f"{SNAPSHOT_NAME_PREFIX}{uuid.uuid4().hex[:12]}"
+        timing = warm_timing.current()
         async with _client() as client:
+            timing.enter("create_s")
             sandbox = await client.create(
                 _create_params(
                     name=snapshot,
@@ -254,19 +257,24 @@ class DaytonaStarter:
                 ),
                 timeout=settings.monitor_daytona_create_timeout_seconds,
             )
+            timing.enter("exec_s")
             try:
                 pulled = await sandbox.process.exec(
                     f"{ENTRYPOINT} warm", timeout=WARM_UP_SECONDS
                 )
+                timing.read_phases(str(getattr(pulled, "result", "") or ""))
+                timing.stop()
                 if int(pulled.exit_code) == NOTHING_TO_WARM:
                     return None
                 if int(pulled.exit_code) != 0:
                     raise MonitorSandboxError(f"warm-up exited {pulled.exit_code}")
                 # The warm entrypoint waits for Docker to shut down before
                 # succeeding; the snapshot contains images, not live daemons.
+                timing.enter("snapshot_s")
                 await sandbox._experimental_create_snapshot(
                     snapshot, timeout=WARM_UP_SECONDS
                 )
+                timing.stop()
                 return f"{SNAPSHOT_PREFIX}{snapshot}"
             finally:
                 await client.delete(sandbox)  # only the sandbox created above

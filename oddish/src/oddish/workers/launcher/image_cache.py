@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 
 from oddish.db.storage import get_storage_client
 from oddish.mon.contract import WarmRequest
+from oddish.workers.launcher import warm_timing
 from oddish.workers.launcher.attempt import WarmSource
 from oddish.workers.launcher.providers.base import (
     WARM_IMAGE_READY_SECONDS,
@@ -299,14 +300,20 @@ async def resolve(
                 CacheEntry(state=CacheState.WARMING, owner=owner),
             )
             for attempt in (1, 2):
+                timing = warm_timing.begin(key, starter.provider, attempt)
                 try:
                     image = await starter.build_warm_image(  # type: ignore[attr-defined]
                         image=monitor_image,
                         request=await _request(warm_source, fresh_source),
                         size=size,
                     )
+                    timing.emit("snapshot" if image else "nothing_to_warm")
                     break
+                except asyncio.CancelledError:
+                    timing.emit("cancelled")
+                    raise
                 except Exception:
+                    timing.emit("failed")
                     if attempt == 2:
                         # Failed twice: boot the plain image. Not EMPTY and not
                         # left WARMING: the next trial warms again.
