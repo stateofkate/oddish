@@ -236,6 +236,11 @@ High-level flow:
    `AgentSafetyRefusalError`, and the context/output budget errors — keep their
    reward, because a real 0 must stay a real 0. Add a name to that set only when
    the provider, not the agent, ended the run.
+   Muse and Grok can surface provider rejection only in CLI output while Harbor
+   initially sees a generic nonzero exit. Oddish refines strongly provider-shaped
+   HTTP status, authentication, billing, credit, quota, and model-access messages
+   into Harbor's typed API exceptions in both in-process and override-Harbor
+   workers. Unrelated nonzero CLI exits remain solver failures.
    That rule needs the exception to reach settlement. Pinned Harbor omits
    `trial_results` from the job summary it writes, so a caller that rebuilds a
    `JobResult` from that file loses the per-trial exception and phase timing.

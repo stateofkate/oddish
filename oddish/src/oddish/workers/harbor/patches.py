@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import base64
-from collections.abc import Awaitable, Callable
-from contextvars import ContextVar, Token
-from functools import partial
 import importlib
 import inspect
 import json
@@ -14,6 +11,9 @@ import os
 import re
 import shlex
 import tempfile
+from collections.abc import Awaitable, Callable
+from contextvars import ContextVar, Token
+from functools import partial
 from types import SimpleNamespace
 from typing import Any, cast
 from weakref import WeakSet
@@ -76,11 +76,54 @@ def apply_harbor_patches(
     global _PATCHED
     if not _PATCHED:
         _patch_restricted_network_runtime_fields()
+        _patch_provider_error_classifiers()
         _patch_daytona_dind()
         _patch_modal_dind()
         _PATCHED = True
     _patch_ec2_lifecycle(require_ec2=require_ec2)
     _patch_thunder_exception_metadata(require_thunder=require_thunder)
+
+
+def _patch_provider_error_classifiers() -> None:
+    """Recover provider failures hidden behind generic CLI exit errors.
+
+    Override-Harbor workers construct their stock Muse and Grok classes in an
+    isolated interpreter, so Oddish's in-process agent adapters cannot own this
+    boundary. Patch those two stock classes before ``Job.create`` instead.
+    """
+    from oddish.workers.agents.provider_errors import refine_provider_exec_error
+
+    targets = (
+        ("harbor.agents.installed.muse_code", "MuseCode", "Meta"),
+        ("harbor.agents.installed.grok_build", "GrokBuild", "xAI"),
+    )
+    for module_name, class_name, provider in targets:
+        try:
+            agent_class = getattr(importlib.import_module(module_name), class_name)
+        except (ImportError, AttributeError):
+            # Older override pins may not ship a newly-added agent. Such a pin
+            # cannot construct that trial anyway; keep other agents runnable.
+            continue
+        original = agent_class._classify_exec_error
+        if getattr(original, "_oddish_provider_errors_wrapped", False):
+            continue
+
+        def classify_exec_error(
+            self: Any,
+            command: str,
+            result: Any,
+            *,
+            _original: Callable[..., Any] = original,
+            _provider: str = provider,
+        ) -> Any:
+            return refine_provider_exec_error(
+                _original(self, command, result),
+                result,
+                provider=_provider,
+            )
+
+        classify_exec_error._oddish_provider_errors_wrapped = True  # type: ignore[attr-defined]
+        agent_class._classify_exec_error = classify_exec_error
 
 
 def _patch_thunder_exception_metadata(*, require_thunder: bool = False) -> None:
@@ -582,10 +625,7 @@ def _patch_ec2_lifecycle(*, require_ec2: bool = False) -> None:
 
         callback = _EC2_PROVISIONED_CALLBACK.get()
         if callback is not None:
-            if (
-                getattr(self, "instance_id", None) is None
-                and isinstance(launched, str)
-            ):
+            if getattr(self, "instance_id", None) is None and isinstance(launched, str):
                 self.instance_id = launched
             external_id = get_sandbox_id(self)
             if not external_id or not external_id.startswith("ec2://"):

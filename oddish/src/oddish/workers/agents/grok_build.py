@@ -8,7 +8,11 @@ import shlex
 import tempfile
 from typing import Any
 
-from harbor.agents.installed.base import BaseInstalledAgent, with_prompt_template
+from harbor.agents.installed.base import (
+    BaseInstalledAgent,
+    NonZeroAgentExitCodeError,
+    with_prompt_template,
+)
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 from harbor.utils.trajectory_utils import format_trajectory_json
@@ -18,6 +22,7 @@ from .grok_build_session import (
     build_session_trajectory,
 )
 from .grok_build_trajectory import write_grok_build_trajectory_if_richer
+from .provider_errors import refine_provider_exec_error
 
 _OUTPUT_FILENAME = "grok-build.json"
 _STDERR_FILENAME = "grok-build.stderr.log"
@@ -192,6 +197,15 @@ class OddishGrokBuild(BaseInstalledAgent):
 
     def get_version_command(self) -> str | None:
         return 'export PATH="$HOME/.local/bin:$HOME/.grok/bin:$PATH"; grok --version'
+
+    def _classify_exec_error(
+        self, command: str, result: Any
+    ) -> NonZeroAgentExitCodeError:
+        return refine_provider_exec_error(
+            super()._classify_exec_error(command, result),
+            result,
+            provider="xAI",
+        )
 
     @classmethod
     def required_outbound_domains(
@@ -510,6 +524,16 @@ class OddishGrokBuild(BaseInstalledAgent):
             + " esac; "
             "rc=$?; "
             "done; "
+            # Grok's stderr must stay in its artifact for operators, but Harbor
+            # also needs the final provider message to type 403/billing/API
+            # failures. Emit only the final failed arm after all flag fallbacks
+            # and resumable attempts have finished. Streaming-json can put the
+            # same detail in an error event on stdout, so surface only those
+            # structured error lines rather than the agent's whole transcript.
+            f"if [ $rc -ne 0 ]; then cat {stderr_path} >&2; "
+            f'grep -Eai \'"(type|kind)"[[:space:]]*:[[:space:]]*'
+            f'"(error|internal_error|failure)"\' {stdout_path} '
+            "| tail -n 20 >&2 || true; fi; "
             "exit $rc"
         )
         try:

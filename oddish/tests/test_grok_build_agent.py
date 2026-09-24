@@ -10,10 +10,13 @@ The instruction is now uploaded as a file and read back via ``"$(cat ...)"``.
 from __future__ import annotations
 
 import subprocess
+import tomllib
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
-import tomllib
+from harbor.agents.installed.base import AgentAuthenticationError, ApiUsageLimitError
+
 from oddish.workers.agents import grok_build as grok_build_module
 from oddish.workers.agents.grok_build import (
     _PROMPT_PATH,
@@ -28,6 +31,22 @@ def test_advertises_atif_support():
     assert OddishGrokBuild.SUPPORTS_ATIF is True
 
 
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("API error (status 403 Forbidden): access denied", AgentAuthenticationError),
+        ("API error status 400: billing credits exhausted", ApiUsageLimitError),
+    ],
+)
+def test_classifies_xai_provider_rejections(tmp_path, message, expected):
+    agent = OddishGrokBuild(logs_dir=tmp_path, model_name="xai/grok-4")
+    result = SimpleNamespace(return_code=1, stdout="", stderr=message)
+
+    error = agent._classify_exec_error("grok -p", result)
+
+    assert type(error) is expected
+
+
 def test_build_config_toml_defaults_to_responses_backend(tmp_path):
     """Without an override the upstream Harbor default is preserved verbatim."""
     agent = OddishGrokBuild(logs_dir=tmp_path, model_name="xai/v9-stickynote")
@@ -40,9 +59,7 @@ def test_build_config_toml_defaults_to_responses_backend(tmp_path):
 
 def test_learnability_model_pins_grok_cli_1_0_0(tmp_path):
     """v9m-rl-learnability-tp8 404s on grok CLI 1.0.13; pin the last working CLI."""
-    agent = OddishGrokBuild(
-        logs_dir=tmp_path, model_name="xai/v9m-rl-learnability-tp8"
-    )
+    agent = OddishGrokBuild(logs_dir=tmp_path, model_name="xai/v9m-rl-learnability-tp8")
     assert agent._version == "1.0.0"
 
 
@@ -70,9 +87,7 @@ def test_public_route_sends_bare_model_id_to_xai(tmp_path):
 
 @pytest.mark.asyncio
 async def test_install_passes_pinned_cli_version_to_install_sh(tmp_path, monkeypatch):
-    agent = OddishGrokBuild(
-        logs_dir=tmp_path, model_name="xai/v9m-rl-learnability-tp8"
-    )
+    agent = OddishGrokBuild(logs_dir=tmp_path, model_name="xai/v9m-rl-learnability-tp8")
     commands: list[str] = []
 
     async def _fake_exec_as_root(self, environment, *, command, **kwargs):
@@ -236,16 +251,17 @@ async def test_run_uploads_prompt_and_keeps_exec_command_small(tmp_path, monkeyp
     # the stream watchdog because a fresh request lands on a healthy replica and
     # the rate limit because xAI's buckets refill. One resume arm per fallback
     # variant, so the resume replays whichever flag set actually ran.
-    assert (
-        f"grep -Eqi {grok_build_module._RESUMABLE_ERROR_PATTERN}"
-        in command
-    )
+    assert f"grep -Eqi {grok_build_module._RESUMABLE_ERROR_PATTERN}" in command
     assert command.count("grok -c -p") == 6
     assert f"resumes -lt {grok_build_module._MAX_RESUMES}" in command
     # The resume appends to the streamed event log and re-sends a short inline
     # continuation, never the staged instruction.
     assert command.count(">>/logs/agent/grok-build.json") == 6
     assert "Continue the original task" in command
+    # The last failed arm's stderr remains an artifact and is also surfaced to
+    # Harbor after the fallback/resume logic so provider errors are typed.
+    assert "cat /logs/agent/grok-build.stderr.log >&2" in command
+    assert "(error|internal_error|failure)" in command
 
 
 @pytest.mark.asyncio
@@ -297,7 +313,7 @@ async def _generated_command(tmp_path, monkeypatch) -> str:
     return next(c for c in agent_commands if "grok -p" in c)
 
 
-def _run_in_shell(command: str, tmp_path, stub_body: str):
+def _run_in_shell(command: str, tmp_path, stub_body: str, *, with_stderr=False):
     """Execute the generated command under bash against a stubbed ``grok``.
 
     The stub lands in ``$HOME/.local/bin`` of a throwaway HOME, which the
@@ -326,6 +342,8 @@ def _run_in_shell(command: str, tmp_path, stub_body: str):
     )
     calls = (logdir / "calls.log").read_text(encoding="utf-8").splitlines()
     stdout = (logdir / "grok-build.json").read_text(encoding="utf-8")
+    if with_stderr:
+        return proc.returncode, calls, stdout, proc.stderr
     return proc.returncode, calls, stdout
 
 
@@ -373,6 +391,31 @@ fi
 echo '{{"type":"text","data":"resumed"}}'
 exit 0
 """
+
+
+_STRUCTURED_ERROR_STUB = """
+echo "$*" >> "$LOGDIR/calls.log"
+echo '{"type":"text","data":"Checking the 403 handler."}'
+echo '{"type":"error","message":"403 Forbidden: team credits exhausted"}'
+echo '{"kind": "internal_error", "message": "provider failed"}'
+exit 1
+"""
+
+
+@pytest.mark.asyncio
+async def test_shell_surfaces_structured_error_events_on_failure(tmp_path, monkeypatch):
+    # Streaming-json writes quoted values ({"type":"error"}); the failure path
+    # must copy those events to stderr for classification, and only those.
+    command = await _generated_command(tmp_path, monkeypatch)
+    rc, _, _, stderr = _run_in_shell(
+        command, tmp_path, _STRUCTURED_ERROR_STUB, with_stderr=True
+    )
+    assert rc != 0
+    assert '{"type":"error","message":"403 Forbidden: team credits exhausted"}' in (
+        stderr
+    )
+    assert '"kind": "internal_error"' in stderr
+    assert "Checking the 403 handler" not in stderr
 
 
 @pytest.mark.asyncio
