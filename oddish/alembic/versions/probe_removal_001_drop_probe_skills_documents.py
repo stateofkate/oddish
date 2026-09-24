@@ -23,6 +23,13 @@ lock_timeout with retries (see ``migration_locks``) and is idempotent, so a
 failed run is safe to re-trigger. The deletes are skipped once
 ``trials.is_probe`` is gone.
 
+Production also has private Forge rules installed outside Alembic. Remove
+the three triggers and five functions that depend on ``tasks.run_probe``
+before changing any rows or columns. One blocks the column drop; the others
+can fail trial inserts and automatic audit requests after the drop. Use
+named drops without CASCADE so an unknown dependency still stops the run.
+Existing task QA flags, verdicts, and Forge records are not changed.
+
 Downgrade is not supported: the deleted rows cannot be restored.
 """
 
@@ -69,6 +76,23 @@ def _run(table: str, sql: str) -> None:
     run_with_lock_retry(lambda: op.execute(sql), table_name=table)
 
 
+def _remove_private_probe_rules() -> None:
+    for table, trigger in (
+        ("tasks", "forge_private_source_analysis"),
+        ("task_versions", "forge_private_source_audit_cas"),
+        ("trials", "forge_trials_admission"),
+    ):
+        _run(table, f"DROP TRIGGER IF EXISTS {trigger} ON public.{table}")
+    for function in (
+        "forge_pin_private_source_analysis()",
+        "forge_skip_private_source_audit_cas()",
+        "forge_trials_admission_guard()",
+        "forge_arm_private_source_lifecycle(text, text)",
+        "forge_private_source_binding(text, text, text, boolean)",
+    ):
+        _run("tasks", f"DROP FUNCTION IF EXISTS public.{function}")
+
+
 def _rebuild_browse_preview_index() -> None:
     # An interrupted CONCURRENTLY build leaves an INVALID index that
     # ``IF NOT EXISTS`` would keep; drop it so the retry rebuilds it.
@@ -94,6 +118,7 @@ def _rebuild_browse_preview_index() -> None:
 
 
 def upgrade() -> None:
+    _remove_private_probe_rules()
     if _has_column("trials", "is_probe"):
         for table, column, ids in _PROBE_DELETES:
             _run(table, f"DELETE FROM {table} WHERE {column} IN ({ids})")

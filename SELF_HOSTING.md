@@ -166,6 +166,14 @@ uv run alembic upgrade head
 
 Re-run these whenever you pull changes that touch either `alembic/` directory.
 
+If `probe_removal_001` stopped because the private Forge trigger depended on
+`tasks.run_probe`, use the corrected migration and run the same upgrade again.
+It removes the three named Forge triggers and their five related functions
+before removing probe columns. It also resumes when `trials.is_probe` is
+already gone. It does not reset task QA flags, replace verdicts, or delete
+Forge request records. Complete the backend deploy after the migration;
+the old backend still needs the removed trial column.
+
 Apply core migration `task_run_coverage_001` before deploying run-coverage
 filters. It adds and backfills model/oracle/NOP summaries in 200-version
 batches using the same sorted advisory locks as writers. Interrupted upgrades

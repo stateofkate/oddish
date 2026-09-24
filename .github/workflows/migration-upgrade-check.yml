@@ -48,7 +48,7 @@ jobs:
           git cat-file -e "${base}^{commit}" 2>/dev/null \
             || git fetch --no-tags origin "$base"
           changed="$(git diff --name-only "$base" HEAD)"
-          if grep -qE '^(oddish|backend)/alembic/|^\.github/workflows/migration-upgrade-check\.yml$' <<<"$changed"; then
+          if grep -qE '^(oddish|backend)/alembic/|^oddish/tests/test_probe_removal_migration\.py$|^\.github/workflows/migration-upgrade-check\.yml$' <<<"$changed"; then
             echo "run=true" >> "$GITHUB_OUTPUT"
             echo "Migration files or upgrade workflow changed — running upgrade."
           else
@@ -96,6 +96,11 @@ jobs:
         if: steps.changes.outputs.run == 'true'
         working-directory: oddish
         run: uv run alembic upgrade head
+
+      - name: Test probe migration with private rules and interrupted state
+        if: steps.changes.outputs.run == 'true'
+        working-directory: oddish
+        run: ODDISH_TEST_DATABASE_URL="$ODDISH_DATABASE_URL" uv run pytest tests/test_probe_removal_migration.py -q
 
       - name: Sync backend dependencies
         if: steps.changes.outputs.run == 'true'
