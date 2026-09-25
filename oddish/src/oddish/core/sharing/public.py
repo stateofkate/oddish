@@ -13,6 +13,7 @@ from oddish.core.endpoints.experiment_page import (
     get_public_experiment_trial_page_core,
 )
 from oddish.core.endpoints.experiment_cost import get_experiment_cost_totals
+from oddish.core.qa_issue_report import qa_issue_report_core
 from oddish.core.helpers import (
     build_task_status_response,
     fetch_trial_queue_info,
@@ -63,6 +64,7 @@ from oddish.schemas import (
     PublicExperimentResponse,
     PublicTaskStatusResponse,
     PublicTaskQaResponse,
+    QAIssueReportResponse,
     TaskBrowseExperiment,
     TaskStatusResponse,
     TrialResponse,
@@ -166,6 +168,39 @@ async def get_public_experiment_info(public_token: str) -> PublicExperimentRespo
             description=experiment.description,
             show_qa=bool(experiment.show_qa),
         )
+
+
+@router.get(
+    "/public/experiments/{public_token}/qa-issues",
+    response_model=QAIssueReportResponse,
+)
+async def get_public_qa_issues(
+    public_token: str,
+    category: str | None = None,
+    blocking: bool = False,
+    q: str = "",
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=500),
+) -> QAIssueReportResponse:
+    """The experiment's QA issue report, only when the share shows QA."""
+    async with get_read_session() as session:
+        experiment = await get_public_experiment(session, public_token)
+        if experiment is None or not experiment.show_qa:
+            raise HTTPException(status_code=404, detail="Experiment not found")
+        report = await qa_issue_report_core(
+            session,
+            scope_kind="experiment",
+            scope_id=experiment.id,
+            org_id=experiment.org_id,
+            category=category,
+            blocking=blocking,
+            q=q,
+            page=page,
+            page_size=page_size,
+            public=True,
+        )
+    report.scope_id = public_token
+    return report
 
 
 @router.get(

@@ -45,3 +45,29 @@ export async function fetchQaIssueReport(
     return { ok: false, status: 503 };
   }
 }
+
+/** A share page's report: no sign-in; the backend strips people and links. */
+export async function fetchPublicQaIssueReport(
+  token: string,
+  view: QaIssuesView
+): Promise<QaIssueReportResult> {
+  try {
+    const response = await fetch(
+      getBackendUrl(
+        "public",
+        `/experiments/${encodeURIComponent(token)}/qa-issues`,
+        Object.fromEntries(qaIssuesFetchParams(view))
+      ),
+      { cache: "no-store" }
+    );
+    if (!response.ok) return { ok: false, status: response.status };
+    return {
+      ok: true,
+      report: (await response.json()) as QaIssueReport,
+      fetchedAt: new Date().toISOString(),
+    };
+  } catch (error) {
+    console.error("[qa-issues] public report fetch failed", error);
+    return { ok: false, status: 503 };
+  }
+}

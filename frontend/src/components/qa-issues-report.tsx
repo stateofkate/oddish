@@ -38,9 +38,17 @@ interface Props {
   backHref: string;
   /** This page without query parameters. */
   baseHref: string;
+  /** Share pages show task names without links to internal pages. */
+  linkTasks?: boolean;
 }
 
-export function QaIssuesPage({ report, view, backHref, baseHref }: Props) {
+export function QaIssuesPage({
+  report,
+  view,
+  backHref,
+  baseHref,
+  linkTasks = true,
+}: Props) {
   return (
     <div className="space-y-4 py-3">
       <Link
@@ -50,7 +58,12 @@ export function QaIssuesPage({ report, view, backHref, baseHref }: Props) {
         ← Back
       </Link>
       <Suspense fallback={<QaIssuesSkeleton />}>
-        <QaIssuesBody report={report} view={view} baseHref={baseHref} />
+        <QaIssuesBody
+          report={report}
+          view={view}
+          baseHref={baseHref}
+          linkTasks={linkTasks}
+        />
       </Suspense>
     </div>
   );
@@ -70,6 +83,7 @@ async function QaIssuesBody({
   report,
   view,
   baseHref,
+  linkTasks,
 }: Omit<Props, "backHref">) {
   const result = await report;
   if (!result.ok) {
@@ -116,7 +130,14 @@ async function QaIssuesBody({
               open={open}
               href={href({ category: open ? undefined : category.slug })}
             >
-              {open && <CategoryDetail data={data} view={view} href={href} />}
+              {open && (
+                <CategoryDetail
+                  data={data}
+                  view={view}
+                  href={href}
+                  linkTasks={linkTasks}
+                />
+              )}
             </CategoryRow>
           );
         })}
@@ -264,10 +285,12 @@ function CategoryDetail({
   data,
   view,
   href,
+  linkTasks,
 }: {
   data: QaIssueReport;
   view: QaIssuesView;
   href: (next: Partial<QaIssuesView>) => string;
+  linkTasks?: boolean;
 }) {
   const pages = Math.max(1, Math.ceil(data.task_total / PAGE_SIZE));
   // Not clamped: data.tasks is the window for the URL page, so a page past
@@ -321,7 +344,7 @@ function CategoryDetail({
       )}
       <ul className="space-y-2">
         {shown.map((task) => (
-          <TaskRow key={task.task_id} task={task} />
+          <TaskRow key={task.task_id} task={task} linkTasks={linkTasks} />
         ))}
       </ul>
       {(pages > 1 || page > 1) && (
@@ -392,15 +415,25 @@ function PageLink({
   );
 }
 
-function TaskRow({ task }: { task: QaIssueTask }) {
+function TaskRow({
+  task,
+  linkTasks,
+}: {
+  task: QaIssueTask;
+  linkTasks?: boolean;
+}) {
   const status = qaStatusLabel(task.qa_status as DeliveryQAStatus["status"]);
   const taskHref = `/tasks/${encodeURIComponent(task.task_id)}`;
   return (
     <li className="bg-card rounded-lg border p-3">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm">
-        <Link href={taskHref} className="font-medium hover:underline">
-          {task.task_name}
-        </Link>
+        {linkTasks ? (
+          <Link href={taskHref} className="font-medium hover:underline">
+            {task.task_name}
+          </Link>
+        ) : (
+          <span className="font-medium">{task.task_name}</span>
+        )}
         <span className={`${PILL} bg-muted text-muted-foreground`}>
           {status}
         </span>
@@ -433,7 +466,11 @@ function TaskRow({ task }: { task: QaIssueTask }) {
       </div>
       <ul className="mt-1 divide-y">
         {task.issues.map((issue, index) => (
-          <IssueRow key={index} issue={issue} taskHref={taskHref} />
+          <IssueRow
+            key={index}
+            issue={issue}
+            taskHref={linkTasks ? taskHref : undefined}
+          />
         ))}
       </ul>
     </li>

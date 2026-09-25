@@ -200,6 +200,7 @@ async def qa_issue_report_core(
     q: str = "",
     page: int = 1,
     page_size: int = 25,
+    public: bool = False,
 ) -> QAIssueReportResponse:
     """Build the report live. Task rows are sent only for one ``category``.
 
@@ -208,6 +209,8 @@ async def qa_issue_report_core(
     ``blocking``, ``q`` (task, author, PR number, or issue text), and
     ``page`` narrow that category's task rows on the server, so a response
     carries at most ``page_size`` tasks however large the scope is.
+    ``public`` drops authors, PR links, and QA trial ids, like other share
+    views, so a public search cannot match them either.
     Experiment reports count only trials in the experiment; findings and
     verdicts describe the task version, so they are not limited.
     """
@@ -241,7 +244,9 @@ async def qa_issue_report_core(
         issues = findings + trial_issues.get(task.id, [])
         if status == "needs_fixes" and not findings:
             issues.insert(0, _verdict_issue(task, trial_issues.get(task.id, [])))
-        meta = _parse_github_meta(task.tags) or {}
+        if public:
+            issues = [{**i, "trial_id": None} for i in issues]
+        meta = {} if public else _parse_github_meta(task.tags) or {}
         rows.append(
             {
                 "task_id": task.id,
@@ -249,7 +254,11 @@ async def qa_issue_report_core(
                 "version_id": task.current_version_id,
                 "qa_status": status,
                 "finished_qa": status in FINISHED_QA,
-                "author": (task.tags or {}).get("github_username") or task.user,
+                "author": (
+                    None
+                    if public
+                    else (task.tags or {}).get("github_username") or task.user
+                ),
                 "pr_url": meta.get("pr_url"),
                 "pr_number": meta.get("pr_number"),
                 "blocking_issues": sum(1 for i in issues if i["blocking"]),

@@ -162,6 +162,7 @@ async def test_experiment_report_counts_only_its_own_trials(session):
 async def report_api(monkeypatch):
     import oddish.db.connection as connection
     import oddish.server as server
+    import oddish.core.sharing.public as public
     import oddish.server.qa_issue_reports as routes
 
     async with connection.engine.connect() as conn:
@@ -177,6 +178,7 @@ async def report_api(monkeypatch):
                 yield session
 
         monkeypatch.setattr(routes, "get_read_session", get_session)
+        monkeypatch.setattr(public, "get_read_session", get_session)
         async with get_session() as session:
             experiment = ExperimentModel(name=f"local-{generate_id()}", org_id=None)
             session.add(experiment)
@@ -201,3 +203,38 @@ async def test_standalone_route(report_api):
     assert response.json()["summary"]["tasks"] == 0
     assert (await client.get(url, params={"category": "nope"})).status_code == 404
     assert (await client.get("/deliveries/missing/qa-issues")).status_code == 404
+    assert (await client.get("/public/experiments/nope/qa-issues")).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_public_report_needs_show_qa_and_hides_people(session):
+    delivery, task, _, experiment, qa, sources = await _reviewed_delivery(session)
+    await session.execute(
+        task_experiments.insert().values(task_id=task.id, experiment_id=experiment.id)
+    )
+    sources[0].analysis = _labels("hardcoding", "BAD_SUCCESS")
+    task.tags = {"github_username": "secret-author"}
+    task.verdict = {"verdict": "reject", "is_good": False, "_graded_by": qa.id}
+    await session.flush()
+    public = await qa_issue_report_core(
+        session,
+        scope_kind="experiment",
+        scope_id=experiment.id,
+        org_id=ORG,
+        category="agent-can-hard-code-answers",
+        public=True,
+    )
+    [row] = public.tasks
+    assert [i["kind"] for i in row["issues"]] == ["verdict", "trial"]
+    assert (row["author"], row["pr_url"]) == (None, None)
+    assert [i["trial_id"] for i in row["issues"]] == [None, None]
+    hidden = await qa_issue_report_core(
+        session,
+        scope_kind="experiment",
+        scope_id=experiment.id,
+        org_id=ORG,
+        category="agent-can-hard-code-answers",
+        q="secret-author",
+        public=True,
+    )
+    assert hidden.tasks == []
