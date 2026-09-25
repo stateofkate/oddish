@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -25,7 +26,7 @@ class ArchilBackend:
         )
 
     def harbor_env_kwargs(self, base_kwargs: dict[str, Any]) -> dict[str, Any]:
-        return {"pause_http_proxy": True, **base_kwargs}
+        return {"drain_on_pause": True, **base_kwargs}
 
     async def teardown(self, external_id: str) -> bool:
         if not external_id:
@@ -33,7 +34,7 @@ class ArchilBackend:
         try:
             from archil import Archil
 
-            client = Archil(timeout=120)
+            client = Archil(base_url=os.environ.get("ARCHIL_BASE_URL"), timeout=120)
             try:
                 sandbox = await client.sandboxes.get.aio(external_id)
                 if sandbox.status not in {"stopped", "exited", "failed"}:

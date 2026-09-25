@@ -361,3 +361,16 @@ for each database sharing an S3 bucket. Modal deployments set it automatically
 to the secret environment plus app name. Existing stored artifact pointers
 remain readable; changing this value during an unfinished import is unsupported.
 The default empty value preserves the self-hosted storage layout.
+
+### Archil test fleet
+
+Set `ARCHIL_API_KEY`, `ARCHIL_REGION=aws-us-east-1`, and
+`ARCHIL_BASE_URL=https://control.blue.us-east-1.aws.test.archil.com` on both the
+worker and the API/cleanup process when testing blue. The same endpoint must
+be used for submitted Archil trials: recovery cleanup uses these process
+settings, while normal Harbor teardown uses its per-trial client.
+
+Archil request draining is enabled by default. Set `drain_on_pause=false` to
+disable it. `drain_on_pause_hosts` adds hostname globs for custom model gateways;
+known model base URLs are discovered automatically. The Archil runtime handles
+HTTP/HTTPS on ports 80/443 and matches the whole hostname, not URL paths.

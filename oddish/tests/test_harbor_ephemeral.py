@@ -1880,11 +1880,11 @@ def test_payload_hdo_key_wins_over_worker_and_user_keys(
         assert "api.anthropic.com" in child_agent.extra_allowed_hosts
 
 
-def test_payload_declares_gateway_hosts_to_the_pause_proxy(monkeypatch):
+def test_payload_declares_gateway_hosts_for_pause_draining(monkeypatch):
     for key in (*KNOWN_TRANSPORT_BASE_URL_KEYS, *TBH_BASE_URL_KEYS):
         monkeypatch.delenv(key, raising=False)
     resolved = EnvironmentConfig(
-        type=EnvironmentType.ARCHIL, kwargs={"pause_http_proxy": True}
+        type=EnvironmentType.ARCHIL, kwargs={"drain_on_pause": True}
     )
     payload = _build_payload(
         task_path=Path("/tmp/task"),
@@ -1897,20 +1897,20 @@ def test_payload_declares_gateway_hosts_to_the_pause_proxy(monkeypatch):
         extra_agent_env={"ANTHROPIC_BASE_URL": "https://gateway.test/anthropic"},
     )
 
-    assert payload["environment_config"]["kwargs"]["pause_http_proxy_hosts"] == [
+    assert payload["environment_config"]["kwargs"]["drain_on_pause_hosts"] == [
         "gateway.test"
     ]
-    assert "pause_http_proxy_hosts" not in resolved.kwargs
+    assert "drain_on_pause_hosts" not in resolved.kwargs
 
 
 @pytest.mark.parametrize("agent", ["muse-code", "tbh"])
 @pytest.mark.parametrize("enabled", [True, False])
-def test_payload_declares_pause_proxy_kwargs_base_url(monkeypatch, agent, enabled):
+def test_payload_declares_pause_drain_kwargs_base_url(monkeypatch, agent, enabled):
     for key in (*KNOWN_TRANSPORT_BASE_URL_KEYS, *TBH_BASE_URL_KEYS):
         monkeypatch.delenv(key, raising=False)
     resolved = EnvironmentConfig(
         type=EnvironmentType.ARCHIL,
-        kwargs={"pause_http_proxy": enabled, "pause_http_proxy_hosts": ["manual.test"]},
+        kwargs={"drain_on_pause": enabled, "drain_on_pause_hosts": ["manual.test"]},
     )
     payload = _build_payload(
         task_path=Path("/tmp/task"),
@@ -1924,7 +1924,7 @@ def test_payload_declares_pause_proxy_kwargs_base_url(monkeypatch, agent, enable
         },
     )
 
-    hosts = payload["environment_config"]["kwargs"]["pause_http_proxy_hosts"]
+    hosts = payload["environment_config"]["kwargs"]["drain_on_pause_hosts"]
     assert "manual.test" in hosts
     assert ("kwargs-gateway.test" in hosts) is enabled
-    assert resolved.kwargs["pause_http_proxy_hosts"] == ["manual.test"]
+    assert resolved.kwargs["drain_on_pause_hosts"] == ["manual.test"]

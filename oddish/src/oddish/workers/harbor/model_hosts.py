@@ -15,6 +15,8 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
+from harbor.utils.env import resolve_env_vars
+
 from oddish.config import (
     DEEPSEEK_DEFAULT_BASE_URL,
     FIREWORKS_DEFAULT_BASE_URL,
@@ -352,15 +354,20 @@ def _hosts_from_env(
 
 def gateway_hosts_from_env(env: Mapping[str, str] | None) -> list[str]:
     """Hosts of every model base URL the agent was handed, public or private."""
-    return _hosts_from_env(
-        env,
-        keys=(
-            *_BASE_URL_ENV_KEYS,
-            *AZURE_BASE_URL_KEYS,
-            *MUSE_CODE_BASE_URL_KEYS,
-            *TBH_BASE_URL_KEYS,
-        ),
+    keys = (
+        *_BASE_URL_ENV_KEYS,
+        *AZURE_BASE_URL_KEYS,
+        *MUSE_CODE_BASE_URL_KEYS,
+        *TBH_BASE_URL_KEYS,
     )
+    resolved: dict[str, str] = {}
+    for key in keys:
+        if value := (env or {}).get(key):
+            try:
+                resolved.update(resolve_env_vars({key: value}))
+            except ValueError:  # an unset ${VAR} names no host
+                pass
+    return _hosts_from_env(resolved, keys=keys)
 
 
 def gemini_cli_transport_hosts(

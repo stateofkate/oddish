@@ -67,6 +67,7 @@ jobs:
         id: prepare
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          ARCHIL_PREVIEW_CONFIG: ${{ secrets[format('ARCHIL_PREVIEW_{0}', github.event.pull_request.number)] }}
         run: "$GITHUB_WORKSPACE/.github/scripts/preview/prepare_preview_database.sh"
 
   deploy-preview-backend:

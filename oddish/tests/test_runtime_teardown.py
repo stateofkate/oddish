@@ -21,6 +21,9 @@ from oddish.runtime.backends.modal import ModalBackend
 
 def test_archil_teardown_stops_deletes_and_closes(monkeypatch) -> None:
     calls: dict[str, object] = {}
+    monkeypatch.setenv(
+        "ARCHIL_BASE_URL", "https://control.blue.us-east-1.aws.test.archil.com"
+    )
 
     async def _stop_aio():
         calls["stopped"] = True
@@ -37,8 +40,9 @@ def test_archil_teardown_stops_deletes_and_closes(monkeypatch) -> None:
     )
 
     class _FakeClient:
-        def __init__(self, *, timeout: int):
+        def __init__(self, *, base_url: str | None, timeout: int):
             calls["timeout"] = timeout
+            calls["base_url"] = base_url
 
             async def _get_aio(external_id: str):
                 calls["get"] = external_id
@@ -60,6 +64,7 @@ def test_archil_teardown_stops_deletes_and_closes(monkeypatch) -> None:
     assert asyncio.run(ArchilBackend().teardown("sb-archil")) is True
     assert calls == {
         "timeout": 120,
+        "base_url": "https://control.blue.us-east-1.aws.test.archil.com",
         "get": "sb-archil",
         "stopped": True,
         "deleted": True,
@@ -74,7 +79,7 @@ def test_archil_teardown_treats_missing_sandbox_as_done(monkeypatch) -> None:
         status = 404
 
     class _FakeClient:
-        def __init__(self, *, timeout: int):
+        def __init__(self, *, base_url: str | None, timeout: int):
             async def _get_aio(external_id: str):
                 raise _NotFoundError
 

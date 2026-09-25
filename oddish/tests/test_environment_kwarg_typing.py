@@ -30,14 +30,12 @@ def test_plain_strings_pass_through():
     coerced = _coerce_kwarg_values(
         {
             "cluster_name": "oddish-tpu-usw4",
-            "region": "us-west4",
             "topology": "2x2",
             "region": "us-east",
         }
     )
     assert coerced == {
         "cluster_name": "oddish-tpu-usw4",
-        "region": "us-west4",
         "topology": "2x2",
         "region": "us-east",
     }
@@ -62,3 +60,19 @@ def test_nonstandard_json_constants_stay_strings():
         {"tag": "NaN", "x": "Infinity", "y": "-Infinity"}
     )
     assert coerced == {"tag": "NaN", "x": "Infinity", "y": "-Infinity"}
+
+
+def test_archil_test_region_and_drain_hosts_keep_their_types():
+    assert _coerce_kwarg_values(
+        {
+            "region": "aws-us-east-1",
+            "base_url": "https://control.blue.us-east-1.aws.test.archil.com",
+            "drain_on_pause": "true",
+            "drain_on_pause_hosts": '["*.gateway.test"]',
+        }
+    ) == {
+        "region": "aws-us-east-1",
+        "base_url": "https://control.blue.us-east-1.aws.test.archil.com",
+        "drain_on_pause": True,
+        "drain_on_pause_hosts": ["*.gateway.test"],
+    }

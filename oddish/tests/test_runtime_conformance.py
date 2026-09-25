@@ -75,13 +75,11 @@ def test_archil_capabilities_match_current_harbor_support() -> None:
 
 
 def test_archil_env_kwargs_enable_safe_pause_by_default() -> None:
-    assert ArchilBackend().harbor_env_kwargs({})["pause_http_proxy"] is True
+    assert ArchilBackend().harbor_env_kwargs({})["drain_on_pause"] is True
 
 
-def test_archil_env_kwargs_allow_explicit_proxy_override() -> None:
+def test_archil_env_kwargs_allow_explicit_drain_override() -> None:
     assert (
-        ArchilBackend().harbor_env_kwargs({"pause_http_proxy": False})[
-            "pause_http_proxy"
-        ]
+        ArchilBackend().harbor_env_kwargs({"drain_on_pause": False})["drain_on_pause"]
         is False
     )

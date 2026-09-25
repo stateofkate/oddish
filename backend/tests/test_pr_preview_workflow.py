@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import subprocess
@@ -29,6 +30,87 @@ def _wf():
 def _needs(job):
     n = job.get("needs", [])
     return [n] if isinstance(n, str) else list(n)
+
+
+@pytest.mark.parametrize(
+    ("workflow", "job", "step", "pr_number"),
+    [
+        (
+            WORKFLOW,
+            "prepare-preview-database",
+            "Prepare preview database",
+            "github.event.pull_request.number",
+        ),
+        (RESET_WORKFLOW, "reset", "Rebuild preview database", "inputs.pr_number"),
+    ],
+)
+def test_archil_override_is_selected_for_this_preview(workflow, job, step, pr_number):
+    steps = yaml.safe_load(workflow.read_text())["jobs"][job]["steps"]
+    env = next(item["env"] for item in steps if item["name"] == step)
+    assert env["ARCHIL_PREVIEW_CONFIG"] == (
+        "${{ secrets[format('ARCHIL_PREVIEW_{0}', " + pr_number + ")] }}"
+    )
+
+
+@needs_bash
+@pytest.mark.parametrize("override", [False, True])
+def test_publish_preview_archil_credentials(tmp_path, override):
+    config = (
+        {
+            "ARCHIL_API_KEY": "test-blue-key",
+            "ARCHIL_BASE_URL": "https://blue.example.com",
+            "ARCHIL_REGION": "aws-us-east-1",
+        }
+        if override
+        else {}
+    )
+    bins = tmp_path / "bin"
+    bins.mkdir()
+    (bins / "python").symlink_to(sys.executable)
+    capture = tmp_path / "capture.json"
+    uv = bins / "uv"
+    uv.write_text(
+        f"#!{sys.executable}\n"
+        "import json, pathlib, sys\n"
+        "p = pathlib.Path(sys.argv[sys.argv.index('--from-json') + 1])\n"
+        f"pathlib.Path({str(capture)!r}).write_text(json.dumps({{"
+        "'args': sys.argv[1:], 'values': json.loads(p.read_text()), "
+        "'mode': p.stat().st_mode & 0o777, 'file': str(p)}))\n"
+    )
+    uv.chmod(0o755)
+    proc = subprocess.run(
+        ["bash", str(PREVIEW / "publish_modal_db_secret.sh")],
+        env={
+            **os.environ,
+            "PATH": f"{bins}:{os.environ['PATH']}",
+            "MODAL_ENVIRONMENT": "preview",
+            "MODAL_APP_NAME": "oddish-pr-123",
+            "ODDISH_RUNTIME_DATABASE_URL": "postgresql://preview-only",
+            "ARCHIL_PREVIEW_CONFIG": json.dumps(config) if override else "",
+        },
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    published = json.loads(capture.read_text())
+    assert published["values"] == {
+        "ODDISH_DATABASE_URL": "postgresql://preview-only",
+        **config,
+    }
+    assert published["args"][:7] == [
+        "run",
+        "modal",
+        "secret",
+        "create",
+        "--env",
+        "preview",
+        "--force",
+    ]
+    assert published["args"][7] == "oddish-pr-123-db"
+    assert published["mode"] == 0o600
+    assert not Path(published["file"]).exists()
+    for value in published["values"].values():
+        assert value not in proc.stdout + proc.stderr + " ".join(published["args"])
 
 
 def test_every_same_repo_pr_prepares_a_database_without_change_detection():

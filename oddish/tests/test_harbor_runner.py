@@ -2638,7 +2638,7 @@ def test_run_harbor_trial_async_skips_temp_root_preflight_without_task_patch(
     monkeypatch.setattr(
         harbor_runner,
         "_build_agent_config",
-        lambda **kwargs: SimpleNamespace(kwargs={}),
+        lambda **kwargs: SimpleNamespace(kwargs={}, env={}),
     )
     monkeypatch.setattr(harbor_runner, "TaskConfig", lambda path: path)
     monkeypatch.setattr(harbor_runner, "JobConfig", lambda **kwargs: kwargs)
@@ -6183,13 +6183,13 @@ def no_ambient_gateways(monkeypatch):
         monkeypatch.delenv(key, raising=False)
 
 
-def test_pause_proxy_gateway_hosts_follow_the_agent_base_urls(no_ambient_gateways):
+def test_pause_drain_hosts_follow_the_agent_base_urls(no_ambient_gateways):
     environment_config = HarborEnvironmentConfig(
         type=EnvironmentType.ARCHIL,
-        kwargs={"pause_http_proxy": True, "pause_http_proxy_hosts": "llm-gw.internal"},
+        kwargs={"drain_on_pause": True, "drain_on_pause_hosts": "llm-gw.internal"},
     )
 
-    harbor_runner.declare_pause_proxy_gateway_hosts(
+    harbor_runner.declare_pause_drain_hosts(
         environment_config,
         HarborAgentConfig(name="claude-code"),
         {
@@ -6207,7 +6207,7 @@ def test_pause_proxy_gateway_hosts_follow_the_agent_base_urls(no_ambient_gateway
         {"MUSE_CODE_BASE_URL": "https://muse-gateway.test/v1"},
     )
 
-    assert environment_config.kwargs["pause_http_proxy_hosts"] == [
+    assert environment_config.kwargs["drain_on_pause_hosts"] == [
         "llm-gw.internal",
         "review-example.openai.azure.com",
         "gateway.test",
@@ -6218,16 +6218,14 @@ def test_pause_proxy_gateway_hosts_follow_the_agent_base_urls(no_ambient_gateway
 
 
 @pytest.mark.parametrize(
-    "kwargs", [{}, {"pause_http_proxy": False}, {"pause_http_proxy": True}]
+    "kwargs", [{}, {"drain_on_pause": False}, {"drain_on_pause": True}]
 )
-def test_pause_proxy_gateway_hosts_leave_untouched_kwargs_alone(
-    kwargs, no_ambient_gateways
-):
+def test_pause_drain_hosts_leave_untouched_kwargs_alone(kwargs, no_ambient_gateways):
     environment_config = HarborEnvironmentConfig(
         type=EnvironmentType.ARCHIL, kwargs=dict(kwargs)
     )
 
-    harbor_runner.declare_pause_proxy_gateway_hosts(
+    harbor_runner.declare_pause_drain_hosts(
         environment_config,
         HarborAgentConfig(name="claude-code"),
         {"OPENAI_API_KEY": "sk", "UNRELATED_URL": "https://x.test"},
@@ -6236,22 +6234,22 @@ def test_pause_proxy_gateway_hosts_leave_untouched_kwargs_alone(
     assert environment_config.kwargs == kwargs
 
 
-def test_pause_proxy_gateway_hosts_include_the_worker_environment(
+def test_pause_drain_hosts_include_the_worker_environment(
     monkeypatch, no_ambient_gateways
 ):
     monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://ambient-gw.internal/v1")
     environment_config = HarborEnvironmentConfig(
-        type=EnvironmentType.ARCHIL, kwargs={"pause_http_proxy": True}
+        type=EnvironmentType.ARCHIL, kwargs={"drain_on_pause": True}
     )
 
-    harbor_runner.declare_pause_proxy_gateway_hosts(
+    harbor_runner.declare_pause_drain_hosts(
         environment_config,
         HarborAgentConfig(name="claude-code"),
         {"OPENAI_BASE_URL": "https://azure.test/openai/v1"},
         os.environ,
     )
 
-    assert environment_config.kwargs["pause_http_proxy_hosts"] == [
+    assert environment_config.kwargs["drain_on_pause_hosts"] == [
         "azure.test",
         "ambient-gw.internal",
     ]
@@ -6259,7 +6257,7 @@ def test_pause_proxy_gateway_hosts_include_the_worker_environment(
 
 @pytest.mark.parametrize("agent", ["muse-code", "tbh"])
 @pytest.mark.parametrize("enabled", [True, False])
-def test_runner_declares_pause_proxy_kwargs_base_url(
+def test_runner_declares_pause_drain_kwargs_base_url(
     monkeypatch, tmp_path, no_ambient_gateways, agent, enabled
 ):
     task_path = tmp_path / "task"
@@ -6280,12 +6278,13 @@ def test_runner_declares_pause_proxy_kwargs_base_url(
             jobs_dir=tmp_path / "jobs",
             agent=agent,
             model="meta/muse-spark-1.2",
+            environment=EnvironmentType.ARCHIL,
             harbor_config={
                 "environment": {
                     "type": "archil",
                     "kwargs": {
-                        "pause_http_proxy": enabled,
-                        "pause_http_proxy_hosts": ["manual.test"],
+                        "drain_on_pause": enabled,
+                        "drain_on_pause_hosts": ["manual.test"],
                     },
                 },
                 "agent_config": {
@@ -6296,7 +6295,7 @@ def test_runner_declares_pause_proxy_kwargs_base_url(
     )
 
     assert outcome.error is None
-    hosts = seen["environment_kwargs"]["pause_http_proxy_hosts"]
+    hosts = seen["environment_kwargs"]["drain_on_pause_hosts"]
     assert "manual.test" in hosts
     assert ("kwargs-gateway.test" in hosts) is enabled
 
@@ -6332,3 +6331,44 @@ def test_muse_code_arm_matches_import_path_configs():
     )
     assert harbor_runner._is_muse_code_agent(agent=None, agent_config=config)
     assert not harbor_runner._is_muse_code_agent(agent="tbh", agent_config=None)
+
+
+@pytest.mark.parametrize("enabled", [False, "false", "no", True, "true", "yes"])
+def test_native_drain_respects_opt_out_and_resolves_url_hosts(monkeypatch, enabled):
+    monkeypatch.setenv(
+        "TEST_MODEL_URL", "https://User:Password@Gateway.Test.:443/anthropic?x=1"
+    )
+    monkeypatch.delenv("UNSET_MODEL_URL", raising=False)
+    config = HarborEnvironmentConfig(
+        type=EnvironmentType.ARCHIL,
+        kwargs={
+            "drain_on_pause": enabled,
+            "drain_on_pause_hosts": ["*.custom.test"],
+        },
+    )
+    harbor_runner.declare_pause_drain_hosts(
+        config,
+        HarborAgentConfig(name="claude-code"),
+        {
+            "ANTHROPIC_BASE_URL": "${TEST_MODEL_URL}",
+            "OPENAI_BASE_URL": "${UNSET_MODEL_URL}",
+            "MUSE_CODE_BASE_URL": "http://10.0.0.8/v1",
+        },
+    )
+    assert config.kwargs["drain_on_pause_hosts"] == (
+        ["*.custom.test", "gateway.test", "10.0.0.8"]
+        if enabled in (True, "true", "yes")
+        else ["*.custom.test"]
+    )
+
+
+def test_native_drain_does_not_change_other_providers():
+    config = HarborEnvironmentConfig(
+        type=EnvironmentType.DAYTONA, kwargs={"drain_on_pause": True}
+    )
+    harbor_runner.declare_pause_drain_hosts(
+        config,
+        HarborAgentConfig(name="codex"),
+        {"OPENAI_BASE_URL": "https://gateway.test/v1"},
+    )
+    assert config.kwargs == {"drain_on_pause": True}

@@ -1717,8 +1717,9 @@ Keep these routing rules in sync with `oddish/src/oddish/config.py` and
   agent runtime hosts to the agent-phase allowlist and disables supported
   server-side web tools. This does not widen a restricted environment baseline:
   legacy `allow_internet=false` still blocks agent installation unless its
-  dependencies are already available or explicitly allowed. Custom Compose
-  tasks use the separate Daytona-only restricted-network profile.
+  dependencies are already available or explicitly allowed. Archil applies the same host injection to Compose tasks because its VM
+  enforces egress. Other custom Compose tasks use the separate Daytona-only
+  restricted-network profile.
 - Kubernetes task charts that enforce their own runtime egress boundary can opt
   into Oddish's model-route bridge with a chart-root
   `.oddish-agent-egress-hosts` marker containing exactly
@@ -2255,6 +2256,29 @@ Harbor's artifact scrubber excludes the `*_FORCE_OAUTH` mode flags
 valid JSON by parsing it first. This keeps JSON
 numbers and booleans typed while removing credentials from strings. Treating
 a flag's `0` or `false` value as a secret corrupts trajectories and analysis results.
+
+Archil's `drain_on_pause` option configures `network.egress.drain_on_pause`
+in Harbor and is enabled by default in Oddish. Model hosts and worker/agent gateway
+hostnames are selected before sandbox creation and kept across phase changes.
+The runtime gates new selected requests, drains admitted responses for up to
+ten minutes after pause is requested, then snapshots. This is not a request
+lifetime limit; stop does not drain. Matching is by hostname on HTTP/HTTPS
+ports 80/443, with no URL path filtering. The SDK and Harbor revisions are
+pinned for preview testing; use their merged/published versions before landing.
+
+For an Archil test fleet, the worker and recovery-cleanup process must share
+`ARCHIL_REGION` and `ARCHIL_BASE_URL` with the trial's `region` and `base_url`
+kwargs, plus a valid `ARCHIL_API_KEY`. Normal Harbor teardown uses the trial's
+client, while out-of-band cleanup reconstructs its client from process settings.
+Do not mix endpoint overrides in one preview's Archil jobs.
+
+PR previews can override these three process settings using the repository
+Actions secret `ARCHIL_PREVIEW_<PR number>`, a JSON object containing exactly
+`ARCHIL_API_KEY`, `ARCHIL_BASE_URL`, and `ARCHIL_REGION`. Preview preparation
+and reset publish it alongside the preview database URL in the existing
+`oddish-pr-<number>-db` Modal secret. Workers and recovery cleanup receive the
+same override; shared `oddish-prod` remains unchanged. Removing the Actions
+secret and redeploying restores the shared Archil settings.
 
 ### Worker resource comparison
 

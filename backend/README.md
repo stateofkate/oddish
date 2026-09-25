@@ -368,6 +368,18 @@ The authoritative list of mounted secrets is every `Secret.from_name(...)` in
 is `oddish-prod`, `oddish-logfire`, `<app>-db`, and the purpose-specific
 Sauron/GKE/Numinous/EC2/Slack secrets. Nothing else reaches a container.
 
+For a temporary Archil test fleet on one PR preview, create a repository Actions
+secret named `ARCHIL_PREVIEW_<PR number>` containing a JSON object with
+`ARCHIL_API_KEY`, `ARCHIL_BASE_URL`, and `ARCHIL_REGION` (all required). For example,
+`gh secret set ARCHIL_PREVIEW_123 --repo abundant-ai/oddish < archil-preview.json`.
+Keep that file private and untracked. Push the PR after setting the secret to
+redeploy; preview preparation copies the values into its existing
+`oddish-pr-<number>-db` Modal secret, after the shared runtime credentials.
+Workers and recovery cleanup then use the same Archil fleet without changing
+`oddish-prod` or storing the key in trial configs. Delete the Actions secret and
+redeploy to restore the shared defaults; manual preview resets also retain the
+override while the Actions secret exists.
+
 **`XAI_API_KEYS` overrides `XAI_API_KEY`.** `_pick_api_key()` in
 `oddish/workers/agents/grok_build.py` reads `XAI_API_KEYS` first as a
 comma-separated pool and picks one at random, falling back to `XAI_API_KEY`

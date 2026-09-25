@@ -34,7 +34,7 @@ from harbor.models.trial.config import EnvironmentConfig as HarborEnvironmentCon
 from harbor.models.trial.config import ResourceMode
 from harbor.models.trial.config import TaskConfig
 from harbor.trial.hooks import TrialHookEvent
-from harbor.utils.env import resolve_env_vars
+from harbor.utils.env import parse_bool_env_value, resolve_env_vars
 
 from oddish.workers.harbor.vertex_ai import plan_for_model as _vertex_ai_plan
 from oddish.config import (
@@ -1059,9 +1059,7 @@ def _supports_auto_restricted_agent_network(
     ):
         return False
 
-    # Thunder and Archil enforce phase policies on the VM rather than inside
-    # the task container, so the container topology is immaterial to host
-    # injection and Dockerfile and Compose tasks are treated alike.
+    # These providers enforce egress on the VM, including Compose sidecars.
     if environment_config.type in (EnvironmentType.THUNDER, EnvironmentType.ARCHIL):
         return _task_has_dynamic_restricted_agent_phase(task_path)
 
@@ -1108,20 +1106,23 @@ def _apply_restricted_agent_web_tool_defaults(
     agent_config.kwargs = kwargs
 
 
-def declare_pause_proxy_gateway_hosts(
+def declare_pause_drain_hosts(
     environment_config: HarborEnvironmentConfig,
     agent_config: HarborAgentConfig,
     *agent_envs: Mapping[str, str] | None,
 ) -> None:
-    """Widen the pause proxy to every base URL the agent was handed.
+    """Add every model base URL the agent was handed to the pause drain hosts.
 
-    Harbor drains only the hosts its proxy intercepts: a built-in provider list
-    plus ``pause_http_proxy_hosts``. A gateway the worker routes the agent to
-    is outside that list, so its responses would not be waited for at pause.
     The env sources are not merged: when two of them name different hosts
     under one key, both hosts are declared.
     """
-    if not environment_config.kwargs.get("pause_http_proxy"):
+    if environment_config.type != EnvironmentType.ARCHIL:
+        return
+    if not parse_bool_env_value(
+        environment_config.kwargs.get("drain_on_pause"),
+        name="drain_on_pause",
+        default=False,
+    ):
         return
     hosts = [
         host
@@ -1134,10 +1135,10 @@ def declare_pause_proxy_gateway_hosts(
         hosts.append(host)
     if not hosts:
         return
-    declared = environment_config.kwargs.get("pause_http_proxy_hosts") or []
+    declared = environment_config.kwargs.get("drain_on_pause_hosts") or []
     if isinstance(declared, str):
         declared = declared.replace(",", " ").split()
-    environment_config.kwargs["pause_http_proxy_hosts"] = list(
+    environment_config.kwargs["drain_on_pause_hosts"] = list(
         dict.fromkeys([*declared, *hosts])
     )
 
@@ -1162,6 +1163,7 @@ def _inject_restricted_agent_model_hosts(
         agent_kwargs["extra_env"] = resolved_env
     inferred_hosts = normalize_allowed_hosts(
         [
+            *gateway_hosts_from_env(runtime_transport_env),
             *outbound_hosts_for_model(
                 agent_config.model_name,
                 agent_env=resolved_env,
@@ -2338,10 +2340,10 @@ async def _run_harbor_trial_async_impl(
             # worker minted, the agent's own env and kwargs extra_env
             # (submitted, probe, gateway), and the worker process environment
             # Harbor agents fall back to.
-            declare_pause_proxy_gateway_hosts(
+            declare_pause_drain_hosts(
                 env_config,
                 agent_config,
-                openai_env,
+                runtime_transport_env,
                 byok_anthropic_env,
                 getattr(agent_config, "env", None),
                 (getattr(agent_config, "kwargs", None) or {}).get("extra_env"),

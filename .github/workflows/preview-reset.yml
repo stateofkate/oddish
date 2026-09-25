@@ -160,6 +160,8 @@ jobs:
 
       - name: Rebuild preview database
         id: database
+        env:
+          ARCHIL_PREVIEW_CONFIG: ${{ secrets[format('ARCHIL_PREVIEW_{0}', inputs.pr_number)] }}
         run: "$GITHUB_WORKSPACE/.github/scripts/preview/prepare_preview_database.sh"
 
       - name: Deploy preview backend
