@@ -9,6 +9,8 @@ The instruction is now uploaded as a file and read back via ``"$(cat ...)"``.
 
 from __future__ import annotations
 
+import os
+import select
 import subprocess
 import tomllib
 from pathlib import Path
@@ -256,7 +258,7 @@ async def test_run_uploads_prompt_and_keeps_exec_command_small(tmp_path, monkeyp
     assert f"resumes -lt {grok_build_module._MAX_RESUMES}" in command
     # The resume appends to the streamed event log and re-sends a short inline
     # continuation, never the staged instruction.
-    assert command.count(">>/logs/agent/grok-build.json") == 6
+    assert command.count("oddish_grok_run append grok -c -p") == 6
     assert "Continue the original task" in command
     # The last failed arm's stderr remains an artifact and is also surfaced to
     # Harbor after the fallback/resume logic so provider errors are typed.
@@ -313,8 +315,8 @@ async def _generated_command(tmp_path, monkeypatch) -> str:
     return next(c for c in agent_commands if "grok -p" in c)
 
 
-def _run_in_shell(command: str, tmp_path, stub_body: str, *, with_stderr=False):
-    """Execute the generated command under bash against a stubbed ``grok``.
+def _prepare_shell(command: str, tmp_path, stub_body: str):
+    """Prepare the generated command for bash with a stubbed ``grok``.
 
     The stub lands in ``$HOME/.local/bin`` of a throwaway HOME, which the
     command's own ``export PATH`` puts first; ``/logs/agent`` is rewritten to a
@@ -333,9 +335,15 @@ def _run_in_shell(command: str, tmp_path, stub_body: str, *, with_stderr=False):
     rewritten = command.replace("/logs/agent", str(logdir)).replace(
         _PROMPT_PATH, str(tmp_path / "prompt.txt")
     )
+    env = {"HOME": str(home), "LOGDIR": str(logdir), "PATH": "/usr/bin:/bin"}
+    return rewritten, env, logdir
+
+
+def _run_in_shell(command: str, tmp_path, stub_body: str, *, with_stderr=False):
+    rewritten, env, logdir = _prepare_shell(command, tmp_path, stub_body)
     proc = subprocess.run(
         ["bash", "-c", rewritten],
-        env={"HOME": str(home), "LOGDIR": str(logdir), "PATH": "/usr/bin:/bin"},
+        env=env,
         capture_output=True,
         text=True,
         timeout=30,
@@ -345,6 +353,66 @@ def _run_in_shell(command: str, tmp_path, stub_body: str, *, with_stderr=False):
     if with_stderr:
         return proc.returncode, calls, stdout, proc.stderr
     return proc.returncode, calls, stdout
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exit_code", [0, 73])
+async def test_shell_streams_both_channels_before_exit(tmp_path, monkeypatch, exit_code):
+    command = await _generated_command(tmp_path, monkeypatch)
+    stub = f"""
+echo 'event'
+echo 'diagnostic' >&2
+for i in {{1..250}}; do
+  [ -f "$LOGDIR/continue" ] && exit {exit_code}
+  sleep 0.02
+done
+exit 99
+"""
+    rewritten, env, logdir = _prepare_shell(command, tmp_path, stub)
+    proc = subprocess.Popen(
+        ["bash", "-c", rewritten],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        pending = {proc.stdout: b"event\n", proc.stderr: b"diagnostic\n"}
+        while pending:
+            ready, _, _ = select.select(list(pending), [], [], 3)
+            assert ready, "Grok output was not streamed while the process was running"
+            for stream in ready:
+                assert os.read(stream.fileno(), 4096) == pending.pop(stream)
+        assert proc.poll() is None
+        (logdir / "continue").touch()
+        proc.communicate(timeout=5)
+        assert proc.returncode == exit_code
+        assert (logdir / "grok-build.json").read_text() == "event\n"
+        assert (logdir / "grok-build.stderr.log").read_text() == "diagnostic\n"
+    finally:
+        (logdir / "continue").touch()
+        proc.communicate(timeout=10)
+
+
+@pytest.mark.asyncio
+async def test_shell_drains_stderr_before_fallback(tmp_path, monkeypatch):
+    command = await _generated_command(tmp_path, monkeypatch)
+    rewritten, env, logdir = _prepare_shell(
+        command, tmp_path, _FALLBACK_THEN_STALL_STUB
+    )
+    tee = Path(env["HOME"]) / ".local/bin/tee"
+    tee.write_text(
+        '#!/bin/bash\ncase "$*" in *stderr.log*) sleep 0.2;; esac\n'
+        'exec /usr/bin/tee "$@"\n'
+    )
+    tee.chmod(0o755)
+    proc = subprocess.run(
+        ["bash", "-c", rewritten], env=env, capture_output=True, text=True, timeout=10
+    )
+    assert proc.returncode == 0
+    assert len((logdir / "calls.log").read_text().splitlines()) == 3
+    assert "unknown option" in proc.stderr
+    assert "idle timeout" in proc.stderr
+    assert (logdir / "grok-build.stderr.log").read_text() == ""
 
 
 _IDLE_TIMEOUT_STDERR = (

@@ -451,10 +451,10 @@ class OddishGrokBuild(BaseInstalledAgent):
         ]
 
         def arm(index: int) -> str:
-            return grok_command(**variants[index])
+            return f"oddish_grok_run overwrite {grok_command(**variants[index])}"
 
         def resume_arm(index: int) -> str:
-            return grok_command(**variants[index], resume=True)
+            return f"oddish_grok_run append {grok_command(**variants[index], resume=True)}"
 
         reasoning_unsupported_pattern = "'(reasoning-effort|reasoning_effort)'"
         unsupported_pattern = (
@@ -471,33 +471,43 @@ class OddishGrokBuild(BaseInstalledAgent):
             'GROK_HOME="${GROK_HOME:-$HOME/.grok}"; '
             'rm -rf "$GROK_HOME/sessions" "$GROK_HOME/logs" 2>/dev/null; '
             "set +e; "
-            f"{arm(0)} "
-            f">{stdout_path} 2>{stderr_path}; "
+            # Stream both channels over exec/SSH while keeping stderr out of
+            # the JSON event log. Drain its tee before the fallback greps read
+            # it, and preserve Grok's exit status rather than tee's status.
+            "oddish_grok_run() { "
+            "local stderr_fd stderr_pid stderr_rc; "
+            "local -a tee_flags=() pipeline_status; "
+            '[ "$1" = append ] && tee_flags=(-a); shift; '
+            f"exec {{stderr_fd}}> >(tee {stderr_path} >&2); "
+            "stderr_pid=$!; "
+            f'"$@" 2>&$stderr_fd | tee "${{tee_flags[@]}}" {stdout_path}; '
+            'pipeline_status=("${PIPESTATUS[@]}"); '
+            "exec {stderr_fd}>&-; "
+            'wait "$stderr_pid"; stderr_rc=$?; '
+            '[ "${pipeline_status[0]}" -ne 0 ] && return "${pipeline_status[0]}"; '
+            '[ "${pipeline_status[1]}" -ne 0 ] && return "${pipeline_status[1]}"; '
+            'return "$stderr_rc"; }; '
+            f"{arm(0)}; "
             "rc=$?; rv=0; "
             f"if [ $rc -ne 0 ] && grep -Eqi {reasoning_unsupported_pattern} {stderr_path}; then "
-            f"{arm(1)} "
-            f">{stdout_path} 2>{stderr_path}; "
+            f"{arm(1)}; "
             "rc=$?; rv=1; "
             "fi; "
             f"if [ $rc -ne 0 ] && grep -Eqi {unsupported_pattern} {stderr_path}; then "
-            f"{arm(2)} "
-            f">{stdout_path} 2>{stderr_path}; "
+            f"{arm(2)}; "
             "rc=$?; rv=2; "
             "fi; "
             f"if [ $rc -ne 0 ] && grep -Eqi {reasoning_unsupported_pattern} {stderr_path}; then "
-            f"{arm(3)} "
-            f">{stdout_path} 2>{stderr_path}; "
+            f"{arm(3)}; "
             "rc=$?; rv=3; "
             "fi; "
             "if [ $rc -ne 0 ] && grep -Eqi '(no-auto-update|unknown option|"
             f"unrecognized option|unexpected argument)' {stderr_path}; then "
-            f"{arm(4)} "
-            f">{stdout_path} 2>{stderr_path}; "
+            f"{arm(4)}; "
             "rc=$?; rv=4; "
             "fi; "
             f"if [ $rc -ne 0 ] && grep -Eqi {reasoning_unsupported_pattern} {stderr_path}; then "
-            f"{arm(5)} "
-            f">{stdout_path} 2>{stderr_path}; "
+            f"{arm(5)}; "
             "rc=$?; rv=5; "
             "fi; "
             # Resume (rather than fail the trial) when the run died to the
@@ -518,7 +528,7 @@ class OddishGrokBuild(BaseInstalledAgent):
             "fi; "
             'case "$rv" in '
             + " ".join(
-                f"{index}) {resume_arm(index)} >>{stdout_path} 2>{stderr_path};;"
+                f"{index}) {resume_arm(index)};;"
                 for index in range(len(variants))
             )
             + " esac; "

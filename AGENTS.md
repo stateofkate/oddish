@@ -1800,6 +1800,11 @@ Keep these routing rules in sync with `oddish/src/oddish/config.py` and
   self-update mid-trial. Do not bypass the wrapper with Harbor stock
   `GrokBuild` on 1.0.0: that class runs `grok --single --session-id`,
   which 1.0.0 rejects (`Session ID is already in use`).
+  Initial, fallback, and resumed commands stream stdout and stderr through
+  separate `tee` processes so remote exec/SSH receives output while logs are
+  saved. Resumes append stdout; each attempt replaces stderr. The wrapper
+  waits for stderr's `tee` before inspecting errors and preserves Grok's exit
+  code; a logging failure also fails an otherwise successful command.
 - `grok-build` trajectories come from the CLI's on-disk **session store**, not
   its headless stdout. `grok -p --output-format json|streaming-json` only emits
   the assistant's `text`/`thought` — no tool calls and no token usage — so
