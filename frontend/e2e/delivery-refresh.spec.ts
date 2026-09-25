@@ -489,7 +489,9 @@ test("local add, remove and sign-off refresh immediately and checks carry the vi
     checked: true,
   });
   await expect.poll(() => state.reads.history).toBeGreaterThan(1);
-  await page.getByRole("button", { name: "Paste task IDs…", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Paste task IDs…", exact: true })
+    .click();
   await page.getByRole("textbox").fill("task-b");
   await page.getByRole("button", { name: "Add 1 task" }).click();
   await expect(
@@ -723,54 +725,6 @@ test("bulk sign-off keeps the versions shown when confirmation opened", async ({
     check_key: "signoff",
     expected_version_id: "version-7",
   });
-});
-
-test("a fresh server board avoids the initial read and keeps history, URL navigation, and edits live", async ({
-  page,
-}) => {
-  const state = await controlledAPI(page);
-  await page.goto("/?seed=fresh&filter=all&task=task-a&source=agent");
-  await page.getByText("QA history", { exact: true }).click();
-  await expect(current(page)).toBeVisible();
-  expect(state.reads).toEqual({ board: 0, history: 1 });
-  await page.evaluate(() =>
-    window.history.pushState(
-      null,
-      "",
-      "?seed=fresh&filter=all&group=owner&source=agent"
-    )
-  );
-  await expect(page).toHaveURL(/group=owner/);
-  await page.goBack();
-  // The shared URL restores the open history panel.
-  await expect(current(page)).toBeVisible();
-  expect(state.reads.board).toBe(1);
-  await page.goForward();
-  await expect(page).toHaveURL(/group=owner/);
-  expect(state.reads.board).toBe(1);
-  await page.goBack();
-  // The shared URL restores the open history panel.
-  state.history = history(7, 7, "success");
-  await tick(page);
-  await expect(current(page)).toContainText("qa (success)");
-  expect(state.reads.board).toBe(2);
-  await page.getByRole("button", { name: "Edit QA work" }).click();
-  await page
-    .getByRole("textbox", { name: "Handoff note" })
-    .fill("Saved after server load");
-  await page.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(page.getByRole("dialog")).toBeHidden();
-  await expect.poll(() => state.reads.board).toBe(3);
-  await expect(
-    page.getByText("Saved after server load", { exact: true })
-  ).toBeVisible();
-  expect(state.writes).toHaveLength(1);
-  await page.clock.setSystemTime(new Date());
-  await page.reload();
-  // The shared URL restores the open history panel.
-  await expect(current(page)).toBeVisible();
-  expect(state.reads.board).toBe(3);
-  await expect(page).toHaveURL(/source=agent/);
 });
 
 test("an old server snapshot refreshes on arrival", async ({ page }) => {

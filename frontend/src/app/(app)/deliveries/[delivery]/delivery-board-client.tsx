@@ -12,6 +12,7 @@ import {
   Link2,
   Lock,
   Plus,
+  ShieldAlert,
 } from "lucide-react";
 
 import { findingHref } from "@/lib/review";
@@ -1791,61 +1792,73 @@ function DeliveryBoardContent({
                 ` · finalized ${new Date(data.finalized_at).toLocaleString()}`}
             </p>
           </div>
-          {isAdmin && !frozen && (
-            <div className="flex flex-wrap items-center gap-2">
-              <Button variant="outline" size="sm" asChild>
-                <Link
-                  href={`/tasks?${new URLSearchParams({ delivery: deliveryId, ...(data.delivery.customer_name ? { lab: data.delivery.customer_name } : {}) })}`}
-                >
-                  <Plus className="mr-1 h-4 w-4" />
-                  Add tasks
-                </Link>
-              </Button>
-              <PasteTasksDialog
-                open={addOpen}
-                onOpenChange={setAddOpen}
-                busy={busy || changingView}
-                onAdd={addTasks}
-              />
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button
-                    size="sm"
-                    disabled={busy || changingView || !data.ready}
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" size="sm" asChild>
+              <Link
+                href={`/deliveries/${encodeURIComponent(deliveryId)}/qa-issues`}
+              >
+                <ShieldAlert className="mr-1 h-4 w-4" />
+                QA issues
+              </Link>
+            </Button>
+            {isAdmin && !frozen && (
+              <>
+                <Button variant="outline" size="sm" asChild>
+                  <Link
+                    href={`/tasks?${new URLSearchParams({ delivery: deliveryId, ...(data.delivery.customer_name ? { lab: data.delivery.customer_name } : {}) })}`}
                   >
-                    Finalize
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>Finalize this delivery?</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      Finalizing pins every task at its current version and
-                      freezes the board as the permanent record of what shipped.
-                      A finalized delivery is read-only; follow-up work goes in
-                      a new delivery.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                    <AlertDialogAction
-                      onClick={() =>
-                        void run(() =>
-                          postJson(
-                            `/api/deliveries/${encodeURIComponent(deliveryId)}/finalize`,
-                            "POST",
-                            {}
-                          )
-                        )
-                      }
+                    <Plus className="mr-1 h-4 w-4" />
+                    Add tasks
+                  </Link>
+                </Button>
+                <PasteTasksDialog
+                  open={addOpen}
+                  onOpenChange={setAddOpen}
+                  busy={busy || changingView}
+                  onAdd={addTasks}
+                />
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button
+                      size="sm"
+                      disabled={busy || changingView || !data.ready}
                     >
                       Finalize
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-            </div>
-          )}
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>
+                        Finalize this delivery?
+                      </AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Finalizing pins every task at its current version and
+                        freezes the board as the permanent record of what
+                        shipped. A finalized delivery is read-only; follow-up
+                        work goes in a new delivery.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={() =>
+                          void run(() =>
+                            postJson(
+                              `/api/deliveries/${encodeURIComponent(deliveryId)}/finalize`,
+                              "POST",
+                              {}
+                            )
+                          )
+                        }
+                      >
+                        Finalize
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </>
+            )}
+          </div>
         </header>
         {(actionError || data.delivery_checks.length > 0) && (
           <CardContent className="space-y-2 pt-0">

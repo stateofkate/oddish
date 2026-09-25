@@ -588,6 +588,11 @@ trials live in the shadow experiment. `GET /{experiments|deliveries}/{id}/qa-iss
 returns counts and categories; `?category=<slug>` adds that category's task
 rows and QA text, which keeps the overview small for large scopes. It costs
 about the same as one delivery board poll (about 0.7 s at 1,000 tasks locally).
+The dashboard pages `/experiments/[experiment]/qa-issues` and
+`/deliveries/[delivery]/qa-issues` (`?category=<slug>` for one category) start
+`fetchQaIssueReport` without awaiting it and read it with `use()` inside
+`<Suspense>`, as the dashboard does. The fetch checks Clerk auth itself,
+because `/experiments` is public for link previews, and it never rejects.
 
 Delivery boards expose the latest QA run's evidence coverage and completion time.
 `oddish.core.delivery_qa` compares its pinned solver/baseline evidence and source
