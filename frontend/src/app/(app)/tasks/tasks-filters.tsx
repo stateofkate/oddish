@@ -24,6 +24,10 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  MemberFilterTypeahead,
+  useOrgMembers,
+} from "@/components/member-filter-typeahead";
 import { SavedFiltersMenu } from "@/components/saved-filters-menu";
 import {
   SearchSyntaxHelp,
@@ -207,6 +211,13 @@ export function TasksFilters({
     [searchParams]
   );
 
+  const onlyMine = values.mine === "only" || (values.author.length === 1 && values.author[0] === "me");
+  // Author values are user ids from the member picker; show their emails.
+  const { data: members } = useOrgMembers();
+  const authorLabel = values.author
+    .map((id) => members?.items.find((person) => person.id === id)?.email ?? id)
+    .join(", ");
+
   const open = searchParams.get("filters") === "1";
   const urlFilterSearch = searchParams.get("filter_search") ?? "";
   const [filterSearch, setFilterSearch] = useState(urlFilterSearch);
@@ -313,29 +324,17 @@ export function TasksFilters({
             />
           </SearchSyntaxHelp>
         </div>
-        <select
-          aria-label="Author"
-          className="border-input bg-background h-9 rounded-md border px-3 text-sm"
-          value={
-            values.mine === "only" || (values.author.length === 1 && values.author[0] === "me")
-              ? "me"
-              : values.author.length ? "custom"
-                : values.mine === null || values.mine === "first" ? "first" : "all"
+        <MemberFilterTypeahead
+          ariaLabel="Filter tasks by member"
+          selectedUserId={onlyMine ? "me" : values.author.join(", ") || null}
+          onSelect={(userId) =>
+            setTaskFilters(
+              userId === "me"
+                ? { author: [], mine: "only" }
+                : { author: userId ? [userId] : [], mine: "off" }
+            )
           }
-          onChange={(e) =>
-            setTaskFilters({
-              author: [],
-              mine: e.target.value === "me" ? "only" : e.target.value === "first" ? "first" : "off",
-            })
-          }
-        >
-          <option value="all">Authors: Everyone</option>
-          <option value="first">Authors: Everyone, mine first</option>
-          <option value="me">Authors: Only mine</option>
-          {values.author.length > 0 && !(values.author.length === 1 && values.author[0] === "me") ? (
-            <option value="custom">Authors: {values.author.join(", ")}</option>
-          ) : null}
-        </select>
+        />
         </div>
       </fieldset>
       <div className="grid gap-3 md:grid-cols-2">
@@ -489,7 +488,7 @@ export function TasksFilters({
               })
             }
           >
-            Author: {values.mine === "only" ? "Me" : values.author.join(", ")} ×
+            Author: {values.mine === "only" ? "Me" : authorLabel} ×
           </button>
         ) : null}
         {values.runCoverage !== "any" || activeDefs.length ||

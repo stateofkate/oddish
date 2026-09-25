@@ -129,6 +129,7 @@ test("coverage and author scope reach selection while result links preserve cont
     else if (url.pathname.endsWith("/ids"))
       body = { ids: items.map((item) => item.id), truncated: false };
     else if (url.pathname.endsWith("/facets")) body = {};
+    else if (url.pathname === "/api/people/search") body = { items: [] };
     await route.fulfill({ json: body });
   });
   await page.goto("/tasks?mine=off");
@@ -168,13 +169,12 @@ test("coverage and author scope reach selection while result links preserve cont
     if (width === 1280) await page.screenshot({ path: "task-run-coverage.png", fullPage: true });
   }
   await page.setViewportSize({ width: 1280, height: 1100 });
-  await page
-    .getByRole("combobox", { name: "Author", exact: true })
-    .selectOption("first");
+  await page.getByRole("button", { name: "Filter tasks by member" }).click();
+  await page.getByRole("button", { name: "Mine", exact: true }).click();
   await page
     .getByRole("combobox", { name: "Sort tasks" })
     .selectOption("model_score_desc");
-  await expect(page).toHaveURL(/mine=first/);
+  await expect(page).toHaveURL(/mine=only/);
   await expect(page).toHaveURL(/sort=model_score_desc/);
   await page
     .getByRole("combobox", { name: "Runs on current version" })

@@ -3182,8 +3182,10 @@ URL filter registry, so page/count/ID requests, saved views and clear behavior
 share it without additional fetches or React state.
 
 Tasks separates Find tasks, Evidence on this version, and Delivery history.
-Author restriction and mine-first priority share the Authors control; sort never
-changes either. Advanced filters use searchable group disclosures rather than
+The shared Members picker searches emails and GitHub handles and writes the selected
+member ID to `author`, with `mine=off`. Its Mine row uses `mine=only`; clearing it restores the Org view.
+Task author resolution accepts exact active organization member IDs as well as
+existing search tokens. Legacy mine-first URLs still work; sort never changes ownership. Advanced filters use searchable group disclosures rather than
 an added-filter state list. Choosing a lab applies recorded-history filtering
 when no history condition is selected. Cards are the default view; the table
 remains available. CLI `ls --run-coverage` forwards the same coverage for rows, counts,

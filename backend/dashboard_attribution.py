@@ -536,8 +536,8 @@ async def _match_authors_for_token(
 
     A token matches on ``github_username`` (the primary affordance) and,
     because the ``author:`` / ``user:`` aliases let people type a teammate's
-    email or display name, also on ``email`` / ``name`` -- all
-    case-insensitively. The github match reuses the plural lookup so handle
+    email or display name, also on ``email`` / ``name`` case-insensitively.
+    The member picker supplies an exact ``id``. The github match reuses the plural lookup so handle
     collisions (two members, same handle) union rather than raise.
     """
     from api.routers.task_submission import lookup_users_by_github_username
@@ -556,6 +556,7 @@ async def _match_authors_for_token(
                 UserModel.org_id == org_id,
                 UserModel.is_active == True,  # noqa: E712
                 or_(
+                    UserModel.id == normalized_token,
                     UserModel.email.ilike(partial, escape="\\"),
                     UserModel.name.ilike(partial, escape="\\"),
                 ),

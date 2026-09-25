@@ -22,22 +22,32 @@ type PeopleSearchItem = {
   github_username: string | null;
 };
 
+// Every org member, loaded once and shared through the SWR cache, so other
+// UI (e.g. an active-filter chip) can turn a selected user id into an email.
+export function useOrgMembers() {
+  return useSWR<{ items: PeopleSearchItem[] }>(
+    "/api/people/search?all_members=true",
+    fetcher,
+    {
+      revalidateOnFocus: false,
+      revalidateOnReconnect: false,
+      shouldRetryOnError: false,
+    }
+  );
+}
+
 export function MemberFilterTypeahead({
   selectedUserId,
   onSelect,
+  ariaLabel = "Filter experiments by member",
 }: {
   selectedUserId: string | null;
+  ariaLabel?: string;
   onSelect: (userId: string | null) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const { data, error, isLoading, mutate } = useSWR<{
-    items: PeopleSearchItem[];
-  }>("/api/people/search?all_members=true", fetcher, {
-    revalidateOnFocus: false,
-    revalidateOnReconnect: false,
-    shouldRetryOnError: false,
-  });
+  const { data, error, isLoading, mutate } = useOrgMembers();
   const selectedPerson = data?.items.find(
     (person) => person.id === selectedUserId
   );
@@ -72,14 +82,14 @@ export function MemberFilterTypeahead({
             size="sm"
             className="h-8 w-full justify-between border-[#6f88b4]/20 sm:w-[180px]"
             aria-expanded={open}
-            aria-label="Filter experiments by member"
+            aria-label={ariaLabel}
           >
             <span className="flex min-w-0 items-center gap-1.5">
               <Users className="h-3.5 w-3.5 shrink-0 opacity-60" />
               <span className="truncate">
                 {selectedUserId === MINE
                   ? "Mine"
-                  : (selectedPerson?.email ?? "Members")}
+                  : (selectedPerson?.email ?? selectedUserId ?? "Members")}
               </span>
             </span>
             <ChevronDown className="h-4 w-4 opacity-50" />

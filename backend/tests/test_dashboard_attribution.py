@@ -699,3 +699,24 @@ async def test_people_search_can_load_all_members_in_one_request(monkeypatch):
     assert "offset" not in sql
     assert "users.org_id = 'org_current'" in sql
     assert "users.is_active is true" in sql
+
+
+@pytest.mark.asyncio
+async def test_member_id_search_is_scoped_and_expands_attribution(monkeypatch) -> None:
+    from unittest.mock import AsyncMock
+    from api.routers import task_submission
+
+    user = _user(id="selected-member")
+    session = _CapturingSession([user])
+    monkeypatch.setattr(task_submission, "lookup_users_by_github_username", AsyncMock(return_value=[]))
+    monkeypatch.setattr(dashboard_attribution, "_load_attribution_profile", AsyncMock(return_value=AttributionProfile(
+        github_handles=("praxs",), legacy_emails=("pratty@abundant.ai",),
+    )))
+    ids, handles, emails = await resolve_search_authors(session, org_id="org_1", tokens=[user.id])
+    assert ids == ("selected-member",)
+    assert "praxs" in handles
+    assert emails == ("pratty@abundant.ai",)
+    sql = _compiled(session.statements[0])
+    assert "users.id = 'selected-member'" in sql
+    assert "users.org_id = 'org_1'" in sql
+    assert "users.is_active = true" in sql

@@ -75,15 +75,13 @@ test("rapid author and sort changes preserve each other and pending search", asy
   await page
     .getByRole("textbox", { name: "Search tasks", exact: true })
     .fill("some task");
+  await page.getByRole("button", { name: "Filter tasks by member" }).click();
   await page.evaluate(() => {
-    const author = document.querySelector<HTMLSelectElement>(
-      'select[aria-label="Author"]'
-    )!;
+    const mine = Array.from(document.querySelectorAll("button")).find(button => button.textContent?.trim() === "Mine")!;
     const sort = document.querySelector<HTMLSelectElement>(
       'select[aria-label="Sort tasks"]'
     )!;
-    author.value = "me";
-    author.dispatchEvent(new Event("change", { bubbles: true }));
+    mine.click();
     sort.value = "total_trials_desc";
     sort.dispatchEvent(new Event("change", { bubbles: true }));
   });
@@ -317,9 +315,9 @@ test("sorting only-mine links keeps the author filter", async ({page}) => {
   await expect.poll(() => new URL(page.url()).searchParams.get("mine")).toBe("only");
   await page.evaluate(() => {
     const sort = document.querySelector<HTMLSelectElement>('select[aria-label="Sort tasks"]')!;
-    const author = document.querySelector<HTMLSelectElement>('select[aria-label="Author"]')!;
+    const clear = document.querySelector<HTMLButtonElement>('button[aria-label="Clear member filter"]')!;
     sort.value = "recent"; sort.dispatchEvent(new Event("change", {bubbles: true}));
-    author.value = "all"; author.dispatchEvent(new Event("change", {bubbles: true}));
+    clear.click();
   });
   await expect.poll(() => new URL(page.url()).searchParams.get("mine")).toBe("off");
   expect(new URL(page.url()).searchParams.has("author")).toBe(false);
@@ -328,12 +326,12 @@ test("sorting only-mine links keeps the author filter", async ({page}) => {
 for (const clear of ["Clear filters", "Author: Me ×"]) {
   test(`${clear} restores mine-first after selecting Only mine`, async ({ page }) => {
     await page.goto("/picker?delivery=existing&mine=off&sort=model_score_desc&run_coverage=model_trials");
-    const authors = page.getByRole("combobox", { name: "Author", exact: true });
-    await authors.selectOption("me");
+    await page.getByRole("button", { name: "Filter tasks by member" }).click();
+    await page.getByRole("button", { name: "Mine", exact: true }).click();
     await expect.poll(() => new URL(page.url()).searchParams.get("mine")).toBe("only");
     expect(new URL(page.url()).searchParams.has("author")).toBe(false);
     await page.getByRole("button", { name: clear, exact: true }).first().click();
-    await expect(authors).toHaveValue("first");
+    await expect(page.getByRole("button", { name: "Filter tasks by member" })).toHaveText("Members");
     const params = new URL(page.url()).searchParams;
     expect(params.has("mine")).toBe(false);
     expect(params.has("author")).toBe(false);
@@ -346,7 +344,7 @@ for (const clear of ["Clear filters", "Author: Me ×"]) {
 test("clearing other filters preserves explicitly unpinned Everyone", async ({ page }) => {
   await page.goto("/picker?mine=off&sort=model_score_desc&run_coverage=model_trials");
   await page.getByRole("button", { name: "Clear filters", exact: true }).first().click();
-  await expect(page.getByRole("combobox", { name: "Author", exact: true })).toHaveValue("all");
+  await expect(page.getByRole("button", { name: "Filter tasks by member" })).toHaveText("Members");
   expect(new URL(page.url()).searchParams.get("mine")).toBe("off");
   expect(new URL(page.url()).searchParams.get("sort")).toBe("model_score_desc");
 });
@@ -848,4 +846,34 @@ test("criteria search preserves caret edits and follows URL navigation", async (
   await expect.poll(() => new URL(page.url()).searchParams.has("filter_search")).toBe(false);
   await page.reload();
   await expect(input).toHaveValue("");
+});
+
+
+test("delivery picker searches members and restores selection on reload", async ({ page }) => {
+  await page.route("**/api/people/search?*", route => route.fulfill({ json: {
+    items: [{ id: "user-alice", email: "alice@example.com", github_username: "alice-dev" }],
+  } }));
+  await page.goto("/picker?delivery=existing&lab=Lab&mine=only&offset=24");
+  const members = page.getByRole("button", { name: "Filter tasks by member" });
+  await members.click();
+  await page.getByRole("textbox", { name: "Search members" }).fill("@alice-dev");
+  await page.getByRole("button", { name: "alice@example.com @alice-dev" }).click();
+  await expect(members).toContainText("alice@example.com");
+  let params = new URL(page.url()).searchParams;
+  expect(params.get("author")).toBe("user-alice");
+  expect(params.get("mine")).toBe("off");
+  expect(params.has("offset")).toBe(false);
+  expect(params.get("delivery")).toBe("existing");
+  expect(params.get("lab")).toBe("Lab");
+  await expect.poll(() => page.evaluate(() => performance.getEntriesByType("resource").some(entry => {
+    const url = new URL(entry.name);
+    return url.pathname === "/api/tasks/browse" && url.searchParams.get("author") === "user-alice";
+  }))).toBe(true);
+  await page.reload();
+  await expect(members).toContainText("alice@example.com");
+  await expect(page.getByRole("button", { name: "Author: alice@example.com ×" })).toBeVisible();
+  await page.getByRole("button", { name: "Clear member filter" }).click();
+  params = new URL(page.url()).searchParams;
+  expect(params.has("author")).toBe(false);
+  expect(params.get("delivery")).toBe("existing");
 });
