@@ -33,6 +33,8 @@ _HTTP_STATUS_PATTERNS = tuple(
         r'"(?:http[_-]?status|status[_-]?code|statusCode)"\s*:\s*"?([45]\d\d)\b',
         r"\bstatus(?:[_ ]code)?[\"']?\s*[=:()]?\s*([45]\d\d)\b",
         r"\berror code\s*[=:]?\s*([45]\d\d)\b",
+        # Muse's run reason: "model failed: API error 400 [request_id=...]".
+        r"\bAPI error\s+([45]\d\d)\b",
         r"\bHTTP(?:/\d(?:\.\d)?)?\s+([45]\d\d)\b",
         (
             r"\b([45]\d\d)\s+(?:bad request|payment required|unauthorized|"
@@ -75,26 +77,84 @@ _MODEL_NOT_FOUND_PATTERN = re.compile(
 )
 
 
-def _output(result: Any, *, provider: str) -> str:
-    stdout = getattr(result, "stdout", None) or ""
-    stderr = getattr(result, "stderr", None) or ""
-    if provider.lower() == "xai":
-        # Stock Grok returns the full streaming transcript on stdout. Do not
-        # classify an assistant merely discussing a 403 or billing problem as
-        # the provider's own failure; only its structured error events count.
-        error_events: list[str] = []
-        for line in stdout.splitlines():
-            try:
-                event = json.loads(line)
-            except (TypeError, json.JSONDecodeError):
-                continue
-            if not isinstance(event, dict):
-                continue
-            event_type = str(event.get("type") or event.get("kind") or "").lower()
-            if event_type in {"error", "internal_error", "failure"}:
-                error_events.append(line)
-        stdout = "\n".join(error_events)
-    return f"{stdout}\n{stderr}"
+# Grok's structured error events.
+_GROK_ERROR_EVENTS = frozenset({"error", "internal_error", "failure"})
+
+
+def _json_records(stdout: str) -> list[dict[str, Any]]:
+    records = []
+    for line in stdout.splitlines():
+        try:
+            record = json.loads(line)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if isinstance(record, dict):
+            records.append(record)
+    return records
+
+
+def _grok_failures(records: list[dict[str, Any]]) -> list[str]:
+    return [
+        json.dumps(record)
+        for record in records
+        if str(record.get("type") or record.get("kind") or "").lower()
+        in _GROK_ERROR_EVENTS
+    ]
+
+
+def _muse_failures(records: list[dict[str, Any]]) -> list[str] | None:
+    """The reason ``muse exec --json`` gives for ending the run.
+
+    Tasks fail mid-run without ending it: tool calls, and helper model calls
+    such as skill reminders, whose 400s the CLI routinely shrugs off. Only
+    ``run.terminal.failed`` says why the run ended. When that reason is a tool
+    task's failure, the solver ended the run, so return None.
+    """
+    task_kinds: dict[Any, str] = {}
+    task_failures: dict[Any, Any] = {}
+    run_reason: Any = None
+    for record in records:
+        payload = record.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        payload_type = record.get("payload_type")
+        if payload_type == "run.terminal.failed":
+            run_reason = payload.get("reason")
+            continue
+        event = payload.get("event")
+        if not isinstance(event, dict):
+            continue
+        if payload_type == "task.lifecycle.proposed":
+            task_kinds[event.get("task_id")] = str(event.get("task_kind") or "")
+        elif payload_type == "task.lifecycle.failed":
+            task_failures[event.get("task_id")] = event.get("reason")
+    if not isinstance(run_reason, str) or not run_reason:
+        return []
+    ended_by_tool = any(
+        reason == run_reason and task_kinds.get(task_id, "").startswith("tool.")
+        for task_id, reason in task_failures.items()
+    )
+    return None if ended_by_tool else [run_reason]
+
+
+def _output(result: Any, *, provider: str) -> str | None:
+    """The CLI's own failure text: its failure records on stdout, and stderr.
+
+    Muse and Grok stream the whole session as JSONL on stdout, including
+    assistant text and tool output, so a task's own logs can say "invalid
+    token" or "billing quota exceeded". Only the CLI's structured failure
+    records on stdout are evidence that the provider ended the run. None means
+    the CLI reports that a tool call, not the provider, ended the run.
+    """
+    records = _json_records(getattr(result, "stdout", None) or "")
+    failures = (
+        _muse_failures(records)
+        if provider.lower() == "meta"
+        else _grok_failures(records)
+    )
+    if failures is None:
+        return None
+    return "\n".join([*failures, getattr(result, "stderr", None) or ""])
 
 
 def _http_status(output: str) -> int | None:
@@ -168,6 +228,8 @@ def refine_provider_exec_error(
     one typed result refined further because the HTTP status can make it exact.
     """
     output = _output(result, provider=provider)
+    if output is None:
+        return fallback
     status = _http_status(output)
     exception_class = _exception_class(output, status)
 

@@ -240,7 +240,11 @@ High-level flow:
    initially sees a generic nonzero exit. Oddish refines strongly provider-shaped
    HTTP status, authentication, billing, credit, quota, and model-access messages
    into Harbor's typed API exceptions in both in-process and override-Harbor
-   workers. Unrelated nonzero CLI exits remain solver failures.
+   workers. Both CLIs stream the session (assistant text, tool output) on
+   stdout, so only stderr, Grok's error events, and Muse's
+   `run.terminal.failed` reason count as evidence; a Muse run that a tool call
+   ended stays a solver failure. Unrelated nonzero CLI exits remain solver
+   failures.
    That rule needs the exception to reach settlement. Pinned Harbor omits
    `trial_results` from the job summary it writes, so a caller that rebuilds a
    `JobResult` from that file loses the per-trial exception and phase timing.

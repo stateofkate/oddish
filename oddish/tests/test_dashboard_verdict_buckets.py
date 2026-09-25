@@ -19,13 +19,13 @@ from oddish.db.models import (
 )
 
 
-def _task(name: str, *, verdict_error: str) -> TaskModel:
+def _task(name: str, *, verdict_error: str, run_analysis: bool = True) -> TaskModel:
     return TaskModel(
         name=name,
         org_id="org1",
         user="tester",
         task_path=f"s3://tasks/{name}",
-        run_analysis=True,
+        run_analysis=run_analysis,
         verdict_status=VerdictStatus.FAILED,
         verdict_error=verdict_error,
     )
@@ -47,25 +47,13 @@ def _trial(task: TaskModel, experiment: ExperimentModel) -> TrialModel:
     )
 
 
-@pytest.mark.asyncio
-async def test_missing_evidence_and_cancellation_count_as_pending_not_failed(session):
-    no_evidence = _task(
-        "verdict-bucket-no-evidence", verdict_error=INSUFFICIENT_EVIDENCE_ERROR
-    )
-    cancelled = _task("verdict-bucket-cancelled", verdict_error="Cancelled by user")
-    crashed = _task("verdict-bucket-crashed", verdict_error="worker crashed")
-    experiment = ExperimentModel(name="verdict-buckets", org_id="org1")
-    session.add_all([no_evidence, cancelled, crashed, experiment])
+async def _task_aggregates(session, experiment, tasks):
+    session.add_all([*tasks, experiment])
     await session.flush()
-    session.add_all(
-        [_trial(task, experiment) for task in (no_evidence, cancelled, crashed)]
-    )
+    session.add_all([_trial(task, experiment) for task in tasks])
     await session.execute(
         insert(task_experiments).values(
-            [
-                {"task_id": task.id, "experiment_id": experiment.id}
-                for task in (no_evidence, cancelled, crashed)
-            ]
+            [{"task_id": task.id, "experiment_id": experiment.id} for task in tasks]
         )
     )
     await session.flush()
@@ -73,7 +61,7 @@ async def test_missing_evidence_and_cancellation_count_as_pending_not_failed(ses
     task_agg, _, _ = _build_aggregates_for_experiment_ids(
         [experiment.id], org_id="org1"
     )
-    row = (
+    return (
         (
             await session.execute(
                 select(task_agg).where(task_agg.c.experiment_id == experiment.id)
@@ -82,6 +70,17 @@ async def test_missing_evidence_and_cancellation_count_as_pending_not_failed(ses
         .mappings()
         .one()
     )
+
+
+@pytest.mark.asyncio
+async def test_missing_evidence_and_cancellation_count_as_pending_not_failed(session):
+    no_evidence = _task(
+        "verdict-bucket-no-evidence", verdict_error=INSUFFICIENT_EVIDENCE_ERROR
+    )
+    cancelled = _task("verdict-bucket-cancelled", verdict_error="Cancelled by user")
+    crashed = _task("verdict-bucket-crashed", verdict_error="worker crashed")
+    experiment = ExperimentModel(name="verdict-buckets", org_id="org1")
+    row = await _task_aggregates(session, experiment, [no_evidence, cancelled, crashed])
     assert row["task_count"] == 3
     assert row["verdict_failed"] == 1
     assert row["verdict_pending"] == 2
@@ -93,3 +92,19 @@ async def test_missing_evidence_and_cancellation_count_as_pending_not_failed(ses
     assert not _experiment_row_passes_status_filter(
         only_missing_evidence, status_filter="failed"
     )
+
+
+@pytest.mark.asyncio
+async def test_cancelled_qa_on_legacy_no_analysis_task_counts_as_pending(session):
+    # Tasks created before analysis became unconditional keep run_analysis
+    # false; an explicit QA re-run that is then cancelled must not leave both
+    # the pending and failed buckets.
+    cancelled = _task(
+        "verdict-bucket-legacy-cancelled",
+        verdict_error="Cancelled by user",
+        run_analysis=False,
+    )
+    experiment = ExperimentModel(name="verdict-buckets-legacy", org_id="org1")
+    row = await _task_aggregates(session, experiment, [cancelled])
+    assert row["verdict_failed"] == 0
+    assert row["verdict_pending"] == 1

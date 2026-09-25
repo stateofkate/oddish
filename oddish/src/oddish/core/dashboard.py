@@ -377,26 +377,32 @@ def _build_aggregates_for_experiment_ids(
             func.count(
                 case(
                     (
-                        and_(
-                            TaskModel.run_analysis.is_(True),
-                            or_(
-                                TaskModel.verdict_status.is_(None),
-                                and_(
-                                    TaskModel.verdict_status == VerdictStatus.FAILED,
-                                    _no_verdict_failure_clause(),
-                                ),
-                                TaskModel.verdict_status.in_(
-                                    [
-                                        VerdictStatus.PENDING,
-                                        VerdictStatus.QUEUED,
-                                        VerdictStatus.RUNNING,
-                                    ]
-                                ),
-                                TaskModel.status.in_(
-                                    [
-                                        TaskStatus.ANALYZING,
-                                        TaskStatus.VERDICT_PENDING,
-                                    ]
+                        or_(
+                            # QA ran on this task and ended without a verdict,
+                            # so it waits for one even when the legacy
+                            # run_analysis flag is false; verdict_failed above
+                            # excludes it.
+                            and_(
+                                TaskModel.verdict_status == VerdictStatus.FAILED,
+                                _no_verdict_failure_clause(),
+                            ),
+                            and_(
+                                TaskModel.run_analysis.is_(True),
+                                or_(
+                                    TaskModel.verdict_status.is_(None),
+                                    TaskModel.verdict_status.in_(
+                                        [
+                                            VerdictStatus.PENDING,
+                                            VerdictStatus.QUEUED,
+                                            VerdictStatus.RUNNING,
+                                        ]
+                                    ),
+                                    TaskModel.status.in_(
+                                        [
+                                            TaskStatus.ANALYZING,
+                                            TaskStatus.VERDICT_PENDING,
+                                        ]
+                                    ),
                                 ),
                             ),
                         ),

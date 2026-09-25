@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -146,6 +147,90 @@ def test_grok_structured_error_event_is_provider_evidence():
 
     assert type(error) is AgentAuthenticationError
     assert error.http_status == 403
+
+
+def _muse_record(payload_type: str, payload: dict) -> str:
+    """One ``muse exec --json`` stdout record."""
+    return json.dumps(
+        {"record_type": "event", "payload_type": payload_type, "payload": payload}
+    )
+
+
+def _muse_task(payload_type: str, **event) -> str:
+    return _muse_record(payload_type, {"kind": "task_lifecycle", "event": event})
+
+
+def _muse_run_failed(reason: str) -> str:
+    return _muse_record(
+        "run.terminal.failed", {"kind": "run_terminal", "reason": reason}
+    )
+
+
+def _refine_muse(*records: str) -> NonZeroAgentExitCodeError:
+    return refine_provider_exec_error(
+        NonZeroAgentExitCodeError("muse failed", return_code=1),
+        _result(stdout="\n".join(records)),
+        provider="Meta",
+    )
+
+
+def test_muse_tool_output_is_not_provider_evidence():
+    # The task's own test log, streamed back as tool output, is not the
+    # provider rejecting Muse.
+    error = _refine_muse(
+        _muse_task(
+            "task.lifecycle.output",
+            task_id="t1",
+            chunk="FAILED test_login: invalid token; model gpt-x not found",
+        )
+    )
+
+    assert type(error) is NonZeroAgentExitCodeError
+
+
+def test_muse_run_ended_by_a_tool_is_not_provider_evidence():
+    reason = "pytest: invalid token; billing quota exceeded"
+    error = _refine_muse(
+        _muse_task("task.lifecycle.proposed", task_id="t1", task_kind="tool.bash"),
+        _muse_task("task.lifecycle.failed", task_id="t1", reason=reason),
+        _muse_run_failed(reason),
+    )
+
+    assert type(error) is NonZeroAgentExitCodeError
+
+
+def test_muse_helper_failures_that_did_not_end_the_run_are_ignored():
+    # Real Muse runs log skill-reminder helpers failing with a 400 while the
+    # run carries on; only the run's own failure reason counts.
+    error = _refine_muse(
+        _muse_task(
+            "task.lifecycle.proposed",
+            task_id="t1",
+            task_kind="reminder.agent.skill-reminder",
+        ),
+        _muse_task(
+            "task.lifecycle.failed",
+            task_id="t1",
+            reason="model failed: API error 400: reasoning_effort 'low' is not supported",
+        ),
+    )
+
+    assert type(error) is NonZeroAgentExitCodeError
+
+
+def test_muse_run_failure_reason_is_provider_evidence():
+    reason = "model failed: API error 400 [request_id=req-1]: billing quota exceeded"
+    error = _refine_muse(
+        _muse_task(
+            "task.lifecycle.proposed", task_id="t1", task_kind="model.meta.response"
+        ),
+        _muse_task("task.lifecycle.failed", task_id="t1", reason=reason),
+        _muse_run_failed(reason),
+    )
+
+    assert type(error) is ApiUsageLimitError
+    assert error.http_status == 400
+    assert error.request_id == "req-1"
 
 
 def test_existing_agent_owned_classification_remains_authoritative():
