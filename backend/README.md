@@ -470,6 +470,9 @@ Archil trials switch to Modal when a retry starts after two failed attempts
 Remaining retries stay on Modal within the existing attempt budget;
 non-retryable failures still stop without a fallback attempt.
 Values outside 0 through 100 fail settings validation at process startup.
+Production sets it in `.github/workflows/modal-deploy.yml`; `modal_app.py`
+bakes the deploy-time value into the image, so ramping or rolling back is an
+edit to that line followed by a promotion to `main`.
 
 ### Ephemeral EC2 Harbor backend
 

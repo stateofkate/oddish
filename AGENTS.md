@@ -1441,6 +1441,8 @@ Keep these routing rules in sync with `oddish/src/oddish/config.py` and
 - `ODDISH_ARCHIL_TRAFFIC_PERCENT` (integer 0 through 100, default 0) replaces
   a Daytona result for that percentage of newly submitted hosted CPU sweeps.
   Enabled Numinous remains the first CPU candidate and is not replaced.
+  Production sets it in `.github/workflows/modal-deploy.yml` (currently 1);
+  `backend/modal_app.py` bakes the deploy-time value into the image.
   `backend/api/routers/tasks.py` computes the request fingerprint before
   identity or GitHub attribution mutates the submission; `backend/cloud_policy.py`
   maps that SHA-256 value into a 0–99 bucket. The selected default reaches every

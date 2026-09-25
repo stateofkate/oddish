@@ -947,6 +947,14 @@ ENV_VARS = {
         for k, v in {**LOCAL_DOTENV_VARS, **os.environ}.items()
         if k.startswith("ODDISH_MONITOR_EXECUTION_")
     },
+    # Archil CPU rollout lever (oddish.config.Settings.archil_traffic_percent),
+    # read by the API when it picks a provider for a new sweep. Unset keeps the
+    # code default of 0; each deploy workflow sets its own line.
+    **{
+        k: v
+        for k, v in {**LOCAL_DOTENV_VARS, **os.environ}.items()
+        if k == "ODDISH_ARCHIL_TRAFFIC_PERCENT"
+    },
     # GKE coordinates resolved at deploy time (process env wins over
     # backend/.env, mirroring _effective_gke_cluster_name), baked into the
     # image like MODAL_APP_NAME above. The oddish-gcp secret gate and the
