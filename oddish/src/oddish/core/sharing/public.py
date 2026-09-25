@@ -181,6 +181,7 @@ async def get_public_qa_issues(
     q: str = "",
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=500),
+    version: int | None = Query(None, ge=1),
 ) -> QAIssueReportResponse:
     """The experiment's QA issue report, only when the share shows QA."""
     async with get_read_session() as session:
@@ -197,6 +198,7 @@ async def get_public_qa_issues(
             q=q,
             page=page,
             page_size=page_size,
+            version=version,
             public=True,
         )
     report.scope_id = public_token

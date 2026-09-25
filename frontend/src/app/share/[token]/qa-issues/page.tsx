@@ -19,9 +19,9 @@ export default async function ShareQaIssuesPage({
       <main className="mx-auto w-full max-w-(--breakpoint-2xl) px-4 py-4">
         <QaIssuesPage
           report={fetchPublicQaIssueReport(token, view)}
-          view={view}
           backHref={href}
           baseHref={`${href}/qa-issues`}
+          apiHref={`/api/public/experiments/${encodeURIComponent(token)}/qa-issues`}
           linkTasks={false}
         />
       </main>

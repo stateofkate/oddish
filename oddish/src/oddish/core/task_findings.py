@@ -182,6 +182,71 @@ async def task_defect_items(
     return out
 
 
+async def must_fix_labels(
+    session: AsyncSession, versions: dict[str, TaskVersionModel]
+) -> dict[str, list[dict]]:
+    """Each version's must-fix defects as ``dimension`` and ``problem_type`` only.
+
+    The same sources and tier rule as ``task_defect_items`` without the
+    evidence text or the per-defect ids, for views that only count or
+    categorize defects over every version of many tasks.
+    """
+    out: dict[str, list[dict]] = {vid: [] for vid in versions}
+
+    def must_fix(item: object) -> bool:
+        if not isinstance(item, dict):
+            return False
+        tier = item["tier"] if item.get("tier") is not None else item.get("severity")
+        return tier == ActionTier.MUST_FIX.value
+
+    for vid, version in versions.items():
+        items = [r.get("finding") for r in version.reported_findings or []]
+        for item in items + pre_trial_items(version):
+            if must_fix(item):
+                out[vid].append(
+                    {
+                        "dimension": item.get("dimension"),
+                        "problem_type": item.get("problem_type"),
+                    }
+                )
+    if not versions:
+        return out
+    items = func.jsonb_array_elements(
+        case(
+            (
+                func.jsonb_typeof(TrialModel.analysis["action_items"]) == "array",
+                TrialModel.analysis["action_items"],
+            ),
+            else_=text("'[]'::jsonb"),
+        )
+    ).table_valued("value", joins_implicitly=True)
+    scope = EligibleTrialScope(
+        membership=[TrialModel.task_version_id.in_(list(versions))],
+        include_superseded=True,
+        include_deleted=True,
+    )
+    rows = await session.execute(
+        select(
+            TrialModel.task_version_id,
+            items.c.value.op("->>")("dimension"),
+            items.c.value.op("->>")("problem_type"),
+        )
+        .where(
+            *scope.clauses(),
+            func.jsonb_typeof(items.c.value) == "object",
+            func.coalesce(
+                items.c.value.op("->>")("tier"), items.c.value.op("->>")("severity")
+            )
+            == ActionTier.MUST_FIX.value,
+        )
+        .distinct()
+        .execution_options(include_deleted=True)
+    )
+    for vid, dimension, problem_type in rows:
+        out[vid].append({"dimension": dimension, "problem_type": problem_type})
+    return out
+
+
 async def preserve_task_findings(
     session: AsyncSession, version_id: str | None
 ) -> list[dict]:

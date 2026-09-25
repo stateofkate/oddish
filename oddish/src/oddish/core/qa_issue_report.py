@@ -18,6 +18,7 @@ splits tasks into blocked (any blocking issue, finished QA or not), clear
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from time import monotonic
 from typing import Any
 
 from fastapi import HTTPException
@@ -39,13 +40,19 @@ from oddish.core.qa_burndown import qa_burndown
 from oddish.core.deliveries import _get_delivery, _member_rows
 from oddish.core.experiment_membership import trial_in_experiment
 from oddish.core.helpers import _parse_github_meta
-from oddish.core.task_findings import task_defect_items
+from oddish.core.task_findings import must_fix_labels, task_defect_items
 from oddish.db import ExperimentModel, TaskModel, TaskVersionModel, TrialModel
 from oddish.db.models import task_experiments
 from oddish.filters.trial_predicates import qa_eligible_trial_clauses
 from oddish.schemas import QAIssueReportResponse
 
 FINISHED_QA = frozenset({"accepted", "needs_fixes"})
+# Opening a category, filtering, or paging reuses the report that the page
+# overview built a moment ago instead of rebuilding every task and version.
+# The overview (no category) always rebuilds, so its counts are never stale.
+_REUSE_SECONDS = 60
+_MAX_REPORTS = 32
+_REPORTS: dict[tuple, tuple[float, dict[str, Any]]] = {}
 _SOURCE_LABELS = {"pre_trial": "Source audit", "trial": "Trial review"}
 
 
@@ -88,17 +95,21 @@ def _trial_issue(trial: Any) -> dict[str, Any]:
     }
 
 
-def _verdict_issue(task: TaskModel, trial_issues: list[dict]) -> dict[str, Any]:
-    verdict = task.verdict or {}
-    primary = verdict.get("primary_issue")
+def _verdict_category(verdict: dict, trial_categories: list[str]) -> str:
     # A reject without a finding rests on a failed baseline or on most trials
     # showing the same problem, so take the trials' most common category.
-    counts = Counter(i["category"] for i in trial_issues)
-    category = category_for_rejection(primary) or (
+    counts = Counter(trial_categories)
+    return category_for_rejection(verdict.get("primary_issue")) or (
         counts.most_common(1)[0][0] if counts else "rejected-reason-unknown"
     )
+
+
+def _verdict_issue(
+    verdict: dict, date: Any, trial_issues: list[dict]
+) -> dict[str, Any]:
+    primary = verdict.get("primary_issue")
     return {
-        "category": category,
+        "category": _verdict_category(verdict, [i["category"] for i in trial_issues]),
         "kind": "verdict",
         "blocking": True,
         "severity": "reject",
@@ -109,21 +120,16 @@ def _verdict_issue(task: TaskModel, trial_issues: list[dict]) -> dict[str, Any]:
             verdict.get("reasoning"), "\n".join(verdict.get("recommendations") or [])
         ),
         "trial_id": verdict.get("_graded_by"),
-        "date": task.verdict_finished_at,
+        "date": date,
     }
 
 
-async def _trial_issues(
-    session: AsyncSession, version_ids: list[str], experiment_id: str | None
-) -> dict[str, list[dict]]:
+def _problem_trials(
+    columns: list[Any], version_ids: list[str], experiment_id: str | None
+) -> Any:
+    """Trials the QA agent labeled as a task problem, on these versions."""
     query = (
-        select(
-            TrialModel.id,
-            TrialModel.task_id,
-            TrialModel.agent,
-            TrialModel.analysis,
-            TrialModel.finished_at,
-        )
+        select(*columns)
         .where(
             TrialModel.task_version_id.in_(version_ids),
             *qa_eligible_trial_clauses(),
@@ -134,14 +140,105 @@ async def _trial_issues(
                 TrialModel.analysis["subtype"].astext == "hidden_file_leak",
             ),
         )
-        .order_by(TrialModel.task_id, TrialModel.id)
+        .order_by(TrialModel.task_version_id, TrialModel.id)
     )
     if experiment_id is not None:
         query = query.where(trial_in_experiment(experiment_id))
+    return query
+
+
+async def _trial_issues(
+    session: AsyncSession, version_ids: list[str], experiment_id: str | None
+) -> dict[str, list[dict]]:
+    columns = [
+        TrialModel.id,
+        TrialModel.task_version_id,
+        TrialModel.agent,
+        TrialModel.analysis,
+        TrialModel.finished_at,
+    ]
+    query = _problem_trials(columns, version_ids, experiment_id)
     issues: dict[str, list[dict]] = defaultdict(list)
     for trial in await session.execute(query):
-        issues[trial.task_id].append(_trial_issue(trial))
+        issues[trial.task_version_id].append(_trial_issue(trial))
     return issues
+
+
+async def _issues_at_version(
+    session: AsyncSession, tasks: list[TaskModel], k: int, experiment_id: str | None
+) -> dict[str, tuple[TaskVersionModel, str, list[dict]]]:
+    """Each task at its k-th version (or its last), with each issue's fix.
+
+    ``fixed_in`` is the first later version that finished QA from which the
+    task has no issue in that category any more, up to its newest version;
+    None means the issue is still open. A version without a QA verdict
+    cannot show that an issue is gone. The QA status comes from that
+    version's own verdict. Only the shown versions load the issue text; the
+    other versions load just enough to name each issue's category.
+    """
+    chains: dict[str, list[TaskVersionModel]] = defaultdict(list)
+    for v in await session.scalars(
+        select(TaskVersionModel)
+        .where(TaskVersionModel.task_id.in_([t.id for t in tasks]))
+        .order_by(TaskVersionModel.version)
+    ):
+        chains[v.task_id].append(v)
+    shown = {
+        task_id: chain[min(k, len(chain)) - 1] for task_id, chain in chains.items()
+    }
+    everything = {v.id: v for chain in chains.values() for v in chain}
+    defects = await task_defect_items(session, {v.id: v for v in shown.values()})
+    trials = await _trial_issues(session, [v.id for v in shown.values()], experiment_id)
+    labels = await must_fix_labels(session, everything)
+    subtypes: dict[str, list[str]] = defaultdict(list)
+    query = _problem_trials(
+        [TrialModel.task_version_id, TrialModel.analysis["subtype"].astext],
+        list(everything),
+        experiment_id,
+    )
+    for vid, subtype in await session.execute(query):
+        subtypes[vid].append(category_for_subtype(subtype))
+
+    def verdict_of(v: TaskVersionModel) -> dict:
+        return v.verdict if isinstance(v.verdict, dict) else {}
+
+    def categories_of(v: TaskVersionModel) -> set[str]:
+        found = {category_for_finding(label) for label in labels[v.id]}
+        verdict = verdict_of(v)
+        if verdict and verdict.get("is_good") is not True and not found:
+            found.add(_verdict_category(verdict, subtypes[v.id]))
+        return found | set(subtypes[v.id])
+
+    out = {}
+    for task_id, chain in chains.items():
+        version = shown[task_id]
+        verdict = verdict_of(version)
+        findings = [
+            _finding_issue(d, version)
+            for d in defects.get(version.id, [])
+            if d.get("recorded_tier") == "must_fix"
+        ]
+        found = findings + trials.get(version.id, [])
+        if verdict and verdict.get("is_good") is not True and not findings:
+            found.insert(0, _verdict_issue(verdict, None, trials.get(version.id, [])))
+        later = [(v, categories_of(v)) for v in chain if v.version > version.version]
+        issues = []
+        for issue in found:
+            fixed_in = None
+            for v, categories in reversed(later):
+                if issue["category"] in categories:
+                    break
+                # Only a version that finished QA can show the issue is gone.
+                if verdict_of(v):
+                    fixed_in = v.version
+            issues.append({**issue, "fixed_in": fixed_in})
+        status = (
+            "never"
+            if not verdict
+            else "accepted" if verdict.get("is_good") is True else "needs_fixes"
+        )
+        out[task_id] = (version, status, issues)
+    return out
 
 
 def _category_tasks(
@@ -190,6 +287,44 @@ async def _scope_tasks(
     return name, list(await session.scalars(select(TaskModel).where(where)))
 
 
+async def _current_issues(
+    session: AsyncSession, tasks: list[TaskModel], experiment_id: str | None
+) -> dict[str, tuple[TaskVersionModel | None, str, list[dict]]]:
+    """Each task at its current version, with the delivery board's QA status."""
+    version_ids = [t.current_version_id for t in tasks if t.current_version_id]
+    versions = {
+        v.id: v
+        for v in await session.scalars(
+            select(TaskVersionModel).where(TaskVersionModel.id.in_(version_ids))
+        )
+    }
+    qa = await delivery_qa_statuses(
+        session, tasks={t.id: t for t in tasks}, versions=versions
+    )
+    defects = await task_defect_items(session, versions)
+    trials = await _trial_issues(session, version_ids, experiment_id)
+    out: dict[str, tuple[TaskVersionModel | None, str, list[dict]]] = {}
+    for task in tasks:
+        version = versions.get(task.current_version_id or "")
+        status = qa[task.id].status if task.id in qa else "never"
+        findings = [
+            _finding_issue(d, version)
+            for d in (defects.get(version.id, []) if version else [])
+            if d.get("recorded_tier") == "must_fix"
+        ]
+        version_trials = trials.get(task.current_version_id or "", [])
+        issues = findings + version_trials
+        if status == "needs_fixes" and not findings:
+            issues.insert(
+                0,
+                _verdict_issue(
+                    task.verdict or {}, task.verdict_finished_at, version_trials
+                ),
+            )
+        out[task.id] = (version, status, issues)
+    return out
+
+
 async def qa_issue_report_core(
     session: AsyncSession,
     *,
@@ -202,6 +337,7 @@ async def qa_issue_report_core(
     page: int = 1,
     page_size: int = 25,
     public: bool = False,
+    version: int | None = None,
 ) -> QAIssueReportResponse:
     """Build the report live. Task rows are sent only for one ``category``.
 
@@ -214,37 +350,65 @@ async def qa_issue_report_core(
     views, so a public search cannot match them either.
     Experiment reports count only trials in the experiment; findings and
     verdicts describe the task version, so they are not limited.
+    ``version`` shows each task at its k-th version and marks every issue
+    with the version that fixed it, or None while it is still open.
     """
     if category is not None and category not in CATEGORY_BY_SLUG:
         raise HTTPException(status_code=404, detail="Unknown QA issue category")
+
+    async def report_at(at: int | None, fresh: bool) -> dict[str, Any]:
+        key = (scope_kind, scope_id, org_id, public, at)
+        cached = _REPORTS.get(key)
+        if fresh or cached is None or monotonic() - cached[0] > _REUSE_SECONDS:
+            built = await _build_report(
+                session, scope_kind, scope_id, org_id, public=public, version=at
+            )
+            _REPORTS.pop(key, None)
+            _REPORTS[key] = (monotonic(), built)
+            while len(_REPORTS) > _MAX_REPORTS:
+                _REPORTS.pop(next(iter(_REPORTS)))
+            return built
+        return cached[1]
+
+    built = await report_at(version, fresh=category is None)
+    # The burndown always ends at the live report, also when time travelling.
+    live = built if version is None else await report_at(None, fresh=False)
+    matches = _category_tasks(built["rows"], category, blocking, q) if category else []
+    return QAIssueReportResponse(
+        scope_kind=scope_kind,
+        scope_id=scope_id,
+        scope_name=built["name"],
+        taxonomy_version=TAXONOMY_VERSION,
+        summary=built["summary"],
+        burndown=live["burndown"],
+        version=version,
+        categories=built["categories"],
+        category=category,
+        task_total=len(matches),
+        tasks=matches[(page - 1) * page_size : page * page_size],
+    )
+
+
+async def _build_report(
+    session: AsyncSession,
+    scope_kind: str,
+    scope_id: str,
+    org_id: str | None,
+    *,
+    public: bool,
+    version: int | None,
+) -> dict[str, Any]:
+    """Every task row, the categories, the split, and the burndown."""
     name, tasks = await _scope_tasks(session, scope_kind, scope_id, org_id)
-    version_ids = [t.current_version_id for t in tasks if t.current_version_id]
-    versions = {
-        v.id: v
-        for v in await session.scalars(
-            select(TaskVersionModel).where(TaskVersionModel.id.in_(version_ids))
-        )
-    }
-    qa = await delivery_qa_statuses(
-        session, tasks={t.id: t for t in tasks}, versions=versions
-    )
-    defects = await task_defect_items(session, versions)
-    trial_issues = await _trial_issues(
-        session, version_ids, scope_id if scope_kind == "experiment" else None
-    )
+    experiment_id = scope_id if scope_kind == "experiment" else None
+    if version is None:
+        per_task = await _current_issues(session, tasks, experiment_id)
+    else:
+        per_task = await _issues_at_version(session, tasks, version, experiment_id)
 
     rows: list[dict[str, Any]] = []
     for task in sorted(tasks, key=lambda t: t.name):
-        version = versions.get(task.current_version_id or "")
-        status = qa[task.id].status if task.id in qa else "never"
-        findings = [
-            _finding_issue(d, version)
-            for d in (defects.get(version.id, []) if version else [])
-            if d.get("recorded_tier") == "must_fix"
-        ]
-        issues = findings + trial_issues.get(task.id, [])
-        if status == "needs_fixes" and not findings:
-            issues.insert(0, _verdict_issue(task, trial_issues.get(task.id, [])))
+        task_version, status, issues = per_task.get(task.id, (None, "never", []))
         if public:
             issues = [{**i, "trial_id": None} for i in issues]
         meta = {} if public else _parse_github_meta(task.tags) or {}
@@ -252,7 +416,8 @@ async def qa_issue_report_core(
             {
                 "task_id": task.id,
                 "task_name": task.name,
-                "version_id": task.current_version_id,
+                "version_id": task_version.id if task_version else None,
+                "version": task_version.version if task_version else None,
                 "qa_status": status,
                 "finished_qa": status in FINISHED_QA,
                 "author": (
@@ -282,27 +447,29 @@ async def qa_issue_report_core(
                     "tasks": len({r["task_id"] for r, _ in hits}),
                 }
             )
+            if version is not None:
+                categories[-1]["fixed_issues"] = sum(
+                    1 for _, i in hits if i.get("fixed_in")
+                )
     categories.sort(key=lambda c: (-c["issues"], c["name"]))
 
     blocked = sum(1 for r in rows if r["blocking_issues"])
     clear = sum(1 for r in rows if r["finished_qa"] and not r["blocking_issues"])
-    matches = _category_tasks(rows, category, blocking, q) if category else []
     summary = {
         "tasks": len(rows),
         "blocked": blocked,
         "clear": clear,
         "waiting": len(rows) - blocked - clear,
     }
-    burndown = await qa_burndown(session, [t.id for t in tasks], summary)
-    return QAIssueReportResponse(
-        scope_kind=scope_kind,
-        scope_id=scope_id,
-        scope_name=name,
-        taxonomy_version=TAXONOMY_VERSION,
-        summary=summary,
-        burndown=burndown,
-        categories=categories,
-        category=category,
-        task_total=len(matches),
-        tasks=matches[(page - 1) * page_size : page * page_size],
+    burndown = (
+        await qa_burndown(session, [t.id for t in tasks], summary)
+        if version is None
+        else []
     )
+    return {
+        "name": name,
+        "rows": rows,
+        "categories": categories,
+        "summary": summary,
+        "burndown": burndown,
+    }

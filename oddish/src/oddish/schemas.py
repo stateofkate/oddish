@@ -2953,6 +2953,8 @@ class QAIssueReportResponse(BaseModel):
     summary: dict[str, int]
     # Blocked / clear / waiting over time, replayed from task versions.
     burndown: list[dict[str, Any]] = Field(default_factory=list)
+    # Set when the report shows each task at its k-th version.
+    version: int | None = None
     categories: list[dict[str, Any]]
     category: str | None = None
     task_total: int = 0

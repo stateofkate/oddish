@@ -27,6 +27,7 @@ async def get_qa_issue_report(
     q: str = "",
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=500),
+    version: int | None = Query(None, ge=1),
 ) -> QAIssueReportResponse:
     auth.require_scope(APIKeyScope.TASKS if scope == "deliveries" else APIKeyScope.READ)
     async with get_read_session() as session:
@@ -40,4 +41,5 @@ async def get_qa_issue_report(
             q=q,
             page=page,
             page_size=page_size,
+            version=version,
         )

@@ -1,7 +1,15 @@
 "use client";
 
-import { useState } from "react";
-import { BURNDOWN_SERIES, type QaBurndownPoint } from "@/lib/qa-issues";
+import { useState, useTransition } from "react";
+import { Loader2 } from "lucide-react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import {
+  BURNDOWN_SERIES,
+  qaIssuesHref,
+  type QaBurndownPoint,
+} from "@/lib/qa-issues";
+import { useOrgPath, useQaIssuesView } from "@/lib/use-qa-issues-view";
 
 const W = 1000;
 
@@ -15,8 +23,43 @@ function total(p: QaBurndownPoint) {
   return p.blocked + p.clear + p.waiting;
 }
 
-export function QaBurndownChart({ points }: { points: QaBurndownPoint[] }) {
+export function QaBurndownChart({
+  points,
+  baseHref,
+  selected,
+}: {
+  points: QaBurndownPoint[];
+  /** The QA issues page; when set, each point links to its version there. */
+  baseHref?: string;
+  /** The version the page shows; undefined for Now. */
+  selected?: number;
+}) {
+  const router = useRouter();
   const [hover, setHover] = useState<number | null>(null);
+  // On the QA issues page, keep the open category and filters in the URL.
+  const view = useQaIssuesView(baseHref ?? "");
+  const orgPath = useOrgPath();
+  const href = (p: QaBurndownPoint) =>
+    orgPath(
+      qaIssuesHref(baseHref!, {
+        ...view,
+        page: 1,
+        version: p.version ?? undefined,
+      })
+    );
+  // A version click marks its point at once; the page follows when it loads.
+  const [loading, startLoading] = useTransition();
+  const [target, setTarget] = useState<number | null>(null);
+  const open = (i: number) => {
+    setTarget(i);
+    startLoading(() => router.push(href(points[i]), { scroll: false }));
+  };
+  const at =
+    loading && target !== null
+      ? target
+      : selected
+        ? points.findIndex((p) => p.version === selected)
+        : points.length - 1;
   const max = Math.max(1, ...points.map(total));
   const x = (i: number) => (i / (points.length - 1)) * W;
   const y = (v: number) => H - (v / max) * H;
@@ -46,11 +89,15 @@ export function QaBurndownChart({ points }: { points: QaBurndownPoint[] }) {
           );
         }}
         onPointerLeave={() => setHover(null)}
+        onClick={() => {
+          if (baseHref && hover !== null) open(hover);
+        }}
+        style={baseHref ? { cursor: "pointer" } : undefined}
       >
         <svg
           viewBox={`0 0 ${W} ${H}`}
           preserveAspectRatio="none"
-          className="h-full w-full overflow-visible"
+          className={`h-full w-full overflow-visible transition-opacity ${loading ? "opacity-60" : ""}`}
           aria-hidden
         >
           {bands.map((band) => (
@@ -62,6 +109,17 @@ export function QaBurndownChart({ points }: { points: QaBurndownPoint[] }) {
               vectorEffect="non-scaling-stroke"
             />
           ))}
+          {baseHref && at >= 0 && (
+            <line
+              x1={x(at)}
+              x2={x(at)}
+              y1={0}
+              y2={H}
+              className="stroke-foreground"
+              strokeWidth={2}
+              vectorEffect="non-scaling-stroke"
+            />
+          )}
           {hover !== null && (
             <line
               x1={x(hover)}
@@ -77,6 +135,12 @@ export function QaBurndownChart({ points }: { points: QaBurndownPoint[] }) {
         <span className="text-muted-foreground absolute top-0 left-1 text-[11px] tabular-nums">
           {max}
         </span>
+        {loading && target !== null && (
+          <span className="bg-card text-muted-foreground absolute top-0 right-1 flex items-center gap-1 rounded px-1 text-[11px]">
+            <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+            Loading {label(points[target])}
+          </span>
+        )}
         {point && hover !== null && (
           <div
             className="bg-popover text-popover-foreground pointer-events-none absolute top-2 z-10 min-w-36 rounded-md border px-2.5 py-2 text-xs shadow-md"
@@ -103,9 +167,32 @@ export function QaBurndownChart({ points }: { points: QaBurndownPoint[] }) {
         {(points.length <= 12
           ? points
           : [points[0], points[points.length - 1]]
-        ).map((p) => (
-          <span key={label(p)}>{label(p)}</span>
-        ))}
+        ).map((p) =>
+          baseHref ? (
+            <Link
+              key={label(p)}
+              href={href(p)}
+              scroll={false}
+              // Each version page builds a report on the server; load on click.
+              prefetch={false}
+              onClick={(event) => {
+                if (event.metaKey || event.ctrlKey || event.shiftKey) return;
+                event.preventDefault();
+                open(points.indexOf(p));
+              }}
+              aria-current={points[at] === p ? "page" : undefined}
+              className={
+                points[at] === p
+                  ? "text-foreground font-semibold"
+                  : "hover:text-foreground"
+              }
+            >
+              {label(p)}
+            </Link>
+          ) : (
+            <span key={label(p)}>{label(p)}</span>
+          )
+        )}
       </figcaption>
       <table className="sr-only">
         <thead>

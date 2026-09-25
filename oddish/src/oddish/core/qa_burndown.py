@@ -16,15 +16,15 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from oddish.core.task_findings import task_defect_items
+from oddish.core.task_findings import must_fix_labels
 from oddish.db import TaskVersionModel
 
 
-def _state(version: TaskVersionModel, defects: list[dict]) -> str:
+def _state(version: TaskVersionModel, must_fix: list[dict]) -> str:
     # The delivery board's rule: any published verdict counts, and only
     # ``is_good: true`` accepts. Older payloads carry no ``verdict`` string.
     verdict = version.verdict
-    if any(d.get("recorded_tier") == "must_fix" for d in defects):
+    if must_fix:
         return "blocked"
     if isinstance(verdict, dict) and verdict:
         return "clear" if verdict.get("is_good") is True else "blocked"
@@ -42,7 +42,7 @@ async def qa_burndown(
             select(TaskVersionModel).where(TaskVersionModel.task_id.in_(task_ids))
         )
     }
-    defects = await task_defect_items(session, versions, include_details=False)
+    defects = await must_fix_labels(session, versions)
     states: dict[str, list[str]] = {}
     for v in sorted(versions.values(), key=lambda v: v.version):
         states.setdefault(v.task_id, []).append(_state(v, defects.get(v.id, [])))

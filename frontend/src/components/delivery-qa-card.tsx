@@ -23,6 +23,7 @@ export function DeliveryQaCard({ deliveryId }: { deliveryId: string }) {
       summary={data.summary}
       burndown={data.burndown}
       href={`/deliveries/${encodeURIComponent(deliveryId)}/qa-issues`}
+      pointsHref={`/deliveries/${encodeURIComponent(deliveryId)}/qa-issues`}
     />
   );
 }

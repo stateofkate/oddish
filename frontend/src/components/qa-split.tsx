@@ -23,11 +23,17 @@ export function QaSplit({
   summary,
   burndown,
   href,
+  pointsHref,
+  selected,
 }: {
   summary: QaIssueReport["summary"];
   burndown: QaIssueReport["burndown"];
   /** Set where the card links to the full QA issues page. */
   href?: string;
+  /** The QA issues page that each chart point opens at its version. */
+  pointsHref?: string;
+  /** The version the report shows; undefined for Now. */
+  selected?: number;
 }) {
   return (
     <section className="bg-card space-y-3 rounded-xl border p-4">
@@ -61,7 +67,11 @@ export function QaSplit({
         ))}
       </div>
       {burndown.length > 1 ? (
-        <QaBurndownChart points={burndown} />
+        <QaBurndownChart
+          points={burndown}
+          baseHref={pointsHref}
+          selected={selected}
+        />
       ) : (
         <Bar parts={BURNDOWN_SERIES.map((s) => [summary[s.key], s.dot])} />
       )}

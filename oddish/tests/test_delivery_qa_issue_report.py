@@ -14,6 +14,7 @@ from oddish.analyze.qa_issue_taxonomy import CATEGORIES, LABEL_CATEGORY
 from oddish.core.qa_burndown import qa_burndown
 from oddish.core.qa_issue_report import qa_issue_report_core
 from oddish.db import ExperimentModel, TaskVersionModel, generate_id
+from oddish.db.models import DeliveryTaskModel
 from oddish.db.models import task_experiments
 from test_deliveries import ORG, _trial
 from test_delivery_qa import _reviewed_delivery
@@ -267,3 +268,49 @@ async def test_burndown_counts_each_task_at_each_version(session):
         {"version": 3, "blocked": 0, "clear": 1, "waiting": 1},
         {"version": None, **live},
     ]
+
+
+@pytest.mark.asyncio
+async def test_time_travel_marks_each_old_issue_fixed_or_open(session):
+    delivery, task, version, *_ = await _reviewed_delivery(session)
+    version.pre_trial = {"items": [_finding("verifier")]}
+    for number, is_good in ((2, False), (3, True)):
+        session.add(
+            TaskVersionModel(
+                id=f"{task.id}-v{number}",
+                task_id=task.id,
+                version=number,
+                task_path="x",
+                verdict={"is_good": is_good},
+            )
+        )
+    _, stuck, stuck_version, *_ = await _reviewed_delivery(session)
+    stuck_version.pre_trial = {"items": [_finding("verifier")]}
+    session.add(
+        TaskVersionModel(
+            id=f"{stuck.id}-v2", task_id=stuck.id, version=2, task_path="x"
+        )
+    )
+    session.add(
+        DeliveryTaskModel(delivery_id=delivery.id, task_id=stuck.id, sort_order=1)
+    )
+    await session.flush()
+
+    def fixes(report):
+        return {
+            (row["task_name"], row["version"]): [i["fixed_in"] for i in row["issues"]]
+            for row in report.tasks
+        }
+
+    at_v1 = await _report(
+        session, delivery.id, "instruction-and-tests-disagree", version=1
+    )
+    assert fixes(at_v1) == {(task.name, 1): [2], (stuck.name, 1): [None]}
+    [category] = at_v1.categories
+    assert (category["issues"], category["fixed_issues"]) == (2, 1)
+    live = (await _report(session, delivery.id)).burndown[-1]
+    assert at_v1.burndown[-1] == live
+    at_v2 = await _report(session, delivery.id, "rejected-reason-unknown", version=2)
+    assert fixes(at_v2) == {(task.name, 2): [3]}
+    assert (await _report(session, delivery.id, version=3)).summary["clear"] == 1
+    assert "fixed_issues" not in (await _report(session, delivery.id)).categories[0]

@@ -12,6 +12,8 @@ export interface QaIssue {
   file?: string | null;
   trial_id: string | null;
   date: string | null;
+  /** Time travel only: the version that fixed it, or null while still open. */
+  fixed_in?: number | null;
 }
 
 export interface QaIssueTask {
@@ -22,6 +24,8 @@ export interface QaIssueTask {
   pr_url: string | null;
   pr_number: string | null;
   blocking_issues: number;
+  /** The version the row shows: current, or the time-travel version. */
+  version?: number | null;
   issues: QaIssue[];
 }
 
@@ -32,6 +36,8 @@ export interface QaIssueCategory {
   description: string;
   issues: number;
   blocking_issues: number;
+  /** Time travel only: issues fixed by a later version. */
+  fixed_issues?: number;
   tasks: number;
 }
 
@@ -67,6 +73,8 @@ export interface QaIssueReport {
   summary: { tasks: number; blocked: number; clear: number; waiting: number };
   /** The same split at each task version number, then Now (= summary). */
   burndown: QaBurndownPoint[];
+  /** Set when every task is shown at this version number. */
+  version?: number | null;
   categories: QaIssueCategory[];
   category: string | null;
   task_total: number;
@@ -83,6 +91,8 @@ export interface QaIssuesView {
   blocking: boolean;
   q: string;
   page: number;
+  /** Time travel: show every task at this version number. */
+  version?: number;
 }
 
 export function parseQaIssuesView(
@@ -97,6 +107,7 @@ export function parseQaIssuesView(
     blocking: one("blocking") === "1",
     q: one("q"),
     page: Math.max(1, Number.parseInt(one("page"), 10) || 1),
+    version: Number.parseInt(one("version"), 10) || undefined,
   };
 }
 
@@ -106,6 +117,7 @@ function qaIssuesParams(view: Partial<QaIssuesView>) {
   if (view.blocking) params.set("blocking", "1");
   if (view.q) params.set("q", view.q);
   if (view.page && view.page > 1) params.set("page", String(view.page));
+  if (view.version) params.set("version", String(view.version));
   return params;
 }
 

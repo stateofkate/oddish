@@ -19,9 +19,9 @@ export default async function ExperimentQaIssuesPage({
   return (
     <QaIssuesPage
       report={fetchQaIssueReport("experiments", experimentId, view)}
-      view={view}
       backHref={href}
       baseHref={`${href}/qa-issues`}
+      apiHref={`/api${href}/qa-issues`}
     />
   );
 }
