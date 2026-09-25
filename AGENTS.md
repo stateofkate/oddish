@@ -1446,10 +1446,12 @@ Keep these routing rules in sync with `oddish/src/oddish/config.py` and
   `backend/api/routers/tasks.py` computes the request fingerprint before
   identity or GitHub attribution mutates the submission; `backend/cloud_policy.py`
   maps that SHA-256 value into a 0–99 bucket. The selected default reaches every
-  unset trial spec in the sweep. Explicit submission/config environments,
-  non-Daytona capability routes, appends that inherit an existing task's
-  environment keep their provider. The batch route applies the same rule
-  independently to each raw item. When a retry starts after two failed Archil
+  unset trial spec in the sweep, including newly appended trials on existing
+  Daytona tasks. An Archil selection replaces inherited Daytona before both
+  Harbor stamping and trial creation; existing trials remain unchanged.
+  Explicit submission/config environments, non-Daytona capability routes,
+  and inherited providers other than Daytona keep their provider. The batch route
+  applies the same rule independently to each raw item. When a retry starts after two failed Archil
   attempts, `_prepare_trial_run` persists Modal on the trial and uses it for
   attempt 3 and later retries, including retries recovered after worker loss.
   This also applies to explicitly selected Archil trials. The existing attempt

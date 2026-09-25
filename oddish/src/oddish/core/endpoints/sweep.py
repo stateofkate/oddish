@@ -516,6 +516,13 @@ async def create_task_sweep_core(
         inherited_environment = await _existing_task_environment(
             session, submission.task_id
         )
+    # Let the Archil rollout select new trials on existing Daytona tasks too.
+    # Explicit submission/config environments still win during spec creation.
+    if (
+        inherited_environment == EnvironmentType.DAYTONA
+        and default_environment == EnvironmentType.ARCHIL
+    ):
+        inherited_environment = EnvironmentType.ARCHIL
     effective_default_env = (
         inherited_environment
         if inherited_environment is not None

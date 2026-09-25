@@ -335,6 +335,71 @@ async def test_append_without_env_inherits_gke_and_routes_to_gke_variant():
         assert variants and all(v == "gke" for v in variants)
 
 
+@pytest.mark.parametrize(
+    "inherited,selected,submission_env,config_env,expected",
+    [
+        ("daytona", "archil", None, None, "archil"),
+        ("daytona", "daytona", None, None, "daytona"),
+        ("daytona", "archil", "daytona", None, "daytona"),
+        ("daytona", "archil", None, "daytona", "daytona"),
+        ("modal", "archil", None, None, "modal"),
+        ("gke", "archil", None, None, "gke"),
+        ("archil", "daytona", None, None, "archil"),
+    ],
+)
+async def test_archil_rollout_on_existing_task(
+    inherited, selected, submission_env, config_env, expected
+):
+    from uuid import uuid4
+
+    from harbor.models.environment_type import EnvironmentType
+    from sqlalchemy import select
+
+    from oddish.db import WorkerJobModel
+
+    task_id = f"hsweep-archil-append-{uuid4().hex}"
+    async with get_session() as session:
+        session.add(TaskModel(id=task_id, name=task_id, user="t", task_path="p"))
+        await session.flush()
+        _, original_trials, _, _ = await create_task_sweep_core(
+            session,
+            submission=TaskSweepSubmission(
+                task_id=task_id,
+                configs=[AgentModelPair(agent="nop", n_trials=1)],
+                environment=EnvironmentType(inherited),
+            ),
+        )
+        # Let the core detect append mode, as it does for existing-task reruns.
+        _, new_trials, is_append, _ = await create_task_sweep_core(
+            session,
+            submission=TaskSweepSubmission(
+                task_id=task_id,
+                configs=[
+                    AgentModelPair(
+                        agent="nop",
+                        model="distinct-model",
+                        n_trials=2,
+                        environment=config_env,
+                    )
+                ],
+                environment=submission_env,
+            ),
+            default_environment=EnvironmentType(selected),
+        )
+        assert is_append and len(new_trials) == 2
+        assert {t.environment for t in new_trials} == {expected}
+        await session.refresh(original_trials[0])
+        assert original_trials[0].environment == inherited
+        variants = (
+            await session.scalars(
+                select(WorkerJobModel.harbor_variant_id).where(
+                    WorkerJobModel.subject_id.in_([t.id for t in new_trials])
+                )
+            )
+        ).all()
+        assert variants == ["gke" if expected == "gke" else "default"] * 2
+
+
 async def test_disallowed_source_rejected_with_422():
     async with get_session() as session:
         await _cleanup(session, "hsweep-task3")
