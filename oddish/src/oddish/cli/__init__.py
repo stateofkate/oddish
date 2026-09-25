@@ -12,6 +12,7 @@ from oddish.cli.combine import combine
 from oddish.cli.cost_exclusions import cost_exclusions_app
 from oddish.cli.costs import costs
 from oddish.cli.delete import delete
+from oddish.cli.qa_issues import qa_issues
 from oddish.cli.delivery import delivery_app
 from oddish.cli.experiment import experiment_app
 from oddish.cli.link import link_app
@@ -70,6 +71,7 @@ app.command()(collect)
 app.command()(delete)
 app.add_typer(admin_app, name="admin")
 app.add_typer(delivery_app, name="delivery")
+app.command(name="qa-issues")(qa_issues)
 app.add_typer(experiment_app, name="experiment")
 app.add_typer(link_app, name="link")
 app.command()(pull)

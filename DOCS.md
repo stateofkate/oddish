@@ -1150,6 +1150,31 @@ to the current version, so a new version starts unassigned. Finalized delivery
 snapshots remain unchanged. Standalone servers accept a local owner identifier
 instead of resolving an organization member.
 
+## QA issues by category
+
+`oddish qa-issues` shows which kinds of QA problems an experiment or a
+delivery has. It reads the QA results that Oddish already stores. It does not
+run QA again and it changes nothing.
+
+```bash
+oddish qa-issues --experiment EXPERIMENT_ID
+oddish qa-issues --delivery september-batch
+oddish qa-issues --delivery september-batch --category tests-pass-wrong-work
+```
+
+The first lines split the tasks into three parts that add up to the total:
+blocked (at least one blocking issue), clear (QA finished with no blocking
+issue), and waiting for QA (the rest). A table then
+counts issues per category. Each category is in one group: grading accuracy,
+solution integrity, task design, or environment. Use the slug from the table
+with `--category` to list that category's tasks, authors, PRs, and issues.
+
+An issue is a `must_fix` finding (blocking), a trial that QA labeled as a task
+problem (not blocking alone), or a reject verdict on a task with no `must_fix`
+finding (blocking). A blocking finding blocks a task before its QA verdict is
+ready. For an experiment, only the
+trials in that experiment count. `--json` prints the full response.
+
 ## Deliveries
 
 A delivery is a checklist for a set of tasks. It answers one question: can

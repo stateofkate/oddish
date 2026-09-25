@@ -96,6 +96,11 @@ excludes existing delivery members by full delivery ID.
 `oddish delivery create-customer NAME [--json]` creates one independently.
 `oddish delivery history TASK` remains the QA trail, not shipment history.
 
+`oddish qa-issues -e EXPERIMENT` or `-d DELIVERY [--json]` reads (never
+changes) the live QA issue report: tasks split into blocked, clear, and
+waiting for QA, and issue counts per category. Add `-c CATEGORY` (the slug from
+the table) to list that category's tasks, authors, PRs, and issues.
+
 Use `oddish <command> --help` for the exhaustive option list. Important
 submission controls include:
 

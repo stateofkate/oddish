@@ -102,6 +102,7 @@ reference. The main commands are:
 - `oddish publish` / `oddish unpublish` — toggle public read-only experiment sharing. QA is hidden by default; admins can enable **Show QA** in the dashboard.
 - `oddish backfill-analysis` — specialized QA tool.
 - `oddish delivery` — create and manage delivery checklists; `customers` / `create-customer` manage destinations, and `create` / `add --tasks-file` accept a complete `oddish ls --ids --json` selection. `oddish ls --delivery-history` shows recorded shipments. `oddish ls --share-selection NAME` saves matching task IDs for the organization; `--selection-id ID` reopens them.
+- `oddish qa-issues` — count QA issues by plain-English category for one experiment (`-e ID`) or one delivery (`-d ID|NAME`); `-c CATEGORY` lists that category's tasks and issues; `--json` for scripts.
 - `oddish assign` — assign QA review ownership by task IDs or `--tasks-file`; active delivery boards show the owner.
 - `oddish skill` — print the packaged SKILL.md or install the complete agent skill with its reference files.
 - `oddish version` — print the installed CLI version (`--check` compares with the latest PyPI release). No API key.
