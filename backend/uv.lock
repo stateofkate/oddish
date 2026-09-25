@@ -1538,7 +1538,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rich", specifier = "==14.3.1" },
     { name = "sqlalchemy", extras = ["asyncio"], marker = "extra == 'server'", specifier = "==2.0.46" },
-    { name = "thunder-sandbox", marker = "extra == 'worker'", specifier = "==0.7.4" },
+    { name = "thunder-sandbox", marker = "extra == 'worker'", specifier = "==0.7.5" },
     { name = "tomlkit", specifier = "==0.15.1" },
     { name = "twine", marker = "extra == 'dev'", specifier = "==6.2.0" },
     { name = "typer", specifier = "==0.21.1" },
@@ -2512,8 +2512,8 @@ name = "secretstorage"
 version = "3.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cryptography" },
-    { name = "jeepney" },
+    { name = "cryptography", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "jeepney", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/1c/03/e834bcd866f2f8a49a85eaff47340affa3bfa391ee9912a952a1faa68c7b/secretstorage-3.5.0.tar.gz", hash = "sha256:f04b8e4689cbce351744d5537bf6b1329c6fc68f91fa666f60a380edddcd11be", size = 19884, upload-time = "2025-11-23T19:02:53.191Z" }
 wheels = [
@@ -2765,15 +2765,15 @@ wheels = [
 
 [[package]]
 name = "thunder-sandbox"
-version = "0.7.4"
+version = "0.7.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
     { name = "asyncssh" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/6f/5a/69d94924dff1269842cac0026642c621df452fb9b5e56d82559021807e42/thunder_sandbox-0.7.4.tar.gz", hash = "sha256:248f8fba66e807b30a1260e564d508a43b2231bd31704c10cc48974dbdca4d27", size = 61213, upload-time = "2026-09-19T02:02:56.539Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d8/6c/d43ed030ed7c05356d643da3a3eb92a69e134eae3d72ea914c32db4c7b27/thunder_sandbox-0.7.5.tar.gz", hash = "sha256:a859a723c68add4e95dee336127c8de411442b8f9944a7580c102f403691257d", size = 61565, upload-time = "2026-09-25T01:28:20.431Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/46/ff/449ee5ce8b8845d54a6ab6cf41ca53572bed9464e6ecc077417fefd7fd13/thunder_sandbox-0.7.4-py3-none-any.whl", hash = "sha256:35e48cd746b3f74d2724ad7a07e7ac992472561868c6c8224a5791cdd93ea2a1", size = 65391, upload-time = "2026-09-19T02:02:55.222Z" },
+    { url = "https://files.pythonhosted.org/packages/36/70/ed622e660c69d98e521866784d947ed49644e11f58f46f13cc8f0e18a351/thunder_sandbox-0.7.5-py3-none-any.whl", hash = "sha256:8195764a74ec450fbc363f6137d80577a5a69eac36e2f10afa6a04e0115a4a09", size = 65748, upload-time = "2026-09-25T01:28:19.064Z" },
 ]
 
 [[package]]
