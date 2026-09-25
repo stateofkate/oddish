@@ -1807,6 +1807,10 @@ Keep these routing rules in sync with `oddish/src/oddish/config.py` and
   saved. Resumes append stdout; each attempt replaces stderr. The wrapper
   waits for stderr's `tee` before inspecting errors and preserves Grok's exit
   code; a logging failure also fails an otherwise successful command.
+  Because every attempt streams, a failed run prints a final-attempt marker
+  on both channels before the last arm's stderr, and `_classify_exec_error`
+  reads only what follows it, so a discarded arm's flag error or rate limit
+  cannot type the final failure.
 - `grok-build` trajectories come from the CLI's on-disk **session store**, not
   its headless stdout. `grok -p --output-format json|streaming-json` only emits
   the assistant's `text`/`thought` — no tool calls and no token usage — so

@@ -708,3 +708,55 @@ def test_pool_tolerates_whitespace_and_empty_entries(tmp_path, monkeypatch):
 
     assert agent._xai_env() == {_XAI_API_KEY_ENV: "key_A"}
     assert set(pools[0]) == {"key_A", "key_B"}
+
+
+_DISCARDED_RATE_LIMIT_THEN_BILLING_STUB = """
+echo "$*" >> "$LOGDIR/calls.log"
+case "$*" in
+  *--reasoning-effort*)
+    echo "Error: You've hit your team's API rate limit." >&2
+    echo "unknown option '--reasoning-effort'" >&2
+    exit 1;;
+esac
+echo "Error: 403 Forbidden: team credits exhausted" >&2
+exit 1
+"""
+
+
+@pytest.mark.asyncio
+async def test_classification_ignores_discarded_attempt_output(tmp_path, monkeypatch):
+    # The first arm's rate-limit text streams over exec before the flag
+    # fallback runs. Classifying the whole stream picks it (Harbor keeps the
+    # last pattern match, and rate limit is not refined), hiding the final
+    # arm's billing failure.
+    command = await _generated_command(tmp_path, monkeypatch)
+    rewritten, env, _ = _prepare_shell(
+        command, tmp_path, _DISCARDED_RATE_LIMIT_THEN_BILLING_STUB
+    )
+    proc = subprocess.run(
+        ["bash", "-c", rewritten], env=env, capture_output=True, text=True, timeout=10
+    )
+    result = SimpleNamespace(
+        return_code=proc.returncode, stdout=proc.stdout, stderr=proc.stderr
+    )
+    assert proc.returncode == 1
+    assert "rate limit" in proc.stderr
+
+    agent = OddishGrokBuild(logs_dir=tmp_path, model_name="xai/grok-4")
+    error = agent._classify_exec_error("grok -p", result)
+
+    assert type(error) is ApiUsageLimitError
+    assert "rate limit" not in str(error)
+
+
+def test_classification_keeps_whole_output_without_final_marker(tmp_path):
+    agent = OddishGrokBuild(logs_dir=tmp_path, model_name="xai/grok-4")
+    result = SimpleNamespace(
+        return_code=1,
+        stdout="",
+        stderr="API error status 400: billing credits exhausted",
+    )
+
+    error = agent._classify_exec_error("grok -p", result)
+
+    assert type(error) is ApiUsageLimitError

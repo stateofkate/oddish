@@ -6,6 +6,7 @@ import random
 import re
 import shlex
 import tempfile
+from types import SimpleNamespace
 from typing import Any
 
 from harbor.agents.installed.base import (
@@ -26,6 +27,11 @@ from .provider_errors import refine_provider_exec_error
 
 _OUTPUT_FILENAME = "grok-build.json"
 _STDERR_FILENAME = "grok-build.stderr.log"
+# Every fallback and resume attempt streams its output live over exec, so the
+# captured stdout/stderr also hold discarded attempts (flag-probe errors, idle
+# timeouts, rate limits). The failure path prints this line on both channels
+# before the final attempt's evidence; classification reads only what follows.
+_FINAL_ATTEMPT_MARKER = "oddish-grok-build: final attempt output"
 _DEFAULT_MODEL = "v9m-rl-learnability-tp8"
 # grok CLI 1.0.13 (current ``install.sh`` stable) 404s this first-party
 # learnability model on both Responses and Chat Completions. 1.0.0 is the
@@ -147,6 +153,28 @@ def _positive_int(name: str, value: float | str | None) -> int | None:
     return parsed
 
 
+def _after_final_marker(text: str | None) -> str:
+    _, found, tail = (text or "").rpartition(_FINAL_ATTEMPT_MARKER)
+    return tail.lstrip("\n") if found else ""
+
+
+def _final_attempt_output(result: Any) -> Any:
+    """Narrow a failed run's output to the final attempt's evidence.
+
+    Without the marker (the shell never reached its failure path), keep the
+    whole output rather than guess which attempt it came from.
+    """
+    stdout = getattr(result, "stdout", None) or ""
+    stderr = getattr(result, "stderr", None) or ""
+    if _FINAL_ATTEMPT_MARKER not in stderr:
+        return result
+    return SimpleNamespace(
+        return_code=getattr(result, "return_code", None),
+        stdout=_after_final_marker(stdout),
+        stderr=_after_final_marker(stderr),
+    )
+
+
 class OddishGrokBuild(BaseInstalledAgent):
     """Grok Build wrapper that preserves streaming events for ATIF conversion."""
 
@@ -201,6 +229,7 @@ class OddishGrokBuild(BaseInstalledAgent):
     def _classify_exec_error(
         self, command: str, result: Any
     ) -> NonZeroAgentExitCodeError:
+        result = _final_attempt_output(result)
         return refine_provider_exec_error(
             super()._classify_exec_error(command, result),
             result,
@@ -540,7 +569,12 @@ class OddishGrokBuild(BaseInstalledAgent):
             # and resumable attempts have finished. Streaming-json can put the
             # same detail in an error event on stdout, so surface only those
             # structured error lines rather than the agent's whole transcript.
-            f"if [ $rc -ne 0 ]; then cat {stderr_path} >&2; "
+            # The marker separates this evidence from every attempt's live
+            # output that already streamed over the same channels.
+            "if [ $rc -ne 0 ]; then "
+            f"printf '%s\\n' {shlex.quote(_FINAL_ATTEMPT_MARKER)}; "
+            f"printf '%s\\n' {shlex.quote(_FINAL_ATTEMPT_MARKER)} >&2; "
+            f"cat {stderr_path} >&2; "
             f'grep -Eai \'"(type|kind)"[[:space:]]*:[[:space:]]*'
             f'"(error|internal_error|failure)"\' {stdout_path} '
             "| tail -n 20 >&2 || true; fi; "
