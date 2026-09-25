@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import urlsplit
 
 from pydantic import (
@@ -2936,3 +2936,22 @@ class TaskQAHistoryResponse(BaseModel):
     # QA/audit trials with no version id (legacy rows): shown apart so the
     # record stays complete without guessing which version they graded.
     unversioned_runs: list[TaskQAHistoryRun] = Field(default_factory=list)
+
+
+# =============================================================================
+# QA issue reports (oddish.core.qa_issue_report)
+# =============================================================================
+
+
+class QAIssueReportResponse(BaseModel):
+    """A live QA issue report. ``tasks`` is filled only for one ``category``."""
+
+    scope_kind: Literal["experiment", "delivery"]
+    scope_id: str
+    scope_name: str
+    taxonomy_version: str
+    summary: dict[str, int]
+    categories: list[dict[str, Any]]
+    category: str | None = None
+    task_total: int = 0
+    tasks: list[dict[str, Any]] = Field(default_factory=list)

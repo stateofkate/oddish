@@ -319,6 +319,7 @@ def create_app() -> FastAPI:
         monitor,
         notifications,
         orgs,
+        qa_issue_reports,
         qa_work,
         public,
         public_analysis,
@@ -347,6 +348,7 @@ def create_app() -> FastAPI:
     api.include_router(feedback.router)
     api.include_router(deliveries.router)
     api.include_router(qa_work.router)
+    api.include_router(qa_issue_reports.router)
     api.include_router(public.router)
     api.include_router(public_analysis.router)
     api.include_router(qa_eval.router)

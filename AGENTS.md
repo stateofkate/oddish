@@ -574,6 +574,21 @@ It defers versions whose task still has active trials or worker jobs and closes
 an idle current-version task without launching replacement QA, while
 preserving published verdicts, newer audits, and work in other experiments.
 
+QA issue reports (`oddish.core.qa_issue_report`) are built live on each
+request for an experiment or a delivery; nothing is stored. A report reads
+stored QA output only, with no model call: current-version `must_fix` findings
+(blocking), trials labeled BAD_FAILURE, BAD_SUCCESS, or HARNESS_ERROR
+`hidden_file_leak` (not blocking), and a current reject verdict on a task
+without a `must_fix` finding (blocking). `oddish.analyze.qa_issue_taxonomy`
+maps each subtype and each finding `(dimension, problem_type)` to one
+plain-English category; unknown labels go to `other`. "Finished QA" reuses
+`delivery_qa_statuses` (`accepted` or `needs_fixes`). Experiment reports limit
+trial labels to trials in the experiment, but find QA runs by task, because QA
+trials live in the shadow experiment. `GET /{experiments|deliveries}/{id}/qa-issues`
+returns counts and categories; `?category=<slug>` adds that category's task
+rows and QA text, which keeps the overview small for large scopes. It costs
+about the same as one delivery board poll (about 0.7 s at 1,000 tasks locally).
+
 Delivery boards expose the latest QA run's evidence coverage and completion time.
 `oddish.core.delivery_qa` compares its pinned solver/baseline evidence and source
 audit with the current default version, using the same eligibility clauses and
