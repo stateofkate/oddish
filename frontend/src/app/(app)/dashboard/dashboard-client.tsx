@@ -643,7 +643,6 @@ function RecentTasksCard({
   onRefreshData: () => void;
   onViewOrgExperiments: () => void;
 }) {
-  const isMemberSelected = authorFilter !== "all" && authorFilter !== "me";
   const statusFilterLabel =
     STATUS_FILTER_OPTIONS.find((option) => option.value === statusFilter)
       ?.label ?? "Filter status";
@@ -655,31 +654,9 @@ function RecentTasksCard({
           <CardTitle className="text-base">Recent Experiments</CardTitle>
         </div>
         <div className="flex flex-1 flex-wrap gap-2 sm:justify-end">
-          {/* Owner filter: Org / Mine toggle + optional member picker. */}
-          <div className="flex items-center gap-0.5 rounded-md border border-[#6f88b4]/20 p-0.5">
-            <Button
-              type="button"
-              variant={authorFilter === "all" ? "secondary" : "ghost"}
-              size="sm"
-              className="h-7 px-2.5 text-[11px]"
-              onClick={() => onAuthorFilterChange("all")}
-              aria-pressed={authorFilter === "all"}
-            >
-              Org
-            </Button>
-            <Button
-              type="button"
-              variant={authorFilter === "me" ? "secondary" : "ghost"}
-              size="sm"
-              className="h-7 px-2.5 text-[11px]"
-              onClick={() => onAuthorFilterChange("me")}
-              aria-pressed={authorFilter === "me"}
-            >
-              Mine
-            </Button>
-          </div>
+          {/* Owner filter: whole org by default; "Mine" or one member. */}
           <MemberFilterTypeahead
-            selectedUserId={isMemberSelected ? authorFilter : null}
+            selectedUserId={authorFilter === "all" ? null : authorFilter}
             onSelect={(userId) => onAuthorFilterChange(userId ?? "all")}
           />
           <div className="relative w-full sm:w-[220px]">
@@ -1004,7 +981,7 @@ export function DashboardClient({
   const searchParams = useSearchParams();
   const [, startTransition] = useTransition();
 
-  // Selection filters (Org/Mine, member, status) and the page come from the
+  // Selection filters (member or Mine, status) and the page come from the
   // URL and are resolved on the server, so the applied values are the SSR
   // props; changing one navigates (router.push) to re-render server-side.
   const authorFilter = initialAuthor;

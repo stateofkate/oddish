@@ -45,7 +45,7 @@ test("member picker filters its loaded list and restores the selected account fr
   await picker.click();
   await expect(
     page.getByLabel("Member results").getByRole("button")
-  ).toHaveText(["alpha@example.com", "kyle@example.com@kyle"]);
+  ).toHaveText(["Mine", "alpha@example.com", "kyle@example.com@kyle"]);
   await page
     .getByRole("textbox", { name: "Search members" })
     .fill("ALPHA@EXAMPLE.COM");
@@ -78,13 +78,22 @@ test("member picker filters its loaded list and restores the selected account fr
   await expect(page).toHaveURL(/author=user_kyle/);
   await expect(picker).toContainText("kyle@example.com");
   await page.getByRole("button", { name: "Clear member filter" }).click();
-  await expect(page).toHaveURL(/author=all/);
+  await expect(page).toHaveURL(/\/dashboard$/);
   await expect(picker).toContainText("Members");
   await page.goBack();
   await expect(page).toHaveURL(/author=user_kyle/);
   await expect(picker).toContainText("kyle@example.com");
   await page.goForward();
-  await expect(page).toHaveURL(/author=all/);
+  await expect(page).toHaveURL(/\/dashboard$/);
   await expect(picker).toContainText("Members");
   expect(memberRequests).toEqual(["?all_members=true", "?all_members=true"]);
+
+  // "Mine" sits at the top of the list and maps to the author=me sentinel.
+  await picker.click();
+  await page
+    .getByLabel("Member results")
+    .getByRole("button", { name: "Mine" })
+    .click();
+  await expect(page).toHaveURL(/author=me/);
+  await expect(picker).toContainText("Mine");
 });

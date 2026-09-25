@@ -13,6 +13,9 @@ import {
 import { fetcher } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
+// Sentinel selection for "the signed-in user", resolved by the backend.
+const MINE = "me";
+
 type PeopleSearchItem = {
   id: string;
   email: string;
@@ -39,6 +42,13 @@ export function MemberFilterTypeahead({
     (person) => person.id === selectedUserId
   );
   const search = query.trim().toLowerCase();
+  const showMine = "mine".includes(search);
+  // Clicking the selected row again clears the filter.
+  const pick = (value: string) => {
+    onSelect(selectedUserId === value ? null : value);
+    setOpen(false);
+    setQuery("");
+  };
   const people = (data?.items ?? []).filter(
     (person) =>
       person.email.toLowerCase().includes(search) ||
@@ -67,7 +77,9 @@ export function MemberFilterTypeahead({
             <span className="flex min-w-0 items-center gap-1.5">
               <Users className="h-3.5 w-3.5 shrink-0 opacity-60" />
               <span className="truncate">
-                {selectedPerson?.email ?? "Members"}
+                {selectedUserId === MINE
+                  ? "Mine"
+                  : (selectedPerson?.email ?? "Members")}
               </span>
             </span>
             <ChevronDown className="h-4 w-4 opacity-50" />
@@ -86,6 +98,14 @@ export function MemberFilterTypeahead({
             className="max-h-[300px] overflow-y-auto p-1"
             aria-label="Member results"
           >
+            {showMine && (
+              <PickerRow
+                selected={selectedUserId === MINE}
+                onClick={() => pick(MINE)}
+              >
+                Mine
+              </PickerRow>
+            )}
             {isLoading ? (
               <p className="text-muted-foreground p-4 text-center text-sm">
                 Loading members…
@@ -97,32 +117,17 @@ export function MemberFilterTypeahead({
                   Retry
                 </Button>
               </div>
-            ) : people.length === 0 ? (
+            ) : people.length === 0 && !showMine ? (
               <p className="text-muted-foreground p-4 text-center text-sm">
                 No members found.
               </p>
             ) : (
               people.map((person) => (
-                <button
+                <PickerRow
                   key={person.id}
-                  type="button"
-                  aria-pressed={selectedUserId === person.id}
-                  className={cn(
-                    "hover:bg-accent focus-visible:bg-accent flex w-full items-center rounded-sm px-2 py-1.5 text-left text-sm focus-visible:outline-none",
-                    selectedUserId === person.id && "bg-accent"
-                  )}
-                  onClick={() => {
-                    onSelect(selectedUserId === person.id ? null : person.id);
-                    setOpen(false);
-                    setQuery("");
-                  }}
+                  selected={selectedUserId === person.id}
+                  onClick={() => pick(person.id)}
                 >
-                  <Check
-                    className={cn(
-                      "mr-2 h-4 w-4 shrink-0",
-                      selectedUserId === person.id ? "opacity-100" : "opacity-0"
-                    )}
-                  />
                   <span className="flex min-w-0 flex-col">
                     <span className="truncate">{person.email}</span>
                     {person.github_username && (
@@ -131,7 +136,7 @@ export function MemberFilterTypeahead({
                       </span>
                     )}
                   </span>
-                </button>
+                </PickerRow>
               ))
             )}
           </div>
@@ -150,5 +155,35 @@ export function MemberFilterTypeahead({
         </Button>
       )}
     </div>
+  );
+}
+
+function PickerRow({
+  selected,
+  onClick,
+  children,
+}: {
+  selected: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={selected}
+      className={cn(
+        "hover:bg-accent focus-visible:bg-accent flex w-full items-center rounded-sm px-2 py-1.5 text-left text-sm focus-visible:outline-none",
+        selected && "bg-accent"
+      )}
+      onClick={onClick}
+    >
+      <Check
+        className={cn(
+          "mr-2 h-4 w-4 shrink-0",
+          selected ? "opacity-100" : "opacity-0"
+        )}
+      />
+      {children}
+    </button>
   );
 }

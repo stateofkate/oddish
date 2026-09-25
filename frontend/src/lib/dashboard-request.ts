@@ -30,10 +30,10 @@ type DashboardRequestParams = {
 export const DASHBOARD_DEFAULT_EXPERIMENTS_LIMIT = 25;
 export const DASHBOARD_DEFAULT_USAGE_MINUTES = 1440;
 
-// Owner filter sentinel for the experiments table. "all" shows the whole
-// organization; "me" scopes to the current user; any other value is an
-// org member's user id.
-export const DASHBOARD_DEFAULT_EXPERIMENTS_AUTHOR = "me";
+// Owner filter sentinel for the experiments table. "all" (the default) shows
+// the whole organization; "me" scopes to the current user (the "Mine" row in
+// the member picker); any other value is an org member's user id.
+export const DASHBOARD_DEFAULT_EXPERIMENTS_AUTHOR = "all";
 
 export const DEFAULT_DASHBOARD_REQUEST_PARAMS: DashboardRequestParams =
   Object.freeze({

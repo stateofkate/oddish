@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/table";
 
 // Placeholder rows shown while the experiments list is (re)loading — e.g. when
-// switching Org/Mine, selecting a member, changing status, or paging. Mirrors
+// selecting Mine or a member, changing status, or paging. Mirrors
 // the real table's columns so the layout doesn't jump when data arrives.
 export function ExperimentsSkeleton({ rows = 10 }: { rows?: number }) {
   return (

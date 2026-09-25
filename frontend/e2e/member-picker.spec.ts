@@ -23,7 +23,7 @@ test("load once, browse and search locally, select and clear without automatic s
   });
   await trigger.click();
   const results = page.getByLabel("Member results");
-  await expect(results.getByRole("button")).toHaveCount(61);
+  await expect(results.getByRole("button")).toHaveCount(62);
   await expect(results.getByRole("button", { pressed: true })).toHaveCount(0);
   await expect(page.locator("output")).toBeEmpty();
   const search = page.getByRole("textbox", { name: "Search members" });
@@ -47,7 +47,7 @@ test("load once, browse and search locally, select and clear without automatic s
   await expect(page.locator("output")).toBeEmpty();
   await expect(trigger).toContainText("Members");
   await trigger.click();
-  await expect(results.getByRole("button")).toHaveCount(61);
+  await expect(results.getByRole("button")).toHaveCount(62);
   await expect(results.getByRole("button", { pressed: true })).toHaveCount(0);
   await results.getByRole("button", { name: /member60/ }).click();
   await trigger.click();
@@ -76,5 +76,5 @@ test("retry a failed list request", async ({ page }) => {
   await page.getByRole("button", { name: "Retry" }).click();
   await expect(
     page.getByLabel("Member results").getByRole("button")
-  ).toHaveCount(61);
+  ).toHaveCount(62);
 });
