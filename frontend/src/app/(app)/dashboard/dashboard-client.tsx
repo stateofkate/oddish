@@ -337,7 +337,7 @@ function ExperimentsTableBody({
           <p>No experiments match the current filters.</p>
         </div>
       ) : (
-        <div className="max-h-[68vh] min-h-[560px] overflow-x-hidden overflow-y-auto overscroll-y-none">
+        <div className="min-h-[560px] overflow-x-hidden">
           <Table>
             <TableHeader>
               <TableRow>
