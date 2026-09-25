@@ -9,6 +9,7 @@ import {
   GitPullRequest,
   Search,
 } from "lucide-react";
+import { Bar, QaSplit } from "@/components/qa-split";
 import { CopyJsonButton } from "@/components/qa-report/copy-json-button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { qaStatusLabel } from "@/lib/deliveries";
@@ -26,7 +27,6 @@ import {
 } from "@/lib/qa-issues";
 
 const RED = "bg-red-500";
-const GREEN = "bg-emerald-500";
 const GREY = "bg-muted-foreground/30";
 const PILL = "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs";
 const BLOCKING_PILL = `${PILL} bg-red-500/10 text-red-700 dark:text-red-300`;
@@ -94,23 +94,15 @@ async function QaIssuesBody({
       </p>
     );
   }
-  const { report: data, fetchedAt } = result;
+  const { report: data } = result;
   const href = (next: Partial<QaIssuesView>) =>
     qaIssuesHref(baseHref, { ...view, page: 1, ...next });
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-baseline gap-x-3">
-        <h1 className="text-2xl font-semibold tracking-tight">
-          {data.scope_name}
-        </h1>
-        <span className="text-muted-foreground ml-auto text-xs">
-          {new Date(fetchedAt).toLocaleString(undefined, {
-            dateStyle: "medium",
-            timeStyle: "short",
-          })}
-        </span>
-      </div>
-      <Partition summary={data.summary} />
+      <h1 className="text-2xl font-semibold tracking-tight">
+        {data.scope_name}
+      </h1>
+      <QaSplit summary={data.summary} burndown={data.burndown} />
       <section className="bg-card rounded-xl border p-2">
         <h2 className="text-muted-foreground px-3 py-1 text-sm font-medium">
           Categories
@@ -146,74 +138,6 @@ async function QaIssuesBody({
   );
 }
 
-function Bar({ parts, of }: { parts: [number, string][]; of?: number }) {
-  const total = Math.max(1, of ?? parts.reduce((s, [n]) => s + n, 0));
-  return (
-    <div className="bg-muted flex h-2 w-full overflow-hidden rounded-full">
-      {parts.map(([n, color], i) => (
-        <div
-          key={i}
-          className={color}
-          style={{ width: `${(100 * n) / total}%` }}
-        />
-      ))}
-    </div>
-  );
-}
-
-function Count({
-  label,
-  value,
-  of,
-  dot,
-}: {
-  label: string;
-  value: number;
-  of: number;
-  dot: string;
-}) {
-  return (
-    <div className="flex items-baseline gap-1.5 text-sm">
-      <span className={`h-2 w-2 shrink-0 rounded-full ${dot}`} aria-hidden />
-      <span className="text-muted-foreground text-xs">{label}</span>
-      <span className="ml-auto font-semibold tabular-nums">{value}</span>
-      <span className="text-muted-foreground w-9 text-right text-[11px] tabular-nums">
-        {of ? `${Math.round((100 * value) / of)}%` : ""}
-      </span>
-    </div>
-  );
-}
-
-function Partition({ summary }: { summary: QaIssueReport["summary"] }) {
-  const parts: [string, number, string][] = [
-    ["Blocked", summary.blocked, RED],
-    ["Clear", summary.clear, GREEN],
-    ["Waiting for QA", summary.waiting, GREY],
-  ];
-  return (
-    <section className="bg-card space-y-4 rounded-xl border p-4">
-      <div className="flex items-baseline justify-between">
-        <h2 className="text-muted-foreground text-sm font-medium">Tasks</h2>
-        <span className="text-2xl font-semibold tabular-nums">
-          {summary.tasks}
-        </span>
-      </div>
-      <Bar parts={parts.map(([, n, color]) => [n, color])} />
-      <div className="grid gap-x-6 gap-y-1.5 sm:grid-cols-3">
-        {parts.map(([label, value, dot]) => (
-          <Count
-            key={label}
-            label={label}
-            value={value}
-            of={summary.tasks}
-            dot={dot}
-          />
-        ))}
-      </div>
-    </section>
-  );
-}
-
 function CategoryRow({
   category,
   scale,
@@ -245,8 +169,20 @@ function CategoryRow({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-baseline gap-x-2">
             <span className="text-sm font-medium">{category.name}</span>
-            <span className="text-muted-foreground shrink-0 text-xs">
-              {category.tasks} {category.tasks === 1 ? "task" : "tasks"}
+            <span className="text-sm tabular-nums">
+              Issues: <span className="font-semibold">{category.issues}</span>{" "}
+              <span
+                className={
+                  category.blocking_issues
+                    ? "text-red-600 dark:text-red-400"
+                    : "text-muted-foreground"
+                }
+              >
+                ({category.blocking_issues} blocking)
+              </span>
+            </span>
+            <span className="text-muted-foreground text-xs tabular-nums">
+              Tasks: {category.tasks}
               {category.dimension !== "Other" && ` · ${category.dimension}`}
             </span>
           </div>
@@ -258,14 +194,6 @@ function CategoryRow({
                 [category.issues - category.blocking_issues, GREY],
               ]}
             />
-          </div>
-        </div>
-        <div className="text-right tabular-nums">
-          <div className="text-sm font-semibold">{category.issues}</div>
-          <div
-            className={`text-xs ${category.blocking_issues ? "text-red-600 dark:text-red-400" : "text-muted-foreground"}`}
-          >
-            {category.blocking_issues} blocking
           </div>
         </div>
       </Link>
@@ -359,7 +287,7 @@ function CategoryDetail({
             Previous
           </PageLink>
           <span className="text-muted-foreground tabular-nums">
-            {page} / {pages}
+            Page {page} of {pages}
           </span>
           <PageLink
             href={href({ category: view.category, page: page + 1 })}
@@ -442,7 +370,8 @@ function TaskRow({
             className={BLOCKING_PILL}
             title="Blocking issues in all categories"
           >
-            <AlertTriangle className="h-3 w-3" /> {task.blocking_issues}
+            <AlertTriangle className="h-3 w-3" /> Blocking:{" "}
+            {task.blocking_issues}
           </span>
         )}
         <span className="text-muted-foreground ml-auto flex items-center gap-3 text-xs">

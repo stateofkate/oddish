@@ -1,3 +1,4 @@
+import { DeliveryQaCard } from "@/components/delivery-qa-card";
 import { deliveryPageQuery } from "@/lib/deliveries";
 import { auth } from "@clerk/nextjs/server";
 
@@ -65,6 +66,10 @@ export default async function DeliveryPage({
   });
   const initialBoard = await getInitialBoard(delivery, query);
   return (
-    <DeliveryBoardClient deliveryId={delivery} initialBoard={initialBoard} />
+    <DeliveryBoardClient
+      deliveryId={delivery}
+      initialBoard={initialBoard}
+      qa={<DeliveryQaCard deliveryId={delivery} />}
+    />
   );
 }

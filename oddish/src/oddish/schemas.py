@@ -2951,6 +2951,8 @@ class QAIssueReportResponse(BaseModel):
     scope_name: str
     taxonomy_version: str
     summary: dict[str, int]
+    # Blocked / clear / waiting over time, replayed from task versions.
+    burndown: list[dict[str, Any]] = Field(default_factory=list)
     categories: list[dict[str, Any]]
     category: str | None = None
     task_total: int = 0

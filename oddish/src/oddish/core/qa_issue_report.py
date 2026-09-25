@@ -35,6 +35,7 @@ from oddish.analyze.qa_issue_taxonomy import (
     plain_label,
 )
 from oddish.core.delivery_qa import delivery_qa_statuses
+from oddish.core.qa_burndown import qa_burndown
 from oddish.core.deliveries import _get_delivery, _member_rows
 from oddish.core.experiment_membership import trial_in_experiment
 from oddish.core.helpers import _parse_github_meta
@@ -286,17 +287,20 @@ async def qa_issue_report_core(
     blocked = sum(1 for r in rows if r["blocking_issues"])
     clear = sum(1 for r in rows if r["finished_qa"] and not r["blocking_issues"])
     matches = _category_tasks(rows, category, blocking, q) if category else []
+    summary = {
+        "tasks": len(rows),
+        "blocked": blocked,
+        "clear": clear,
+        "waiting": len(rows) - blocked - clear,
+    }
+    burndown = await qa_burndown(session, [t.id for t in tasks], summary)
     return QAIssueReportResponse(
         scope_kind=scope_kind,
         scope_id=scope_id,
         scope_name=name,
         taxonomy_version=TAXONOMY_VERSION,
-        summary={
-            "tasks": len(rows),
-            "blocked": blocked,
-            "clear": clear,
-            "waiting": len(rows) - blocked - clear,
-        },
+        summary=summary,
+        burndown=burndown,
         categories=categories,
         category=category,
         task_total=len(matches),

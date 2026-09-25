@@ -952,7 +952,7 @@ test("finalized review exposes evidence but cannot acknowledge outstanding findi
   expect(state.writes).toEqual([]);
 });
 
-test("owner, state, and history share one scope across server pages; finalize stays delivery-wide", async ({
+test("owner and state share one scope across server pages; finalize stays delivery-wide", async ({
   page,
 }, testInfo) => {
   const state = await controlledAPI(page);
@@ -1015,27 +1015,6 @@ test("owner, state, and history share one scope across server pages; finalize st
   ];
   state.board.task_count = 6;
   state.board.ready_task_count = 2;
-  state.board.progress_history = Array.from({ length: 10 }, (_, day) => {
-    const maya = day < 3 ? 2 : 4;
-    const jules = day < 6 ? 0 : 1;
-    const unassigned = day < 8 ? 0 : 1;
-    const ready = (day < 4 ? 0 : 1) + jules;
-    return {
-      recorded_at: `2026-09-${String(day + 1).padStart(2, "0")}T12:00:00Z`,
-      task_count: maya + jules + unassigned,
-      ready,
-      blocked: 3,
-      awaiting_signoff: 1,
-      unassigned,
-      open_findings: 1,
-      acknowledged_findings: 0,
-      owners: {
-        maya: { task_count: maya, ready: day < 4 ? 0 : 1 },
-        jules: { task_count: jules, ready: jules },
-        unassigned: { task_count: unassigned, ready: 0 },
-      },
-    };
-  });
   await page.goto("/");
   const overview = page.getByLabel("Delivery overview");
   for (const [label, count] of [
@@ -1065,13 +1044,6 @@ test("owner, state, and history share one scope across server pages; finalize st
     "Issue category filter",
     "Group tasks",
   ]);
-  await expect(overview.locator(".recharts-line-curve")).toHaveCount(2);
-  expect(
-    await overview
-      .locator(".recharts-line-curve")
-      .first()
-      .evaluate((element) => getComputedStyle(element).stroke)
-  ).not.toBe("none");
   const reads = state.reads.board;
   await page
     .getByRole("combobox", { name: "State filter", exact: true })
@@ -1096,10 +1068,6 @@ test("owner, state, and history share one scope across server pages; finalize st
   await expect(
     overview.getByText("Needs sign-off", { exact: true })
   ).toHaveCount(0);
-  await expect(overview.getByRole("img")).toHaveAttribute(
-    "aria-label",
-    /Jules: 1 ready of 1 tasks/
-  );
   await expect(page.getByRole("table")).toContainText("Jules complete");
   await expect(
     page.getByRole("button", { name: "Finalize", exact: true })
@@ -1137,31 +1105,6 @@ test("owner, state, and history share one scope across server pages; finalize st
     path: testInfo.outputPath("delivery-overview-mobile.png"),
     fullPage: true,
   });
-});
-
-test("older owner observations show no history rather than delivery totals", async ({
-  page,
-}) => {
-  const state = await controlledAPI(page);
-  state.board.progress_history = [
-    {
-      recorded_at: "2026-09-09T12:00:00Z",
-      task_count: 10,
-      ready: 8,
-      blocked: 2,
-      awaiting_signoff: 0,
-      unassigned: 1,
-      open_findings: 0,
-      acknowledged_findings: 0,
-    },
-  ];
-  await page.goto("/?owner=maya");
-  await expect(
-    page.getByLabel("Delivery overview").getByText("No history yet")
-  ).toBeVisible();
-  await expect(
-    page.getByLabel("Delivery overview").getByRole("img")
-  ).toHaveCount(0);
 });
 
 test("review disclosures restore from a shared link and browser Back", async ({
@@ -1232,123 +1175,6 @@ test("mixed selections cannot be partly signed off and grouping keeps claim avai
   await expect(
     page.getByRole("button", { name: "Claim task", exact: true })
   ).toBeVisible();
-  expect(state.writes).toEqual([]);
-});
-
-test("history remains above counts with only one observation", async ({
-  page,
-}, testInfo) => {
-  const state = await controlledAPI(page);
-  await page.goto("/");
-  const overview = page.getByLabel("Delivery overview");
-  await expect(overview.getByText("No history yet")).toBeVisible();
-  await expect(overview.locator("svg")).toHaveCount(0);
-  state.board.qa_as_of = "2026-09-10T12:00:00Z";
-  state.board.progress_history = [
-    {
-      recorded_at: "2026-09-09T12:00:00Z",
-      task_count: 24,
-      ready: 3,
-      blocked: 21,
-      awaiting_signoff: 0,
-      unassigned: 0,
-      open_findings: 0,
-      acknowledged_findings: 0,
-    },
-  ];
-  await tick(page);
-  const chart = overview.getByRole("img");
-  await expect(chart.getByText("24 total", { exact: true })).toBeVisible();
-  await expect(chart.getByText("3 ready", { exact: true })).toBeVisible();
-  await expect(overview.getByLabel("Progress snapshot")).toHaveCount(0);
-  expect(
-    await chart
-      .locator(".recharts-line-dots circle")
-      .evaluateAll(
-        (elements) =>
-          elements.filter((e) => Number(e.getAttribute("r")) > 0).length
-      )
-  ).toBe(2);
-  for (const width of [1440, 390]) {
-    await page.setViewportSize({ width, height: 900 });
-    await page.clock.runFor(100);
-    const graph = (await chart.boundingBox())!;
-    const counts = (await overview.locator("dl").boundingBox())!;
-    expect(graph.y + graph.height).toBeLessThanOrEqual(counts.y);
-    await page.screenshot({
-      path: testInfo.outputPath(`delivery-single-observation-${width}.png`),
-      fullPage: true,
-    });
-  }
-  state.board.progress_history[0].recorded_at = "2026-09-10T12:00:00Z";
-  await tick(page);
-  await expect(chart.locator("time")).toHaveCount(1);
-  await expect(chart.getByText("24 total", { exact: true })).toBeVisible();
-  expect(state.writes).toEqual([]);
-});
-
-test("history keeps gaps visible and separates equal endpoint labels", async ({
-  page,
-}, testInfo) => {
-  const state = await controlledAPI(page);
-  state.board.qa_as_of = "2026-09-10T12:00:00Z";
-  state.board.progress_history = [7, 8, 10].map((day) => ({
-    recorded_at: `2026-09-${String(day).padStart(2, "0")}T12:00:00Z`,
-    task_count: 24,
-    ready: 24,
-    blocked: 0,
-    awaiting_signoff: 0,
-    unassigned: 0,
-    open_findings: 0,
-    acknowledged_findings: 0,
-  }));
-  await page.goto("/");
-  const overview = page.getByLabel("Delivery overview");
-  await expect(overview.getByText("24 total", { exact: true })).toBeVisible();
-  await expect(overview.getByText("24 ready", { exact: true })).toBeVisible();
-  await expect(
-    overview.locator(".recharts-cartesian-grid, .recharts-yAxis")
-  ).toHaveCount(0);
-  await expect(overview.getByRole("img").locator("time")).toHaveText([
-    "Sep 7",
-    "Today",
-  ]);
-  const paths = await overview
-    .locator(".recharts-line-curve")
-    .evaluateAll((elements) => elements.map((e) => e.getAttribute("d")));
-  for (const path of paths) expect(path!.match(/M/g)).toHaveLength(2);
-  const dots = await overview
-    .locator(".recharts-line-dots circle")
-    .evaluateAll(
-      (elements) =>
-        elements.filter((e) => Number(e.getAttribute("r")) > 0).length
-    );
-  expect(dots).toBe(2);
-  for (const width of [1440, 390]) {
-    await page.setViewportSize({ width, height: 900 });
-    // ResizeObserver and React render asynchronously; wait for the actual label
-    // position while allowing the fake animation clock to advance.
-    await expect
-      .poll(async () => {
-        await page.clock.runFor(16);
-        return overview
-          .getByText("24 ready", { exact: true })
-          .evaluate((element) => element.getBoundingClientRect().right);
-      })
-      .toBeLessThanOrEqual(width);
-    const total = (await overview
-      .getByText("24 total", { exact: true })
-      .boundingBox())!;
-    const ready = (await overview
-      .getByText("24 ready", { exact: true })
-      .boundingBox())!;
-    expect(total.y + total.height).toBeLessThanOrEqual(ready.y);
-    expect(ready.x + ready.width).toBeLessThanOrEqual(width);
-    await page.screenshot({
-      path: testInfo.outputPath(`delivery-history-gap-${width}.png`),
-      fullPage: true,
-    });
-  }
   expect(state.writes).toEqual([]);
 });
 

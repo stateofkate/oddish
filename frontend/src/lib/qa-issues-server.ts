@@ -38,7 +38,6 @@ export async function fetchQaIssueReport(
     return {
       ok: true,
       report: (await response.json()) as QaIssueReport,
-      fetchedAt: new Date().toISOString(),
     };
   } catch (error) {
     console.error("[qa-issues] report fetch failed", error);
@@ -64,7 +63,6 @@ export async function fetchPublicQaIssueReport(
     return {
       ok: true,
       report: (await response.json()) as QaIssueReport,
-      fetchedAt: new Date().toISOString(),
     };
   } catch (error) {
     console.error("[qa-issues] public report fetch failed", error);

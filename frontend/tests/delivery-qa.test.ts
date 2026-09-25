@@ -4,7 +4,6 @@ import {
   deliveryTaskState,
   deliveryTaskLabels,
   deliveryOwnerTasks,
-  deliveryProgressHistory,
 } from "../src/lib/deliveries.ts";
 import { board, taskRow, reviewTaskRow } from "../e2e/delivery-fixtures.ts";
 
@@ -75,40 +74,6 @@ test("owner scopes include ready and unassigned work without treating signed-out
   assert.equal(deliveryOwnerTasks(data, "unassigned").length, 1);
   data.qa_viewer_user_id = null;
   assert.equal(deliveryOwnerTasks(data, "mine").length, 0);
-});
-
-test("owner history preserves missing observations and zero counts after reassignment", () => {
-  const data = board();
-  const counts = {
-    task_count: 2,
-    ready: 1,
-    blocked: 1,
-    awaiting_signoff: 0,
-    unassigned: 0,
-    open_findings: 0,
-    acknowledged_findings: 0,
-  };
-  data.progress_history = [
-    { ...counts, recorded_at: "2026-09-05T12:00:00Z" },
-    {
-      ...counts,
-      recorded_at: "2026-09-06T12:00:00Z",
-      owners: { maya: { task_count: 2, ready: 1 } },
-    },
-    {
-      ...counts,
-      recorded_at: "2026-09-08T12:00:00Z",
-      owners: { jules: { task_count: 2, ready: 1 } },
-    },
-  ];
-  assert.deepEqual(deliveryProgressHistory(data, "mine"), [
-    { date: "2026-09-06", task_count: 2, ready: 1 },
-    { date: "2026-09-07", task_count: null, ready: null },
-    { date: "2026-09-08", task_count: 0, ready: 0 },
-  ]);
-  assert.equal(deliveryProgressHistory(data, "all")[0].date, "2026-09-05");
-  data.progress_history = [data.progress_history[0]];
-  assert.deepEqual(deliveryProgressHistory(data, "maya"), []);
 });
 
 test("rejected reviews require both finding acknowledgments and a verdict waiver", () => {

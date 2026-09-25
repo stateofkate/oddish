@@ -35,10 +35,38 @@ export interface QaIssueCategory {
   tasks: number;
 }
 
+export interface QaBurndownPoint {
+  /** null for the last point: the live headline ("Now"). */
+  version: number | null;
+  blocked: number;
+  clear: number;
+  waiting: number;
+}
+
+// Stacked from the baseline: blocked, clear, waiting. Fill classes match the
+// task split legend on the QA issues page.
+export const BURNDOWN_SERIES = [
+  { key: "blocked", label: "Blocked", fill: "fill-red-500", dot: "bg-red-500" },
+  {
+    key: "clear",
+    label: "Clear",
+    fill: "fill-emerald-500",
+    dot: "bg-emerald-500",
+  },
+  {
+    key: "waiting",
+    label: "Waiting for QA",
+    fill: "fill-muted-foreground/30",
+    dot: "bg-muted-foreground/30",
+  },
+] as const;
+
 export interface QaIssueReport {
   scope_name: string;
   /** blocked + clear + waiting = tasks */
   summary: { tasks: number; blocked: number; clear: number; waiting: number };
+  /** The same split at each task version number, then Now (= summary). */
+  burndown: QaBurndownPoint[];
   categories: QaIssueCategory[];
   category: string | null;
   task_total: number;
@@ -46,7 +74,7 @@ export interface QaIssueReport {
 }
 
 export type QaIssueReportResult =
-  | { ok: true; report: QaIssueReport; fetchedAt: string }
+  | { ok: true; report: QaIssueReport }
   | { ok: false; status: number; detail?: string };
 
 /** URL state of the QA issues page; every control is a link or a GET form. */
@@ -72,7 +100,7 @@ export function parseQaIssuesView(
   };
 }
 
-export function qaIssuesParams(view: Partial<QaIssuesView>) {
+function qaIssuesParams(view: Partial<QaIssuesView>) {
   const params = new URLSearchParams();
   if (view.category) params.set("category", view.category);
   if (view.blocking) params.set("blocking", "1");

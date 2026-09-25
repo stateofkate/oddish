@@ -120,46 +120,6 @@ export function deliveryOwnerTasks(
   );
 }
 
-/** Missing owner snapshots and missing dates remain gaps, never inferred zeros. */
-export function deliveryProgressHistory(
-  board: DeliveryBoardResponse,
-  owner: string
-) {
-  const id = owner === "mine" ? board.qa_viewer_user_id : owner;
-  const observations = (board.progress_history ?? []).flatMap((point) => {
-    if (owner === "all")
-      return [
-        {
-          date: point.recorded_at.slice(0, 10),
-          task_count: point.task_count,
-          ready: point.ready,
-        },
-      ];
-    if (point.owners == null || !id) return [];
-    const counts = point.owners[id] ?? { task_count: 0, ready: 0 };
-    return [{ date: point.recorded_at.slice(0, 10), ...counts }];
-  });
-  if (!observations.length) return [];
-  const byDay = new Map(observations.map((point) => [point.date, point]));
-  const start = Date.parse(observations[0].date + "T00:00:00Z");
-  const end = Date.parse(
-    (board.finalized_at ?? board.qa_as_of ?? observations.at(-1)!.date).slice(
-      0,
-      10
-    ) + "T00:00:00Z"
-  );
-  const days: {
-    date: string;
-    task_count: number | null;
-    ready: number | null;
-  }[] = [];
-  for (let time = start; time <= end; time += 86400000) {
-    const date = new Date(time).toISOString().slice(0, 10);
-    days.push(byDay.get(date) ?? { date, task_count: null, ready: null });
-  }
-  return days;
-}
-
 /** Shareable delivery view. Page numbers in URLs are one-based. */
 export type DeliveryTaskFilter =
   | DeliveryTaskState

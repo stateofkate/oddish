@@ -11,8 +11,9 @@ from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from oddish.analyze.qa_issue_taxonomy import CATEGORIES, LABEL_CATEGORY
+from oddish.core.qa_burndown import qa_burndown
 from oddish.core.qa_issue_report import qa_issue_report_core
-from oddish.db import ExperimentModel, generate_id
+from oddish.db import ExperimentModel, TaskVersionModel, generate_id
 from oddish.db.models import task_experiments
 from test_deliveries import ORG, _trial
 from test_delivery_qa import _reviewed_delivery
@@ -238,3 +239,31 @@ async def test_public_report_needs_show_qa_and_hides_people(session):
         public=True,
     )
     assert hidden.tasks == []
+
+
+@pytest.mark.asyncio
+async def test_burndown_counts_each_task_at_each_version(session):
+    _, task, version, _, _, _ = await _reviewed_delivery(session)
+    version.pre_trial = {"items": [_finding("verifier")]}
+    for number, is_good in ((2, False), (3, True)):
+        session.add(
+            TaskVersionModel(
+                id=f"{task.id}-v{number}",
+                task_id=task.id,
+                version=number,
+                task_path="x",
+                verdict={"is_good": is_good},
+            )
+        )
+    _, untouched, *_ = await _reviewed_delivery(session)
+    await session.flush()
+    live = {"blocked": 0, "clear": 1, "waiting": 1}
+
+    points = await qa_burndown(session, [task.id, untouched.id], live)
+
+    assert points == [
+        {"version": 1, "blocked": 1, "clear": 0, "waiting": 1},
+        {"version": 2, "blocked": 1, "clear": 0, "waiting": 1},
+        {"version": 3, "blocked": 0, "clear": 1, "waiting": 1},
+        {"version": None, **live},
+    ]

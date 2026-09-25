@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
@@ -32,6 +32,7 @@ import {
   QA_ISSUE_LABELS,
 } from "@/lib/deliveries";
 import { DeliveryDisclosure } from "@/components/delivery-disclosure";
+import { deliveryQaKey } from "@/components/delivery-qa-card";
 import { DeliveryOverview } from "@/components/delivery-overview";
 import { DeliveryQAWorkEditor } from "@/components/delivery-qa-work-editor";
 import { isOrgAdminRole } from "@/lib/org-roles";
@@ -1164,9 +1165,12 @@ export type InitialDeliveryBoard = {
 export function DeliveryBoardClient({
   deliveryId,
   initialBoard,
+  qa,
 }: {
   deliveryId: string;
   initialBoard: InitialDeliveryBoard | null;
+  /** Server-rendered QA summary, shown under the header. */
+  qa?: ReactNode;
 }) {
   const auth = useAuth();
   // The authenticated server snapshot can render before Clerk hydrates. Once
@@ -1206,6 +1210,7 @@ export function DeliveryBoardClient({
         deliveryId={deliveryId}
         initialBoard={snapshot?.board ?? null}
         enabled={Boolean(userId && orgId)}
+        qa={qa}
       />
     </SWRConfig>
   );
@@ -1215,10 +1220,12 @@ function DeliveryBoardContent({
   deliveryId,
   initialBoard,
   enabled,
+  qa,
 }: {
   deliveryId: string;
   initialBoard: DeliveryPageResponse | null;
   enabled: boolean;
+  qa?: ReactNode;
 }) {
   const { mutate: mutateResource, cache } = useSWRConfig();
   const { orgRole } = useAuth();
@@ -1366,6 +1373,7 @@ function DeliveryBoardContent({
     return Promise.all([
       mutateResource(isDeliveryPage),
       mutateResource(isTaskDetail),
+      mutateResource(deliveryQaKey(deliveryId)),
     ]);
   }
 
@@ -1860,6 +1868,7 @@ function DeliveryBoardContent({
             )}
           </div>
         </header>
+        {qa}
         {(actionError || data.delivery_checks.length > 0) && (
           <CardContent className="space-y-2 pt-0">
             {actionError && (
@@ -1890,7 +1899,7 @@ function DeliveryBoardContent({
         )}
       </section>
 
-      <DeliveryOverview board={data} ownerFilter={displayedView.ownerFilter} />
+      <DeliveryOverview board={data} />
 
       <section>
         <div>
