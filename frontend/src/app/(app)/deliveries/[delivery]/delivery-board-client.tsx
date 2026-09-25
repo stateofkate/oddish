@@ -1389,6 +1389,7 @@ function DeliveryBoardContent({
     DeliverySelectionItem[]
   >([]);
   const [notice, setNotice] = useState<string | null>(null);
+  const taskListRef = useRef<HTMLDivElement>(null);
   const pendingHistory = useRef(
     new Map<string, Promise<TaskQAHistoryResponse>>()
   );
@@ -1649,6 +1650,17 @@ function DeliveryBoardContent({
   const pageCount = Math.max(1, Math.ceil(data.total / data.per_page));
   const clampedPage = data.page - 1;
   const pagedTasks = data.tasks;
+  // A new page replaces the rows in place, so bring its first row back
+  // below the sticky nav when the reader paged from further down.
+  function changeTaskPage(page: number) {
+    updateView({ page: String(page), task: null });
+    const taskList = taskListRef.current;
+    if (!taskList) return;
+    const navBottom = parseFloat(getComputedStyle(taskList).scrollMarginTop);
+    if (taskList.getBoundingClientRect().top < navBottom) {
+      taskList.scrollIntoView({ block: "start" });
+    }
+  }
   const bulkable = isAdmin && !frozen;
   const matchingIds = new Set(data.matching_task_ids);
   const currentSelection = new Map(
@@ -2114,15 +2126,8 @@ function DeliveryBoardContent({
                 </p>
               )}
               <div
-                key={`task-page-${clampedPage}`}
-                role={pageCount > 1 ? "region" : undefined}
-                aria-label={pageCount > 1 ? "Delivery tasks" : undefined}
-                tabIndex={pageCount > 1 ? 0 : undefined}
-                className={
-                  pageCount > 1
-                    ? "h-[min(68vh,48rem)] overflow-y-auto overscroll-y-none"
-                    : undefined
-                }
+                ref={taskListRef}
+                className="scroll-mt-[calc(3.5rem+var(--preview-banner-h,0px))]"
               >
                 {data.total === 0 ? (
                   <p className="text-muted-foreground text-sm">
@@ -2275,9 +2280,7 @@ function DeliveryBoardContent({
                         variant="outline"
                         size="sm"
                         disabled={changingView || clampedPage === 0}
-                        onClick={() =>
-                          updateView({ page: String(clampedPage), task: null })
-                        }
+                        onClick={() => changeTaskPage(clampedPage)}
                       >
                         Previous
                       </Button>
@@ -2285,12 +2288,7 @@ function DeliveryBoardContent({
                         variant="outline"
                         size="sm"
                         disabled={changingView || clampedPage >= pageCount - 1}
-                        onClick={() =>
-                          updateView({
-                            page: String(clampedPage + 2),
-                            task: null,
-                          })
-                        }
+                        onClick={() => changeTaskPage(clampedPage + 2)}
                       >
                         Next
                       </Button>

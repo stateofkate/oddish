@@ -301,45 +301,47 @@ test("refresh failures keep history, filters, pagination, scroll, expansion and 
   expect(state.writes).toEqual([]);
 });
 
-test("task pagination stays put when the next page has fewer rows", async ({
+test("task pages scroll with the page and open at their first row", async ({
   page,
 }) => {
   const state = await controlledAPI(page);
-  state.board.tasks = Array.from({ length: 30 }, (_, i) => ({
+  state.board.tasks = Array.from({ length: 50 }, (_, i) => ({
     ...taskRow(),
     task_id: `task-${i}`,
     task_name: `Task ${i}`,
     delivery_task_id: `member-${i}`,
   }));
   await page.goto("/");
+  await expect(page.getByText("Page 1 of 2 · 50 tasks")).toBeVisible();
 
-  const taskRegion = page.getByRole("region", { name: "Delivery tasks" });
-  const pagination = page.getByRole("navigation", { name: "Task pages" });
-  const regionHeight = await taskRegion.evaluate(
-    (element) => element.clientHeight
-  );
-  const paginationOffset = await pagination.evaluate(
-    (element) =>
-      element.getBoundingClientRect().top -
-      element.previousElementSibling!.getBoundingClientRect().top
-  );
+  // The document is the only vertical scroller around the task rows.
+  const nestedScrollers = await page
+    .getByText("Task 0", { exact: true })
+    .first()
+    .evaluate((element) => {
+      const scrollers: string[] = [];
+      let node = element.parentElement;
+      while (node && node !== document.documentElement) {
+        const { overflowY } = getComputedStyle(node);
+        if (
+          /auto|scroll/.test(overflowY) &&
+          node.scrollHeight > node.clientHeight
+        ) {
+          scrollers.push(node.outerHTML.slice(0, 120));
+        }
+        node = node.parentElement;
+      }
+      return scrollers;
+    });
+  expect(nestedScrollers).toEqual([]);
 
-  await taskRegion.evaluate((element) => {
-    element.scrollTop = element.scrollHeight;
-  });
-  await page.getByRole("button", { name: "Next", exact: true }).click();
-  await expect(page.getByText("Page 2 of 2 · 30 tasks")).toBeVisible();
-  await expect(taskRegion).toHaveJSProperty("scrollTop", 0);
-  expect(await taskRegion.evaluate((element) => element.clientHeight)).toBe(
-    regionHeight
-  );
-  expect(
-    await pagination.evaluate(
-      (element) =>
-        element.getBoundingClientRect().top -
-        element.previousElementSibling!.getBoundingClientRect().top
-    )
-  ).toBe(paginationOffset);
+  const next = page.getByRole("button", { name: "Next", exact: true });
+  await next.scrollIntoViewIfNeeded();
+  await next.click();
+  await expect(page.getByText("Page 2 of 2 · 50 tasks")).toBeVisible();
+  await expect(
+    page.getByText("Task 25", { exact: true }).first()
+  ).toBeInViewport();
 });
 
 for (const direction of ["Previous", "Next"] as const) {
@@ -360,6 +362,10 @@ for (const direction of ["Previous", "Next"] as const) {
       exact: true,
     });
     const next = page.getByRole("button", { name: "Next", exact: true });
+    // Page with the keyboard. A pointer parked on the button would end up
+    // over a task row once the list moves and prefetch that row's history.
+    const turnPage = (name: "Previous" | "Next") =>
+      page.getByRole("button", { name, exact: true }).press("Enter");
     const target = direction === "Previous" ? 1 : 3;
     let release!: () => void;
     let gate = new Promise<void>((resolve) => {
@@ -372,7 +378,7 @@ for (const direction of ["Previous", "Next"] as const) {
       return route.fallback();
     });
     state.failBoard = true;
-    await page.getByRole("button", { name: direction, exact: true }).click();
+    await turnPage(direction);
     await expect(page.getByText("Updating delivery view…")).toBeVisible();
     await expect(previous).toBeDisabled();
     await expect(next).toBeDisabled();
@@ -397,7 +403,7 @@ for (const direction of ["Previous", "Next"] as const) {
     gate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    await page.getByRole("button", { name: direction, exact: true }).click();
+    await turnPage(direction);
     await expect.poll(() => requests.length).toBe(2);
     await expect(previous).toBeDisabled();
     await expect(next).toBeDisabled();
@@ -416,12 +422,7 @@ for (const direction of ["Previous", "Next"] as const) {
     expect(state.reads).toEqual({ board: 3, history: 0 });
 
     // Returning to an already loaded page stays immediate and allows navigation.
-    await page
-      .getByRole("button", {
-        name: direction === "Previous" ? "Next" : "Previous",
-        exact: true,
-      })
-      .click();
+    await turnPage(direction === "Previous" ? "Next" : "Previous");
     await expect(page.getByText("Page 2 of 4 · 40 tasks")).toBeVisible();
     await expect(previous).toBeEnabled();
     await expect(next).toBeEnabled();
