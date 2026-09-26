@@ -90,6 +90,7 @@ test("member picker filters its loaded list and restores the selected account fr
 
   // "Mine" sits at the top of the list and maps to the author=me sentinel.
   await picker.click();
+  await page.getByRole("textbox", { name: "Search members" }).fill("me");
   await page
     .getByLabel("Member results")
     .getByRole("button", { name: "Mine" })

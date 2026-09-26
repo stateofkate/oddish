@@ -52,7 +52,7 @@ export function MemberFilterTypeahead({
     (person) => person.id === selectedUserId
   );
   const search = query.trim().toLowerCase();
-  const showMine = "mine".includes(search);
+  const showMine = "mine".includes(search) || "me".includes(search);
   // Clicking the selected row again clears the filter.
   const pick = (value: string) => {
     onSelect(selectedUserId === value ? null : value);
