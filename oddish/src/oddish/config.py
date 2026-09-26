@@ -1242,6 +1242,15 @@ def to_anthropic_api_model_id(model: str | None) -> str | None:
     if stripped.lower().startswith("anthropic.claude-"):
         return to_anthropic_api_model_id(to_bedrock_model_id(stripped))
 
+    # A regional inference profile (us./eu./...) the table does not list maps
+    # like its foundation-model id; an unmapped one keeps its own name.
+    for prefix in _BEDROCK_REGION_PREFIXES:
+        if stripped.lower().startswith(prefix + "anthropic.claude-"):
+            try:
+                return to_anthropic_api_model_id(stripped[len(prefix) :])
+            except ValueError:
+                return stripped
+
     if stripped.lower().startswith("claude-"):
         return re.sub(r"(?<=\d)\.(?=\d)", "-", stripped.lower())
     return stripped

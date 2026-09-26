@@ -763,3 +763,19 @@ def test_public_openai_requires_explicit_provider(monkeypatch):
 
     assert settings.get_openai_provider() == "openai"
     assert settings.get_openai_runtime_env() == {"OPENAI_API_KEY": "sk-test"}
+
+
+@pytest.mark.parametrize(
+    ("model", "api_id"),
+    [
+        ("global.anthropic.claude-haiku-4-5-20251001-v1:0", "claude-haiku-4-5"),
+        ("us.anthropic.claude-haiku-4-5-20251001-v1:0", "claude-haiku-4-5"),
+        ("eu.anthropic.claude-sonnet-4-5-20250929-v1:0", "claude-sonnet-4-5"),
+        ("us.anthropic.claude-opus-4-1-20250805-v1:0", "claude-opus-4-1"),
+        # An unmapped regional id keeps its name instead of raising.
+        ("us.anthropic.claude-unknown-9-v1:0", "us.anthropic.claude-unknown-9-v1:0"),
+        ("anthropic/claude-haiku-4-5-20251001", "claude-haiku-4-5-20251001"),
+    ],
+)
+def test_bedrock_inference_profiles_map_to_the_api_id(model, api_id):
+    assert to_anthropic_api_model_id(model) == api_id

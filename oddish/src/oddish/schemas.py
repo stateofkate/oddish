@@ -1657,12 +1657,164 @@ class QAEvalCreateResponse(BaseModel):
     skipped: list[str] = Field(default_factory=list)
 
 
+# How one replay did against its golden; ``off``: its trial has no counted
+# golden.
+QAEvalOutcome = Literal["right", "wrong", "invalid", "errored", "pending", "off"]
+# Each case's one group: wrong (wrong or invalid), right, not_judged (errored
+# or pending) or no_golden (off).
+QAEvalGroup = Literal["wrong", "right", "not_judged", "no_golden"]
 # counted: reviewed, task version unchanged since labeling (only these score
 # runs); stale: the version's content changed; waiting: the rest.
 QAGoldenState = Literal["counted", "waiting", "stale"]
 QAGoldenReview = Literal["waiting", "stale"]
 # A queued trial's group: labeled when its golden counts, else by reward.
 QAGoldenQueueGroup = Literal["failed", "passed", "labeled"]
+
+
+class QAEvalRunSummary(BaseModel):
+    """One replay experiment scored against the counted goldens."""
+
+    experiment_id: str
+    experiment_name: str
+    # The prompt version's name, else the run's prompt_name, else its hash.
+    title: str
+    created_at: datetime
+    model: str | None
+    # One name per model, whatever route it ran through.
+    model_name: str
+    prompt_sha256: str
+    # Replayed picked trials, so its accuracy is over those alone.
+    subset: bool
+    # Full and scored: charted, and eligible for the frontier and models.
+    charted: bool
+    replays: int
+    # The counts below are over the replays whose trial has a counted golden.
+    with_golden: int
+    # Scored or invalid output: accuracy's denominator.
+    judged: int
+    correct: int
+    errored: int
+    # All unfinished replays, even when their golden does not count.
+    pending: int
+    # correct / judged; null when nothing was judged.
+    accuracy: float | None
+    cost_usd: float
+    # cost_usd per replay with a recorded cost; null when none has one.
+    cost_per_trial: float | None
+    # Finished replays with no recorded cost.
+    cost_missing: int
+
+
+class QALabelCount(BaseModel):
+    label: str
+    count: int
+
+
+class QAGoldensSummary(BaseModel):
+    """Live goldens whose subject still exists, each in one state."""
+
+    counted: int
+    waiting: int
+    stale: int
+    # Counted goldens per StageSpec.label, largest first.
+    labels: list[QALabelCount]
+
+
+class QAEvalModelSpend(BaseModel):
+    model_name: str
+    cost_usd: float
+
+
+class QAEvalSpend(BaseModel):
+    """Spend over every run of the stage."""
+
+    total_usd: float
+    trials: int
+    cost_missing: int
+    # Largest first.
+    by_model: list[QAEvalModelSpend]
+
+
+class QAEvalModelRow(BaseModel):
+    model_name: str
+    # Charted runs of this model.
+    runs: int
+    latest_run_id: str
+
+
+class QAPromptVersion(BaseModel):
+    """A recorded prompt, the shipped prompt, or a hash seen only on runs."""
+
+    sha256: str
+    name: str
+    # The git author, else whoever first sent the text.
+    author: str | None
+    first_seen_at: datetime
+    git_commit: str | None
+    text_available: bool
+    is_production: bool
+    # The closest older version with text: the default diff base.
+    previous_sha256: str | None
+    # Runs with a golden trial, subset runs included; the latest full one.
+    runs: int
+    latest_run_id: str | None
+
+
+class QAEvalStatusResponse(BaseModel):
+    replayable: bool
+    production_prompt_sha256: str
+    goldens: QAGoldensSummary
+    # Cost per trial over every run: the New run estimate.
+    cost_per_trial: float | None
+    spend: QAEvalSpend
+    # Oldest first.
+    runs: list[QAEvalRunSummary]
+    # The newest charted run of the shipped prompt.
+    production_run_id: str | None
+    # Charted runs with a cost that no cheaper run matches on accuracy,
+    # cheapest first.
+    frontier: list[str]
+    # Each model's latest charted run, most accurate first, then cheapest;
+    # a model with no cost ranks after one with a cost.
+    models: list[QAEvalModelRow]
+    # Oldest first.
+    versions: list[QAPromptVersion]
+
+
+class QAPromptVersionText(BaseModel):
+    sha256: str
+    text: str
+
+
+class QAEvalCase(BaseModel):
+    qa_eval_trial_id: str
+    task_id: str
+    source_trial_id: str
+    # The trial goldens key on: the source trial, or the original it copies.
+    original_trial_id: str
+    group: QAEvalGroup
+    outcome: QAEvalOutcome
+    golden_id: str | None
+    # The golden's StageSpec.label and QA's answer.
+    expected: str | None
+    got: str | None
+    cost_usd: float | None
+    # For invalid and errored replays.
+    error: str | None
+
+
+class QAEvalErrorGroup(BaseModel):
+    """Errored replays sharing a first line, file paths masked."""
+
+    message: str
+    count: int
+
+
+class QAEvalRunResponse(BaseModel):
+    summary: QAEvalRunSummary
+    # Largest first.
+    error_groups: list[QAEvalErrorGroup]
+    cases: list[QAEvalCase]
 
 
 class QAGoldenCreate(BaseModel):
