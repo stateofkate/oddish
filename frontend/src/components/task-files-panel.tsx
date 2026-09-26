@@ -52,6 +52,7 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { apiFetch as fetch, fetcher } from "@/lib/api";
 import { formatFileSize } from "@/lib/format";
+import { isEditableTarget } from "@/lib/editable-target";
 import {
   buildTaskFileSections,
   taskFileSectionIdForRootNode,
@@ -1163,17 +1164,6 @@ export function TaskFilesPanel({
     setQAActionError(null);
     setIsRunningQA(false);
   }, [taskId]);
-
-  const isEditableTarget = (target: EventTarget | null) => {
-    if (!target || !(target instanceof HTMLElement)) return false;
-    const tag = target.tagName.toLowerCase();
-    return (
-      tag === "input" ||
-      tag === "textarea" ||
-      target.isContentEditable ||
-      target.getAttribute("role") === "textbox"
-    );
-  };
 
   const [checksRerunning, setChecksRerunning] = useState(false);
   const [checksQueueError, setChecksQueueError] = useState<string | null>(null);

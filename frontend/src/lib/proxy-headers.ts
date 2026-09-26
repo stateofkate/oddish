@@ -6,14 +6,19 @@ import { joinServerTimingHeaders } from "./server-timing";
 
 export { attachUpstreamCacheHeaders } from "./proxy-cache-headers";
 
-const TRACE_CONTEXT_HEADERS = ["traceparent", "tracestate", "baggage"] as const;
+const FORWARDED_HEADERS = [
+  "traceparent",
+  "tracestate",
+  "baggage",
+  "Idempotency-Key",
+] as const;
 
 export function backendFetchHeaders(
   request: Request,
   headers?: HeadersInit
 ): Headers {
   const forwarded = new Headers(headers);
-  for (const name of TRACE_CONTEXT_HEADERS) {
+  for (const name of FORWARDED_HEADERS) {
     const value = request.headers.get(name);
     if (value) forwarded.set(name, value);
   }

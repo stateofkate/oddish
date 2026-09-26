@@ -48,10 +48,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { ExperimentsSkeleton } from "./experiments-skeleton";
-import type {
-  DashboardExperiment,
-  DashboardExperimentAuthor,
-} from "@/lib/types";
+import type { DashboardExperiment } from "@/lib/types";
+import { formatTaskAuthor } from "@/lib/format";
 import {
   SearchSyntaxHelp,
   SearchSyntaxMultiRow,
@@ -115,20 +113,6 @@ export type ExperimentsResult = {
   hasMore: boolean;
   ok: boolean;
 };
-
-function formatTaskAuthor(author: DashboardExperimentAuthor | null): string {
-  if (!author) return "—";
-  // Precedence: canonical org-member name (plain, no "@") -> @github handle ->
-  // raw owner/user string. "member" is resolved by the backend from the
-  // experiment's owner_user_id and matches the name shown on the cost page.
-  if (author.source === "member") {
-    return author.name;
-  }
-  if (author.source === "github") {
-    return `@${author.name.replace(/^@/, "")}`;
-  }
-  return author.name;
-}
 
 function CommandSnippet({ command }: { command: string }) {
   const [copied, setCopied] = useState(false);

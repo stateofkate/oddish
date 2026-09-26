@@ -5,7 +5,7 @@ import type { Task, Trial } from "@/lib/types";
 import { getExperimentAgentKey } from "@/lib/experiment-agent-grouping";
 import type { AgentSummary } from "./experiment-trials-table";
 import { AGENT_COLORS } from "./pass-at-k-graph";
-import { QueueKeyIcon } from "./queue-key-icon";
+import { LeaderboardBars } from "./leaderboard-bars";
 
 interface PassAtOneLeaderboardProps {
   tasks: Task[];
@@ -98,86 +98,20 @@ export const PassAtOneLeaderboard = memo(function PassAtOneLeaderboard({
     return null;
   }
 
-  const domain = 1;
-  const scaleTicks = [0, 0.25, 0.5, 0.75, 1];
-
   return (
-    <section
-      aria-label="Leaderboard"
-      className="flex h-full min-w-0 flex-col rounded-[10px] border border-[color:var(--paper-line)] bg-[color:var(--paper-surface)] px-4 py-3"
-    >
-      <div className="mb-2 flex items-baseline justify-between gap-3">
-        <h3 className="font-display text-[15px] font-medium tracking-[-0.01em] text-[color:var(--paper-ink)]">
-          Leaderboard
-        </h3>
-        <span className="font-mono text-[10.5px] text-[color:var(--paper-ink-3)]">
-          score = (pass + ½·partial) / completed
-        </span>
-      </div>
-
-      <div className="grid grid-cols-[1fr_60px] border-b border-[color:var(--paper-line-2)] pb-1.5 font-mono text-[9.5px] font-semibold tracking-[0.12em] text-[color:var(--paper-ink-3)] uppercase">
-        <span>Agent</span>
-        <span className="text-right">Score</span>
-      </div>
-
-      <div className="flex flex-col">
-        {visibleRows.map((row, index) => {
-          const color = colorByAgent.get(row.key) ?? AGENT_COLORS[0];
-          const width = (row.mean / domain) * 100;
-          const isDim = hoverAgent != null && hoverAgent !== row.key;
-          const isLast = index === visibleRows.length - 1;
-
-          return (
-            <div
-              key={row.key}
-              className={`grid grid-cols-[1fr_60px] items-center pt-2 pb-1.5 transition-opacity ${
-                isLast
-                  ? ""
-                  : "border-b border-dashed border-[color:var(--paper-line-2)]"
-              }`}
-              style={{ opacity: isDim ? 0.32 : 1 }}
-              onMouseEnter={() => onHoverAgent?.(row.key)}
-              onMouseLeave={() => onHoverAgent?.(null)}
-            >
-              <div className="flex min-w-0 items-center gap-2">
-                <QueueKeyIcon
-                  queueKey={row.queueKey}
-                  model={row.model}
-                  agent={row.agent}
-                  size={13}
-                  className="shrink-0"
-                />
-                <span className="truncate font-mono text-[11.5px] text-[color:var(--paper-ink)]">
-                  {row.label}
-                </span>
-              </div>
-              <div className="text-right font-mono text-xs font-semibold tracking-[-0.01em] text-[color:var(--paper-ink)]">
-                {(row.mean * 100).toFixed(1)}%
-              </div>
-              <div className="col-span-2 mt-1.5 h-1.5 overflow-hidden rounded-full bg-[color:var(--paper-bg-2)]">
-                <div
-                  className="h-full rounded-full transition-[width] duration-200"
-                  style={{
-                    width: `${width}%`,
-                    background: `linear-gradient(90deg, color-mix(in oklch, ${color}, white 18%) 0%, ${color} 100%)`,
-                  }}
-                />
-              </div>
-            </div>
-          );
-        })}
-        {visibleRows.length === 0 && (
-          <div className="py-6 text-center text-xs text-[color:var(--paper-ink-3)]">
-            All agents are hidden.
-          </div>
-        )}
-      </div>
-
-      <div className="mt-auto flex justify-between border-t border-[color:var(--paper-line-2)] pt-2 font-mono text-[9.5px] text-[color:var(--paper-ink-3)]">
-        {scaleTicks.map((tick) => (
-          <span key={tick}>{Math.round(tick * 100)}%</span>
-        ))}
-      </div>
-    </section>
+    <LeaderboardBars
+      title="Leaderboard"
+      caption="score = (pass + ½·partial) / completed"
+      nameHeading="Agent"
+      scoreHeading="Score"
+      rows={visibleRows.map((row) => ({
+        ...row,
+        value: row.mean,
+        color: colorByAgent.get(row.key) ?? AGENT_COLORS[0],
+      }))}
+      hoverKey={hoverAgent}
+      onHover={onHoverAgent}
+      emptyText="All agents are hidden."
+    />
   );
 });

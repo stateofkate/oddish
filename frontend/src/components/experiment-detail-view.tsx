@@ -14,6 +14,7 @@ import type { TaskPane } from "@/components/task-files-panel";
 import useSWR from "swr";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { PaperToggle } from "@/components/paper-toggle";
 import { ExperimentTrialsTable } from "@/components/experiment-trials-table";
 import { ExperimentPageSkeleton } from "@/components/experiment-page-skeleton";
 import {
@@ -344,17 +345,7 @@ function ExperimentHeaderMeta({
           <span>{isInitialLoading ? "Loading tasks..." : "Refreshing..."}</span>
         </div>
       )}
-      <Button
-        type="button"
-        variant="ghost"
-        onClick={onToggleShowPassAtK}
-        aria-pressed={showPassAtK}
-        className={`h-8 gap-[7px] rounded-[7px] border px-3 text-[12px] leading-none transition-colors select-none ${
-          showPassAtK
-            ? "border-[color:var(--paper-ink)] bg-[color:var(--paper-ink)] text-[color:var(--paper-bg)] hover:bg-[color:color-mix(in_oklch,var(--paper-ink),white_12%)]"
-            : "border-[color:var(--paper-line)] bg-[color:var(--paper-surface)] text-[color:var(--paper-ink)] hover:border-[color:var(--paper-ink-4)] hover:bg-[color:var(--paper-surface-2)]"
-        }`}
-      >
+      <PaperToggle pressed={showPassAtK} onClick={onToggleShowPassAtK}>
         <svg
           width="13"
           height="13"
@@ -370,7 +361,7 @@ function ExperimentHeaderMeta({
           <path d="M7 14l4-4 4 4 5-5" />
         </svg>
         Pass/k graph
-      </Button>
+      </PaperToggle>
       {headerRight}
     </div>
   );

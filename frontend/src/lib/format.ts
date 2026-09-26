@@ -1,4 +1,8 @@
-import { isAgentTrial, type Trial } from "@/lib/types";
+import {
+  isAgentTrial,
+  type DashboardExperimentAuthor,
+  type Trial,
+} from "@/lib/types";
 
 export function formatCostUsd(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return "$0.00";
@@ -103,4 +107,30 @@ export function formatDurationSec(seconds: number): string {
   const h = Math.floor(m / 60);
   const rem = m - h * 60;
   return rem ? `${h}h ${rem}m` : `${h}h`;
+}
+
+export function formatDate(dateStr: string | null): string {
+  if (!dateStr) return "—";
+  return new Date(dateStr).toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+/** An experiment's author as the dashboard shows it. */
+export function formatTaskAuthor(
+  author: DashboardExperimentAuthor | null
+): string {
+  if (!author) return "—";
+  // Precedence: canonical org-member name (plain, no "@") -> @github handle ->
+  // raw owner/user string. "member" is resolved by the backend from the
+  // experiment's owner_user_id and matches the name shown on the cost page.
+  if (author.source === "member") {
+    return author.name;
+  }
+  if (author.source === "github") {
+    return `@${author.name.replace(/^@/, "")}`;
+  }
+  return author.name;
 }

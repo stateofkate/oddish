@@ -46,6 +46,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { cn, encodeExperimentRouteParam, urlWithSearch } from "@/lib/utils";
+import { isEditableTarget } from "@/lib/editable-target";
 import {
   formatLineRange,
   parseLineRange,
@@ -1166,17 +1167,6 @@ export function TrialDetailPanel({
   const canGoToTask = onNavigateToTask && resolvedIndex === 0;
   const canGoPrev = hasNavigation && resolvedIndex > 0;
   const canGoNext = hasNavigation && resolvedIndex < orderedList.length - 1;
-
-  const isEditableTarget = (target: EventTarget | null) => {
-    if (!target || !(target instanceof HTMLElement)) return false;
-    const tag = target.tagName.toLowerCase();
-    return (
-      tag === "input" ||
-      tag === "textarea" ||
-      target.isContentEditable ||
-      target.getAttribute("role") === "textbox"
-    );
-  };
 
   const navigateTo = useCallback(
     (nextIndex: number) => {

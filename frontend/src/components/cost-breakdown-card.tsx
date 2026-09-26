@@ -58,6 +58,7 @@ import { formatCostUsd } from "@/lib/format";
 import { encodeExperimentRouteParam } from "@/lib/utils";
 import { QueueKeyIcon } from "@/components/queue-key-icon";
 import { AGENT_COLORS } from "@/components/pass-at-k-graph";
+import { stableSeriesColors } from "@/lib/series-colors";
 import { AlertCircle, DollarSign, Info, RefreshCw } from "lucide-react";
 
 // window_days values the backend understands (0 == all-time).
@@ -74,50 +75,13 @@ const OTHER_KEY = "__other__";
 const OTHER_COLOR = "#94a3b8"; // slate-400 — neutral for the folded "Other".
 
 // Reuse the app's shared agent/model palette (the pass@k chart / leaderboard
-// use the same one). Colors are assigned deterministically per key name so a
-// given model/user keeps the same hue across renders and dimensions — rather
-// than by stack position, which made the color depend on rank. Greedy
-// collision avoidance keeps adjacent segments distinct within a chart.
-function hashKey(key: string): number {
-  let hash = 0;
-  for (let i = 0; i < key.length; i += 1) {
-    hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
-  }
-  return hash;
-}
-
+// use the same one), colored per key name (see stableSeriesColors).
 function buildSeriesColors(keys: { key: string }[]): Record<string, string> {
-  const result: Record<string, string> = {};
-  const used = new Set<number>();
-  const pending: string[] = [];
-  for (const { key } of keys) {
-    if (key === OTHER_KEY) {
-      result[key] = OTHER_COLOR;
-      continue;
-    }
-    const pref = hashKey(key) % AGENT_COLORS.length;
-    if (used.has(pref)) {
-      pending.push(key);
-    } else {
-      used.add(pref);
-      result[key] = AGENT_COLORS[pref];
-    }
-  }
-  for (const key of pending) {
-    let slot = hashKey(key) % AGENT_COLORS.length;
-    if (used.size < AGENT_COLORS.length) {
-      for (let step = 0; step < AGENT_COLORS.length; step += 1) {
-        const candidate = (slot + step) % AGENT_COLORS.length;
-        if (!used.has(candidate)) {
-          slot = candidate;
-          break;
-        }
-      }
-    }
-    used.add(slot);
-    result[key] = AGENT_COLORS[slot];
-  }
-  return result;
+  const named = keys.map(({ key }) => key).filter((key) => key !== OTHER_KEY);
+  return {
+    ...stableSeriesColors(named, AGENT_COLORS),
+    [OTHER_KEY]: OTHER_COLOR,
+  };
 }
 
 function formatTokens(value: number): string {

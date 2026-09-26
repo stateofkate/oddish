@@ -42,6 +42,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { apiFetch, fetcher } from "@/lib/api";
+import { formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import {
   Bell,
@@ -188,15 +189,6 @@ interface APIKeyPermissions {
 }
 
 const VISIBLE_API_KEY_LIMIT = 8;
-
-function formatDate(dateStr: string | null): string {
-  if (!dateStr) return "—";
-  return new Date(dateStr).toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
-}
 
 function formatDateTime(dateStr: string | null): string {
   if (!dateStr) return "Never";

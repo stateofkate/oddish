@@ -10,12 +10,18 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import type { TooltipContentProps } from "recharts";
 import type { Task, Trial } from "@/lib/types";
 import { calculatePassAtKCurve, type AgentPassAtKStats } from "@/lib/pass-at-k";
 import { getExperimentAgentKey } from "@/lib/experiment-agent-grouping";
 import type { AgentSummary } from "./experiment-trials-table";
 import { AgentLegend } from "@/components/agent-legend";
+import {
+  CHART_AXIS_STROKE,
+  CHART_CURSOR,
+  CHART_GRID,
+  chartTick,
+  type ChartTooltipProps,
+} from "@/components/chart-style";
 
 // Color palette for different agents — kept stable between chart and
 // leaderboard so the cross-highlight feels coherent.
@@ -41,9 +47,6 @@ interface PassAtKGraphProps {
   hoverAgent?: string | null;
   onHoverAgent?: (key: string | null) => void;
 }
-
-type TooltipValue = number | string | ReadonlyArray<number | string>;
-type TooltipName = number | string;
 
 // Cap the pass/k curve so the x-axis stays readable even when an agent has
 // many attempts per task.
@@ -153,7 +156,7 @@ export const PassAtKGraph = memo(function PassAtKGraph({
     }, [tasks, agentSummaries, groupEfforts]);
 
   const renderTooltip = useCallback(
-    (props: TooltipContentProps<TooltipValue, TooltipName>) => {
+    (props: ChartTooltipProps) => {
       const { active, payload, label } = props;
       if (!active || !payload || payload.length === 0) return null;
 
@@ -261,19 +264,11 @@ export const PassAtKGraph = memo(function PassAtKGraph({
               data={data}
               margin={{ top: 5, right: 16, left: 0, bottom: 5 }}
             >
-              <CartesianGrid
-                strokeDasharray="2 4"
-                stroke="var(--paper-line-2)"
-                vertical={false}
-              />
+              <CartesianGrid {...CHART_GRID} />
               <XAxis
                 dataKey="k"
-                tick={{
-                  fontSize: 10.5,
-                  fill: "var(--paper-ink-2)",
-                  fontFamily: "var(--font-geist-mono), ui-monospace, monospace",
-                }}
-                stroke="var(--paper-line)"
+                tick={chartTick(10.5, "var(--paper-ink-2)")}
+                stroke={CHART_AXIS_STROKE}
                 label={{
                   value: "k",
                   position: "insideBottomRight",
@@ -286,22 +281,14 @@ export const PassAtKGraph = memo(function PassAtKGraph({
               <YAxis
                 domain={[0, 1]}
                 tickFormatter={(v) => `${Math.round(v * 100)}%`}
-                tick={{
-                  fontSize: 9.5,
-                  fill: "var(--paper-ink-3)",
-                  fontFamily: "var(--font-geist-mono), ui-monospace, monospace",
-                }}
-                stroke="var(--paper-line)"
+                tick={chartTick(9.5)}
+                stroke={CHART_AXIS_STROKE}
                 width={40}
               />
               <Tooltip
                 content={renderTooltip}
                 wrapperStyle={{ zIndex: 10, outline: "none" }}
-                cursor={{
-                  stroke: "var(--paper-ink-4)",
-                  strokeWidth: 1,
-                  strokeDasharray: "3 3",
-                }}
+                cursor={CHART_CURSOR}
               />
               {visibleAgentSummaries.map((summary) => {
                 const color = agentColorByKey[summary.key] ?? AGENT_COLORS[0];
