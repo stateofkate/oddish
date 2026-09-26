@@ -2726,6 +2726,99 @@ class FeedbackModel(Base):
     )
 
 
+class QAPromptModel(Base):
+    """One QA prompt version, keyed by the SHA-256 of its stripped text.
+
+    ``org_id`` is NULL for a prompt the deployment shipped (its text is public
+    in the package); a candidate sent to ``/qa-evals`` is private to its org.
+    Rows are written once per hash and only ever gain git provenance.
+    """
+
+    __tablename__ = "qa_prompts"
+    __table_args__ = (
+        CheckConstraint(
+            "stage IN ('pre_trial', 'post_trial')", name="ck_qa_prompts_stage"
+        ),
+        CheckConstraint(
+            "source IN ('production', 'replay')", name="ck_qa_prompts_source"
+        ),
+        Index(
+            "uq_qa_prompts_org_stage_sha256",
+            text("COALESCE(org_id, '')"),
+            "stage",
+            "sha256",
+            unique=True,
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=generate_id)
+    org_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    stage: Mapped[str] = mapped_column(String(16), nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    name: Mapped[str] = mapped_column(String(128), nullable=False, server_default="")
+    source: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_by_user_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    git_commit: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    git_author: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    git_committed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+
+
+class QAGoldenCaseModel(TimestampedMixin, Base):
+    """A person's label of the answer QA should give for one subject: a
+    solver trial (post-trial, ``{"classification": ...}``) or a task version
+    (pre-trial, ``{"required_findings": [...]}``). A subject has at most one
+    live golden per stage.
+
+    ``task_version_content_hash`` pins the bytes the label was made against:
+    an in-place overwrite keeps the version id but changes its content, which
+    makes the golden stale until someone confirms it again.
+    """
+
+    __tablename__ = "qa_golden_cases"
+    __table_args__ = (
+        CheckConstraint(
+            "stage IN ('pre_trial', 'post_trial')", name="ck_qa_golden_cases_stage"
+        ),
+        CheckConstraint(
+            "(stage = 'post_trial' AND source_trial_id IS NOT NULL) OR "
+            "(stage = 'pre_trial' AND source_trial_id IS NULL)",
+            name="ck_qa_golden_cases_subject",
+        ),
+        Index(
+            "uq_qa_golden_cases_live_subject",
+            text("COALESCE(org_id, '')"),
+            "stage",
+            text("COALESCE(source_trial_id, task_version_id)"),
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=generate_id)
+    org_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    stage: Mapped[str] = mapped_column(String(16), nullable=False)
+    # The file the label was imported from; null when a person set it.
+    source: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    source_trial_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    task_version_id: Mapped[str] = mapped_column(String(160), nullable=False)
+    task_version_content_hash: Mapped[str | None] = mapped_column(
+        String(128), nullable=True
+    )
+    expected: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    note: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    created_by_user_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    reviewed_by_user_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
 class CustomerModel(TimestampedMixin, Base):
     """A customer deliveries ship to. One row per org and name."""
 
@@ -3254,4 +3347,5 @@ register_soft_delete_models(
     CostExcludedLlmKeyModel,
     CostExcludedModelModel,
     CostExcludedExperimentModel,
+    QAGoldenCaseModel,
 )

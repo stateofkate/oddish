@@ -23,6 +23,8 @@ from harbor.models.trial.config import (
     VerifierConfig as HarborVerifierConfig,
 )
 
+from oddish.analyze.models import Classification
+from oddish.analyze.qa_stages import STAGES, QAStage
 from oddish.config import is_nop_oracle_agent, normalize_model_id
 from oddish.db import (
     AnalysisStatus,
@@ -1634,6 +1636,86 @@ class QAEvalCreateResponse(BaseModel):
     prompt_sha256: str
     model: str
     trials: list[QAEvalTrialResponse]
+
+
+# counted: reviewed, task version unchanged since labeling (only these score
+# runs); stale: the version's content changed; waiting: the rest.
+QAGoldenState = Literal["counted", "waiting", "stale"]
+QAGoldenReview = Literal["waiting", "stale"]
+# A queued trial's group: labeled when its golden counts, else by reward.
+QAGoldenQueueGroup = Literal["failed", "passed", "labeled"]
+
+
+class QAGoldenCreate(BaseModel):
+    """One unreviewed golden, as an import adds it. The subject is
+    ``source_trial_id`` for a trial stage, ``task_version_id`` otherwise."""
+
+    stage: QAStage
+    # Where the label came from, e.g. the imported file's name.
+    source: str | None = Field(None, max_length=128)
+    source_trial_id: str | None = None
+    task_version_id: str | None = None
+    expected: dict[str, Any]
+    note: str = Field("", max_length=20_000)
+
+    @model_validator(mode="after")
+    def _validate_golden(self) -> "QAGoldenCreate":
+        spec = STAGES[self.stage]
+        self.source = (self.source or "").strip() or None
+        self.expected = spec.parse_expected(self.expected)
+        by_trial = spec.subject == "trial"
+        if by_trial != bool(self.source_trial_id) or by_trial == bool(
+            self.task_version_id
+        ):
+            field = "source_trial_id" if by_trial else "task_version_id"
+            raise ValueError(f"{self.stage.value} goldens need {field} alone")
+        return self
+
+
+class QAGoldenLabel(BaseModel):
+    """A solver trial's correct post-trial classification."""
+
+    classification: Classification
+    # None keeps an unchanged label's note; a changed label starts empty.
+    note: str | None = Field(None, max_length=20_000)
+
+
+class QAGoldenRef(BaseModel):
+    id: str
+    expected: dict[str, Any]
+    state: QAGoldenState
+
+    model_config = {"from_attributes": True}
+
+
+class QAGoldenResponse(QAGoldenRef):
+    source: str | None
+    source_trial_id: str | None
+    task_version_id: str
+    note: str
+
+
+class QAGoldenQueueTrial(BaseModel):
+    trial_id: str
+    task_id: str
+    task_name: str
+    reward: float | None
+    group: QAGoldenQueueGroup
+    # Production QA's classification, taxonomy subtype and root cause.
+    qa_classification: str | None
+    qa_subtype: str | None
+    qa_reason: str | None
+    golden: QAGoldenRef | None
+
+
+class QAGoldenQueue(BaseModel):
+    """Finished solver trials to label: an experiment's, or those of the
+    goldens waiting for review or stale."""
+
+    # The experiment's name, or "Waiting for review" / "Stale".
+    title: str
+    # Failed first, then by task name.
+    trials: list[QAGoldenQueueTrial]
 
 
 class CollectionMutationResponse(BaseModel):

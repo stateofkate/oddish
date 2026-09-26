@@ -324,6 +324,7 @@ def create_app() -> FastAPI:
         public,
         public_analysis,
         qa_eval,
+        qa_goldens,
         slack,
         tags,
         tasks,
@@ -352,6 +353,7 @@ def create_app() -> FastAPI:
     api.include_router(public.router)
     api.include_router(public_analysis.router)
     api.include_router(qa_eval.router)
+    api.include_router(qa_goldens.router)
     api.include_router(slack.router)
     api.include_router(admin.router)
     api.include_router(cost_excluded_models.router)

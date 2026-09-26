@@ -35,6 +35,7 @@ from oddish.analyze.models import (
     TaskVerdictModel,
     TrialClassificationModel,
 )
+from oddish.analyze.qa_stages import STAGES, QAStage
 from oddish.analyze.trajectory_delegation import (
     delegation_facts,
     subagent_dispatches_in,
@@ -224,7 +225,7 @@ def _prompt(name: str) -> str:
 
 def audit_policy_hash() -> str:
     """SHA-256 of the policy text pinned into every new source audit."""
-    policy = _prompt("prompts/pre_trial_qa.txt")
+    policy = _prompt(STAGES[QAStage.PRE_TRIAL].prompt_file)
     return hashlib.sha256(policy.encode()).hexdigest()
 
 
@@ -420,7 +421,7 @@ def build_qa_brief(
     pre_trial_error: str | None = None,
     verdict_omission_reason: str | None = None,
 ) -> str:
-    classify = classification_prompt or _prompt("classify_prompt.txt")
+    classify = classification_prompt or _prompt(STAGES[QAStage.POST_TRIAL].prompt_file)
     verdict = _prompt("verdict_prompt.txt")
     summary = render_summary_instructions(_prompt("prompts/trajectory_summary.txt"))
     pre_trial = (
@@ -600,7 +601,7 @@ The submitted JSON must have this shape:
 
 
 def build_audit_brief(*, task_name: str) -> str:
-    audit = _prompt("prompts/pre_trial_qa.txt")
+    audit = _prompt(STAGES[QAStage.PRE_TRIAL].prompt_file)
     return f"""You are the pre-trial source auditor for the task `{task_name}`. Fetch the task source with the oddish-query CLI: run `node /probe-harness/oddish-query --help` first, then download the task's files. Do not solve the task.
 
 {audit}
