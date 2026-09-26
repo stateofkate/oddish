@@ -45,6 +45,7 @@ import {
 import { CostBreakdownCard } from "@/components/cost-breakdown-card";
 import { CostExclusionsCard } from "@/components/cost-exclusions-card";
 import { SlackAlertSettingsForm } from "@/components/slack-alert-settings-form";
+import { QaEvalsPage } from "@/components/qa-evals/qa-evals-page";
 import { RefreshCw, Server, Clock, AlertCircle } from "lucide-react";
 
 const formatAge = (dateStr: string | null) => {
@@ -706,6 +707,7 @@ const ADMIN_TABS = [
   "concurrency",
   "tags",
   "quotas",
+  "qa-evals",
   "diagnostics",
 ] as const;
 
@@ -754,7 +756,7 @@ function AdminPageContent() {
       <div>
         <h1 className="text-2xl font-bold">Admin Dashboard</h1>
         <p className="text-muted-foreground text-sm">
-          Organization usage, spend, queues, tags, and quotas
+          Organization usage, spend, queues, tags, quotas, and QA evals
         </p>
       </div>
 
@@ -791,6 +793,7 @@ function AdminPageContent() {
           )}
           <TabsTrigger value="tags">Tag Policy</TabsTrigger>
           <TabsTrigger value="quotas">Quotas</TabsTrigger>
+          <TabsTrigger value="qa-evals">QA Evals</TabsTrigger>
           {canManagePlatform && (
             <TabsTrigger value="diagnostics">Diagnostics</TabsTrigger>
           )}
@@ -856,6 +859,10 @@ function AdminPageContent() {
               <QuotaAdminForm />
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="qa-evals">
+          <QaEvalsPage />
         </TabsContent>
 
         {canManagePlatform && (
