@@ -22,6 +22,7 @@ from oddish.config import (
     is_anthropic_hdo_model,
     is_fireworks_model,
     is_geometric_model,
+    is_hunyuan_model,
     is_meta_model,
     is_meta_public_model,
     is_minimax_model,
@@ -31,8 +32,10 @@ from oddish.config import (
     is_xai_public_model,
     is_zai_model,
     require_geometric_served_model_id,
+    require_hunyuan_served_model_id,
     resolve_meta_public_api_key,
     to_geometric_model_id,
+    to_hunyuan_model_id,
     to_meta_model_id,
     to_meta_public_model_id,
     minimax_api_model_id,
@@ -71,6 +74,9 @@ _ODDISH_META_MINI_SWE_IMPORT_PATH = (
 )
 _ODDISH_GEOMETRIC_MINI_SWE_IMPORT_PATH = (
     "oddish.workers.agents.mini_swe_agent:OddishGeometricMiniSweAgent"
+)
+_ODDISH_HUNYUAN_MINI_SWE_IMPORT_PATH = (
+    "oddish.workers.agents.mini_swe_agent:OddishHunyuanMiniSweAgent"
 )
 _SINGLE_LLM_IMPORT_PATH = "oddish.workers.harbor.single_llm_agent:SingleLLMAgent"
 _ANTHROPIC_MODEL_ALIAS_KEYS = (
@@ -630,6 +636,27 @@ def _apply_geometric_mini_swe_agent(agent_config: AgentConfig) -> None:
     agent_config.kwargs = dict(agent_config.kwargs or {})
 
 
+def _apply_hunyuan_mini_swe_agent(agent_config: AgentConfig) -> None:
+    """Route Hunyuan model evals through mini-swe-agent with Hunyuan API settings."""
+    if agent_config.import_path is not None:
+        return
+    if not _is_mini_swe_agent(agent_config):
+        return
+    if not is_hunyuan_model(agent_config.model_name):
+        return
+    # Fail before a sandbox is spent, not at the first model call.
+    require_hunyuan_served_model_id(agent_config.model_name or "")
+
+    agent_config.name = None
+    agent_config.import_path = _ODDISH_HUNYUAN_MINI_SWE_IMPORT_PATH
+
+    env = dict(agent_config.env or {})
+    for key, value in settings.get_hunyuan_agent_env().items():
+        env.setdefault(key, value)
+    agent_config.env = env
+    agent_config.kwargs = dict(agent_config.kwargs or {})
+
+
 def _apply_mini_swe_agent(agent_config: AgentConfig) -> None:
     if agent_config.import_path is not None or not _is_mini_swe_agent(agent_config):
         return
@@ -815,6 +842,8 @@ def _build_routed_agent_config(
         # Before z.ai: an explicit geometric/ (or gm/) prefix on a GLM id
         # must win over the bare-``glm`` z.ai fallback below.
         agent_config.model_name = to_geometric_model_id(agent_config.model_name)
+    elif is_hunyuan_model(agent_config.model_name):
+        agent_config.model_name = to_hunyuan_model_id(agent_config.model_name)
     elif is_xai_model(agent_config.model_name):
         agent_config.model_name = to_xai_model_id(agent_config.model_name)
     elif is_zai_model(agent_config.model_name):
@@ -947,6 +976,7 @@ def _build_agent_config(
     _apply_antigravity_cli_oddish_wrapper(agent_config)
     _apply_meta_mini_swe_agent(agent_config)
     _apply_geometric_mini_swe_agent(agent_config)
+    _apply_hunyuan_mini_swe_agent(agent_config)
     _apply_mini_swe_agent(agent_config)
     # Harbor's kimi-claude-code class defaults to Moonshot; run stock ClaudeCode.
     if _is_kimi_claude_code_agent(agent_config):

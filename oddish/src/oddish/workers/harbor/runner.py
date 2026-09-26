@@ -311,6 +311,7 @@ _PROVIDER_RUNTIME_SECRET_KEYS: dict[str, tuple[str, ...]] = {
     # runtime transport env.
     "meta-public": ("META_PUBLIC_API_KEY",),
     "geometric": ("GEOMETRIC_API_KEY", "OPENAI_API_KEY"),
+    "hunyuan": ("HUNYUAN_API_KEY", "OPENAI_API_KEY"),
     "fireworks": ("FIREWORKS_API_KEY",),
     "deepseek": ("DEEPSEEK_API_KEY",),
     "zai": ("ZAI_API_KEY",),

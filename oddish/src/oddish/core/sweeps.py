@@ -8,8 +8,10 @@ from harbor.models.environment_type import EnvironmentType
 from oddish.config import (
     curated_model_error,
     is_geometric_model,
+    is_hunyuan_model,
     is_nop_oracle_agent,
     require_geometric_served_model_id,
+    require_hunyuan_served_model_id,
     settings,
 )
 from oddish.reasoning_effort import normalize_reasoning_effort
@@ -84,6 +86,22 @@ def build_trial_specs_from_sweep(
             except ValueError as exc:
                 # Surface as a 400 with the message, matching this module's
                 # convention.
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Unsupported model for agent "
+                        f"{config.agent!r} / model {config.model!r}: {exc}"
+                    ),
+                ) from exc
+
+        # Hunyuan: same served-model check, and only mini-swe-agent receives
+        # the Hunyuan key and base URL, so any other harness would run unrouted.
+        if is_hunyuan_model(config.model):
+            try:
+                require_hunyuan_served_model_id(config.model or "")
+                if (config.agent or "").strip().lower() != "mini-swe-agent":
+                    raise ValueError("Hunyuan models run only on mini-swe-agent")
+            except ValueError as exc:
                 raise HTTPException(
                     status_code=400,
                     detail=(

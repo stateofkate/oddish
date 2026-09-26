@@ -30,6 +30,7 @@ from oddish.config import (
     is_deepseek_model,
     is_fireworks_model,
     is_geometric_model,
+    is_hunyuan_model,
     is_meta_model,
     is_meta_public_model,
     is_minimax_model,
@@ -56,6 +57,7 @@ ANTHROPIC_BASE_URL_KEYS = ("ANTHROPIC_BASE_URL",)
 OPENAI_BASE_URL_KEYS = ("OPENAI_BASE_URL", "OPENAI_API_BASE")
 META_BASE_URL_KEYS = ("META_BASE_URL",)
 GEOMETRIC_BASE_URL_KEYS = ("GEOMETRIC_BASE_URL",)
+HUNYUAN_BASE_URL_KEYS = ("HUNYUAN_BASE_URL",)
 OPENROUTER_BASE_URL_KEYS = ("OPENROUTER_BASE_URL",)
 FIREWORKS_BASE_URL_KEYS = ("FIREWORKS_BASE_URL",)
 ZAI_BASE_URL_KEYS = ("ZAI_BASE_URL",)
@@ -91,6 +93,7 @@ _BASE_URL_ENV_KEYS = (
     *OPENAI_BASE_URL_KEYS,
     *META_BASE_URL_KEYS,
     *GEOMETRIC_BASE_URL_KEYS,
+    *HUNYUAN_BASE_URL_KEYS,
     *OPENROUTER_BASE_URL_KEYS,
     *FIREWORKS_BASE_URL_KEYS,
     *ZAI_BASE_URL_KEYS,
@@ -542,6 +545,10 @@ def outbound_hosts_for_model(
             hosts.append(host)
     elif is_geometric_model(model_name):
         host = _default_host(settings.geometric_base_url)
+        if host:
+            hosts.append(host)
+    elif is_hunyuan_model(model_name):
+        host = _default_host(settings.hunyuan_base_url)
         if host:
             hosts.append(host)
     elif is_anthropic_hdo_model(model_name):

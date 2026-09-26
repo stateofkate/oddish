@@ -470,6 +470,7 @@ def _model_transport_base_url_keys(model_name: str | None) -> tuple[str, ...]:
         "meta": ("META_BASE_URL", *_OPENAI_BASE_URL_KEYS),
         "meta-public": ("META_BASE_URL", *_OPENAI_BASE_URL_KEYS),
         "geometric": ("GEOMETRIC_BASE_URL", *_OPENAI_BASE_URL_KEYS),
+        "hunyuan": ("HUNYUAN_BASE_URL", *_OPENAI_BASE_URL_KEYS),
         "openrouter": ("OPENROUTER_BASE_URL",),
         "fireworks": ("FIREWORKS_BASE_URL",),
         "zai": ("ZAI_BASE_URL",),
@@ -939,6 +940,9 @@ _COMPATIBILITY_PROFILES: dict[str, _RestrictedAgentSpec] = {
         _mini_swe_profile, _mini_swe_base_url_keys
     ),
     "oddish.workers.agents.mini_swe_agent:OddishGeometricMiniSweAgent": (
+        _RestrictedAgentSpec(_mini_swe_profile, _mini_swe_base_url_keys)
+    ),
+    "oddish.workers.agents.mini_swe_agent:OddishHunyuanMiniSweAgent": (
         _RestrictedAgentSpec(_mini_swe_profile, _mini_swe_base_url_keys)
     ),
 }

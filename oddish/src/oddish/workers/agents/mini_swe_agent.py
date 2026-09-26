@@ -10,8 +10,10 @@ from harbor.agents.installed.mini_swe_agent import MiniSweAgent
 
 from oddish.config import (
     GEOMETRIC_DEFAULT_BASE_URL,
+    HUNYUAN_DEFAULT_BASE_URL,
     META_DEFAULT_BASE_URL,
     require_geometric_served_model_id,
+    require_hunyuan_served_model_id,
     meta_bare_model_id,
     settings,
 )
@@ -21,6 +23,7 @@ from oddish.workers.agents.network import normalize_domain_or_url
 _CONFIG_PATH = "/tmp/oddish-mini-swe-agent.yaml"
 _META_CONFIG_PATH = "/tmp/oddish-meta-mini-swe-agent.yaml"
 _GEOMETRIC_CONFIG_PATH = "/tmp/oddish-geometric-mini-swe-agent.yaml"
+_HUNYUAN_CONFIG_PATH = "/tmp/oddish-hunyuan-mini-swe-agent.yaml"
 _META_API_DOMAIN = "api.ai.meta.com"
 _TASK_FLAG = "--task="
 _AWS_PROVIDER_CHAIN_ENV = (
@@ -372,3 +375,30 @@ class OddishGeometricMiniSweAgent(_OpenAiCompatMiniSweAgent):
     @staticmethod
     def _oddish_bare_model_id(model_name: str) -> str:
         return require_geometric_served_model_id(model_name)
+
+
+class OddishHunyuanMiniSweAgent(_OpenAiCompatMiniSweAgent):
+    """mini-swe-agent wrapper for Tencent Hunyuan's OpenAI-compatible eval endpoint.
+
+    Plain OpenAI-compatible shape like Geometric: no session header, no
+    eval-name plumbing.
+    """
+
+    _oddish_config_path = _HUNYUAN_CONFIG_PATH
+    _oddish_base_url_env_keys = (
+        "HUNYUAN_BASE_URL",
+        "OPENAI_BASE_URL",
+        "OPENAI_API_BASE",
+    )
+
+    @classmethod
+    def _oddish_configured_base_urls(cls) -> set[str | None]:
+        return {
+            HUNYUAN_DEFAULT_BASE_URL,
+            settings.hunyuan_base_url,
+            os.environ.get("HUNYUAN_BASE_URL"),
+        }
+
+    @staticmethod
+    def _oddish_bare_model_id(model_name: str) -> str:
+        return require_hunyuan_served_model_id(model_name)

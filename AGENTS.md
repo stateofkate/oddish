@@ -1613,10 +1613,10 @@ Keep these routing rules in sync with `oddish/src/oddish/config.py` and
 - OpenAI-family jobs default to Azure OpenAI. Use
   `ODDISH_OPENAI_PROVIDER=openai` plus `OPENAI_API_KEY` only when intentionally
   routing to public OpenAI.
-- z.ai, MiniMax, Moonshot/Kimi, Fireworks, xAI, Meta, Geometric, and Anthropic
-  HDO each have explicit canonical provider prefixes and queue keys: `zai/`,
-  `minimax/`, `moonshot/`, `fireworks/`, `xai/`, `meta/`, `meta-public/`,
-  `geometric/`, and `anthropic-hdo/`. Add or change provider aliases in
+- z.ai, MiniMax, Moonshot/Kimi, Fireworks, xAI, Meta, Geometric, Hunyuan, and
+  Anthropic HDO each have explicit canonical provider prefixes and queue keys:
+  `zai/`, `minimax/`, `moonshot/`, `fireworks/`, `xai/`, `meta/`,
+  `meta-public/`, `geometric/`, `hunyuan/`, and `anthropic-hdo/`. Add or change provider aliases in
   `config.py`, then update env injection in the Harbor runner and the network
   allowlist notes.
 - Google Vertex AI is the `vertex_ai/<model>` provider (aliases `vertex/`,
@@ -1707,6 +1707,10 @@ Keep these routing rules in sync with `oddish/src/oddish/config.py` and
   (`require_geometric_served_model_id`), never in `normalize_trial_model`,
   which must stay total for reads over stored rows whose model has since left
   the set. Keep the set in sync with `--served-model-name`.
+- Hunyuan (`hunyuan/hy4-preview-offline`, Tencent's eval endpoint) copies the
+  Geometric shape on mini-swe-agent only: `_HUNYUAN_SERVED_MODELS` allowlist,
+  `HUNYUAN_API_KEY`, and `HUNYUAN_BASE_URL` without `/chat/completions`.
+  Submit rejects it on any other agent.
 - Gemini model ids use the `gemini/<id>` prefix (the Gemini API key route,
   Google AI Studio; `vertex_ai/` is a separate provider, above). The same
   bare model runs on either route: the prefix alone decides the provider,

@@ -886,6 +886,63 @@ def to_geometric_model_id(model: str | None) -> str | None:
     return f"{GEOMETRIC_PROVIDER}/{geometric_bare_model_id(model)}"
 
 
+# Tencent Hunyuan's own OpenAI-compatible eval endpoint (Hy4 Preview) for
+# mini-swe-agent. Same shape as Geometric: litellm's ``openai/`` provider
+# against a vendor base URL, a served-model allowlist so a foreign id never
+# falls through to public OpenAI, and prefix-only selection
+# (``hunyuan/hy4-preview-offline``). The OpenRouter route
+# (``openrouter/tencent/hy4-preview``) is unaffected.
+HUNYUAN_PROVIDER = "hunyuan"
+# litellm's ``openai/`` provider appends only ``/chat/completions``, and the
+# endpoint serves ``/openapi/v2/data/chat/completions``.
+HUNYUAN_DEFAULT_BASE_URL = "https://eval.hunyuan.tencent.com/openapi/v2/data"
+_HUNYUAN_PROVIDER_PREFIXES: frozenset[str] = frozenset({"hunyuan"})
+_HUNYUAN_SERVED_MODELS: frozenset[str] = frozenset({"hy4-preview-offline"})
+
+
+def is_hunyuan_model(model: str | None) -> bool:
+    """Return True when *model* explicitly selects Hunyuan's OpenAI-compatible API."""
+    if not model:
+        return False
+    raw = model.strip().lower()
+    if not raw:
+        return False
+    provider_prefix, _ = split_provider_model_name(raw)
+    return bool(provider_prefix and provider_prefix in _HUNYUAN_PROVIDER_PREFIXES)
+
+
+def hunyuan_bare_model_id(model: str) -> str:
+    """Strip a ``hunyuan/`` prefix, returning the bare model id."""
+    raw = model.strip()
+    provider_prefix, bare = split_provider_model_name(raw)
+    if not (
+        provider_prefix
+        and provider_prefix.strip().lower() in _HUNYUAN_PROVIDER_PREFIXES
+    ):
+        return raw
+    return str(bare).strip().lower()
+
+
+def require_hunyuan_served_model_id(model: str) -> str:
+    """Bare Hunyuan id, rejecting anything this endpoint does not serve."""
+    bare_id = hunyuan_bare_model_id(model)
+    if bare_id not in _HUNYUAN_SERVED_MODELS:
+        served = ", ".join(sorted(_HUNYUAN_SERVED_MODELS))
+        raise ValueError(
+            f"Hunyuan serves only: {served}. Got {bare_id!r}. "
+            "Add the id to _HUNYUAN_SERVED_MODELS when the endpoint adds a model."
+        )
+    return bare_id
+
+
+def to_hunyuan_model_id(model: str | None) -> str | None:
+    """Canonicalize a Hunyuan model reference to ``hunyuan/<bare-id>``."""
+    if not is_hunyuan_model(model):
+        return model
+    assert model is not None
+    return f"{HUNYUAN_PROVIDER}/{hunyuan_bare_model_id(model)}"
+
+
 # Direct Anthropic API via a separate HDO key. Opt-in with an explicit
 # ``anthropic-hdo/<model>`` prefix so Claude trials can use
 # ``ANTHROPIC_HDO_API_KEY`` (injected as ``ANTHROPIC_API_KEY``) instead of the
@@ -1362,6 +1419,8 @@ _MODEL_PROVIDER_ALIASES: dict[str, str] = {
     # Geometric's own OpenAI-compatible endpoint (GLM-5.3) for mini-swe-agent.
     "geometric": GEOMETRIC_PROVIDER,
     "gm": GEOMETRIC_PROVIDER,
+    # Tencent Hunyuan's OpenAI-compatible eval endpoint (Hy4) for mini-swe-agent.
+    "hunyuan": HUNYUAN_PROVIDER,
     # Direct Anthropic API with the separate HDO key (ANTHROPIC_HDO_API_KEY).
     "anthropic-hdo": ANTHROPIC_HDO_PROVIDER,
     # DeepSeek official API for the dsh harness.
@@ -2070,6 +2129,11 @@ class Settings(BaseSettings):
     geometric_anthropic_base_url: str | None = Field(
         default=None, alias="GEOMETRIC_ANTHROPIC_BASE_URL"
     )
+    hunyuan_api_key: str | None = Field(default=None, alias="HUNYUAN_API_KEY")
+    # OpenAI-compatible base, WITHOUT ``/chat/completions`` (litellm appends it).
+    hunyuan_base_url: str = Field(
+        default=HUNYUAN_DEFAULT_BASE_URL, alias="HUNYUAN_BASE_URL"
+    )
     azure_openai_api_key: str | None = Field(default=None, alias="AZURE_OPENAI_API_KEY")
     azure_openai_endpoint: str | None = Field(
         default=None, alias="AZURE_OPENAI_ENDPOINT"
@@ -2098,6 +2162,8 @@ class Settings(BaseSettings):
             self.geometric_base_url = GEOMETRIC_DEFAULT_BASE_URL
         if not (self.geometric_anthropic_base_url or "").strip():
             self.geometric_anthropic_base_url = None
+        if not (self.hunyuan_base_url or "").strip():
+            self.hunyuan_base_url = HUNYUAN_DEFAULT_BASE_URL
         return self
 
     @model_validator(mode="after")
@@ -2367,6 +2433,9 @@ class Settings(BaseSettings):
             # exposes ``strict``) and the cost/browse/handler reads below them,
             # all of which run over stored rows. Submit validates separately.
             return to_geometric_model_id(cleaned)
+        if is_hunyuan_model(cleaned):
+            # Total like Geometric above; submit validates the served id.
+            return to_hunyuan_model_id(cleaned)
         if is_xai_model(cleaned):
             return to_xai_model_id(cleaned)
         if is_xai_public_model(cleaned):
@@ -2774,6 +2843,21 @@ class Settings(BaseSettings):
             # the agent aborts mid-run. Oddish prices trials from its own
             # model_pricing tables, so mini-swe's accounting is not the source
             # of truth here anyway.
+            "MSWEA_COST_TRACKING": "ignore_errors",
+        }
+
+    def get_hunyuan_agent_env(self) -> dict[str, str]:
+        """Return env vars for Hunyuan's OpenAI-compatible mini-swe-agent route.
+
+        Same contract as get_geometric_agent_env: the key is resolved at
+        runtime from ${HUNYUAN_API_KEY} and never persisted, the setup wizard
+        is skipped, and litellm has no price for this model.
+        """
+        return {
+            "MSWEA_API_KEY": "${HUNYUAN_API_KEY}",
+            "OPENAI_API_KEY": "${HUNYUAN_API_KEY}",
+            "OPENAI_BASE_URL": self.hunyuan_base_url.rstrip("/"),
+            "MSWEA_CONFIGURED": "true",
             "MSWEA_COST_TRACKING": "ignore_errors",
         }
 

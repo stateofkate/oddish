@@ -267,6 +267,15 @@ def scoped_model_env(
             if key
             else {}
         )
+    if provider == "hunyuan":
+        # Same shape as Geometric: litellm's ``openai/`` provider reads
+        # OPENAI_API_KEY.
+        key = getattr(settings, "hunyuan_api_key", None)
+        return (
+            {"HUNYUAN_API_KEY": key, "MSWEA_API_KEY": key, "OPENAI_API_KEY": key}
+            if key
+            else {}
+        )
     if provider == "xai-public":
         key = os.environ.get("XAI_PUBLIC_API_KEY")
         return {"XAI_PUBLIC_API_KEY": key} if key else {}

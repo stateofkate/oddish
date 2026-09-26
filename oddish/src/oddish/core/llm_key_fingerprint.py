@@ -14,6 +14,7 @@ _ODDISH_PROVIDER_ENV_KEYS = {
     "meta": "META_API_KEY",
     "meta-public": "META_PUBLIC_API_KEY",
     "geometric": "GEOMETRIC_API_KEY",
+    "hunyuan": "HUNYUAN_API_KEY",
     "zai": "ZAI_API_KEY",
     "minimax": "MINIMAX_API_KEY",
     "moonshot": "MOONSHOT_API_KEY",
@@ -80,6 +81,8 @@ def platform_key_hash_for_provider(provider: str | None) -> str | None:
             raw = resolve_meta_public_api_key(settings)
         elif provider == "geometric":
             raw = settings.geometric_api_key or os.environ.get("GEOMETRIC_API_KEY")
+        elif provider == "hunyuan":
+            raw = settings.hunyuan_api_key or os.environ.get("HUNYUAN_API_KEY")
         elif provider == "vertex_ai":
             # The credential that actually pays: the service-account JSON, or
             # the express-mode key. Read through Settings so a self-host .env
