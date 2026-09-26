@@ -613,12 +613,25 @@ class QARunRequest(BaseModel):
 
 
 class QAEvalCreateRequest(BaseModel):
-    """Replay one candidate QA prompt over exact historical solver trials."""
+    """Replay one QA prompt version over exact historical solver trials:
+    picked ones (a subset run) or every counted golden's."""
 
     name: str = Field(..., max_length=255)
-    source_trial_ids: list[str]
-    prompt_name: str = Field(..., max_length=128)
-    prompt_text: str = Field(..., max_length=200_000)
+    source_trial_ids: list[str] = Field(default_factory=list)
+    goldens: bool = Field(
+        False,
+        description="Replay every counted golden's trial instead of source_trial_ids.",
+    )
+    prompt_name: str | None = Field(
+        None,
+        max_length=128,
+        description="Required with prompt_text; prompt_sha256 uses the recorded name.",
+    )
+    prompt_text: str | None = Field(None, max_length=200_000)
+    prompt_sha256: str | None = Field(
+        None, description="Replay a recorded prompt version instead of sending text."
+    )
+    stage: QAStage = QAStage.POST_TRIAL
     model: str | None = Field(
         None,
         description=(
@@ -640,8 +653,9 @@ class QAEvalCreateRequest(BaseModel):
     @model_validator(mode="after")
     def _validate_qa_eval(self) -> "QAEvalCreateRequest":
         self.name = self.name.strip()
-        self.prompt_name = self.prompt_name.strip()
-        self.prompt_text = self.prompt_text.strip()
+        self.prompt_name = (self.prompt_name or "").strip() or None
+        self.prompt_text = (self.prompt_text or "").strip() or None
+        self.prompt_sha256 = (self.prompt_sha256 or "").strip() or None
         self.source_trial_ids = list(
             dict.fromkeys(
                 value.strip()
@@ -649,14 +663,16 @@ class QAEvalCreateRequest(BaseModel):
                 if value and value.strip()
             )
         )
+        if not STAGES[self.stage].replayable:
+            raise ValueError(f"{self.stage.value} prompts cannot be replayed yet")
         if not self.name:
             raise ValueError("name must not be empty")
-        if not self.prompt_name:
-            raise ValueError("prompt_name must not be empty")
-        if not self.prompt_text:
-            raise ValueError("prompt_text must not be empty")
-        if not self.source_trial_ids:
-            raise ValueError("source_trial_ids must not be empty")
+        if (self.prompt_text is None) == (self.prompt_sha256 is None):
+            raise ValueError("give exactly one of prompt_text and prompt_sha256")
+        if self.prompt_text is not None and self.prompt_name is None:
+            raise ValueError("prompt_name is required with prompt_text")
+        if self.goldens == bool(self.source_trial_ids):
+            raise ValueError("give exactly one of goldens and source_trial_ids")
         if self.model is not None:
             self.model = self.model.strip() or None
         return self
@@ -1636,6 +1652,9 @@ class QAEvalCreateResponse(BaseModel):
     prompt_sha256: str
     model: str
     trials: list[QAEvalTrialResponse]
+    # With ``goldens``: golden trials that can no longer be replayed, each as
+    # "trial id: reason".
+    skipped: list[str] = Field(default_factory=list)
 
 
 # counted: reviewed, task version unchanged since labeling (only these score

@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
@@ -10,7 +11,7 @@ from httpx import ASGITransport, AsyncClient
 
 from auth import require_auth
 from auth.types import AuthContext, AuthMethod
-from models import APIKeyScope
+from models import APIKeyScope, UserRole
 from oddish.schemas import QAEvalCreateResponse, QAEvalTrialResponse
 
 _ROUTER_PATH = Path(__file__).resolve().parents[1] / "api" / "routers" / "qa_eval.py"
@@ -19,47 +20,54 @@ assert _SPEC is not None and _SPEC.loader is not None
 qa_eval = module_from_spec(_SPEC)
 _SPEC.loader.exec_module(qa_eval)
 
+ADMIN = AuthContext(
+    method=AuthMethod.CLERK_JWT,
+    org_id="org-1",
+    user_id="user-1",
+    user_role=UserRole.ADMIN,
+)
+
+
+class _EmptySession:
+    """A database with no prompt rows and no replays."""
+
+    committed = False
+
+    async def scalars(self, _statement):
+        return []
+
+    async def execute(self, _statement):
+        return SimpleNamespace(all=lambda: [])
+
+    async def commit(self):
+        self.committed = True
+
+
+def _client(monkeypatch, auth: AuthContext = ADMIN) -> AsyncClient:
+    session = _EmptySession()
+
+    @asynccontextmanager
+    async def fake_session():
+        yield session
+
+    monkeypatch.setattr(qa_eval, "get_session", fake_session)
+    monkeypatch.setattr(qa_eval, "invalidate_dashboard_cache", lambda **_: None)
+    app = FastAPI()
+    app.include_router(qa_eval.router)
+    app.dependency_overrides[require_auth] = lambda: auth
+    return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+
 
 @pytest.mark.asyncio
 async def test_post_qa_evals_passes_org_and_owner_to_shared_core(monkeypatch):
     captured: dict = {}
 
-    class FakeSession:
-        committed = False
-
-        async def commit(self):
-            self.committed = True
-
-    session = FakeSession()
-
-    @asynccontextmanager
-    async def fake_get_session():
-        yield session
-
-    async def fake_create_core(
-        _session,
-        *,
-        request,
-        org_id: str | None,
-        owner_user_id: str | None,
-        billed_user_id: str | None,
-        idempotency_key,
-        idempotency_store,
-        request_hash,
-    ):
-        captured.update(
-            request=request,
-            org_id=org_id,
-            owner_user_id=owner_user_id,
-            billed_user_id=billed_user_id,
-            idempotency_key=idempotency_key,
-            idempotency_store=idempotency_store,
-            request_hash=request_hash,
-        )
+    async def fake_create_core(_session, **kwargs):
+        captured.update(kwargs)
         return QAEvalCreateResponse(
             experiment_id="experiment-1",
-            experiment_name=request.name,
-            prompt_name=request.prompt_name,
+            experiment_name=kwargs["request"].name,
+            prompt_name=kwargs["request"].prompt_name,
             prompt_sha256="abc",
             model="canonical-model",
             trials=[
@@ -69,21 +77,8 @@ async def test_post_qa_evals_passes_org_and_owner_to_shared_core(monkeypatch):
             ],
         )
 
-    monkeypatch.setattr(qa_eval, "get_session", fake_get_session)
     monkeypatch.setattr(qa_eval, "create_qa_eval_core", fake_create_core)
-    monkeypatch.setattr(qa_eval, "invalidate_dashboard_cache", lambda **_: None)
-
-    app = FastAPI()
-    app.include_router(qa_eval.router)
-    app.dependency_overrides[require_auth] = lambda: AuthContext(
-        method=AuthMethod.CLERK_JWT,
-        org_id="org-1",
-        user_id="user-1",
-        scope=APIKeyScope.TASKS,
-    )
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with _client(monkeypatch) as client:
         response = await client.post(
             "/qa-evals",
             headers={"Idempotency-Key": "stable-key"},
@@ -98,6 +93,7 @@ async def test_post_qa_evals_passes_org_and_owner_to_shared_core(monkeypatch):
         )
 
     assert response.status_code == 200, response.text
+    assert response.json()["skipped"] == []
     assert captured["org_id"] == "org-1"
     assert captured["owner_user_id"] == "user-1"
     assert captured["billed_user_id"] == "user-1"
@@ -106,4 +102,30 @@ async def test_post_qa_evals_passes_org_and_owner_to_shared_core(monkeypatch):
     assert captured["request"].environment == "modal"
     assert captured["idempotency_key"] == "stable-key"
     assert captured["request_hash"]
-    assert session.committed is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "auth",
+    [
+        AuthContext(
+            method=AuthMethod.CLERK_JWT, org_id="org-1", user_role=UserRole.MEMBER
+        ),
+        AuthContext(method=AuthMethod.API_KEY, org_id="org-1", scope=APIKeyScope.TASKS),
+    ],
+)
+async def test_post_qa_evals_needs_an_org_admin(monkeypatch, auth):
+    async with _client(monkeypatch, auth) as client:
+        response = await client.post("/qa-evals", json={})
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_replaying_an_unknown_prompt_hash_is_not_found(monkeypatch):
+    async with _client(monkeypatch) as client:
+        response = await client.post(
+            "/qa-evals",
+            json={"name": "replay", "goldens": True, "prompt_sha256": "0" * 64},
+        )
+    assert response.status_code == 404, response.text
+    assert "no recorded post_trial prompt" in response.json()["detail"]

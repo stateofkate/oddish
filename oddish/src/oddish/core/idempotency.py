@@ -95,6 +95,13 @@ _REMOVED_SWEEP_FIELD_DEFAULTS = {
     "run_probe": False,
 }
 
+# QA replay fields added after clients shipped, at their defaults.
+_ADDED_QA_EVAL_FIELD_DEFAULTS = {
+    "goldens": False,
+    "prompt_sha256": None,
+    "stage": "post_trial",
+}
+
 
 def compute_request_hash(submission: Any) -> str:
     payload = submission.model_dump(mode="json")
@@ -132,6 +139,11 @@ def compute_request_hash(submission: Any) -> str:
     # Keep unset github_id stable across the deploy boundary.
     if payload.get("github_id") is None:
         payload.pop("github_id", None)
+    # An older QA replay body retried within the TTL keeps its hash.
+    if "prompt_sha256" in payload:  # QA replay requests only
+        for key, default in _ADDED_QA_EVAL_FIELD_DEFAULTS.items():
+            if payload[key] == default:
+                payload.pop(key)
     return _canonical_digest(payload)
 
 

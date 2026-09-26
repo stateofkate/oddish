@@ -7,8 +7,11 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy.dialects import postgresql
 
+from oddish.analyze.qa_stages import prompt_sha256
 from oddish.core.endpoints.qa_eval import create_qa_eval_core
+from oddish.core.idempotency import _canonical_digest, compute_request_hash
 from oddish.db import AnalysisStatus, TaskModel, TaskVersionModel, TrialStatus
 from oddish.db.models import TrialModel
 from oddish.schemas import QAEvalCreateRequest
@@ -150,9 +153,10 @@ class _Result:
 
 
 class _CreateSession:
-    def __init__(self, source: TrialModel):
-        self.source = source
+    def __init__(self, *sources: TrialModel):
+        self.sources = list(sources)
         self.added_experiment = None
+        self.prompt_rows: list[dict] = []
         self.task = TaskModel(
             id="task-1",
             name="task-1",
@@ -166,13 +170,19 @@ class _CreateSession:
         )
 
     async def execute(self, statement):
+        if getattr(statement, "is_insert", False):
+            assert statement.table.name == "qa_prompts"
+            self.prompt_rows.append(
+                statement.compile(dialect=postgresql.dialect()).params
+            )
+            return None
         descriptions = getattr(statement, "column_descriptions", None)
         if not descriptions:
             raise AssertionError("replay must not write task_experiments membership")
         entity = descriptions[0].get("entity")
         return _Result(
             {
-                TrialModel: [self.source],
+                TrialModel: self.sources,
                 TaskModel: [self.task],
                 TaskVersionModel: [self.version],
             }[entity]
@@ -254,6 +264,24 @@ async def test_create_accepts_a_failed_source_without_a_trajectory(
     assert admitted == [("org-1", "user-1", 1)]
     assert source.experiment_id == "original-experiment"
     assert source.analysis == {"classification": "BAD_FAILURE"}
+
+    # Picked trials: a subset run. The sent text is recorded, private to the
+    # org, so the page can show and diff it.
+    sha = prompt_sha256("Classify the stored solver evidence.")
+    assert captured["payload"]["subset"] is True
+    assert captured["payload"]["stage"] == "post_trial"
+    assert (response.prompt_sha256, captured["payload"]["prompt_sha256"]) == (sha, sha)
+    assert response.skipped == []
+    [row] = session.prompt_rows
+    assert {k: row[k] for k in ("org_id", "stage", "sha256", "name", "source")} == {
+        "org_id": "org-1",
+        "stage": "post_trial",
+        "sha256": sha,
+        "name": "candidate-1",
+        "source": "replay",
+    }
+    assert row["text"] == "Classify the stored solver evidence."
+    assert row["created_by_user_id"] == "user-1"
 
 
 @pytest.mark.asyncio
@@ -413,3 +441,139 @@ async def test_importer_requires_exactly_one_source_trial(monkeypatch):
     assert eval_trial.analysis is None
     assert eval_trial.analysis_status == AnalysisStatus.FAILED
     assert "exactly one" in eval_trial.analysis_error
+
+
+def _patch_create(monkeypatch, *, goldens=(), version=None) -> dict:
+    """Fake the golden and prompt lookups and the trial writes; returns what
+    the endpoint admitted and created."""
+    seen: dict = {"admitted": [], "payloads": []}
+
+    async def fake_counted_goldens(_session, org_id, stage):
+        seen["goldens_for"] = (org_id, stage)
+        return {trial_id: object() for trial_id in goldens}
+
+    async def fake_prompt_version(_session, org_id, stage, sha256):
+        seen["version_for"] = (org_id, stage, sha256)
+        return version
+
+    async def fake_admit_trials(_session, _org_id, _billed_user_id, count):
+        seen["admitted"].append(count)
+
+    async def fake_create_analysis_trial(_session, **kwargs):
+        seen["payloads"].append(kwargs["payload"])
+        return SimpleNamespace(id=f"qa-{kwargs['payload']['trial_ids'][0]}")
+
+    endpoint = "oddish.core.endpoints.qa_eval"
+    monkeypatch.setattr(f"{endpoint}.counted_goldens", fake_counted_goldens)
+    monkeypatch.setattr(f"{endpoint}.prompt_version", fake_prompt_version)
+    monkeypatch.setattr(f"{endpoint}.admit_trials", fake_admit_trials)
+    monkeypatch.setattr(f"{endpoint}.create_analysis_trial", fake_create_analysis_trial)
+    return seen
+
+
+async def _create(session, **body):
+    return await create_qa_eval_core(
+        session,
+        request=QAEvalCreateRequest(name="goldens replay", **body),
+        org_id="org-1",
+        owner_user_id="user-1",
+        billed_user_id="user-1",
+    )
+
+
+def _retried_source() -> TrialModel:
+    retried = _source()
+    retried.id = "source-2"
+    retried.superseded_by_trial_id = "source-3"
+    return retried
+
+
+@pytest.mark.asyncio
+async def test_create_replays_every_golden_with_a_recorded_prompt(monkeypatch):
+    text = "Recorded candidate prompt."
+    seen = _patch_create(monkeypatch, goldens=["source-1"], version=("rec-1", text))
+    session = _CreateSession(_source())
+
+    response = await _create(session, goldens=True, prompt_sha256=prompt_sha256(text))
+
+    assert seen["goldens_for"] == ("org-1", "post_trial")
+    assert seen["version_for"] == ("org-1", "post_trial", prompt_sha256(text))
+    [payload] = seen["payloads"]
+    assert payload["trial_ids"] == ["source-1"]
+    # Every golden replayed: a full run, charted and compared.
+    assert payload["subset"] is False
+    assert (payload["prompt_name"], payload["prompt_sha256"]) == (
+        "rec-1",
+        prompt_sha256(text),
+    )
+    assert (response.prompt_name, response.skipped) == ("rec-1", [])
+    # The version is already recorded; only sent text writes a row.
+    assert session.prompt_rows == []
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_prompt_hash_is_not_found(monkeypatch):
+    _patch_create(monkeypatch, goldens=["source-1"], version=None)
+    session = _CreateSession(_source())
+    with pytest.raises(HTTPException) as caught:
+        await _create(session, goldens=True, prompt_sha256="0" * 64)
+    assert caught.value.status_code == 404
+    assert session.added_experiment is None
+
+
+@pytest.mark.asyncio
+async def test_a_full_run_skips_golden_trials_that_can_no_longer_replay(monkeypatch):
+    seen = _patch_create(monkeypatch, goldens=["source-1", "source-2"])
+    body = {"prompt_name": "candidate-1", "prompt_text": "Classify."}
+
+    # Golden trial source-2 was retried after it was labeled: the run replays
+    # the rest and says what it left out.
+    response = await _create(
+        _CreateSession(_source(), _retried_source()), goldens=True, **body
+    )
+    assert [t.source_trial_id for t in response.trials] == ["source-1"]
+    assert response.skipped == ["source-2: superseded"]
+    assert seen["admitted"] == [1]
+
+    # Named explicitly, the same trial is refused.
+    session = _CreateSession(_source(), _retried_source())
+    with pytest.raises(HTTPException) as caught:
+        await _create(session, source_trial_ids=["source-2"], **body)
+    assert caught.value.status_code == 409
+    assert session.added_experiment is None
+
+    # Nothing left to replay is refused rather than started empty.
+    session = _CreateSession(_retried_source())
+    with pytest.raises(HTTPException) as caught:
+        await _create(session, goldens=True, **body)
+    assert caught.value.status_code == 422
+    assert "source-2: superseded" in caught.value.detail
+    assert session.added_experiment is None
+
+
+@pytest.mark.asyncio
+async def test_a_goldens_run_with_no_counted_goldens_is_refused(monkeypatch):
+    _patch_create(monkeypatch, goldens=[])
+    session = _CreateSession(_source())
+    with pytest.raises(HTTPException) as caught:
+        await _create(session, goldens=True, prompt_name="c", prompt_text="Classify.")
+    assert caught.value.status_code == 422
+    assert "no counted post_trial goldens" in caught.value.detail
+    assert session.added_experiment is None
+
+
+def test_an_older_replay_body_keeps_its_idempotency_hash():
+    request = QAEvalCreateRequest(
+        name="replay",
+        source_trial_ids=["source-1"],
+        prompt_name="candidate-1",
+        prompt_text="classify this",
+    )
+    legacy = request.model_dump(
+        mode="json", exclude={"stage", "goldens", "prompt_sha256"}
+    )
+    assert compute_request_hash(request) == _canonical_digest(legacy)
+    by_hash = QAEvalCreateRequest(name="replay", goldens=True, prompt_sha256="abc")
+    assert compute_request_hash(by_hash) != compute_request_hash(
+        by_hash.model_copy(update={"prompt_sha256": "abd"})
+    )

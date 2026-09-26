@@ -1,4 +1,4 @@
-"""The QA eval contract: stage specs, golden checks, table constraints and
+"""The QA eval contract: stage specs, request checks, table constraints and
 the two shared golden rules. Table tests need Postgres."""
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ from oddish.db import (
     TrialStatus,
     utcnow,
 )
-from oddish.schemas import QAGoldenCreate
+from oddish.schemas import QAEvalCreateRequest, QAGoldenCreate
 
 needs_db = pytest.mark.skipif(
     not os.environ.get("ODDISH_DATABASE_URL"), reason="ODDISH_DATABASE_URL not set"
@@ -50,6 +50,28 @@ def test_only_post_trial_replays_are_graded():
     assert post.grade.answer({"classification": "maybe"}) is None
     assert post.grade.answer(None) is None
     assert post.grade.is_correct({"classification": "GOOD_SUCCESS"}, "GOOD_SUCCESS")
+
+
+def _replay(**overrides) -> QAEvalCreateRequest:
+    body = {"name": "run", "goldens": True, "prompt_sha256": "abc"}
+    return QAEvalCreateRequest(**(body | overrides))
+
+
+def test_a_replay_names_one_prompt_and_one_trial_set():
+    assert _replay().stage == QAStage.POST_TRIAL
+    assert _replay(
+        goldens=False, source_trial_ids=[" t-1 ", "t-1"]
+    ).source_trial_ids == ["t-1"]
+    for bad, message in (
+        ({"stage": "pre_trial"}, "pre_trial prompts cannot be replayed yet"),
+        ({"prompt_text": "x", "prompt_name": "p"}, "exactly one of prompt_text"),
+        ({"prompt_sha256": None}, "exactly one of prompt_text"),
+        ({"prompt_sha256": None, "prompt_text": "x"}, "prompt_name is required"),
+        ({"source_trial_ids": ["t-1"]}, "exactly one of goldens"),
+        ({"goldens": False}, "exactly one of goldens"),
+    ):
+        with pytest.raises(ValidationError, match=message):
+            _replay(**bad)
 
 
 def test_a_golden_is_checked_against_its_stage():

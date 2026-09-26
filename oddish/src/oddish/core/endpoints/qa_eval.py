@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import hashlib
-
 from fastapi import HTTPException
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from oddish.analyze.qa_stages import prompt_sha256
 from oddish.config import is_nop_oracle_agent, settings
 from oddish.core.analysis_payload import qa_trial_evidence
 from oddish.core.idempotency import (
@@ -17,13 +17,15 @@ from oddish.core.idempotency import (
     compute_request_hash,
     reserve_idempotency_slot,
 )
+from oddish.core.qa_eval_scores import counted_goldens, prompt_version
+from oddish.core.qa_goldens import FINISHED_STATUSES
 from oddish.core.quota_admission import admit_trials
 from oddish.db import (
     ExperimentModel,
+    QAPromptModel,
     TaskModel,
     TaskVersionModel,
     TrialModel,
-    TrialStatus,
     utcnow,
 )
 from oddish.schemas import (
@@ -37,7 +39,6 @@ from oddish.workers.analysis_trials import (
     pre_trial_item_ids,
 )
 
-_QA_EVAL_SOURCE_STATUSES = (TrialStatus.SUCCESS, TrialStatus.FAILED)
 _QA_EVAL_ROUTE = "POST /qa-evals"
 
 
@@ -52,7 +53,8 @@ async def create_qa_eval_core(
     idempotency_store: IdempotencyStore | None = None,
     request_hash: str | None = None,
 ) -> QAEvalCreateResponse:
-    """Create one replay experiment and one QA trial per source trial."""
+    """Create one replay experiment and one QA trial per source trial: the
+    listed trials, or every counted golden's."""
     reservation: Reservation | None = None
     if idempotency_store is not None and idempotency_key and org_id:
         try:
@@ -67,11 +69,31 @@ async def create_qa_eval_core(
         except IdempotencyConflict as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
+    stage = request.stage
+    if request.prompt_text is not None:
+        prompt_name, prompt_text = request.prompt_name or "", request.prompt_text
+    else:
+        assert request.prompt_sha256 is not None
+        version = await prompt_version(session, org_id, stage, request.prompt_sha256)
+        if version is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"no recorded {stage.value} prompt {request.prompt_sha256}",
+            )
+        prompt_name, prompt_text = request.prompt_name or version[0], version[1]
+
+    source_trial_ids = request.source_trial_ids
+    if request.goldens:
+        source_trial_ids = sorted(await counted_goldens(session, org_id, stage))
+        if not source_trial_ids:
+            raise HTTPException(
+                status_code=422, detail=f"no counted {stage.value} goldens to replay"
+            )
     source_rows = (
         (
             await session.execute(
                 select(TrialModel).where(
-                    TrialModel.id.in_(request.source_trial_ids),
+                    TrialModel.id.in_(source_trial_ids),
                     TrialModel.org_id == org_id,
                 )
             )
@@ -109,8 +131,8 @@ async def create_qa_eval_core(
     task_by_id = {row.id: row for row in tasks}
     version_by_id = {row.id: row for row in versions}
 
-    invalid: list[str] = []
-    for source_trial_id in request.source_trial_ids:
+    rejected: dict[str, str] = {}
+    for source_trial_id in source_trial_ids:
         source = source_by_id.get(source_trial_id)
         reason = None
         if source is None:
@@ -119,7 +141,7 @@ async def create_qa_eval_core(
             reason = "not an ordinary solver trial"
         elif source.superseded_by_trial_id is not None:
             reason = "superseded"
-        elif source.status not in _QA_EVAL_SOURCE_STATUSES:
+        elif source.status not in FINISHED_STATUSES:
             reason = f"not terminal ({source.status.value})"
         elif source.task_version_id is None:
             reason = "missing an exact task version"
@@ -132,22 +154,29 @@ async def create_qa_eval_core(
         elif not version_by_id[source.task_version_id].task_s3_key:
             reason = "exact task version has no stored files"
         if reason:
-            invalid.append(f"{source_trial_id}: {reason}")
+            rejected[source_trial_id] = reason
 
-    if invalid:
+    skipped = [f"{trial_id}: {reason}" for trial_id, reason in rejected.items()]
+    # A golden's trial can stop being replayable (retried, deleted), so a
+    # full run skips it; a listed trial must replay.
+    if rejected and not request.goldens:
         raise HTTPException(
             status_code=409,
-            detail="QA replay rejected; fix these source rows: " + "; ".join(invalid),
+            detail="QA replay rejected; fix these source rows: " + "; ".join(skipped),
+        )
+    source_trial_ids = [i for i in source_trial_ids if i not in rejected]
+    if not source_trial_ids:
+        raise HTTPException(
+            status_code=422,
+            detail="no golden trial can be replayed: " + "; ".join(skipped),
         )
 
-    await admit_trials(
-        session, org_id, billed_user_id, count=len(request.source_trial_ids)
-    )
+    await admit_trials(session, org_id, billed_user_id, count=len(source_trial_ids))
 
     canonical_model = settings.normalize_trial_model(
         "claude-code", request.model or settings.analysis_model
     )
-    prompt_sha256 = hashlib.sha256(request.prompt_text.encode("utf-8")).hexdigest()
+    prompt_hash = prompt_sha256(prompt_text)
     experiment = ExperimentModel(
         name=request.name,
         org_id=org_id,
@@ -157,9 +186,23 @@ async def create_qa_eval_core(
     )
     session.add(experiment)
     await session.flush()
+    if request.prompt_text is not None:
+        await session.execute(
+            pg_insert(QAPromptModel)
+            .values(
+                org_id=org_id,
+                stage=stage.value,
+                sha256=prompt_hash,
+                text=prompt_text,
+                name=prompt_name,
+                source="replay",
+                created_by_user_id=owner_user_id,
+            )
+            .on_conflict_do_nothing()
+        )
 
     created: list[QAEvalTrialResponse] = []
-    for source_trial_id in request.source_trial_ids:
+    for source_trial_id in source_trial_ids:
         source = source_by_id[source_trial_id]
         task_version_id = source.task_version_id
         assert task_version_id is not None
@@ -182,7 +225,7 @@ async def create_qa_eval_core(
                 trial_ids=[source.id],
                 pre_trial_items=pre_trial_items,
                 with_verdict=False,
-                classification_prompt=request.prompt_text,
+                classification_prompt=prompt_text,
                 trial_evidence=evidence,
                 pre_trial_status=(
                     version.pre_trial_status.value
@@ -208,8 +251,10 @@ async def create_qa_eval_core(
                 "pre_trial_item_ids": item_ids,
                 "pre_trial_must_fix_ids": must_fix_ids,
                 "with_verdict": False,
-                "prompt_name": request.prompt_name,
-                "prompt_sha256": prompt_sha256,
+                "stage": stage.value,
+                "prompt_name": prompt_name,
+                "prompt_sha256": prompt_hash,
+                "subset": not request.goldens,
                 "audit_context": request.audit_context,
             },
         )
@@ -220,10 +265,11 @@ async def create_qa_eval_core(
     response = QAEvalCreateResponse(
         experiment_id=experiment.id,
         experiment_name=experiment.name,
-        prompt_name=request.prompt_name,
-        prompt_sha256=prompt_sha256,
+        prompt_name=prompt_name,
+        prompt_sha256=prompt_hash,
         model=canonical_model,
         trials=created,
+        skipped=skipped,
     )
     if reservation is not None and idempotency_store is not None and org_id is not None:
         await session.flush()

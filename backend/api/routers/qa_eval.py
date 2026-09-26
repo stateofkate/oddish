@@ -1,10 +1,10 @@
-"""Authenticated QA prompt replay endpoint."""
+"""QA prompt replay endpoint for org admins."""
 
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header
 
-from auth import APIKeyScope, AuthContext, require_auth
+from auth import AuthContext, require_admin
 from oddish.core.dashboard import invalidate_dashboard_cache
 from oddish.core.idempotency import IdempotencyReplay, compute_request_hash
 from oddish.core.endpoints.qa_eval import create_qa_eval_core
@@ -17,14 +17,15 @@ from idempotency_store import SubmissionIdempotencyStore
 
 router = APIRouter(tags=["QA evaluations"])
 
+Admin = Annotated[AuthContext, Depends(require_admin)]
+
 
 @router.post("/qa-evals", response_model=QAEvalCreateResponse)
 async def create_qa_eval(
     payload: QAEvalCreateRequest,
-    auth: Annotated[AuthContext, Depends(require_auth)],
+    auth: Admin,
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> QAEvalCreateResponse:
-    auth.require_scope(APIKeyScope.TASKS, allow_member_created_task_key=False)
     async with get_session() as session:
         try:
             result = await create_qa_eval_core(
