@@ -216,3 +216,80 @@ async def test_ambiguous_or_service_errors_propagate(
     assert raised.value is error
     sdk.head_object.assert_not_called()
     assert not trial_io._TRAJECTORY_CACHE
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("agent", ["codex", "claude-code"])
+async def test_invalid_unicode_is_repaired_before_response_and_cache(
+    trajectory_storage, agent
+):
+    from fastapi.responses import JSONResponse
+
+    trial, objects, sdk, _, trajectory_key = trajectory_storage
+    trajectory = {
+        "agent": {"name": agent},
+        "steps": [
+            {
+                "message": "start\udc4a middle\ud800 end\udec0",
+                "observation": {
+                    "results": [
+                        {
+                            "content": [
+                                {"type": "text", "text": "日本語 café 😀"},
+                                {"type": "text", "text": r"literal \udc4a"},
+                            ]
+                        }
+                    ]
+                },
+            }
+        ],
+        "extra\udc6d": [None, 3, True, {"value": "\udc59"}],
+    }
+    original = json.dumps(trajectory)
+    objects[trajectory_key] = original
+    for _ in range(2):
+        response = JSONResponse(content=await trial_io.read_trial_trajectory(trial))
+        assert response.status_code == 200
+        decoded = json.loads(response.body.decode("utf-8"))
+        assert decoded["steps"][0]["message"] == "start� middle� end�"
+        assert decoded["extra�"] == [None, 3, True, {"value": "�"}]
+        assert (
+            decoded["steps"][0]["observation"] == trajectory["steps"][0]["observation"]
+        )
+    assert objects[trajectory_key] == original
+    assert sdk.get_object.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_unicode_repair_follows_codex_repr_conversion(trajectory_storage):
+    from fastapi.responses import JSONResponse
+
+    trial, objects, _, _, trajectory_key = trajectory_storage
+    objects[trajectory_key] = json.dumps(
+        {
+            "agent": {"name": "codex"},
+            "steps": [
+                {
+                    "observation": {
+                        "results": [
+                            {
+                                "content": repr(
+                                    [
+                                        {
+                                            "type": "input_text",
+                                            "text": "\ud83d\ude00\udc4a",
+                                        }
+                                    ]
+                                )
+                            }
+                        ]
+                    }
+                }
+            ],
+        }
+    )
+    result = await trial_io.read_trial_trajectory(trial)
+    assert result["steps"][0]["observation"]["results"][0]["content"] == [
+        {"type": "text", "text": "😀�"}
+    ]
+    assert JSONResponse(content=result).status_code == 200

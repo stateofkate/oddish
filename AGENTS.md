@@ -2245,6 +2245,16 @@ artifact prefix. Request traces expose `storage.trajectory_cache.hit`,
 `storage_client_init.duration_ms`, and `trajectory_cache_wait.duration_ms`
 alongside storage request counts and download timings.
 
+Before caching or returning a trajectory, the shared reader repairs Codex
+text-block reprs, then joins valid UTF-16 surrogate pairs and replaces isolated
+surrogates with U+FFFD. This keeps JSON responses UTF-8 serializable for every
+agent without rewriting stored artifacts or changing valid Unicode text.
+
+Trial imports retain `import:{external_trial_id}:{experiment_id}` duplicate
+keys up to 64 characters; longer keys use the full SHA-256 hex digest of that
+same string. Lookup and insertion use the same key, preserving existing short
+keys and HTTP 409 duplicate responses without widening the database column.
+
 Modal compute-cost ledger rows use full UUID hex identifiers (32 characters)
 within the existing 64-character column; high-volume ledger inserts must not
 truncate UUIDs to the eight-character IDs used by some other entities.

@@ -36,6 +36,7 @@ of live and imported rows.
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from datetime import datetime, timezone
 
@@ -287,6 +288,10 @@ async def initialize_trial_import(
         # (surfacing as an opaque 500).
         if trial_spec.external_trial_id:
             idempotency_key = f"import:{trial_spec.external_trial_id}:{experiment.id}"
+            # Preserve existing keys; longer external IDs must fit String(64)
+            # without truncating the identity used for duplicate detection.
+            if len(idempotency_key) > 64:
+                idempotency_key = hashlib.sha256(idempotency_key.encode()).hexdigest()
             existing_trial_id = await session.scalar(
                 select(TrialModel.id)
                 .where(TrialModel.idempotency_key == idempotency_key)

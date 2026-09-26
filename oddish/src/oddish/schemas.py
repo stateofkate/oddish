@@ -2406,9 +2406,10 @@ class ImportedTrialSpec(BaseModel):
     external_trial_id: str | None = Field(
         None,
         description=(
-            "Harbor TrialResult UUID (or any stable external ID). Stored as "
-            "the trial's idempotency_key; re-imports with the same key are "
-            "rejected by the unique index."
+            "Harbor TrialResult UUID (or any stable external ID). Combined with "
+            "the target experiment to detect duplicates; keys longer than 64 "
+            "characters are hashed. Re-importing into the same experiment "
+            "returns 409 with the existing trial ID."
         ),
     )
     imported_at: datetime | None = Field(

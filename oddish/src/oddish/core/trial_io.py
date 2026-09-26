@@ -15,7 +15,10 @@ from fastapi import HTTPException
 from harbor.models.trial.paths import TrialPaths
 
 from oddish.config import settings
-from oddish.core.trajectory_content import normalize_codex_trajectory
+from oddish.core.trajectory_content import (
+    normalize_codex_trajectory,
+    repair_trajectory_unicode,
+)
 from oddish.core.trial_artifacts import (
     TrialArtifactLayout,
     TrialArtifactMode,
@@ -892,6 +895,7 @@ async def read_trial_trajectory(trial: TrialModel) -> dict | None:
         result = normalize_codex_trajectory(
             await _read_trial_trajectory_uncached(trial)
         )
+        result = repair_trajectory_unicode(result)
         if _should_cache_trial(trial):
             _cache_set(_TRAJECTORY_CACHE, cache_key, result)
         return result

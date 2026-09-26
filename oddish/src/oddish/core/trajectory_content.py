@@ -9,11 +9,33 @@ trajectories that were stored before that fix, at read time.
 """
 
 import ast
+import re
 from typing import Any
 
 _TEXT_BLOCK_TYPES = {"text", "input_text", "output_text"}
 # literal_eval cost grows with input size; larger reprs stay verbatim.
 _MAX_REPAIR_CHARS = 1_000_000
+_SURROGATE = re.compile(r"[\ud800-\udfff]")
+
+
+def repair_trajectory_unicode(value: Any) -> Any:
+    """Make decoded JSON UTF-8 serializable, preserving valid Unicode pairs."""
+    if isinstance(value, str):
+        if _SURROGATE.search(value):
+            # JSON escapes and legacy Python reprs can contain lone UTF-16
+            # surrogates. Join valid pairs; replace only unpaired units with U+FFFD.
+            return value.encode("utf-16-le", "surrogatepass").decode(
+                "utf-16-le", "replace"
+            )
+        return value
+    if isinstance(value, list):
+        return [repair_trajectory_unicode(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            repair_trajectory_unicode(key): repair_trajectory_unicode(item)
+            for key, item in value.items()
+        }
+    return value
 
 
 def codex_text_parts(value: object) -> list[dict[str, Any]] | None:
