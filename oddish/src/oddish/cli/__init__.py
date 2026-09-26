@@ -20,6 +20,8 @@ from oddish.cli.logs import logs
 from oddish.cli.ls import ls
 from oddish.cli.publish import publish, unpublish
 from oddish.cli.qa import qa_app
+from oddish.cli.qa_evals import evals_app
+from oddish.cli.qa_goldens import goldens_app
 from oddish.cli.pull import pull
 from oddish.cli.preflight import preflight
 from oddish.cli.run import run
@@ -53,6 +55,8 @@ def _root(
 
 app.command()(run)
 app.command()(assign)
+qa_app.add_typer(evals_app, name="evals")
+qa_app.add_typer(goldens_app, name="goldens")
 app.add_typer(qa_app, name="qa")
 app.command(name="backfill-analysis")(backfill_analysis)
 app.command()(upload)

@@ -16,7 +16,10 @@ import typer
 from oddish.analyze.models import ActionTier
 from oddish.cli.config import get_api_url, get_auth_headers
 
-qa_app = typer.Typer(help="Export existing QA feedback.", no_args_is_help=True)
+qa_app = typer.Typer(
+    help="Export QA feedback, label goldens and score QA prompt versions.",
+    no_args_is_help=True,
+)
 
 _TASK_COLUMNS = [
     "task_id",

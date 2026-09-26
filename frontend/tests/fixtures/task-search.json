@@ -1,0 +1,116 @@
+[
+  {
+    "search": "",
+    "expected": { "text": "", "all": [], "any": [], "none": [], "authors": [] }
+  },
+  {
+    "search": "author:ana tag:smoke sweep",
+    "expected": {
+      "text": "sweep",
+      "all": ["smoke"],
+      "any": [],
+      "none": [],
+      "authors": ["ana"]
+    }
+  },
+  {
+    "search": "-tag:x",
+    "expected": {
+      "text": "",
+      "all": [],
+      "any": [],
+      "none": ["x"],
+      "authors": []
+    }
+  },
+  {
+    "search": "tag:a OR tag:b NOT tag:c foo",
+    "expected": {
+      "text": "foo",
+      "all": [],
+      "any": ["a", "b"],
+      "none": ["c"],
+      "authors": []
+    }
+  },
+  {
+    "search": "tag:a AND tag:B or tag:c",
+    "expected": {
+      "text": "",
+      "all": ["a"],
+      "any": ["B", "c"],
+      "none": [],
+      "authors": []
+    }
+  },
+  {
+    "search": "-tag:a OR tag:b",
+    "expected": {
+      "text": "",
+      "all": [],
+      "any": ["b"],
+      "none": ["a"],
+      "authors": []
+    }
+  },
+  {
+    "search": "tag:a word OR tag:b",
+    "expected": {
+      "text": "word",
+      "all": ["a"],
+      "any": ["b"],
+      "none": [],
+      "authors": []
+    }
+  },
+  {
+    "search": "not really OR tag related",
+    "expected": {
+      "text": "not really OR tag related",
+      "all": [],
+      "any": [],
+      "none": [],
+      "authors": []
+    }
+  },
+  {
+    "search": "\"exact phrase\" -noisy TAG:Smoke tag:",
+    "expected": {
+      "text": "\"exact phrase\" -noisy tag:",
+      "all": ["Smoke"],
+      "any": [],
+      "none": [],
+      "authors": []
+    }
+  },
+  {
+    "search": "-\"quoted tag:x\" \"unterminated tag:y",
+    "expected": {
+      "text": "-\"quoted tag:x\" \"unterminated tag:y",
+      "all": [],
+      "any": [],
+      "none": [],
+      "authors": []
+    }
+  },
+  {
+    "search": "  GitHub:Octocat user:ana@example.com -author:bo author: sweep  ",
+    "expected": {
+      "text": "-author:bo author: sweep",
+      "all": [],
+      "any": [],
+      "none": [],
+      "authors": ["Octocat", "ana@example.com"]
+    }
+  },
+  {
+    "search": "tag:a OR author:ana tag:b",
+    "expected": {
+      "text": "OR",
+      "all": ["a", "b"],
+      "any": [],
+      "none": [],
+      "authors": ["ana"]
+    }
+  }
+]

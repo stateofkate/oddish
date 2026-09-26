@@ -17,11 +17,18 @@ error_console = Console(stderr=True)
 # Canonical API base URL constants live in oddish.config (single source of
 # truth, importable without pulling in the CLI's typer/rich deps). Re-exported
 # here for the CLI's existing callers.
-from oddish.config import DEFAULT_API_URL, PREVIEW_URL_TEMPLATE  # noqa: E402,F401
+from oddish.config import (  # noqa: E402,F401
+    DEFAULT_API_URL,
+    PREVIEW_URL_TEMPLATE,
+    STAGING_API_URL,
+)
 
 DEFAULT_DASHBOARD_URL = os.environ.get(
     "ODDISH_DEFAULT_DASHBOARD_URL", "https://www.oddish.app"
 )
+STAGING_DASHBOARD_URL = "https://staging.oddish.app"
+# A PR preview's frontend alias (``PREVIEW_ALIAS_HOSTNAME`` in pr-preview.yml).
+PREVIEW_DASHBOARD_URL_TEMPLATE = "https://pr-{n}.oddish.app"
 
 
 # =============================================================================
@@ -59,10 +66,24 @@ def is_modal_api_url(api_url: str) -> bool:
 
 
 def get_dashboard_url(api_url: str | None = None) -> str:
-    """Get dashboard URL from environment or default."""
+    """The dashboard serving ``api_url``'s data.
+
+    Resolution order:
+      1. ``ODDISH_DASHBOARD_URL``
+      2. A PR preview API (``PREVIEW_URL_TEMPLATE``) -> that PR's preview frontend
+      3. ``STAGING_API_URL`` -> the staging frontend
+      4. ``DEFAULT_DASHBOARD_URL``
+    """
     env_url = os.environ.get("ODDISH_DASHBOARD_URL")
     if env_url:
         return env_url.rstrip("/")
+    api_url = (api_url or "").rstrip("/")
+    prefix, _, suffix = PREVIEW_URL_TEMPLATE.partition("{n}")
+    pr = api_url.removeprefix(prefix).removesuffix(suffix)
+    if api_url.startswith(prefix) and api_url.endswith(suffix) and pr.isdigit():
+        return PREVIEW_DASHBOARD_URL_TEMPLATE.format(n=pr)
+    if api_url and api_url == STAGING_API_URL.rstrip("/"):
+        return STAGING_DASHBOARD_URL
     return DEFAULT_DASHBOARD_URL
 
 
