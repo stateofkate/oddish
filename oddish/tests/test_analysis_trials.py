@@ -58,10 +58,28 @@ def test_the_analysis_kinds_are_known():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("environment", [None, "modal", "daytona"])
-async def test_analysis_creation_stores_kind_only_once(monkeypatch, environment):
+@pytest.mark.parametrize(
+    ("kind", "model", "expected_agent"),
+    [
+        ("qa", None, "claude-code"),
+        ("audit", None, "claude-code"),
+        ("qa_eval", None, "claude-code"),
+        ("qa_eval", "anthropic/claude-sonnet-5", "claude-code"),
+        ("qa_eval", "openai/gpt-6-sol", "codex"),
+        ("qa_eval", "gpt-6-luna", "codex"),
+        ("qa_eval", "openai/gpt-6-luna", "codex"),
+        ("summarize", "openai/gpt-6-sol", "single-llm"),
+    ],
+)
+async def test_analysis_creation_preserves_contract_and_routes_qa_eval_models(
+    monkeypatch, environment, kind, model, expected_agent
+):
+    from oddish.config import settings
     from oddish.db import TaskModel
     from oddish.workers.analysis_trials import create_analysis_trial
 
+    monkeypatch.setattr(settings, "analysis_model", "anthropic/claude-sonnet-5")
+    queued = {}
     task = TaskModel(
         id="task-1",
         name="task-1",
@@ -83,8 +101,8 @@ async def test_analysis_creation_stores_kind_only_once(monkeypatch, environment)
         assert task_id == "task-1"
         return 4
 
-    async def enqueue_trial_worker_job(_session, **_kwargs):
-        return None
+    async def enqueue_trial_worker_job(_session, **kwargs):
+        queued.update(kwargs)
 
     monkeypatch.setattr(
         "oddish.queue.reserve_next_trial_index", reserve_next_trial_index
@@ -97,14 +115,22 @@ async def test_analysis_creation_stores_kind_only_once(monkeypatch, environment)
     trial = await create_analysis_trial(
         session,
         task=task,
-        kind="qa",
+        kind=kind,
+        model=model,
         brief="grade the trials",
         payload={"trial_ids": ["source-1"]},
         experiment_id="analysis-experiment",
         environment=environment,
     )
 
-    assert trial.kind == "qa"
+    assert trial.kind == kind
+    assert trial.agent == expected_agent
+    assert trial.model == (model or "anthropic/claude-sonnet-5")
+    if expected_agent == "codex":
+        assert trial.provider == "openai"
+        assert "gpt-6" in trial.queue_key
+    assert queued["queue_key"] == trial.queue_key
+    assert queued["trial_id"] == trial.id
     assert trial.environment == environment
     assert "mode" not in trial.harbor_config
     assert trial.harbor_config["analysis_payload"]["trial_ids"] == ["source-1"]

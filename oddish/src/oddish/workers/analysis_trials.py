@@ -1,8 +1,9 @@
 """Analysis trials: the platform's own agents, run through the trial pipeline.
 
 The pre-trial audit, task QA, QA prompt replay, and single-trial summarizer are
-trials with a non-'agent' ``kind``. QA, QA replay, and audit run claude-code
-because they browse artifacts through oddish-query. Summarize runs one host-side
+trials with a non-'agent' ``kind``. QA and audit run claude-code; QA replay uses
+codex for OpenAI models and claude-code otherwise. Both browse artifacts through
+oddish-query. Summarize runs one host-side
 LLM request over a trajectory the worker materializes before Harbor starts the
 agent. Every kind writes one JSON artifact that settlement imports into its
 owned columns.
@@ -53,7 +54,7 @@ from oddish.analyze.trajectory_taxonomy import (
     render_summary_instructions,
     taxonomy_version,
 )
-from oddish.config import is_nop_oracle_agent, settings
+from oddish.config import infer_model_provider_prefix, is_nop_oracle_agent, settings
 from oddish.core.analysis_payload import (
     AnalysisPayloadError,
     audit_fingerprint,
@@ -342,6 +343,8 @@ async def create_analysis_trial(
     normalized_model = settings.normalize_trial_model(
         analysis_agent, model or settings.analysis_model
     )
+    if kind == "qa_eval" and infer_model_provider_prefix(normalized_model) == "openai":
+        analysis_agent = "codex"
     harbor_config: dict = {"extra_instructions": brief}
     if kind == "audit":
         payload = dict(payload or {})
