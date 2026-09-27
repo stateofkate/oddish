@@ -291,12 +291,7 @@ High-level flow:
    row without a readable trajectory returns HTTP 409 before stored analysis is
    reset or the current verdict is withdrawn.
    `POST /qa-evals` is the lower-level historical prompt-replay primitive. It
-   selects the Codex runner for OpenAI model overrides (bare or `openai/`
-   prefixed), retaining Claude Code for other models. The stored trial agent,
-   provider and queue key follow that selection; production QA and audit runner
-   defaults are unchanged. These replays use the existing evidence access,
-   output validation and evaluation-only settlement.
-   It creates one output experiment and one `qa_eval` trial per exact source
+   creates one output experiment and one `qa_eval` trial per exact source
    solver trial. Terminal failed sources remain replayable when no trajectory
    was recorded; the QA brief then uses the result, verifier, exception, and
    authoritative trial facts without inventing agent actions. Each new trial
