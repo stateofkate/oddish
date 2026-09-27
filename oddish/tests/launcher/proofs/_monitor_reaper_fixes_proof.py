@@ -173,12 +173,10 @@ async def _main() -> int:
 
     # -- H16: a failed teardown after a reap is retried, bounded ---------------
     s16 = _provider("s16")
-    first_teardown: dict[str, bool] = {}  # the reap's own teardown, per sandbox
-
     async def _teardown(provider, external_id):
-        return first_teardown.get(external_id, True)
+        return True
 
-    cleanup.cancel_job_by_worker = _teardown
+    pending_teardowns.cancel_job_by_worker = _teardown
     cleanup.sweep_orphaned_tag_owners = _no_tag_owners
 
     async def _sweep() -> dict:
@@ -187,29 +185,27 @@ async def _main() -> int:
 
     retried = await _seed("s16", "sb-16", max_attempts=2)
     worker = await _seed("s16", "sb-worker", monitor=False)  # not a monitor job
-    first_teardown.update({"sb-16": False, "sb-worker": False})
     s16.status_answers = [monitor_sandbox.StatusReply(exit_code=1)]  # GONE
     s16.stop_answers = [ConnectionError("provider down"), None]
     pending = [await _sweep() for _ in range(3)]
     row, worker_row = await _row(retried), await _row(worker)
     print(f"INFO H16 pending after each sweep {pending}; stopped {s16.stopped}")
     checks["H16_a_failed_teardown_is_retried_until_it_stops"] = (
-        pending == [{("s16", "sb-16"): 0}, {("s16", "sb-16"): 1}, {}]
+        pending == [{("s16", "sb-16"): 1}, {}, {}]
         and s16.stopped == ["sb-16"]
         and row.status == WorkerJobStatus.RETRYING  # reaped once, never revived
         and row.stale_reaped_at is not None
-        and worker_row.status == FAILED  # a worker job's teardown is not retried
+        and worker_row.status == FAILED  # worker teardown was confirmed
     )
 
     pending_teardowns.TEARDOWN_TRIES = 2
     never = await _seed("s16", "sb-never")
-    first_teardown["sb-never"] = False
     s16.status_answers = [monitor_sandbox.StatusReply(exit_code=1)]
     s16.stop_answers = [ConnectionError("provider down")] * 5
     pending = [await _sweep() for _ in range(3)]
     print(f"INFO H16 bounded {pending}")
     checks["H16_retries_end_after_TEARDOWN_TRIES"] = (
-        pending == [{("s16", "sb-never"): 0}, {("s16", "sb-never"): 1}, {}]
+        pending == [{("s16", "sb-never"): 1}, {}, {}]
         and (await _row(never)).status == FAILED
         and "sb-never" not in s16.stopped
     )

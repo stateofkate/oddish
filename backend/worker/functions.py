@@ -22,6 +22,7 @@ from oddish.config import Settings
 Settings.db_use_null_pool = True
 
 import asyncio
+import socket
 import time
 from uuid import uuid4
 
@@ -71,7 +72,6 @@ from modal_app import (
 # ``configure_logfire`` runs in ``worker/__init__.py`` (so auto-tracing
 # can patch our modules before they're imported); we just need the
 # ``span`` helper here to wrap entry points.
-from observability import log_exception
 from observability import span as _otel_span
 from oddish.config import settings
 from oddish.core.harbor_source import harbor_variant_function_name
@@ -111,7 +111,6 @@ from oddish.workers.launcher.settle import (
 from oddish.workers.queue.runtime_status import (
     DISPATCHER_COMPONENT,
     RECONCILER_COMPONENT,
-    record_queue_runtime_status,
 )
 from oddish.workers.queue.sandbox_capacity import (
     SANDBOX_CAPACITY_LEASE_SECONDS,
@@ -121,6 +120,7 @@ from oddish.workers.queue.sandbox_capacity import (
     release_sandbox_capacity_lease,
 )
 from oddish.workers.queue.slots import (
+    LaunchReservation,
     acquire_queue_slot,
     cleanup_stale_queue_slots,
     release_launch_reservations,
@@ -140,6 +140,7 @@ from oddish.workers.queue.worker_job_single_job import (
 
 from .github import notify_github_qa, notify_github_trial
 from .runtime import configure_storage_paths, console
+from .scheduled import QueueCycle, run_queue_cycle
 
 # Provider credentials are lane-scoped. Generic workers receive neither EC2
 # nor Thunder credentials; each provider lane carries only its own secrets.
@@ -735,178 +736,52 @@ def build_harbor_variant_functions(
     nonpreemptible=DISPATCHER_NONPREEMPTIBLE,
 )
 async def reconcile_queue_state():
-    """
-    Scheduled reconciliation sweep, decoupled from dispatch.
+    await run_queue_cycle(
+        RECONCILER_COMPONENT,
+        _reconcile_queue_state,
+        timeout_seconds=CLEANUP_TIMEOUT_SECONDS,
+    )
 
-    This used to run inline at the top of ``poll_queue`` under a 60s
-    timeout. The sweep does several near-full-table passes over
-    ``trials`` / ``tasks`` / ``worker_jobs`` and could (a) exceed the
-    dispatcher's tight timeout -- getting SIGKILLed mid-transaction and
-    leaving orphaned 'idle in transaction' locks -- and (b) deadlock
-    against the live single-job workers writing the same rows. Either
-    way the dispatcher's spawn step never ran, so the queue got *no*
-    new workers that cycle. Splitting it out means dispatch can never
-    be blocked by reconciliation, and the sweep gets a generous timeout
-    so it is never killed mid-transaction.
 
-    Each phase is wrapped defensively: a failure (e.g. a transient
-    deadlock) in one phase logs and is swallowed so the remaining
-    phases still run.
-    """
-    cycle_span = _otel_span("worker.reconcile_queue_state")
-    cycle_span.__enter__()
-    started = time.monotonic()
-    # Accumulated for the persisted heartbeat the admin dashboard reads back.
+async def _reconcile_queue_state(cycle: QueueCycle) -> None:
+    """Independent phase budgets leave later maintenance time to run."""
     summary: dict[str, int] = {}
-    phase_errors: list[str] = []
-    try:
-        console.print("[cyan]Queue reconciler starting...[/cyan]")
+    cycle.payload["counts"] = summary
+    with _otel_span("worker.reconcile_queue_state"):
         await configure_storage_paths()
-
-        try:
+        async with cycle.phase("unapproved_org_cleanup", seconds=20):
             summary["unapproved_tasks_cancelled"] = await cancel_unapproved_runs()
-        except Exception as e:
-            phase_errors.append(f"unapproved_org_cleanup: {type(e).__name__}: {e}")
-            log_exception("reconcile phase failed", phase="unapproved_org_cleanup")
-
-        try:
-            stale_cleared = await cleanup_stale_queue_slots()
-            summary["stale_slots_cleared"] = stale_cleared
-            if stale_cleared > 0:
-                console.print(f"metric=queue_lock_stale_cleared count={stale_cleared}")
-                console.print(
-                    f"[dim]Cleared {stale_cleared} stale queue slot lock(s)[/dim]"
-                )
-        except Exception as e:  # noqa: BLE001 - best-effort phase
-            phase_errors.append(f"stale_slot_cleanup: {e}")
-            log_exception("reconcile phase failed", phase="stale_slot_cleanup")
-            console.print(f"[yellow]Stale slot cleanup skipped: {e}[/yellow]")
-
-        try:
+        async with cycle.phase("stale_slot_cleanup", seconds=10):
+            summary["stale_slots_cleared"] = await cleanup_stale_queue_slots()
+        async with cycle.phase("orphaned_state", seconds=300):
             cleanup_counts = await cleanup_orphaned_queue_state()
-            summary.update({k: int(v) for k, v in cleanup_counts.items()})
-            reap_errors = cleanup_counts.get("worker_job_reap_errors", 0)
-            if reap_errors:
-                phase_errors.append(
-                    f"orphaned_state: database rejected {reap_errors} stale job(s); "
-                    "other jobs reconciled; see worker logs for job IDs"
+            summary.update(cleanup_counts)
+            for name, count in cleanup_counts.items():
+                if name.endswith("_errors") and count:
+                    cycle.errors.append(f"orphaned_state: {name}={count}")
+                if name.endswith("_deferred") and count:
+                    cycle.deferred.append(f"orphaned_state: {name}={count}")
+        async with cycle.phase("daytona_terminal_cleanup", seconds=90):
+            summary["daytona_terminal_deleted"] = await reap_stale_daytona_sandboxes()
+        async with cycle.phase("owner_backfill", seconds=20):
+            summary.update(await backfill_experiment_owners())
+        async with cycle.phase("github_id_backfill", seconds=60):
+            counts = (
+                await backfill_github_id(
+                    max_users=200,
+                    time_budget_seconds=50.0,
                 )
-            if any(cleanup_counts.values()):
-                console.print(
-                    "metric=orphaned_queue_cleanup "
-                    + " ".join(
-                        f"{key}={value}" for key, value in cleanup_counts.items()
-                    )
-                )
-                console.print(
-                    "[yellow]Reconciled orphaned queue state:[/yellow] "
-                    + ", ".join(
-                        f"{key}={value}"
-                        for key, value in cleanup_counts.items()
-                        if value > 0
-                    )
-                )
-        except Exception as e:  # noqa: BLE001 - best-effort phase
-            phase_errors.append(f"orphaned_state: {e}")
-            log_exception("reconcile phase failed", phase="orphaned_state")
-            console.print(
-                f"[yellow]Orphaned-state reconciliation skipped: {e}[/yellow]"
-            )
-
-        try:
-            deleted = await asyncio.wait_for(reap_stale_daytona_sandboxes(), 450)
-            summary["daytona_terminal_deleted"] = deleted
-            if deleted:
-                console.print(f"metric=daytona_terminal_deleted count={deleted}")
-        except Exception as e:
-            phase_errors.append(f"daytona_terminal_cleanup: {e}")
-            log_exception("reconcile phase failed", phase="daytona_terminal_cleanup")
-
-        try:
-            backfill_counts = await backfill_experiment_owners()
-            summary.update({k: int(v) for k, v in backfill_counts.items()})
-            if any(backfill_counts.values()):
-                console.print(
-                    "metric=experiments_owner_backfill "
-                    + " ".join(
-                        f"{key}={value}" for key, value in backfill_counts.items()
-                    )
-                )
-        except Exception as e:  # noqa: BLE001 - best-effort phase
-            phase_errors.append(f"owner_backfill: {e}")
-            log_exception("reconcile phase failed", phase="owner_backfill")
-            console.print(f"[yellow]Experiment owner backfill skipped: {e}[/yellow]")
-
-        try:
-            # Bounded so the first-run backlog spreads across reconciles, and
-            # wall-clock-capped so a slow Clerk can't push this best-effort phase
-            # toward the reconciler's hard SIGKILL ceiling.
-            gid_counts = (
-                await backfill_github_id(max_users=200, time_budget_seconds=60.0)
             ).as_dict()
-            summary.update({k: int(v) for k, v in gid_counts.items()})
-            if gid_counts["github_id_backfill_failed"]:
-                phase_errors.append(
-                    "github_id_backfill: Clerk identity lookups failed; "
-                    "existing identities preserved (see Clerk HTTP errors in logs)"
-                )
-            if gid_counts["github_id_backfill_deferred"]:
-                phase_errors.append(
-                    "github_id_backfill: retry deferred after failed Clerk batch; "
-                    "existing identities preserved"
-                )
-            if any(gid_counts.values()):
-                console.print(
-                    "metric=github_id_backfill "
-                    + " ".join(f"{key}={value}" for key, value in gid_counts.items())
-                )
-        except Exception as e:  # noqa: BLE001 - best-effort phase
-            phase_errors.append(f"github_id_backfill: {e}")
-            console.print(f"[yellow]github_id backfill skipped: {e}[/yellow]")
-
-        # Recompute the self-tuning per-model concurrency advisory (default off).
-        # DEPRECATED: superseded by database-backed admin overrides; retained
-        # only for deployments that still opt in via
-        # ODDISH_DYNAMIC_MODEL_CONCURRENCY. A defensive phase like the others: a
-        # failure logs and is swallowed so the rest of the reconcile sweep still
-        # runs, and the static limits stay the fallback.
+            summary.update(counts)
+            if counts["github_id_backfill_failed"]:
+                cycle.errors.append("github_id_backfill: Clerk identity lookups failed")
+            if counts["github_id_backfill_deferred"]:
+                cycle.deferred.append("github_id_backfill")
         if settings.dynamic_model_concurrency:
-            try:
+            async with cycle.phase("concurrency_controller", seconds=20):
                 async with get_session() as session:
                     advisory = await recompute_advisory_limits(session)
                 summary["advisory_limits_updated"] = len(advisory)
-            except Exception as e:  # noqa: BLE001 - best-effort phase
-                phase_errors.append(f"concurrency_controller: {e}")
-                console.print(f"[yellow]Concurrency controller skipped: {e}[/yellow]")
-
-        # Persist a heartbeat the admin dashboard reads back. Keep only
-        # non-zero counters so the payload stays legible.
-        await record_queue_runtime_status(
-            RECONCILER_COMPONENT,
-            {
-                "ok": not phase_errors,
-                "duration_seconds": round(time.monotonic() - started, 2),
-                "errors": phase_errors,
-                "counts": {k: v for k, v in summary.items() if v},
-            },
-        )
-
-    except OSError as e:
-        console.print(
-            f"[yellow]Reconciler skipped (transient network error): {e}[/yellow]"
-        )
-    except Exception as e:
-        console.print(f"[red]Reconciler error: {e}[/red]")
-        raise
-    finally:
-        await close_database_connections()
-        import sys as _sys
-
-        try:
-            cycle_span.__exit__(*_sys.exc_info())
-        except Exception:
-            pass
-        console.print("[green]Reconciler complete[/green]")
 
 
 @app.function(
@@ -1150,6 +1025,14 @@ GKE_CLUSTER_TEARDOWN: object | None = build_gke_cluster_teardown_function(app)
     nonpreemptible=DISPATCHER_NONPREEMPTIBLE,
 )
 async def poll_queue():
+    await run_queue_cycle(
+        DISPATCHER_COMPONENT,
+        _dispatch_queue,
+        timeout_seconds=DISPATCHER_TIMEOUT_SECONDS,
+    )
+
+
+async def _dispatch_queue(cycle: QueueCycle) -> None:
     """
     Queue-aware dispatcher that spawns ``process_single_job`` workers
     based on per-queue-key depth in the unified ``worker_jobs`` table.
@@ -1171,7 +1054,7 @@ async def poll_queue():
     cycle_started_at = time.monotonic()
     cycle_outcome: DispatchCycleOutcome = "error"
     workers_spawned = 0
-    reservations = []
+    reservations: list[LaunchReservation] = []
     launches_finished = False
     spawn_cap_reached = False
     cycle_span = _otel_span("worker.poll_queue_cycle")
@@ -1268,16 +1151,14 @@ async def poll_queue():
         spawn_plan = [reservation.unit for reservation in reservations]
         spawn_cap_reached = len(spawn_plan) >= MAX_WORKERS_PER_POLL
 
-        # Persist a heartbeat the admin dashboard reads back so operators can
-        # see the spawn rate (and whether it is pinned at the per-poll cap)
-        # without scraping Modal logs.
-        await record_queue_runtime_status(
-            DISPATCHER_COMPONENT,
+        # Accumulate status without delaying launches for a dashboard write.
+        # The cycle owner persists it once, after work finishes or is cancelled.
+        cycle.payload.update(
             {
                 "planned": len(spawn_plan),
                 "spawned": 0,
                 "max_workers_per_poll": MAX_WORKERS_PER_POLL,
-                "spawn_cap_reached": len(spawn_plan) >= MAX_WORKERS_PER_POLL,
+                "spawn_cap_reached": spawn_cap_reached,
                 "active_queue_keys": len(plan.queue_keys),
                 "queued_total": sum(plan.queued_by_queue.values()),
                 "running_total": sum(plan.running_by_queue.values()),
@@ -1327,10 +1208,18 @@ async def poll_queue():
             )
             spawn_kwargs["reservation_token"] = reservation.token
             spawn_requests.append((fn, spawn_kwargs))
-        results = await asyncio.gather(
-            *(fn.spawn.aio(**kwargs) for fn, kwargs in spawn_requests),
-            return_exceptions=True,
-        )
+        spawn_tasks = [
+            asyncio.create_task(fn.spawn.aio(**kwargs)) for fn, kwargs in spawn_requests
+        ]
+        try:
+            results = await asyncio.gather(*spawn_tasks, return_exceptions=True)
+        except asyncio.CancelledError:
+            workers_spawned = sum(
+                task.done() and not task.cancelled() and task.exception() is None
+                for task in spawn_tasks
+            )
+            cycle.payload.update(spawned=workers_spawned, launch_outcome_unknown=True)
+            raise
         failed = [
             r.token
             for r, result in zip(reservations, results)
@@ -1344,19 +1233,7 @@ async def poll_queue():
         workers_spawned = len(spawned_queue_keys)
         launches_finished = True
         await release_launch_reservations(failed)
-        await record_queue_runtime_status(
-            DISPATCHER_COMPONENT,
-            {
-                "planned": len(spawn_plan),
-                "spawned": workers_spawned,
-                "launch_failed": len(failed),
-                "max_workers_per_poll": MAX_WORKERS_PER_POLL,
-                "spawn_cap_reached": spawn_cap_reached,
-                "active_queue_keys": len(plan.queue_keys),
-                "queued_total": sum(plan.queued_by_queue.values()),
-                "running_total": sum(plan.running_by_queue.values()),
-            },
-        )
+        cycle.payload.update(spawned=workers_spawned, launch_failed=len(failed))
         console.print(
             f"[green]Dispatched {workers_spawned} workers; {len(failed)} launch failures[/green]"
         )
@@ -1377,10 +1254,14 @@ async def poll_queue():
     except asyncio.CancelledError:
         cycle_outcome = "cancelled"
         raise
-    except OSError as e:
+    except TimeoutError:
+        # A dependency timeout is a failure; only our own cycle deadline defers.
+        raise
+    except (ConnectionError, socket.gaierror) as e:
         # Transient network/DNS errors (e.g. socket.gaierror) should not
         # crash the scheduled function -- the next scheduled poll will retry.
         cycle_outcome = "skipped"
+        cycle.deferred.append(f"network: {type(e).__name__}: {e}")
         console.print(
             f"[yellow]Dispatcher skipped (transient network error): {e}[/yellow]"
         )
@@ -1392,7 +1273,8 @@ async def poll_queue():
         # unadopted tokens are revoked; already-running workers keep their lease.
         if not launches_finished:
             try:
-                await release_launch_reservations([r.token for r in reservations])
+                async with asyncio.timeout(5):
+                    await release_launch_reservations([r.token for r in reservations])
             except Exception as release_error:
                 console.print(
                     f"[yellow]Launch release failed; leases expire in 300s: {release_error}[/yellow]"
@@ -1403,11 +1285,6 @@ async def poll_queue():
             duration_seconds=time.monotonic() - cycle_started_at,
             outcome=cycle_outcome,
         )
-        await close_database_connections()
         import sys as _sys
 
-        try:
-            cycle_span.__exit__(*_sys.exc_info())
-        except Exception:
-            pass
-        console.print("[green]Dispatcher complete[/green]")
+        cycle_span.__exit__(*_sys.exc_info())

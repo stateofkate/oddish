@@ -60,7 +60,7 @@ function bool(payload: Record<string, unknown>, key: string): boolean {
 // ---------------------------------------------------------------------------
 
 // A heartbeat is "stale" if we haven't heard from the component in a while.
-// Dispatcher polls ~180s; reconciler ~240s. Use generous multiples so a
+// Dispatcher polls ~30s; reconciler ~240s. Use generous multiples so a
 // single skipped tick doesn't cry wolf.
 const STALE_THRESHOLD_SECONDS = 600;
 
@@ -86,7 +86,13 @@ export function DispatcherTile({
   const atCap = bool(payload, "spawn_cap_reached");
   const queuedTotal = num(payload, "queued_total");
   const stale = (status.age_seconds ?? Infinity) > STALE_THRESHOLD_SECONDS;
-  const tone = stale ? "warn" : atCap && (queuedTotal ?? 0) > 0 ? "warn" : "ok";
+  const incomplete = payload.ok === false;
+  const tone =
+    stale || incomplete || (atCap && (queuedTotal ?? 0) > 0) ? "warn" : "ok";
+  const lastSuccess =
+    typeof payload.last_success_at === "string"
+      ? new Date(payload.last_success_at).toLocaleString()
+      : "not recorded";
 
   return (
     <HealthTile
@@ -103,9 +109,11 @@ export function DispatcherTile({
       warning={
         stale
           ? "Dispatcher hasn't reported recently — check the Modal schedule."
-          : atCap && (queuedTotal ?? 0) > 0
-            ? "Spawn cap reached with backlog pending — raise MAX_WORKERS_PER_POLL."
-            : undefined
+          : incomplete
+            ? `Poll ${String(payload.state)}. Last completed: ${lastSuccess}.`
+            : atCap && (queuedTotal ?? 0) > 0
+              ? "Spawn cap reached with backlog pending — raise MAX_WORKERS_PER_POLL."
+              : undefined
       }
     />
   );
@@ -133,6 +141,9 @@ export function ReconcilerTile({
   const errors = Array.isArray(payload.errors)
     ? (payload.errors as unknown[]).map(String)
     : [];
+  const deferred = Array.isArray(payload.deferred_phases)
+    ? payload.deferred_phases.map(String)
+    : [];
   const stale = (status.age_seconds ?? Infinity) > STALE_THRESHOLD_SECONDS;
   const tone = stale || !ok ? "warn" : "ok";
 
@@ -145,13 +156,16 @@ export function ReconcilerTile({
       detail={
         ok
           ? `Healthy${duration != null ? ` · ${duration}s` : ""}`
-          : `${errors.length} phase error(s)`
+          : `${errors.length} phase error(s), ${deferred.length} deferred`
       }
       warning={
         stale
           ? "Reconciler hasn't reported recently — check the Modal schedule."
-          : errors.length > 0
-            ? errors.join(" · ")
+          : errors.length > 0 || deferred.length > 0
+            ? [
+                ...errors,
+                ...deferred.map((phase) => `${phase}: retry next run`),
+              ].join(" · ")
             : undefined
       }
     />

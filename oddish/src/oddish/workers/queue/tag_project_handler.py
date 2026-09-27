@@ -90,7 +90,7 @@ async def _heartbeat_progress(
     batch_size: int,
     progress: dict[str, Any],
 ) -> None:
-    """Bump the in-flight ``worker_jobs`` row's ``last_heartbeat_at`` and
+    """Bump the in-flight ``worker_jobs`` row's ``heartbeat_at`` and
     merge a small JSON progress blob into ``payload`` for observability.
 
     We key by (kind='TAG_PROJECT', subject_id=target_id) — the partial
@@ -101,7 +101,7 @@ async def _heartbeat_progress(
         text(
             """
             UPDATE worker_jobs
-            SET last_heartbeat_at = NOW(),
+            SET heartbeat_at = NOW(),
                 payload = COALESCE(payload, '{}'::jsonb)
                           || CAST(:progress AS JSONB)
             WHERE kind = 'TAG_PROJECT'

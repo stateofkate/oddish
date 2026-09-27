@@ -7,8 +7,7 @@ from typing import Any
 import pytest
 
 from oddish.runtime.ec2_orphans import Ec2InstanceSnapshot, Ec2InventorySnapshot
-from oddish.workers.queue import cleanup
-
+from oddish.workers.queue import cleanup, pending_teardowns
 
 NOW = datetime(2026, 8, 7, 12, 0, tzinfo=timezone.utc)
 ACCOUNT_ID = "123456789012"
@@ -231,10 +230,13 @@ def _patch_unrelated_cleanup_phases(
 
     terminated_targets: list[set[tuple[str, str]]] = []
 
-    async def terminate(targets: set[tuple[str, str]], failed=None) -> int:
-        events.append("terminate")
+    async def remember(_session, targets, *, monitor_handles):
+        events.append("remember")
         terminated_targets.append(set(targets))
-        return termination_result
+
+    async def terminate():
+        events.append("terminate")
+        return pending_teardowns.TeardownResult(termination_result, 0)
 
     monkeypatch.setattr(cleanup, "get_session", fake_get_session)
     monkeypatch.setattr(cleanup, "reap_idle_in_transaction_zombies", zero)
@@ -261,15 +263,40 @@ def _patch_unrelated_cleanup_phases(
     monkeypatch.setattr(cleanup, "_reconcile_experiment_last_activity", zero)
     monkeypatch.setattr(cleanup, "_maybe_reconcile_tag_projections", zero)
     monkeypatch.setattr(cleanup, "sweep_orphaned_tag_owners", zero)
-    monkeypatch.setattr(cleanup, "_terminate_orphaned_sandboxes", terminate)
+    monkeypatch.setattr(cleanup, "remember_pending_teardowns", remember)
+    monkeypatch.setattr(cleanup, "retry_pending_teardowns", terminate)
     monkeypatch.setattr(cleanup, "_terminate_orphaned_sandbox_runs", zero)
     monkeypatch.setattr(cleanup, "check_stale_monitor_jobs", zero)
-    monkeypatch.setattr(cleanup, "retry_failed_teardowns", zero)
     monkeypatch.setattr(cleanup, "clear_terminal_trial_runtime_refs", zero)
     monkeypatch.setattr(cleanup, "purge_stale_trial_events", zero)
     monkeypatch.setattr(cleanup, "reconcile_compute_cost_spans", zero)
     monkeypatch.setattr(cleanup, "backfill_verifier_costs_from_s3", zero)
     return terminated_targets
+
+
+async def _retry_targets(monkeypatch, targets):
+    stored = {
+        (p, i): pending_teardowns.PendingTeardown(
+            provider=p, external_id=i, monitor_driven=False
+        )
+        for p, i in targets
+    }
+
+    async def read(_component):
+        return {"sandboxes": [s.model_dump() for s in stored.values()]}
+
+    @asynccontextmanager
+    async def session():
+        yield None
+
+    @asynccontextmanager
+    async def locked(_session):
+        yield stored
+
+    monkeypatch.setattr(pending_teardowns, "get_queue_runtime_status", read)
+    monkeypatch.setattr(pending_teardowns, "get_session", session)
+    monkeypatch.setattr(pending_teardowns, "_pending_for_update", locked)
+    return (await pending_teardowns.retry_pending_teardowns()).stopped
 
 
 @pytest.mark.asyncio
@@ -282,11 +309,9 @@ async def test_orphan_cleanup_terminates_persisted_thunder_sandbox_id(
         calls.append((provider, external_id))
         return True
 
-    monkeypatch.setattr(cleanup, "cancel_job_by_worker", terminate)
+    monkeypatch.setattr(pending_teardowns, "cancel_job_by_worker", terminate)
 
-    terminated = await cleanup._terminate_orphaned_sandboxes(
-        {("thunder", "sb-thunder-orphan")}
-    )
+    terminated = await _retry_targets(monkeypatch, {("thunder", "sb-thunder-orphan")})
 
     assert terminated == 1
     assert calls == [("thunder", "sb-thunder-orphan")]
@@ -502,16 +527,18 @@ async def test_ec2_teardown_error_is_logged_without_aborting_other_targets(
     async def fail_teardown(_provider: str, _external_id: str) -> bool:
         raise RuntimeError("AWS terminate failed")
 
-    monkeypatch.setattr(cleanup, "cancel_job_by_worker", fail_teardown)
-    monkeypatch.setattr(cleanup.console, "print", lines.append)
+    monkeypatch.setattr(pending_teardowns, "cancel_job_by_worker", fail_teardown)
+    monkeypatch.setattr(
+        pending_teardowns.console, "out", lambda line, **_kw: lines.append(line)
+    )
 
-    terminated = await cleanup._terminate_orphaned_sandboxes(
-        {("ec2", f"ec2://{ACCOUNT_ID}/us-east-1/i-0123456789abcdef0")}
+    terminated = await _retry_targets(
+        monkeypatch, {("ec2", f"ec2://{ACCOUNT_ID}/us-east-1/i-0123456789abcdef0")}
     )
 
     assert terminated == 0
     assert any(
-        "metric=orphaned_sandbox_termination outcome=error" in line
+        "metric=monitor_teardown_retry outcome=failed" in line
         and "error_type=RuntimeError" in line
         for line in lines
     )
@@ -580,7 +607,7 @@ async def test_stale_reap_discovers_one_ec2_teardown_target(monkeypatch) -> None
         return True
 
     monkeypatch.setattr(cleanup, "_mirror_stale_job_to_domain_row", mirror)
-    monkeypatch.setattr(cleanup, "cancel_job_by_worker", terminate)
+    monkeypatch.setattr(pending_teardowns, "cancel_job_by_worker", terminate)
 
     (
         retried,
@@ -590,7 +617,7 @@ async def test_stale_reap_discovers_one_ec2_teardown_target(monkeypatch) -> None
         errors,
         _,
     ) = await cleanup._reap_stale_worker_jobs(Session(), stale_after_minutes=15)
-    terminated = await cleanup._terminate_orphaned_sandboxes(targets)
+    terminated = await _retry_targets(monkeypatch, targets)
 
     assert (retried, failed, trial_ids, errors) == (0, 1, ["trial-stale"], 0)
     assert targets == {("ec2", handle)}

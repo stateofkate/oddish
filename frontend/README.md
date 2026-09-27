@@ -297,3 +297,9 @@ through the saved-view API and opens `/tasks?selection_id=...`. These links reta
 normal organization permissions and do not grant public access. Delivery picking
 shows existing members as disabled selections and uses the same creation dialog
 as the Deliveries page. Adding a task does not finalize or submit the batch.
+
+The admin queue-health tiles read additive cycle outcomes from the existing
+status payload. A recent dispatcher report with `ok: false` warns and shows its
+last completed run; deferred reconciliation names phases left for another pass.
+Legacy payloads without these fields retain their previous rendering. These
+values are derived directly from the response, with no new polling or state.

@@ -3217,3 +3217,31 @@ searches their labels. These presentation parameters never enter browse/count/ID
 queries and do not reset pagination. Copy view preserves offset when an expanded
 row is linked. An off-page task links to its detail page rather than silently
 substituting another row. See `docs/task-browser-navigation.md` for CLI mappings.
+
+### Scheduled queue progress and cancellation
+
+Hosted dispatch and reconciliation use `backend/worker/scheduled.py` to reserve
+45 seconds before Modal's timeout for rollback and finalization. Independent
+reconciliation phase deadlines preserve time for later phases. Queue status
+writes are bounded to three seconds in the shared writer; payload `state`,
+`deferred_phases`, and `last_success_at` are additive. Failed, cancelled, and
+deferred cycles preserve the previous successful completion timestamp. Existing
+payload counters remain readable by older clients; missing success history is
+unknown, never inferred from `updated_at`.
+
+The stale-worker pass handles at most 100 candidates per transaction, rotating
+a persisted cursor past rejected/locked candidates so later jobs are not starved. It writes
+sandbox teardown intent into the existing `monitor_pending_teardowns` status
+row in the same transaction as reaping. Its typed entries distinguish monitor
+handles (the existing default for historical records) from worker handles,
+which use registered backend teardown. Provider calls occur after commit;
+cancellation leaves durable intent for the next sweep. Only the singleton
+reconciler writes this record. Each pass attempts at most 50 handles, rotating failures behind untried ones.
+Retries are limited to 20 calls per handle, with
+provider TTLs as the existing final backstop.
+
+Analysis re-imports receive 45 seconds per cleanup pass after commit, with unattempted or
+interrupted imports returned as deferred and failed imports counted separately. Verifier cost backfill processes 25
+trials and terminal runtime-ref cleanup processes at most two existing batches.
+Tag fan-out progress updates `worker_jobs.heartbeat_at`; there is no
+`last_heartbeat_at` column.

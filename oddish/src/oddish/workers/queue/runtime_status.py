@@ -11,13 +11,14 @@ Each component upserts a single row into ``queue_runtime_status`` keyed by
 ``component`` with a small JSON ``payload`` summary and ``updated_at``. The
 admin dashboard reads these back to render "last poll 12s ago, spawned 41
 workers" and "last reconcile reaped 3 zombies, no errors". Writes are
-best-effort: a status-write failure must never break the dispatch or
-reconcile loop, so callers should wrap calls defensively (and this module
-swallows its own errors as a second line of defence).
+best-effort and bounded to three seconds, including connection and commit.
+Callers need no additional timeout or exception wrapper. Completed queue cycles
+advance last_success_at; failed, deferred, and cancelled cycles retain it.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -38,6 +39,7 @@ __all__ = [
 
 DISPATCHER_COMPONENT = "dispatcher"
 RECONCILER_COMPONENT = "reconciler"
+STATUS_WRITE_TIMEOUT_SECONDS = 3.0
 
 
 async def record_queue_runtime_status(component: str, payload: dict[str, Any]) -> None:
@@ -48,18 +50,28 @@ async def record_queue_runtime_status(component: str, payload: dict[str, Any]) -
         encoded = "{}"
 
     try:
-        async with get_session() as session:
+        async with (
+            asyncio.timeout(STATUS_WRITE_TIMEOUT_SECONDS),
+            get_session() as session,
+        ):
             await session.execute(
-                text(
-                    """
+                text("""
                     INSERT INTO queue_runtime_status (component, updated_at, payload)
-                    VALUES (:component, NOW(), CAST(:payload AS JSONB))
+                    VALUES (:component, NOW(), CAST(:payload AS JSONB) ||
+                        CASE WHEN :completed THEN jsonb_build_object('last_success_at', NOW())
+                             ELSE '{}'::jsonb END)
                     ON CONFLICT (component) DO UPDATE
                     SET updated_at = NOW(),
-                        payload = EXCLUDED.payload
-                    """
-                ),
-                {"component": component, "payload": encoded},
+                        payload = EXCLUDED.payload ||
+                            CASE WHEN NOT :completed AND queue_runtime_status.payload ? 'last_success_at'
+                                 THEN jsonb_build_object('last_success_at', queue_runtime_status.payload->'last_success_at')
+                                 ELSE '{}'::jsonb END
+                    """),
+                {
+                    "component": component,
+                    "payload": encoded,
+                    "completed": payload.get("state") == "completed",
+                },
             )
     except Exception as exc:  # noqa: BLE001 - status writes are never critical
         console.print(

@@ -33,7 +33,6 @@ from oddish.config import (
     ORPHANED_ANALYSIS_ERROR_PREFIX,
     settings,
 )
-from oddish.core.helpers import cancel_job_by_worker
 from oddish.core.tags.ownership_transfer import sweep_orphaned_tag_owners
 from oddish.core.task_browse_summary import refresh_task_browse_summaries
 from oddish.core.verdict_state import fail_verdict, queue_verdict
@@ -64,7 +63,10 @@ from oddish.runtime.backends.thunder import (
     ThunderSandboxSnapshot,
     snapshot_thunder_sandboxes,
 )
-from oddish.workers.queue.pending_teardowns import retry_failed_teardowns
+from oddish.workers.queue.pending_teardowns import (
+    remember_pending_teardowns,
+    retry_pending_teardowns,
+)
 from oddish.workers.queue.sandbox_capacity import cleanup_sandbox_capacity_leases
 from oddish.workers.queue.shared import console
 from oddish.workers.queue.worker_job_single_job import (
@@ -503,7 +505,9 @@ async def _mirror_stale_job_to_domain_row(session, row) -> str | None:
 # the Thunder inventory function had no secret to start with, its remote call
 # sat pending, and every sweep died at 600 s. Past this bound the snapshot is
 # recorded as an error and the pass goes on without it.
-INVENTORY_SNAPSHOT_TIMEOUT_SECONDS = 120
+INVENTORY_SNAPSHOT_TIMEOUT_SECONDS = 30
+STALE_WORKER_BATCH_LIMIT = 100
+ANALYSIS_REIMPORT_BUDGET_SECONDS = 45.0
 
 
 async def cleanup_orphaned_queue_state(
@@ -580,15 +584,25 @@ async def cleanup_orphaned_queue_state(
     completed_thunder_handoffs: list[tuple[str, str, str]] = []
 
     # Provider calls, so before (and outside) the reconciliation transaction.
+    monitor_status_check_errors = 0
+    monitor_status_checks_deferred = 0
+    monitor_deadline = asyncio.timeout(60)
     try:
-        monitor_status_checks = await check_stale_monitor_jobs(
-            stale_after_minutes=stale_after_minutes
-        )
+        async with monitor_deadline:
+            monitor_status_checks = await check_stale_monitor_jobs(
+                stale_after_minutes=stale_after_minutes
+            )
         if monitor_status_checks:
+            monitor_status_check_errors = monitor_status_checks.get("error", 0)
+            monitor_status_checks_deferred = monitor_status_checks.get("deferred", 0)
             console.out(
                 f"metric=monitor_status_check {monitor_status_checks}", highlight=False
             )
     except Exception as exc:
+        if monitor_deadline.expired():
+            monitor_status_checks_deferred = 1
+        else:
+            monitor_status_check_errors = 1
         console.print(
             "metric=monitor_status_check outcome=error "
             f"error_type={type(exc).__name__} error={exc}"
@@ -678,6 +692,11 @@ async def cleanup_orphaned_queue_state(
 
         tag_projections_reconciled = await _maybe_reconcile_tag_projections(session)
         tag_owners_reassigned = await sweep_orphaned_tag_owners(session)
+        await remember_pending_teardowns(
+            session,
+            worker_targets,
+            monitor_handles={r["handle"] for r in monitor_releases if r["handle"]},
+        )
 
     # Analysis re-imports run AFTER the outer commit: the importers take
     # their own task/version row locks on fresh connections
@@ -688,18 +707,26 @@ async def cleanup_orphaned_queue_state(
     # sweep that commits and then dies before this point just retries next
     # sweep.
     stale_analysis_imports_healed = 0
+    stale_analysis_import_errors = 0
     if analysis_reimport_trial_ids:
         from oddish.workers.analysis_trials import handle_analysis_trial_settled
 
-        for reimport_trial_id in analysis_reimport_trial_ids:
-            try:
-                await handle_analysis_trial_settled(reimport_trial_id)
-                stale_analysis_imports_healed += 1
-            except Exception:  # noqa: BLE001 -- next sweep retries
-                logger.exception(
-                    "healer: analysis re-import of trial %s failed",
-                    reimport_trial_id,
-                )
+        reimport_deadline = asyncio.timeout(ANALYSIS_REIMPORT_BUDGET_SECONDS)
+        try:
+            async with reimport_deadline:
+                for reimport_trial_id in analysis_reimport_trial_ids:
+                    try:
+                        await handle_analysis_trial_settled(reimport_trial_id)
+                        stale_analysis_imports_healed += 1
+                    except Exception:  # noqa: BLE001 -- next sweep retries
+                        stale_analysis_import_errors += 1
+                        logger.exception(
+                            "healer: analysis re-import of trial %s failed",
+                            reimport_trial_id,
+                        )
+        except TimeoutError:
+            if not reimport_deadline.expired():
+                raise
 
     # Re-run after the ledger transaction commits only when it closed rows. They
     # no longer protect their capacity leases, so the same reconciliation cycle
@@ -734,26 +761,16 @@ async def cleanup_orphaned_queue_state(
             handoff=handoff,
             reason="teardown_confirmed",
         )
-    failed_teardowns: list[tuple[str, str]] = []
-    worker_sandboxes_terminated = (
-        await _terminate_orphaned_sandboxes(worker_targets, failed=failed_teardowns)
-        + thunder_sandboxes_terminated
-    )
-    # A reaped monitor attempt ended without a result, so settlement never
-    # frees what its hand-off kept. Release it as settle does, after the commit
-    # (the rows are locked until then) and after the sandbox teardown.
-    await _release_reaped_monitor_attempts(monitor_releases)
-    # Its sandbox, if it would not stop, is stopped again on later sweeps.
+    worker_sandboxes_terminated = thunder_sandboxes_terminated
+    pending_teardown_errors = 0
     try:
-        handles = {release["handle"] for release in monitor_releases}
-        await retry_failed_teardowns([t for t in failed_teardowns if t in handles])
-    except Exception as exc:  # noqa: BLE001 -- the next sweep retries
-        console.out(
-            "metric=monitor_teardown_retry outcome=error "
-            f"error_type={type(exc).__name__}",
-            highlight=False,
-        )
-        logger.exception("retrying failed monitor teardowns failed")
+        teardown_result = await retry_pending_teardowns()
+        worker_sandboxes_terminated += teardown_result.stopped
+        pending_teardown_errors = teardown_result.errors
+    except Exception:
+        pending_teardown_errors = 1
+        logger.exception("retrying pending sandbox teardowns failed")
+    await _release_reaped_monitor_attempts(monitor_releases)
     if thunder_sandboxes_terminated:
         try:
             sandbox_capacity_leases_cleared += await cleanup_sandbox_capacity_leases()
@@ -769,14 +786,19 @@ async def cleanup_orphaned_queue_state(
         console.print(f"[yellow]Modal cost reconciliation failed: {exc}[/yellow]")
         modal_cost_spans_reconciled = 0
     try:
-        verifier_costs_backfilled = await backfill_verifier_costs_from_s3()
+        verifier_costs_backfilled = await backfill_verifier_costs_from_s3(limit=25)
     except Exception as exc:
         console.print(f"[yellow]Verifier cost backfill failed: {exc}[/yellow]")
         verifier_costs_backfilled = 0
-    terminal_trial_runtime_refs_cleared = await clear_terminal_trial_runtime_refs()
+    terminal_trial_runtime_refs_cleared = await clear_terminal_trial_runtime_refs(
+        max_batches=2
+    )
     stale_trial_events_purged = await purge_stale_trial_events()
 
     return {
+        "monitor_status_check_errors": monitor_status_check_errors,
+        "monitor_status_checks_deferred": monitor_status_checks_deferred,
+        "pending_teardown_errors": pending_teardown_errors,
         "worker_jobs_retried": worker_jobs_retried,
         "worker_jobs_failed": worker_jobs_failed,
         "worker_job_reap_errors": worker_job_reap_errors,
@@ -797,6 +819,9 @@ async def cleanup_orphaned_queue_state(
         "tasks_progressed_to_verdict": tasks_progressed_to_verdict,
         "verdict_pending_completed": verdict_pending_completed,
         "stale_analysis_imports_healed": stale_analysis_imports_healed,
+        "stale_analysis_import_errors": stale_analysis_import_errors,
+        "stale_analysis_imports_deferred": len(analysis_reimport_trial_ids)
+        - stale_analysis_imports_healed - stale_analysis_import_errors,
         "stale_summarize_imports_queued": len(summarize_reimport_trial_ids),
         "stuck_analyzing_advanced": stuck_analyzing_advanced,
         "stuck_analyzing_finalized": stuck_analyzing_finalized,
@@ -1227,8 +1252,7 @@ async def _reap_stale_worker_jobs(
     """
     stale_candidates = (
         await session.execute(
-            text(
-                f"""
+            text(f"""
                 SELECT id, attempts FROM worker_jobs
                 WHERE  status::text = 'RUNNING'
                   AND  (
@@ -1236,10 +1260,17 @@ async def _reap_stale_worker_jobs(
                       OR heartbeat_at < NOW() - make_interval(mins => :stale_after_minutes)
                   )
                   AND  {_MONITOR_REAPABLE}
-                ORDER BY id
-                """
-            ),
-            {"stale_after_minutes": stale_after_minutes, "reapable": REAPABLE},
+                ORDER BY (id <= COALESCE((
+                    SELECT payload->>'after_job_id' FROM queue_runtime_status
+                    WHERE component = 'stale_worker_reap_cursor'
+                ), '')), id
+                LIMIT :batch_limit
+                """),
+            {
+                "stale_after_minutes": stale_after_minutes,
+                "reapable": REAPABLE,
+                "batch_limit": STALE_WORKER_BATCH_LIMIT,
+            },
         )
     ).all()
 
@@ -1409,6 +1440,16 @@ async def _reap_stale_worker_jobs(
                     "handle": handle,
                 }
             )
+
+    if stale_candidates:
+        # Rotate past rejected/locked candidates too, so a bad first batch cannot
+        # starve later jobs. Commit the cursor with the reap, never before it.
+        await session.execute(text("""
+            INSERT INTO queue_runtime_status (component, updated_at, payload)
+            VALUES ('stale_worker_reap_cursor', NOW(), jsonb_build_object('after_job_id', CAST(:last AS TEXT)))
+            ON CONFLICT (component) DO UPDATE
+            SET updated_at = NOW(), payload = EXCLUDED.payload
+        """), {"last": stale_candidates[-1][0]})
 
     await session.flush()
     return (
@@ -2470,47 +2511,6 @@ async def _reconcile_experiment_last_activity(session) -> int:
             or 0
         )
     )
-
-
-async def _terminate_orphaned_sandboxes(
-    worker_targets: set[tuple[str, str]],
-    failed: list[tuple[str, str]] | None = None,
-) -> int:
-    """Kill the orphaned sandboxes whose workers crashed. Runs AFTER the outer
-    commit: a rolled-back sweep must never leave RUNNING rows pointing at
-    sandboxes we already destroyed. Best-effort and concurrent; the provider's
-    auto-stop / auto-delete TTL is the backstop. Targets that did not stop are
-    appended to ``failed``.
-    """
-    if not worker_targets:
-        return 0
-    ordered_targets = sorted(worker_targets)
-    results = await asyncio.gather(
-        *(
-            cancel_job_by_worker(provider, external_id)
-            for provider, external_id in ordered_targets
-        ),
-        return_exceptions=True,
-    )
-    terminated = 0
-    for (provider, external_id), result in zip(ordered_targets, results, strict=True):
-        if failed is not None and (isinstance(result, BaseException) or not result):
-            failed.append((provider, external_id))
-        if isinstance(result, BaseException):
-            console.print(
-                "metric=orphaned_sandbox_termination outcome=error "
-                f"provider={provider} external_id={external_id} "
-                f"error_type={type(result).__name__} error={result}"
-            )
-            continue
-        if result:
-            terminated += 1
-        console.print(
-            "metric=orphaned_sandbox_termination "
-            f"outcome={'terminated' if result else 'failed'} "
-            f"provider={provider} external_id={external_id}"
-        )
-    return terminated
 
 
 async def _terminate_orphaned_sandbox_runs(sandbox_run_ids: list[str]) -> int:

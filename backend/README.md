@@ -934,3 +934,23 @@ trigger rejects an individual stale job. Its Diagnostics heartbeat stays in
 error and directs operators to the worker logs for job IDs, while unrelated
 stale jobs and baseline-gate recovery continue. The rejected job is left intact;
 inspect its trial result and applicable admission policy before recovering it.
+
+### Scheduled queue cycle budgets
+
+`worker/scheduled.py` owns the dispatcher/reconciler cycle deadline, outcome,
+status write, and connection cleanup. Work stops 45 seconds before the Modal
+limit (75 seconds of dispatch work and 555 seconds of reconciliation at the
+current defaults). The reserve covers the 30-second database command bound,
+five-second launch-reservation release, three-second status write, and
+five-second connection close. These are cooperative asyncio deadlines, not a
+replacement for Modal's hard timeout.
+
+Reconciliation gives each phase its own deadline so one slow dependency cannot
+consume the whole pass. Job retry transactions retain post-commit teardown
+intent in the existing pending-teardown record. Interrupted calls retry from
+that record; analysis result imports resume from the remaining database candidates.
+Dispatcher status writes occur after launches. `state` distinguishes completed,
+deferred, failed, and cancelled cycles; only completed cycles advance
+`last_success_at`. Dependency errors still fail dispatch; an internal deadline
+defers work to the next scheduled invocation. External cancellation propagates.
+These changes do not repair slow GKE queries or alter Slack/endpoint schedules.

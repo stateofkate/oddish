@@ -118,18 +118,11 @@ WORKER_TASK_MOUNT_KEY_PREFIX = "tasks/"
 
 # Worker configuration
 POLL_INTERVAL_SECONDS = _env_int("ODDISH_MODAL_POLL_INTERVAL_SECONDS", 30)
-# The dispatcher (poll_queue) now only discovers active queue keys and spawns
-# job workers -- it no longer runs the heavy reconciliation sweep inline, so it
-# stays well under this timeout. Kept comfortably above 60s so spawning a large
-# batch via asyncio.gather can never be SIGKILLed mid-flight (a kill there used
-# to leave orphaned 'idle in transaction' locks that deadlocked the next poll).
+# Scheduled queue work stops 45s before Modal's timeout to roll back, release
+# launch reservations, and persist an honest outcome. Modal remains the hard cap.
 DISPATCHER_TIMEOUT_SECONDS = _env_int("ODDISH_MODAL_DISPATCHER_TIMEOUT_SECONDS", 120)
-# Queue-state reconciliation (stale-heartbeat reap, stage advances, orphaned
-# slot release, owner backfill) runs in its own scheduled function, decoupled
-# from dispatch. It gets a generous timeout so it is never SIGKILLed
-# mid-transaction; the interval is a little longer than the poll interval since
-# the stale-heartbeat threshold is 15 minutes and reconciliation does not need
-# to run as often as dispatch.
+# Reconciliation runs separately, with independent phase budgets. Partial work
+# is retried on the next scheduled pass; a failed pass never stamps success.
 CLEANUP_INTERVAL_SECONDS = _env_int("ODDISH_MODAL_CLEANUP_INTERVAL_SECONDS", 240)
 CLEANUP_TIMEOUT_SECONDS = _env_int("ODDISH_MODAL_CLEANUP_TIMEOUT_SECONDS", 600)
 # Dashboard queue/pipeline precompute. A scheduled grouped scan warms every
