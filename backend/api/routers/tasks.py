@@ -146,6 +146,7 @@ from oddish.schemas import (
     ExperimentTrialPageResponse,
     ExperimentOptionsResponse,
     QARunRequest,
+    FullQARunRequest,
     TaskBrowseFacets,
     TaskBrowseCountResponse,
     TaskBrowseIdsResponse,
@@ -1723,6 +1724,24 @@ async def rerun_pre_trial_audit(
             task_id=task_id,
             org_id=auth.org_id,
             environment=body.environment if body is not None else None,
+        )
+
+
+@router.post("/tasks/{task_id}/qa/full")
+async def rerun_full_qa(
+    task_id: str,
+    body: FullQARunRequest,
+    auth: Annotated[AuthContext, Depends(require_auth)],
+) -> dict:
+    """Request both QA stages without changing the automatic-analysis setting."""
+    auth.require_scope(APIKeyScope.TASKS, allow_member_created_task_key=False)
+    async with get_session() as session:
+        return await rerun_pre_trial_audit_core(
+            session,
+            task_id=task_id,
+            org_id=auth.org_id,
+            full_qa=True,
+            expected_version_id=body.expected_version_id,
         )
 
 

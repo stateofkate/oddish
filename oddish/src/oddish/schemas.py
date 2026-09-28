@@ -621,6 +621,12 @@ class QARunRequest(BaseModel):
     )
 
 
+class FullQARunRequest(BaseModel):
+    """Rerun both QA stages for the version selected by the caller."""
+
+    expected_version_id: str = Field(min_length=1)
+
+
 class QAEvalCreateRequest(TrialSpec):
     """Replay one QA prompt version over exact historical solver trials:
     picked ones (a subset run) or every counted golden's."""
@@ -3006,6 +3012,10 @@ class DeliveryTaskBoardRow(BaseModel):
     checks: list[DeliveryCheckResult]
     defects: list[DeliveryDefect] = Field(default_factory=list)
     qa: DeliveryQAStatus = Field(default_factory=DeliveryQAStatus)
+    pre_trial_status: str | None = "unknown"
+    pre_trial_error: str | None = None
+    verdict_status: str | None = None
+    verdict_error: str | None = None
     qa_work: QAWorkMetadata = Field(default_factory=QAWorkMetadata)
     qa_owner_name: str | None = None
     ready: bool

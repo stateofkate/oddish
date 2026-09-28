@@ -12,7 +12,7 @@ from oddish.core.endpoints._common import (
     _ACTIVE_WORKER_JOB_STATUSES_SQL,
     USER_CANCELLED_MESSAGE,
 )
-from oddish.core.verdict_state import cancel_verdict, reset_verdict
+from oddish.core.verdict_state import cancel_verdict, queue_verdict, reset_verdict
 from oddish.core.trial_io import qa_source_evidence_errors
 from oddish.db import (
     ACTIVE_TRIAL_STATUSES,
@@ -414,6 +414,8 @@ async def rerun_pre_trial_audit_core(
     task_id: str,
     org_id: str | None = None,
     environment: str | None = None,
+    full_qa: bool = False,
+    expected_version_id: str | None = None,
 ) -> dict[str, str]:
     """Queue the pre-trial audit for the task's current version.
 
@@ -434,6 +436,14 @@ async def rerun_pre_trial_audit_core(
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
     if not task.current_version_id:
         raise HTTPException(status_code=400, detail="Task has no version to audit")
+    if (
+        expected_version_id is not None
+        and task.current_version_id != expected_version_id
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Task version changed; refresh the delivery and retry",
+        )
 
     version = await session.get(
         TaskVersionModel, task.current_version_id, with_for_update=True
@@ -446,29 +456,40 @@ async def rerun_pre_trial_audit_core(
     from oddish.workers.analysis_trials import ANALYSIS_TRIAL_TIMEOUT_MINUTES
 
     lease = timedelta(minutes=ANALYSIS_TRIAL_TIMEOUT_MINUTES * 2)
-    if (
+    live_audit_id = await live_analysis_trial_id(session, task_id, kind="audit")
+    if full_qa and live_audit_id is not None:
+        live_audit = await session.get(TrialModel, live_audit_id)
+        if live_audit.task_version_id != version.id:
+            raise HTTPException(
+                status_code=409,
+                detail="Another task version has a live source audit; wait for it to finish",
+            )
+    audit_active = (
         version.pre_trial_status in (VerdictStatus.QUEUED, VerdictStatus.RUNNING)
         and version.pre_trial_started_at is not None
         and utcnow() - version.pre_trial_started_at < lease
-    ):
+    ) or live_audit_id is not None
+    if audit_active and full_qa:
+        # Adopt the in-flight source check and durably request its follow-up.
+        # Do not change the task's automatic-analysis preference.
+        queue_verdict(task)
+        task.status = TaskStatus.RUNNING
+        task.finished_at = None
+        await session.commit()
+        return {"status": "already_running", "task_id": task_id}
+    if audit_active:
         raise HTTPException(
             status_code=400,
             detail="An audit is already running for this version",
         )
 
-    # A queued request with a live audit trial behind it must not be queued
-    # again. A stale QUEUED status with no trial (cancelled or crashed) may
-    # be: re-queuing is the remedy there.
-    if await live_analysis_trial_id(session, task_id, kind="audit"):
-        raise HTTPException(
-            status_code=400,
-            detail="An audit trial is already queued or running for this task",
-        )
-
     # A live QA trial may finish, but its audit fingerprint prevents it from
     # publishing the obsolete decision. Admission waits for both jobs before
     # creating replacement QA, so this does not duplicate a live QA job.
-    reset_verdict(task)
+    if full_qa:
+        queue_verdict(task)
+    else:
+        reset_verdict(task)
     task.status = TaskStatus.RUNNING
     task.finished_at = None
 

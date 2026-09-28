@@ -12,7 +12,7 @@ import pytest
 
 from api.routers import tasks as tasks_router
 from api.routers import trials as trials_router
-from oddish.schemas import BackfillQARequest, QARunRequest
+from oddish.schemas import BackfillQARequest, FullQARunRequest, QARunRequest
 
 
 def _fake_auth():
@@ -26,6 +26,30 @@ def _fake_auth():
 @asynccontextmanager
 async def _fake_get_session():
     yield object()
+
+
+@pytest.mark.asyncio
+async def test_full_qa_requires_mutation_scope_and_pins_version(monkeypatch):
+    from unittest.mock import AsyncMock, Mock
+
+    auth = _fake_auth()
+    auth.require_scope = Mock()
+    core = AsyncMock(return_value={"status": "queued", "task_id": "task-1"})
+    monkeypatch.setattr(tasks_router, "get_session", _fake_get_session)
+    monkeypatch.setattr(tasks_router, "rerun_pre_trial_audit_core", core)
+    result = await tasks_router.rerun_full_qa(
+        "task-1", FullQARunRequest(expected_version_id="task-1-v2"), auth
+    )
+    assert result["status"] == "queued"
+    auth.require_scope.assert_called_once_with(
+        tasks_router.APIKeyScope.TASKS, allow_member_created_task_key=False
+    )
+    assert core.call_args.kwargs == {
+        "task_id": "task-1",
+        "org_id": "org-1",
+        "full_qa": True,
+        "expected_version_id": "task-1-v2",
+    }
 
 
 @pytest.mark.asyncio

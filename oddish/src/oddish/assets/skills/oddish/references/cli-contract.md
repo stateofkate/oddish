@@ -31,6 +31,18 @@ auto-publish (`run --publish` or GitHub-attributed CI runs); a member-created
 
 ## Command surface
 
+`oddish delivery qa rerun NAME_OR_ID` queues both QA stages for every task's
+current version in an active delivery. `--dry-run` previews without spending.
+It reuses a running source check, explicitly requests post-trial QA even when
+automatic analysis is disabled, and never reruns solver trials. Submission
+failures do not stop other tasks; exit 1 means at least one failed. Inspect
+`--json` per-task outcomes before retrying: another invocation reruns finished
+tasks, and a transport timeout can mean the request already committed.
+`oddish delivery qa status NAME_OR_ID [--json]` reads both stages and counts;
+it exits 0 on a successful fetch, regardless of QA outcome. Finalized deliveries
+show frozen results and cannot be rerun. Use `delivery ready` for shipping gates.
+Both commands accept `--api` and `--json`.
+
 Current top-level commands are `run`, `upload`, `preflight`, `ls`, `status`,
 `skill`, `version`, `update`, `logs`, `cancel`, `backfill-analysis`, `combine`,
 `costs`, `cost-exclusions`, `collect`, `delete`, `admin`, `experiment`, `link`,

@@ -799,6 +799,48 @@ Options
 - `--api TEXT` - Override the API URL
 - `--json` - Emit the cancellation result as JSON (implies `--force`)
 
+## Rerun QA for a delivery
+
+Pre-trial QA checks the task files. Post-trial QA reviews existing agent runs
+and updates the task verdict. To rerun both for every task in an active delivery:
+
+```bash
+oddish delivery qa rerun "september-batch" --dry-run
+oddish delivery qa rerun "september-batch"
+oddish delivery qa status "september-batch"
+oddish delivery qa status "september-batch" --json
+```
+
+Use a delivery name or ID. `--dry-run` lists the selected task versions without
+starting paid work. The rerun captures the delivery's membership and current
+task versions, then submits up to four requests at once. Each request queues a
+source check followed by a run review; the server finishes both after the CLI
+exits. Automatic QA can be disabled on the task: this explicit request still
+runs both stages without changing that setting. Existing agent runs are reused.
+
+A source check already in progress is reused and reported as `already_running`;
+its post-trial review is explicitly requested. Post-trial QA waits for the source
+check's results and any existing agent/QA runs. A changed task version is refused
+instead of silently reviewing different files. Each task commits independently;
+submission failures are printed with task IDs in `--json`, other tasks continue,
+and the command exits 1 if any submission failed. A network timeout means the
+submission is unconfirmed: inspect status before retrying. The command does not
+automatically retry requests. A later rerun starts another pass for finished tasks.
+
+`status` shows per-task pre-trial execution and post-trial results, with totals
+for each state. Pre-trial `success` means the source check completed, not that
+the source has no defects. Post-trial `needs_fixes` is a completed rejection;
+`error` means the review failed or has insufficient evidence, and `outdated`
+means its evidence no longer matches. Status is read-only and exits 0 after a
+successful fetch, even if QA is unfinished or rejects tasks. Use
+`oddish delivery ready NAME` for a pass/fail shipping check, including manual
+sign-off. Finalized deliveries show frozen results and cannot be rerun through
+this command. Older snapshots without source-check status show `unknown`.
+
+Both commands accept `--api` and `--json`. The rerun requires a server with
+`POST /tasks/{task_id}/qa/full`; an older server returns an error rather than
+silently skipping the post-trial request.
+
 ## Backfill Analysis
 
 Use `oddish backfill-analysis` to (re)run task-level QA — LLM trajectory

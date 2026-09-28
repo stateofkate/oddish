@@ -8,6 +8,7 @@ import uuid
 from datetime import timedelta
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 import pytest_asyncio
 from sqlalchemy import select, text
@@ -47,6 +48,194 @@ FINDING = {
     "recommendation": "Assert returncode == 0.",
     "tier": "must_fix",
 }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("automatic_qa", [True, False])
+@pytest.mark.parametrize("existing_qa", [True, False])
+async def test_full_qa_requests_one_followup_without_changing_preference(
+    audit_task, automatic_qa, existing_qa
+):
+    from oddish.server import api
+
+    task_id, version_id, source_id, artifacts = audit_task
+    old_qa = await create_qa(task_id) if existing_qa else None
+    if old_qa:
+        artifacts[old_qa] = qa_artifact(source_id)
+    async with get_session() as session:
+        task = await session.get(TaskModel, task_id)
+        task.run_analysis = automatic_qa
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        url = f"/tasks/{task_id}/qa/full"
+        body = {"expected_version_id": version_id}
+        first = await client.post(url, json=body)
+        assert first.status_code == 200, first.text
+        assert first.json()["status"] == "queued"
+        again = await client.post(url, json=body)
+        assert again.status_code == 200, again.text
+        assert again.json()["status"] == "already_running"
+    async with get_session() as session:
+        audits = list(
+            await session.scalars(
+                select(TrialModel).where(
+                    TrialModel.task_id == task_id, TrialModel.kind == "audit"
+                )
+            )
+        )
+        assert len(audits) == 1
+        audit_id = audits[0].id
+        task = await session.get(TaskModel, task_id)
+        assert task.run_analysis is automatic_qa
+        assert task.verdict_status == VerdictStatus.QUEUED
+    artifacts[audit_id] = {"items": []}
+    await settle(audit_id)
+    if old_qa:
+        await settle(old_qa)
+    # Duplicate settlement and cleanup admission must not create another job.
+    await analysis_trials.handle_analysis_trial_settled(audit_id)
+    async with get_session() as session:
+        await maybe_start_task_qa_stage(session, task_id)
+        qas = list(
+            await session.scalars(
+                select(TrialModel).where(
+                    TrialModel.task_id == task_id, TrialModel.kind == "qa"
+                )
+            )
+        )
+        assert len(qas) == (2 if old_qa else 1)
+        fresh = next(qa for qa in qas if qa.id != old_qa)
+        assert fresh.harbor_config["analysis_payload"]["pre_trial_must_fix_ids"] == []
+        task = await session.get(TaskModel, task_id)
+        assert task.run_analysis is automatic_qa
+        assert task.status == TaskStatus.VERDICT_PENDING
+
+
+@pytest.mark.asyncio
+async def test_full_qa_refuses_changed_version_before_queuing(audit_task):
+    from oddish.server import api
+
+    task_id, _, _, _ = audit_task
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=api), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            f"/tasks/{task_id}/qa/full", json={"expected_version_id": "old-version"}
+        )
+    assert response.status_code == 409
+    async with get_session() as session:
+        assert (
+            await session.scalar(
+                select(TrialModel.id).where(
+                    TrialModel.task_id == task_id, TrialModel.kind == "audit"
+                )
+            )
+            is None
+        )
+
+
+@pytest.mark.asyncio
+async def test_full_qa_waits_for_solver_then_survives_fresh_admission(audit_task):
+    task_id, version_id, source_id, artifacts = audit_task
+    async with get_session() as session:
+        task = await session.get(TaskModel, task_id)
+        task.run_analysis = False
+        source = await session.get(TrialModel, source_id)
+        source.status = TrialStatus.RUNNING
+        await rerun_pre_trial_audit_core(
+            session, task_id=task_id, full_qa=True, expected_version_id=version_id
+        )
+        audit_id = await session.scalar(
+            select(TrialModel.id).where(
+                TrialModel.task_id == task_id, TrialModel.kind == "audit"
+            )
+        )
+    artifacts[audit_id] = {"items": []}
+    await settle(audit_id)
+    async with get_session() as session:
+        assert (
+            await session.scalar(
+                select(TrialModel.id).where(
+                    TrialModel.task_id == task_id, TrialModel.kind == "qa"
+                )
+            )
+            is None
+        )
+        source = await session.get(TrialModel, source_id)
+        source.status = TrialStatus.SUCCESS
+        await session.commit()
+    # A new session, as used by cleanup or the solver settlement worker, owns
+    # no request-local state and still starts the requested follow-up.
+    async with get_session() as session:
+        assert (await maybe_start_task_qa_stage(session, task_id)).advanced
+        task = await session.get(TaskModel, task_id)
+        assert task.status == TaskStatus.VERDICT_PENDING
+        assert task.run_analysis is False
+
+
+@pytest.mark.asyncio
+async def test_full_qa_cannot_adopt_an_audit_of_another_version(audit_task):
+    from fastapi import HTTPException
+
+    task_id, version_id, _, _ = audit_task
+    async with get_session() as session:
+        await rerun_pre_trial_audit_core(session, task_id=task_id)
+    async with get_session() as session:
+        task = await session.get(TaskModel, task_id)
+        new_version = TaskVersionModel(
+            id=task_id + "-v2", task_id=task_id, version=2, task_path="v2"
+        )
+        session.add(new_version)
+        await session.flush()
+        task.current_version_id = new_version.id
+    async with get_session() as session:
+        with pytest.raises(HTTPException) as exc:
+            await rerun_pre_trial_audit_core(
+                session,
+                task_id=task_id,
+                full_qa=True,
+                expected_version_id=task_id + "-v2",
+            )
+        assert exc.value.status_code == 409
+        audits = list(
+            await session.scalars(
+                select(TrialModel).where(
+                    TrialModel.task_id == task_id, TrialModel.kind == "audit"
+                )
+            )
+        )
+        assert [audit.task_version_id for audit in audits] == [version_id]
+
+
+@pytest.mark.asyncio
+async def test_cancelled_full_qa_does_not_start_followup(audit_task):
+    task_id, version_id, _, artifacts = audit_task
+    async with get_session() as session:
+        task = await session.get(TaskModel, task_id)
+        task.run_analysis = False
+        await rerun_pre_trial_audit_core(
+            session, task_id=task_id, full_qa=True, expected_version_id=version_id
+        )
+    async with get_session() as session:
+        audit_id = await session.scalar(
+            select(TrialModel.id).where(
+                TrialModel.task_id == task_id, TrialModel.kind == "audit"
+            )
+        )
+        await cancel_task_qa_core(session, task_id=task_id)
+    artifacts[audit_id] = {"items": []}
+    await analysis_trials.handle_analysis_trial_settled(audit_id)
+    async with get_session() as session:
+        await maybe_start_task_qa_stage(session, task_id)
+        assert (
+            await session.scalar(
+                select(TrialModel.id).where(
+                    TrialModel.task_id == task_id, TrialModel.kind == "qa"
+                )
+            )
+            is None
+        )
 
 
 @pytest.mark.parametrize("failure_after_repair", ["invalid", "missing", "limit"])

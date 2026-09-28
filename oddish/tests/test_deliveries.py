@@ -1632,10 +1632,19 @@ async def test_delivery_verdict_labels_reserve_failed_for_broken_qa_runs(
 
 
 @pytest.mark.asyncio
-async def test_full_picker_selection_is_atomic_and_batched(session):
+async def test_full_picker_selection_is_atomic_and_batched(session, monkeypatch):
+    from itertools import count
+    from uuid import UUID
+
     from oddish.db import DeliveryModel, DeliveryTaskModel
     from sqlalchemy import func
 
+    # Both tasks and memberships take the first eight UUID characters as IDs.
+    # Give this large fixture unique prefixes instead of risking random collisions.
+    ids_generated = count(1)
+    monkeypatch.setattr(
+        "oddish.db.models.uuid4", lambda: UUID(int=next(ids_generated) << 96)
+    )
     tasks = [_task(f"picker-{i}") for i in range(5000)]
     session.add_all(tasks)
     await session.flush()

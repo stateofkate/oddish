@@ -9,6 +9,9 @@ it into their loops. See docs/delivery-design.md.
 from __future__ import annotations
 
 import json
+import shlex
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Annotated, Any, Optional
 
@@ -23,6 +26,8 @@ delivery_app = typer.Typer(
     help="Track whether a set of tasks is ready to ship to a customer.",
     no_args_is_help=True,
 )
+delivery_qa_app = typer.Typer(help="Rerun and inspect delivery QA.", no_args_is_help=True)
+delivery_app.add_typer(delivery_qa_app, name="qa")
 
 console = Console()
 error_console = Console(stderr=True)
@@ -313,6 +318,172 @@ def show_delivery(
         print_json(board)
         return
     _print_board(board)
+
+
+@delivery_qa_app.command("rerun")
+def rerun_delivery_qa(
+    delivery: Annotated[str, typer.Argument(help="Delivery id or name.")],
+    dry_run: Annotated[
+        bool, typer.Option(help="List selected tasks without queuing QA.")
+    ] = False,
+    api_url: Annotated[str, _API_OPTION] = "",
+    json_output: Annotated[bool, _JSON_OPTION] = False,
+) -> None:
+    """Rerun pre-trial and post-trial QA for every current task version.
+
+    Queues paid QA work; existing agent runs are reused. The server completes
+    both stages after this command exits, even with automatic QA disabled.
+    """
+    api_url = (api_url or get_api_url()).rstrip("/")
+    with httpx.Client(timeout=60.0, headers=get_auth_headers(api_url)) as client:
+        board = _fetch_board(client, api_url, delivery)
+        if board.get("frozen") or board["delivery"]["status"] != "active":
+            _fail("Delivery is finalized; its QA results are a frozen snapshot.")
+        tasks = list({row["task_id"]: row for row in board["tasks"]}.values())
+        if not tasks:
+            _fail("Delivery has no tasks.")
+
+        def submit(row: dict) -> dict:
+            result = {
+                key: row[key]
+                for key in ("task_id", "task_name", "version_id", "version")
+            }
+            if not row["version_id"]:
+                return {
+                    **result,
+                    "status": "error",
+                    "detail": "Task has no current version or was deleted",
+                }
+            if dry_run:
+                return {**result, "status": "selected"}
+            try:
+                response = client.post(
+                    f"{api_url}/tasks/{row['task_id']}/qa/full",
+                    json={"expected_version_id": row["version_id"]},
+                )
+                response.raise_for_status()
+                return {**result, "status": response.json()["status"]}
+            except httpx.HTTPStatusError as exc:
+                return {**result, "status": "error", "detail": exc.response.text}
+            except httpx.RequestError as exc:
+                return {
+                    **result,
+                    "status": "error",
+                    "detail": f"Submission unconfirmed; check QA status before retrying: {exc}",
+                }
+
+        # Each task commits independently. A blocked task must not hide other
+        # results or prevent later tasks from being submitted.
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            results = list(pool.map(submit, tasks))
+    counts = dict(Counter(row["status"] for row in results))
+    if json_output:
+        print_json(
+            {
+                "delivery_id": board["delivery"]["id"],
+                "dry_run": dry_run,
+                "counts": counts,
+                "tasks": results,
+            }
+        )
+    else:
+        for row in results:
+            console.print(
+                f"{row['task_name']} ({row['task_id']}) v{row['version']}: {row['status']} {row.get('detail', '')}",
+                markup=False,
+            )
+        console.print(
+            ", ".join(f"{count} {status}" for status, count in counts.items()),
+            markup=False,
+        )
+        console.print(
+            f"Check progress: oddish delivery qa status {shlex.quote(delivery)} --api {shlex.quote(api_url)}",
+            markup=False,
+        )
+    if counts.get("error"):
+        raise typer.Exit(1)
+
+
+@delivery_qa_app.command("status")
+def delivery_qa_status(
+    delivery: Annotated[str, typer.Argument(help="Delivery id or name.")],
+    api_url: Annotated[str, _API_OPTION] = "",
+    json_output: Annotated[bool, _JSON_OPTION] = False,
+) -> None:
+    """Show source-check execution, run-review results, and delivery readiness."""
+    api_url = (api_url or get_api_url()).rstrip("/")
+    with httpx.Client(timeout=60.0, headers=get_auth_headers(api_url)) as client:
+        board = _fetch_board(client, api_url, delivery)
+    rows = []
+    for task in board["tasks"]:
+        # Missing fields on an older server/snapshot are unknown, never success.
+        pre = (
+            (task["pre_trial_status"] or "never")
+            if "pre_trial_status" in task
+            else "unknown"
+        )
+        verdict = task.get("verdict_status")
+        post = task["qa"]["status"]
+        detail = task.get("verdict_error") or task["qa"]["detail"]
+        if verdict in {"pending", "queued", "running"}:
+            post = verdict
+            detail = (
+                "Waiting for source check and existing runs"
+                if pre in {"pending", "queued", "running"}
+                else "QA requested or running"
+            )
+        elif verdict == "failed":
+            post = "error"
+        rows.append(
+            {
+                "task_id": task["task_id"],
+                "task_name": task["task_name"],
+                "version": task["version"],
+                "version_id": task["version_id"],
+                "pre_trial": pre,
+                "pre_trial_error": task.get("pre_trial_error"),
+                "post_trial": post,
+                "detail": detail,
+                "ready": task["ready"],
+            }
+        )
+    result = {
+        "delivery_id": board["delivery"]["id"],
+        "frozen": board.get("frozen", False),
+        "ready": board["ready"],
+        "task_count": len(rows),
+        "pre_trial_counts": dict(Counter(row["pre_trial"] for row in rows)),
+        "post_trial_counts": dict(Counter(row["post_trial"] for row in rows)),
+        "tasks": rows,
+    }
+    if json_output:
+        print_json(result)
+        return
+    console.print(
+        f"{board['delivery']['name']}: {len(rows)} tasks; ready to ship: {board['ready']}",
+        markup=False,
+    )
+    if result["frozen"]:
+        console.print("Finalized delivery: showing frozen results.")
+    for label, key in (
+        ("Pre-trial", "pre_trial_counts"),
+        ("Post-trial", "post_trial_counts"),
+    ):
+        console.print(
+            f"{label}: "
+            + ", ".join(f"{count} {status}" for status, count in result[key].items()),
+            markup=False,
+        )
+    table = Table("Task", "Version", "Pre-trial", "Post-trial", "Detail")
+    for row in rows:
+        table.add_row(
+            row["task_name"],
+            str(row["version"] or "—"),
+            row["pre_trial"],
+            row["post_trial"],
+            row["pre_trial_error"] or row["detail"],
+        )
+    console.print(table)
 
 
 @delivery_app.command("ready")

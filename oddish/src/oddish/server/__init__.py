@@ -100,6 +100,7 @@ from oddish.schemas import (
     RunCoverage,
     BackfillQARequest,
     QARunRequest,
+    FullQARunRequest,
     ExperimentOptionsResponse,
     TaskBatchCancelRequest,
     TaskBrowseCountResponse,
@@ -845,6 +846,18 @@ async def rerun_pre_trial_audit(task_id: str, body: QARunRequest | None = None) 
             session,
             task_id=task_id,
             environment=body.environment if body is not None else None,
+        )
+
+
+@api.post("/tasks/{task_id}/qa/full")
+async def rerun_full_qa(task_id: str, body: FullQARunRequest) -> dict:
+    """Request a source audit followed by QA, regardless of automatic QA settings."""
+    async with get_session() as session:
+        return await rerun_pre_trial_audit_core(
+            session,
+            task_id=task_id,
+            full_qa=True,
+            expected_version_id=body.expected_version_id,
         )
 
 

@@ -1287,6 +1287,14 @@ async def _compute_board(
                 checks=checks,
                 defects=defects,
                 qa=qa_statuses.get(task.id, DeliveryQAStatus()),
+                pre_trial_status=version.pre_trial_status.value
+                if version and version.pre_trial_status
+                else None,
+                pre_trial_error=version.pre_trial_error if version else None,
+                verdict_status=task.verdict_status.value
+                if task.verdict_status
+                else None,
+                verdict_error=task.verdict_error,
                 qa_work=QAWorkMetadata.model_validate(version.qa_work or {})
                 if version
                 else QAWorkMetadata(),
@@ -1397,7 +1405,16 @@ def _customer_safe_board(board: DeliveryBoardResponse) -> dict:
             **{
                 key: value
                 for key, value in row.items()
-                if key not in {"qa", "qa_work", "qa_owner_name"}
+                if key
+                not in {
+                    "qa",
+                    "qa_work",
+                    "qa_owner_name",
+                    "pre_trial_status",
+                    "pre_trial_error",
+                    "verdict_status",
+                    "verdict_error",
+                }
             },
             "internal_note": None,
         }

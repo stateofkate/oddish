@@ -75,6 +75,25 @@ references is evidence to investigate, not proof that a file is useless.
 
 ## CLI delivery selection
 
+`delivery qa rerun` captures the board's task IDs and current version IDs, then
+submits four concurrent `POST /tasks/{task_id}/qa/full` requests with
+`expected_version_id`. The core checks that version under the task lock, returning
+409 before writes on a mismatch. Each request commits independently. A live audit
+is adopted; otherwise one is queued. `queue_verdict` records the explicit follow-up
+request before auditing, and QA admission honors QUEUED verdicts even when
+`run_analysis=False`. The existing audit/solver/live-QA gates still apply;
+cancellation and source changes clear the request through existing verdict-state
+transitions. No task preference, schema migration, or delivery batch job is added.
+The CLI refuses finalized deliveries and reports every submission error.
+
+Delivery board rows add `pre_trial_status`, `pre_trial_error`, `verdict_status`,
+and `verdict_error` from the already loaded task/version fields. Older snapshots
+default the source status to `unknown`. `delivery qa status` combines these with
+the existing evidence-aware `qa` result, keeping rejection, execution failure,
+and outdated evidence distinct. Existing response fields and rerun routes retain
+their behavior. Hosted full-QA requests require TASKS scope and reject
+member-created task keys, matching the existing QA mutation routes.
+
 `oddish ls` forwards lab, category, QA, summary-threshold, date, and author
 filters to `/tasks/browse`; it does not implement eligibility or query the DB.
 `--count` and `--ids` use the existing count/ID-only modes; the latter preserves

@@ -274,8 +274,32 @@ async def test_customer_snapshot_omits_qa_coordination(session):
     board.qa_viewer_user_id = "alice"
     public = _customer_safe_board(board)
     assert "qa_viewer_user_id" not in public
-    assert not {"qa", "qa_work", "qa_owner_name"}.intersection(public["tasks"][0])
+    assert not {
+        "qa",
+        "qa_work",
+        "qa_owner_name",
+        "pre_trial_status",
+        "pre_trial_error",
+        "verdict_status",
+        "verdict_error",
+    }.intersection(public["tasks"][0])
     assert board.tasks[0].qa_work.note == "Internal debugging note"
+
+
+@pytest.mark.asyncio
+async def test_delivery_exposes_both_qa_stage_states_and_errors(session):
+    delivery, task, version, _, _, _ = await _reviewed_delivery(session)
+    version.pre_trial_status = VerdictStatus.FAILED
+    version.pre_trial_error = "Source audit did not produce a result"
+    task.verdict_status = VerdictStatus.QUEUED
+    task.verdict_error = None
+    await session.flush()
+    board = await get_delivery_board_core(session, delivery_id=delivery.id, org_id=ORG)
+    row = board.tasks[0]
+    assert row.pre_trial_status == "failed"
+    assert row.pre_trial_error == "Source audit did not produce a result"
+    assert row.verdict_status == "queued"
+    assert row.verdict_error is None
 
 
 @pytest.mark.asyncio

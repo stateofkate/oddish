@@ -1722,7 +1722,9 @@ async def maybe_start_task_qa_stage(
     if await live_analysis_trial_id(session, task_id, kind="qa") is not None:
         return TaskQAStageAdmission()
 
-    if task.run_analysis:
+    # A full-QA request queues the verdict before its source audit starts.
+    # Honor that one request even when automatic analysis is disabled.
+    if task.run_analysis or task.verdict_status == VerdictStatus.QUEUED:
         await start_qa_for_task(session, task)
     else:
         task.status = TaskStatus.COMPLETED

@@ -11,6 +11,13 @@ The backend wraps the OSS `oddish` core with:
 - Queue-key concurrency controls
 - Public token-based sharing endpoints
 
+`oddish delivery qa rerun NAME` submits each selected task version to
+`POST /tasks/{task_id}/qa/full`. This route requires TASKS scope, rejects
+member-created task keys, and scopes the task lookup to the authenticated
+organization. It queues both QA stages through the shared core; no client
+polling is needed to start the second stage. `delivery qa status NAME` uses
+the delivery board's source-check status and existing QA evidence result.
+
 ## System Architecture
 
 ### Data flow
