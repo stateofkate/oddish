@@ -71,11 +71,11 @@ jobs:
       # editing this line (10, 50, 100); rollback: "0".
       ODDISH_MONITOR_EXECUTION_SAMPLE_PERCENT: "1"
       ODDISH_MONITOR_EXECUTION_FALLBACK_AFTER_ATTEMPTS: "1"
-      # Archil CPU rollout: 1 percent of newly submitted sweeps that would run
+      # Archil CPU rollout: 5 percent of newly submitted sweeps that would run
       # on Daytona (by request-hash bucket) run on Archil instead; a trial that
       # fails twice on Archil retries on Modal. Explicit --env, GPU/TPU and
       # Numinous routes are untouched. Ramp by editing this line; rollback: "0".
-      ODDISH_ARCHIL_TRAFFIC_PERCENT: "1"
+      ODDISH_ARCHIL_TRAFFIC_PERCENT: "5"
       # Thunder must be enabled in the deploy process itself so modal_app.py
       # attaches the worker-only oddish-thunder credential secret.
       ODDISH_THUNDER_ENABLED: "true"

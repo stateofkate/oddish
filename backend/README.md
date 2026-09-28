@@ -460,7 +460,8 @@ its GPU lane. When enabled, the Modal deployment attaches the secret named by
 Local `backend/.env` values are layered on top of the shared Modal secret for local deploys.
 
 `ODDISH_ARCHIL_TRAFFIC_PERCENT` controls the hosted CPU rollout when capability
-routing selects Daytona and defaults to `0`. The API maps the raw request
+routing selects Daytona and defaults to `0`. Production sets it to `5` (5%) in
+`.github/workflows/modal-deploy.yml`. The API maps the raw request
 fingerprint into a bucket from 0 through 99, then selects Archil when the bucket
 is below the configured percentage. One bucket applies to the whole sweep.
 Enabled Numinous, explicit environments, existing task appends, and
