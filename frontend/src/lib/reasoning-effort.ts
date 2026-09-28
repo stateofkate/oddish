@@ -56,7 +56,7 @@ export function reasoningEffortOptions(agent: string, model: string): string[] {
     (agent === "claude-code" || modelRouted) &&
     /claude-(opus|sonnet)-/.test(model)
   ) {
-    return /claude-opus-(5|4-7)/.test(model)
+    return /claude-(?:opus-(5|4-7)|sonnet-5[.-]5(?:$|[-@[]))/.test(model)
       ? EXTENDED_EFFORTS
       : STANDARD_EFFORTS;
   }

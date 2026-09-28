@@ -10,6 +10,9 @@ const standard = ["low", "medium", "high"];
 const extended = [...standard, "xhigh", "max"];
 
 for (const [agent, model, expected] of [
+  ["claude-code", "anthropic/claude-sonnet-5-5", extended],
+  ["claude-code", "global.anthropic.claude-sonnet-5-5", extended],
+  ["claude-code", "claude-sonnet-5", standard],
   ["codex", "openai/gpt-5.6", extended],
   ["codex", "openai/gpt-5.4-codex", extended],
   ["codex", "openai/o3", standard],

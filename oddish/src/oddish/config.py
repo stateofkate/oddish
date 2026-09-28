@@ -1147,6 +1147,7 @@ _ANTHROPIC_TO_BEDROCK_MODEL_IDS: dict[str, str] = {
     # carry a date and a "-v1:0" suffix. Without this key `-m claude-sonnet-5`
     # never reaches Bedrock at all: to_bedrock_model_id() raises on an
     # unmapped Claude id, and the submission path surfaces that as a 500.
+    "claude-sonnet-5-5": "global.anthropic.claude-sonnet-5-5",
     "claude-sonnet-5": "global.anthropic.claude-sonnet-5",
     "claude-sonnet-4-6": "global.anthropic.claude-sonnet-4-6",
     "claude-haiku-4-5": "global.anthropic.claude-haiku-4-5-20251001-v1:0",

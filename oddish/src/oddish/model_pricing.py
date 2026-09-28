@@ -45,6 +45,12 @@ PRICING_TABLE: list[tuple[str, ModelPricing]] = [
     ),
     ("glm-4.5-flash", ModelPricing(input=0.0, output=0.0)),
     ("glm-4.7-flash", ModelPricing(input=0.0, output=0.0)),
+    # Launch-day fallback: platform.claude.com/docs/en/models/sonnet-5-5/overview
+    # (2026-09-28), including the default five-minute cache write rate.
+    (
+        "claude-sonnet-5-5",
+        ModelPricing(input=2e-6, output=10e-6, cache_read=2e-7, cache_write=2.5e-6),
+    ),
     # Anthropic legacy / bare variants.
     (
         "claude-haiku-4",

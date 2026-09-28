@@ -3315,3 +3315,12 @@ spellings can produce different hashes. The chart uses one legend entry, provide
 icon and color per normalized model. `effort` filters chart runs (`unrecorded`
 selects missing effort), and `sort=effort` orders model results by thinking effort.
 Both controls live in the page URL. The cost frontier uses only visible runs.
+
+Sonnet 5.5 QA comparisons use `claude-code` with
+`anthropic/claude-sonnet-5-5` for the direct API, or the configured Claude
+provider for bare `claude-sonnet-5-5`. The Bedrock alias maps to
+`global.anthropic.claude-sonnet-5-5`; live availability still requires account
+access. The shared effort selector offers low/medium/high/xhigh/max for 5.5
+while Sonnet 5 retains low/medium/high. Admin QA Evals keeps the existing
+one-golden preflight before full replay. The production QA default remains
+GPT-6 Luna. Launch-day token pricing has a local fallback for cost reports.
