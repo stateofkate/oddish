@@ -3304,3 +3304,14 @@ interrupted imports returned as deferred and failed imports counted separately. 
 trials and terminal runtime-ref cleanup processes at most two existing batches.
 Tag fan-out progress updates `worker_jobs.heartbeat_at`; there is no
 `last_heartbeat_at` column.
+
+
+### QA evaluation chart identity
+
+QA model comparisons group scored full runs by normalized `model_name`, agent,
+and recorded thinking effort. `configuration_sha256` remains execution metadata
+for preflight validation; it is not a chart identity because equivalent provider
+spellings can produce different hashes. The chart uses one legend entry, provider
+icon and color per normalized model. `effort` filters chart runs (`unrecorded`
+selects missing effort), and `sort=effort` orders model results by thinking effort.
+Both controls live in the page URL. The cost frontier uses only visible runs.

@@ -417,7 +417,9 @@ def _models(charted: list[QAEvalRunSummary]) -> list[QAEvalModelRow]:
     a run with no cost ranks after those with one."""
     by_model: dict[tuple, list[QAEvalRunSummary]] = defaultdict(list)
     for run in charted:
-        by_model[(run.model_name, run.agent, run.reasoning_effort, run.configuration_sha256)].append(run)
+        # Execution hashes include raw model spelling. Compare normalized models
+        # while retaining runner/effort differences and the original run metadata.
+        by_model[(run.model_name, run.agent, run.reasoning_effort)].append(run)
     ranked = sorted(
         by_model.values(),
         key=lambda runs: (

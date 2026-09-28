@@ -182,6 +182,8 @@ export interface QAQueue {
 export interface QAEvalsView {
   stage: QAStage;
   chart: QAEvalsChart;
+  effort: string | null;
+  sort: "accuracy" | "effort";
   /** The selected run's experiment id. */
   run: string | null;
   filter: QAEvalGroup | "all";
@@ -230,6 +232,8 @@ const list: Key<string[]> = {
 const KEYS: { [K in keyof QAEvalsView]: Key<QAEvalsView[K]> } = {
   stage: oneOf(QA_STAGES),
   chart: oneOf(QA_EVALS_CHARTS),
+  effort: text,
+  sort: oneOf(["accuracy", "effort"]),
   run: text,
   filter: oneOf(["all", ...QA_EVAL_GROUPS.map((g) => g.group)]),
   version: text,
@@ -361,7 +365,26 @@ export type QAEvalStart = {
 } & ({ goldens: true } | { source_trial_ids: string[] });
 
 export function configurationKey(run: QAEvalRun): string {
-  return run.configuration_sha256 ?? `${run.agent ?? "claude-code"}:${run.model_name}:${run.reasoning_effort ?? "default"}`;
+  // The execution fingerprint preserves request spelling and is used for
+  // preflight validation. Charts compare the normalized model, runner and effort.
+  return JSON.stringify([
+    run.model_name,
+    run.agent ?? "claude-code",
+    run.reasoning_effort ?? null,
+  ]);
+}
+
+/** Missing effort is not an explicit provider setting such as "none". */
+const THINKING_EFFORTS = [
+  "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
+];
+
+export function compareThinkingEffort(a: string | null, b: string | null): number {
+  const rank = (value: string | null) => {
+    const index = value === null ? -1 : THINKING_EFFORTS.indexOf(value);
+    return index < 0 ? THINKING_EFFORTS.length : index;
+  };
+  return rank(a) - rank(b) || (a ?? "").localeCompare(b ?? "");
 }
 
 export function configurationLabel(run: QAEvalRun): string {

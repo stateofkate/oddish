@@ -3,6 +3,8 @@ import test from "node:test";
 
 import {
   DEFAULT_VIEW,
+  configurationKey,
+  compareThinkingEffort,
   QA_EVAL_GROUPS,
   experimentFromInput,
   formatScore,
@@ -224,4 +226,66 @@ test("a picked base is used only when it has text and differs from the shown ver
   assert.equal(base("version=p2&base_version=p0"), "p1");
   assert.equal(base("version=p2&base_version=p2"), "p1");
   assert.equal(base("version=p1&base_version=p2"), "p2");
+});
+
+
+test("chart identity ignores execution hashes and provider spelling for every normalized model", () => {
+  for (const model of [
+    "gpt-6-luna",
+    "claude-sonnet-5",
+    "gemini-3-pro",
+    "glm-5",
+    "grok-4",
+  ]) {
+    const first = run("old", {
+      model: `provider/${model}`,
+      model_name: model,
+      agent: "claude-code",
+      reasoning_effort: "high",
+      configuration_sha256: "old-fingerprint",
+    });
+    const second = { ...first, model, configuration_sha256: "new-fingerprint" };
+    assert.equal(configurationKey(first), configurationKey(second));
+    assert.notEqual(
+      configurationKey(first),
+      configurationKey({ ...second, reasoning_effort: "low" })
+    );
+    assert.notEqual(
+      configurationKey(first),
+      configurationKey({ ...second, agent: "codex" })
+    );
+    assert.notEqual(
+      configurationKey(first),
+      configurationKey({ ...second, model_name: "different-model" })
+    );
+  }
+});
+
+test("thinking effort filters and sorting round-trip in shared links", () => {
+  const state = view("effort=high&sort=effort");
+  assert.equal(viewHref(state), "/admin?tab=qa-evals&effort=high&sort=effort");
+  assert.deepEqual(view(viewHref(state).split("?")[1]), state);
+  assert.equal(view("sort=unknown").sort, "accuracy");
+  assert.equal(view("effort=unrecorded").effort, "unrecorded");
+});
+
+test("thinking effort sorts by intensity and keeps missing effort distinct from none", () => {
+  assert.deepEqual(
+    [
+      "high",
+      null,
+      "none",
+      "max",
+      "low",
+      "ultra",
+      "medium",
+      "minimal",
+      "xhigh",
+    ].sort(compareThinkingEffort),
+    ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra", null]
+  );
+  assert.notEqual(
+    configurationKey(run("r", { reasoning_effort: null })),
+    configurationKey(run("r", { reasoning_effort: "none" }))
+  );
 });

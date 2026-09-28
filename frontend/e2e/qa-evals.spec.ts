@@ -96,3 +96,125 @@ test("QA checks each selected model and safely retries a partially submitted ful
     full.every(({ body }) => body.preflight_run_id === `check-${body.model}`)
   ).toBe(true);
 });
+
+
+test("QA charts unify model aliases, retain model identity across efforts and share filters", async ({
+  page,
+}) => {
+  await page.goto("/admin?tab=qa-evals");
+  const luna = page.getByRole("button", {
+    name: "OpenAI gpt-6-luna",
+    exact: true,
+  });
+  await expect(luna).toHaveCount(1);
+  await expect(
+    page.getByRole("button", { name: "Anthropic claude-sonnet-5", exact: true })
+  ).toHaveCount(1);
+  await expect(page.locator(".recharts-scatter-symbol")).toHaveCount(6);
+  const color = await luna.locator("span").first().getAttribute("style");
+  // High-effort Luna has two historical points in the same series.
+  const seriesSizes = await page
+    .locator(".recharts-scatter")
+    .evaluateAll((series) =>
+      series.map((s) => s.querySelectorAll(".recharts-scatter-symbol").length)
+    );
+  expect(seriesSizes.sort()).toEqual([1, 1, 2, 2]);
+  await page
+    .getByLabel("Thinking effort", { exact: true })
+    .selectOption("high");
+  await expect(page).toHaveURL(/effort=high/);
+  await expect(page.locator(".recharts-scatter-symbol")).toHaveCount(4);
+  await expect(luna.locator("span").first()).toHaveAttribute("style", color!);
+  await page.getByRole("button", { name: "Models: cost vs accuracy" }).click();
+  const board = page.getByRole("region", { name: "Models", exact: true });
+  await expect(board.getByText("gpt-6-luna", { exact: true })).toHaveCount(1);
+  await expect(board.getByText("80.0%", { exact: true })).toBeVisible();
+  await expect(board.getByText("92.0%", { exact: true })).toHaveCount(0);
+  await expect(board.getByText("high thinking", { exact: true })).toHaveCount(
+    2
+  );
+  await page.getByLabel("Thinking effort", { exact: true }).selectOption("all");
+  await page.getByLabel("Sort models").selectOption("effort");
+  const badges = board.getByText(
+    /^(low thinking|high thinking|effort not recorded)$/
+  );
+  await expect(badges).toHaveText([
+    "low thinking",
+    "high thinking",
+    "high thinking",
+    "effort not recorded",
+  ]);
+  await page.reload();
+  await expect(page.getByLabel("Sort models")).toHaveValue("effort");
+  await luna.click();
+  await expect(board.getByText("gpt-6-luna", { exact: true })).toHaveCount(0);
+  await luna.click();
+  await expect(board.getByText("gpt-6-luna", { exact: true })).toHaveCount(2);
+  await page.screenshot({
+    path: "test-results/qa-model-thinking-effort.png",
+    fullPage: true,
+  });
+  await page
+    .getByLabel("Thinking effort", { exact: true })
+    .selectOption("unrecorded");
+  await expect(board.getByText("gpt-6-sol", { exact: true })).toBeVisible();
+  await expect(board.getByText("gpt-6-luna", { exact: true })).toHaveCount(0);
+  // Links created before the fix hid a raw configuration hash.
+  await page.goto("/admin?tab=qa-evals&hide=luna-old");
+  await expect(luna).toHaveAttribute("title", "Click to show");
+  await expect(page.locator(".recharts-scatter-symbol")).toHaveCount(3);
+});
+
+
+for (const chart of ["history", "models"]) {
+  test(`QA ${chart} chart distinguishes hidden models from an effort with no matching runs`, async ({
+    page,
+  }) => {
+    await page.goto(`/admin?tab=qa-evals&chart=${chart}`);
+    for (const name of [
+      "OpenAI gpt-6-luna",
+      "OpenAI gpt-6-sol",
+      "Anthropic claude-sonnet-5",
+    ]) {
+      await page.getByRole("button", { name, exact: true }).click();
+    }
+    await expect(
+      page.getByLabel("Thinking effort", { exact: true })
+    ).toHaveValue("all");
+    await expect(
+      page.getByText("All models are hidden.", { exact: true })
+    ).toBeVisible();
+    await expect(
+      page.getByText("No visible runs match this thinking effort.", {
+        exact: true,
+      })
+    ).toHaveCount(0);
+    await page
+      .getByLabel("Thinking effort", { exact: true })
+      .selectOption("high");
+    await expect(
+      page.getByText("All models are hidden.", { exact: true })
+    ).toBeVisible();
+    // Sol has no recorded effort: revealing it leaves the high-effort filter empty.
+    await page
+      .getByRole("button", { name: "OpenAI gpt-6-sol", exact: true })
+      .click();
+    await expect(
+      page.getByText("All models are hidden.", { exact: true })
+    ).toHaveCount(0);
+    await expect(
+      page.getByText("No visible runs match this thinking effort.", {
+        exact: true,
+      })
+    ).toBeVisible();
+    await page
+      .getByLabel("Thinking effort", { exact: true })
+      .selectOption("all");
+    await expect(
+      page.getByText("No visible runs match this thinking effort.", {
+        exact: true,
+      })
+    ).toHaveCount(0);
+    await expect(page.locator(".recharts-scatter-symbol circle")).toHaveCount(1);
+  });
+}

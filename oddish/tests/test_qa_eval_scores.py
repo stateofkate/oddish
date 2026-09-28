@@ -28,6 +28,7 @@ from oddish.analyze.qa_stages import (
 from oddish.core.qa_eval_scores import (
     _frontier,
     _models,
+    _model_name,
     _score_runs,
     get_prompt_version_text_core,
     get_qa_eval_run_core,
@@ -685,3 +686,22 @@ async def test_saved_provider_error_remains_visible_after_cancellation(session):
     run = await get_qa_eval_run_core(session, org_id=ids["org"], experiment_id=ids["candidate"])
     [case] = [case for case in run.cases if case.qa_eval_trial_id == trial.id]
     assert case.error == "ApiClientError: model identifier is invalid"
+
+
+@pytest.mark.parametrize("model", ["gpt-6-luna", "claude-sonnet-5", "gemini-3-pro", "glm-5", "grok-4"])
+def test_model_aliases_with_different_execution_hashes_share_latest_score(model):
+    old = _summary("old", 0.2, 0.92).model_copy(update={
+        "model": f"provider/{model}", "model_name": _model_name(f"provider/{model}"),
+        "reasoning_effort": "high", "configuration_sha256": "old-fingerprint",
+    })
+    new = old.model_copy(update={
+        "experiment_id": "new", "model": model, "model_name": _model_name(model),
+        "configuration_sha256": "new-fingerprint", "accuracy": 0.8,
+    })
+    assert old.model_name == new.model_name
+    rows = _models([old, new])
+    assert len(rows) == 1
+    assert rows[0].latest_run_id == "new"
+    assert rows[0].runs == 2
+    assert old.configuration_sha256 == "old-fingerprint"
+    assert new.configuration_sha256 == "new-fingerprint"

@@ -65,6 +65,10 @@ export function RunsView({
         <RunCharts
           status={status}
           chart={view.chart}
+          effort={view.effort}
+          onEffort={(effort) => show({ effort })}
+          sort={view.sort}
+          onSort={(sort) => show({ sort })}
           onChart={(chart) => show({ chart })}
           hidden={view.hide}
           onHidden={(hide) => show({ hide })}

@@ -26,7 +26,7 @@ import { formatCostUsd, formatDate } from "@/lib/format";
 import {
   formatAccuracy,
   configurationKey,
-  configurationLabel,
+  compareThinkingEffort,
   formatScore,
   shortSha,
   type QAEvalRun,
@@ -36,7 +36,7 @@ import {
 import { stableSeriesColors } from "@/lib/series-colors";
 
 type Point = { x: number; y: number; run: QAEvalRun };
-type Series = { model: string; color: string; points: Point[] };
+type Series = { key: string; model: string; color: string; points: Point[] };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const ACCURACY_TICKS = [0, 0.25, 0.5, 0.75, 1];
@@ -51,13 +51,19 @@ function RunTooltip({ active, payload }: ChartTooltipProps) {
   if (!active || !run) return null;
   return (
     <div className="max-w-72 rounded-md border border-[color:var(--paper-line)] bg-[color:var(--paper-surface)] px-3 py-2 text-xs shadow-sm">
-      <div className="font-medium text-[color:var(--paper-ink)]">
-        {run.title}
+      <div className="flex flex-wrap items-center gap-2 font-medium text-[color:var(--paper-ink)]">
+        {run.model_name}
+        <span className="rounded border border-[color:var(--paper-line)] px-1.5 py-0.5 text-[10px] font-normal text-[color:var(--paper-ink-3)]">
+          {run.reasoning_effort
+            ? `${run.reasoning_effort} thinking`
+            : "effort not recorded"}
+        </span>
       </div>
-      <div className="text-[color:var(--paper-ink-3)]">
-        {formatDate(run.created_at)} · {configurationLabel(run)} · prompt{" "}
+      <div className="mt-1 text-[color:var(--paper-ink-3)]">
+        {formatDate(run.created_at)} · {run.agent ?? "claude-code"} · prompt{" "}
         {shortSha(run.prompt_sha256)}
       </div>
+      <div className="text-[color:var(--paper-ink-3)]">{run.title}</div>
       <div className="mt-1 font-mono">
         {formatScore(run)} · {formatCostUsd(run.cost_usd)}
         {run.cost_per_trial !== null &&
@@ -190,7 +196,7 @@ function RunScatter({
           {children}
           {series.map((s) => (
             <Scatter
-              key={s.model}
+              key={s.key}
               name={s.model}
               data={s.points}
               line={
@@ -228,6 +234,10 @@ export function RunCharts({
   status,
   chart,
   onChart,
+  effort,
+  onEffort,
+  sort,
+  onSort,
   hidden,
   onHidden,
   selected,
@@ -235,6 +245,10 @@ export function RunCharts({
 }: {
   status: QAEvalStatus;
   chart: QAEvalsChart;
+  effort: string | null;
+  onEffort: (effort: string | null) => void;
+  sort: "accuracy" | "effort";
+  onSort: (sort: "accuracy" | "effort") => void;
   onChart: (chart: QAEvalsChart) => void;
   hidden: string[];
   onHidden: (hidden: string[]) => void;
@@ -242,29 +256,65 @@ export function RunCharts({
   onSelect: (run: QAEvalRun) => void;
 }) {
   const [hover, setHover] = useState<string | null>(null);
-  const charted = status.runs.filter((run) => run.charted);
-  const runById = new Map(status.runs.map((run) => [run.experiment_id, run]));
-  const latest = new Map(
-    status.models.map((row) => {
-      const run = runById.get(row.latest_run_id)!;
-      return [configurationKey(run), run];
-    })
-  );
-  const models = [...latest.keys()].sort();
+  const allCharted = status.runs.filter((run) => run.charted);
+  const modelRuns = new Map(allCharted.map((run) => [run.model_name, run]));
+  const models = [...modelRuns.keys()].sort();
   const colors = stableSeriesColors(models, AGENT_COLORS);
-  const hiddenConfigs = new Set(models.filter((key) =>
-    hidden.includes(key) || hidden.includes(latest.get(key)!.model_name)
-  ));
-  const shown = models.filter((model) => !hiddenConfigs.has(model));
+  // Keep old shared links that hid execution fingerprints working.
+  const hiddenModels = new Set(
+    allCharted
+      .filter(
+        (run) =>
+          hidden.includes(run.model_name) ||
+          hidden.includes(configurationKey(run)) ||
+          (run.configuration_sha256 &&
+            hidden.includes(run.configuration_sha256))
+      )
+      .map((run) => run.model_name)
+  );
+  const efforts = [
+    ...new Set(allCharted.map((run) => run.reasoning_effort ?? "unrecorded")),
+  ].sort((a, b) =>
+    compareThinkingEffort(
+      a === "unrecorded" ? null : a,
+      b === "unrecorded" ? null : b
+    )
+  );
+  const charted = allCharted.filter(
+    (run) =>
+      !hiddenModels.has(run.model_name) &&
+      (effort === null || (run.reasoning_effort ?? "unrecorded") === effort)
+  );
+  const groups = new Map<string, QAEvalRun[]>();
+  for (const run of charted) {
+    const key = configurationKey(run);
+    const group = groups.get(key);
+    if (group) group.push(run);
+    else groups.set(key, [run]);
+  }
+  const ranked = [...groups.values()].sort((a, b) => {
+    const left = a.at(-1)!;
+    const right = b.at(-1)!;
+    return (
+      (sort === "effort"
+        ? compareThinkingEffort(
+            left.reasoning_effort ?? null,
+            right.reasoning_effort ?? null
+          )
+        : 0) ||
+      right.accuracy! - left.accuracy! ||
+      (left.cost_per_trial ?? Infinity) - (right.cost_per_trial ?? Infinity) ||
+      left.model_name.localeCompare(right.model_name)
+    );
+  });
   const seriesBy = (x: (run: QAEvalRun) => number | null): Series[] =>
-    shown.map((model) => ({
-      model,
-      color: colors[model],
-      points: charted.flatMap((run) => {
+    [...groups].map(([key, runs]) => ({
+      key,
+      model: runs[0].model_name,
+      color: colors[runs[0].model_name],
+      points: runs.flatMap((run) => {
         const at = x(run);
-        return configurationKey(run) === model && at !== null
-          ? [{ x: at, y: run.accuracy!, run }]
-          : [];
+        return at !== null ? [{ x: at, y: run.accuracy!, run }] : [];
       }),
     }));
   const dots: Dots = {
@@ -280,8 +330,12 @@ export function RunCharts({
   const uncosted = charted.length - costs.length;
 
   let body: React.ReactNode;
-  if (charted.length === 0) {
+  if (allCharted.length === 0) {
     body = <Empty>No scored runs over all goldens yet.</Empty>;
+  } else if (hiddenModels.size === models.length) {
+    body = <Empty>All models are hidden.</Empty>;
+  } else if (charted.length === 0) {
+    body = <Empty>No visible runs match this thinking effort.</Empty>;
   } else if (chart === "history") {
     const ticks = dayTicks(
       Math.min(...charted.map((run) => Date.parse(run.created_at))),
@@ -305,12 +359,20 @@ export function RunCharts({
     const domain: [number, number] = costs.length
       ? [Math.min(...costs) * 0.8, Math.max(...costs) * 1.1]
       : [0, 1];
-    const frontier = status.frontier.flatMap((id) => {
-      const run = runById.get(id);
-      return run?.cost_per_trial != null
-        ? [{ x: run.cost_per_trial, y: run.accuracy!, run }]
-        : [];
-    });
+    // Recompute the frontier from visible runs so hidden efforts/models cannot
+    // set the comparison line. At a tied cost, take the most accurate first.
+    let best = -1;
+    const frontier = charted
+      .filter((run) => run.cost_per_trial !== null)
+      .sort(
+        (a, b) =>
+          a.cost_per_trial! - b.cost_per_trial! || b.accuracy! - a.accuracy!
+      )
+      .flatMap((run) => {
+        if (run.accuracy! <= best) return [];
+        best = run.accuracy!;
+        return [{ x: run.cost_per_trial!, y: run.accuracy!, run }];
+      });
     body = (
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
         {costs.length === 0 ? (
@@ -352,27 +414,29 @@ export function RunCharts({
           caption="latest scored run over all goldens"
           nameHeading="Model"
           scoreHeading="Accuracy"
-          rows={status.models
-            .filter((row) => !hiddenConfigs.has(configurationKey(runById.get(row.latest_run_id)!)))
-            .map((row) => {
-              const run = runById.get(row.latest_run_id)!;
-              const key = configurationKey(run);
-              return {
-                key,
-                label: configurationLabel(run),
-                model: run.model,
-                value: run.accuracy ?? 0,
-                color: colors[key],
-                detail: [
-                  run.cost_per_trial !== null &&
-                    `${formatCostUsd(run.cost_per_trial)}/trial`,
-                  `${row.runs} scored ${row.runs === 1 ? "run" : "runs"}`,
-                  formatDate(run.created_at),
-                ]
-                  .filter(Boolean)
-                  .join(" · "),
-              };
-            })}
+          rows={ranked.map((runs) => {
+            const run = runs.at(-1)!;
+            return {
+              key: configurationKey(run),
+              hoverKey: run.model_name,
+              label: run.model_name,
+              badge: run.reasoning_effort
+                ? `${run.reasoning_effort} thinking`
+                : "effort not recorded",
+              model: run.model,
+              value: run.accuracy ?? 0,
+              color: colors[run.model_name],
+              detail: [
+                run.agent ?? "claude-code",
+                run.cost_per_trial !== null &&
+                  `${formatCostUsd(run.cost_per_trial)}/trial`,
+                `${runs.length} scored ${runs.length === 1 ? "run" : "runs"}`,
+                formatDate(run.created_at),
+              ]
+                .filter(Boolean)
+                .join(" · "),
+            };
+          })}
           hoverKey={hover}
           onHover={setHover}
           emptyText="All models are hidden."
@@ -394,6 +458,43 @@ export function RunCharts({
             {c.label}
           </PaperToggle>
         ))}
+        <label className="ml-auto flex items-center gap-2 text-xs text-[color:var(--paper-ink-3)]">
+          Thinking effort
+          <select
+            aria-label="Thinking effort"
+            value={effort ?? "all"}
+            onChange={(event) =>
+              onEffort(event.target.value === "all" ? null : event.target.value)
+            }
+            className="h-7 rounded-md border border-[color:var(--paper-line)] bg-[color:var(--paper-surface)] px-2 text-[color:var(--paper-ink)]"
+          >
+            <option value="all">All efforts</option>
+            {effort && !efforts.includes(effort) && (
+              <option value={effort}>{effort}</option>
+            )}
+            {efforts.map((value) => (
+              <option key={value} value={value}>
+                {value === "unrecorded" ? "Not recorded" : value}
+              </option>
+            ))}
+          </select>
+        </label>
+        {chart === "models" && (
+          <label className="flex items-center gap-2 text-xs text-[color:var(--paper-ink-3)]">
+            Sort by
+            <select
+              aria-label="Sort models"
+              value={sort}
+              onChange={(event) =>
+                onSort(event.target.value as "accuracy" | "effort")
+              }
+              className="h-7 rounded-md border border-[color:var(--paper-line)] bg-[color:var(--paper-surface)] px-2 text-[color:var(--paper-ink)]"
+            >
+              <option value="accuracy">Accuracy</option>
+              <option value="effort">Thinking effort</option>
+            </select>
+          </label>
+        )}
         {chart === "models" && uncosted > 0 && (
           <span className="ml-1 text-xs text-[color:var(--paper-ink-3)]">
             {uncosted} {uncosted === 1 ? "run has" : "runs have"} no recorded
@@ -407,16 +508,16 @@ export function RunCharts({
           <AgentLegend
             items={models.map((model) => ({
               key: model,
-              label: configurationLabel(latest.get(model)!),
+              label: model,
               color: colors[model],
-              model: latest.get(model)?.model,
+              model: modelRuns.get(model)?.model,
             }))}
-            hiddenKeys={hiddenConfigs}
+            hiddenKeys={hiddenModels}
             onToggle={(model) =>
               onHidden(
-                hiddenConfigs.has(model)
-                  ? [...hiddenConfigs].filter((m) => m !== model)
-                  : [...hiddenConfigs, model]
+                hiddenModels.has(model)
+                  ? [...hiddenModels].filter((m) => m !== model)
+                  : [...hiddenModels, model]
               )
             }
             hoverKey={hover}

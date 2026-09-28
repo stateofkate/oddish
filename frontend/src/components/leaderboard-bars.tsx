@@ -5,6 +5,8 @@ import { QueueKeyIcon } from "./queue-key-icon";
 export type LeaderboardBarRow = {
   key: string;
   label: string;
+  badge?: string;
+  hoverKey?: string;
   agent?: string | null;
   model?: string | null;
   queueKey?: string | null;
@@ -59,7 +61,8 @@ export function LeaderboardBars({
 
       <div className="flex flex-col">
         {rows.map((row, index) => {
-          const isDim = hoverKey != null && hoverKey !== row.key;
+          const isDim =
+            hoverKey != null && hoverKey !== (row.hoverKey ?? row.key);
           const isLast = index === rows.length - 1;
           return (
             <div
@@ -70,7 +73,7 @@ export function LeaderboardBars({
                   : "border-b border-dashed border-[color:var(--paper-line-2)]"
               }`}
               style={{ opacity: isDim ? 0.32 : 1 }}
-              onMouseEnter={() => onHover?.(row.key)}
+              onMouseEnter={() => onHover?.(row.hoverKey ?? row.key)}
               onMouseLeave={() => onHover?.(null)}
             >
               <div className="flex min-w-0 items-center gap-2">
@@ -84,6 +87,11 @@ export function LeaderboardBars({
                 <span className="truncate font-mono text-[11.5px] text-[color:var(--paper-ink)]">
                   {row.label}
                 </span>
+                {row.badge && (
+                  <span className="shrink-0 rounded border border-[color:var(--paper-line)] px-1.5 py-0.5 text-[10px] text-[color:var(--paper-ink-3)]">
+                    {row.badge}
+                  </span>
+                )}
               </div>
               <div className="text-right font-mono text-xs font-semibold tracking-[-0.01em] text-[color:var(--paper-ink)]">
                 {(row.value * 100).toFixed(1)}%
