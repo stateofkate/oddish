@@ -5,9 +5,6 @@
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/oddish/">
-    <img alt="PyPI" src="https://img.shields.io/pypi/v/oddish.svg">
-  </a>
   <a href="https://www.python.org/downloads/">
     <img alt="Python" src="https://img.shields.io/badge/python-3.13-blue.svg">
   </a>
@@ -32,17 +29,20 @@ Just replace `harbor run` with `oddish run`.
 
 ### 1. Install
 
-```bash
-uv pip install oddish
-```
-
-#### Install latest development version
+The private Homebrew package requires GitHub read access to
+`abundant-ai/homebrew-tap` and an existing Homebrew installation.
 
 ```bash
-uv pip install "oddish @ git+https://github.com/abundant-ai/oddish.git#subdirectory=oddish"
+brew install gh
+gh auth login
+gh auth setup-git
+brew install abundant-ai/tap/oddish
 ```
 
-`oddish version` and `oddish update` cover a PyPI install.
+Update with `brew update && brew upgrade abundant-ai/tap/oddish`.
+New Oddish releases are no longer published to PyPI. Existing PyPI installs
+must move to Homebrew to receive new CLI releases; see
+[installation and migration instructions](DOCS.md#installation).
 
 ### 2. Generate an API key [here](https://oddish.app/)
 

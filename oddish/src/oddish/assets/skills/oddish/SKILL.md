@@ -159,6 +159,10 @@ the running contract.
 
 ### Homebrew installation
 
+New Oddish releases are no longer published to PyPI. Existing PyPI installs
+can only update to previously published versions; use Homebrew for new CLI
+releases. See `DOCS.md` under Installation for migration steps.
+
 The private Homebrew tap requires GitHub read access to `abundant-ai/homebrew-tap`.
 Install `gh` with `brew install gh`, then run `gh auth login` and
 `gh auth setup-git`. Install with `brew install abundant-ai/tap/oddish`.

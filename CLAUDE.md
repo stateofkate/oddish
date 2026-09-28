@@ -83,6 +83,13 @@ that opens without it. Agents use the template at
 every promotion pull request; humans get it with
 `?quick_pull=1&template=release-promotion.md` on the compare URL.
 
+## CLI distribution
+
+New Oddish releases are not published to PyPI. Distribute the client through
+the private `abundant-ai/homebrew-tap` repository; the full Python package
+contains server and worker code. See `CONTRIBUTING.md` under CLI distribution
+for the required PyPI permission revocation and GitHub workflow shutdown steps.
+
 ## Hotfixes
 
 Branch the fix from `main`, open it as a normal PR into `staging`, squash,

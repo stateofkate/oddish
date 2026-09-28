@@ -7,12 +7,17 @@ monitoring experiments, and pulling logs and artifacts back to disk. If you
 already use `harbor run`, Oddish adds persistent state, retries, queueing, and
 better operational tooling around the same task format.
 
-Python `3.13` is required.
+Homebrew manages the CLI's Python `3.13` runtime.
 
 ## Quick Start
 
+Requires Homebrew and GitHub read access to `abundant-ai/homebrew-tap`.
+
 ```bash
-uv pip install oddish
+brew install gh
+gh auth login
+gh auth setup-git
+brew install abundant-ai/tap/oddish
 
 export ODDISH_API_KEY="ok_..."
 
@@ -47,9 +52,16 @@ The CLI targets Oddish Cloud by default. All API-backed commands require
 
 ## Installation
 
+After authenticating GitHub as shown above:
+
 ```bash
-uv pip install oddish
+brew install abundant-ai/tap/oddish
+brew update && brew upgrade abundant-ai/tap/oddish
 ```
+
+New Oddish releases are no longer published to PyPI. Existing PyPI users
+should follow the [migration instructions](../DOCS.md#installation) to receive
+new CLI releases through Homebrew.
 
 Common environment variables:
 
@@ -106,8 +118,8 @@ reference. The main commands are:
 - `oddish qa-issues` — count QA issues by plain-English category for one experiment (`-e ID`) or one delivery (`-d ID|NAME`); `-c CATEGORY` lists that category's tasks and issues; `--json` for scripts.
 - `oddish assign` — assign QA review ownership by task IDs or `--tasks-file`; active delivery boards show the owner.
 - `oddish skill` — print the packaged SKILL.md or install the complete agent skill with its reference files.
-- `oddish version` — print the installed CLI version (`--check` compares with the latest PyPI release). No API key.
-- `oddish update` — upgrade a `uv pip install oddish` install from PyPI. No API key.
+- `oddish version` — print the installed CLI version; `--check` prints Homebrew check instructions for Homebrew installs or compares legacy installs with PyPI. No API key.
+- `oddish update` — print Homebrew upgrade instructions for Homebrew installs; legacy PyPI installs can only upgrade to previously published PyPI versions. No API key.
 
 Most commands support `--json` for machine-readable output; `oddish logs`,
 `oddish link`, and `oddish skill` do not.

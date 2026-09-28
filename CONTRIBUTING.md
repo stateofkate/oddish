@@ -43,6 +43,26 @@ Preflight` workflow and execute the push command it prints.
 
 Never commit or push to `main` or `staging` directly.
 
+## CLI distribution
+
+New Oddish releases are not published to public PyPI. The full Python package
+contains server and worker code; distribute the CLI through the private
+`abundant-ai/homebrew-tap` repository, which packages the client subset.
+GitHub releases must not upload the full package to PyPI. Hosted deployments
+install Oddish from repository source and do not require a PyPI release.
+
+When retiring PyPI publishing, an Oddish PyPI project owner must remove the
+GitHub Trusted Publisher (the permission authorizing workflow uploads) under
+the project's Publishing settings and revoke any API tokens that can upload
+Oddish. Disable the old `Publish Oddish to PyPI` workflow in GitHub Actions
+and cancel any queued or running uploads, including runs from older tags that
+still contain `.github/workflows/publish-pypi.yml`. Removing the file on a new
+branch alone does not revoke upload permission or change older tags.
+
+Existing PyPI releases remain available; this change does not delete them.
+Use `DOCS.md` for installation and migration instructions. Follow the normal
+staging-to-main promotion process so the workflow removal reaches both branches.
+
 ## Hotfixes
 
 Branch the fix from `main`, not from `staging`. `main` is always an ancestor

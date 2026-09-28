@@ -4,13 +4,30 @@
 
 ## Installation
 
+Install the CLI from the private Homebrew tap (the repository containing its
+package definition). You need Homebrew and GitHub read access to
+`abundant-ai/homebrew-tap`.
+
 ```bash
-uv pip install oddish
+brew install gh
+gh auth login
+gh auth setup-git
+brew install abundant-ai/tap/oddish
 ```
 
-`oddish update` upgrades that install. `oddish version --check` compares with PyPI.
+Update with `brew update && brew upgrade abundant-ai/tap/oddish`.
+For Homebrew installs, `oddish update` prints the Homebrew upgrade command
+and `oddish version --check` prints the Homebrew check command.
 
-To install the development tree:
+New Oddish releases are no longer published to PyPI. Existing PyPI installs
+remain installed, but `oddish update` can only retrieve previously published
+PyPI versions. To receive new CLI releases, install with Homebrew as above,
+then remove the old package using the tool and Python environment that installed
+it (`uv pip uninstall oddish` or `python -m pip uninstall oddish`). If you used
+a virtual environment, deactivate it before checking `command -v oddish` and
+`oddish version` to confirm you are running the Homebrew installation.
+
+Developers with read access to `abundant-ai/oddish` can install the development tree:
 
 ```bash
 uv pip install "oddish @ git+https://github.com/abundant-ai/oddish.git#subdirectory=oddish"
@@ -54,8 +71,8 @@ are excluded. This does not enable trace export or replace `ODDISH_API_KEY`.
 - `oddish delete` - delete trials, tasks, or experiments (what's allowed depends on the deployment; see [Delete Data](#delete-data))
 - `oddish publish` / `oddish unpublish` - toggle public read-only sharing for an experiment
 - `oddish link` - print the dashboard URL for a task or trial (built locally; needs no API key)
-- `oddish version` - print the installed CLI version (`--check` compares with the latest PyPI release)
-- `oddish update` - upgrade a `uv pip install oddish` install from PyPI
+- `oddish version` - print the installed CLI version; `--check` prints Homebrew check instructions for Homebrew installs or compares legacy installs with PyPI
+- `oddish update` - print Homebrew upgrade instructions for Homebrew installs; legacy PyPI installs can only upgrade to previously published PyPI versions
 - `oddish skill` - print or install the packaged SKILL.md agent guide
 
 Most commands accept `--json` for machine-readable output (CI / scripts /
