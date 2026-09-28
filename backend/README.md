@@ -239,11 +239,40 @@ runs that cleanup immediately. Remote cancellation failures are surfaced as erro
 15 seconds is a polling interval, not a guarantee of instantaneous provider shutdown.
 Self-hosted core runners have no approval policy unless their host supplies one.
 
-In Clerk production, disable **Create first organization automatically** and
-**Allow user-created organizations** under organization settings, while leaving
-membership required. These dashboard controls reduce unwanted organization
-creation; backend approval also protects against existing users' organization
-creation permissions. The PR does not itself change live Clerk settings.
+### Prevent accidental organization creation
+
+Apply this in each Clerk application/instance used by Oddish, including production
+and demos. In the Clerk Dashboard, open **Organizations > Settings**: leave
+Organizations enabled and **Membership required** selected, then turn off
+**Create first organization automatically** and **Allow user-created organizations**.
+Required membership plus creation permissions lets someone who has not joined
+their invited organization create an unrelated workspace to finish signing in.
+
+These are live Clerk settings, not repository configuration; merging or deploying
+this code does not change them. Clerk's published Backend API does not expose
+both creation switches. Use the dashboard instead of hiding creation buttons in
+Oddish, which cannot control Clerk's hosted sign-in pages.
+
+After saving, verify the public settings from `backend/` (Python standard library
+only; no secret key, database connection, or writes):
+
+```sh
+python3 -m check_clerk_onboarding clerk.oddish.app
+python3 -m check_clerk_onboarding intent-crane-408.clerk.accounts.dev
+```
+
+The second hostname belongs to **Oddish / Unikraft Demo**. For another instance,
+use the hostname in its `CLERK_DOMAIN`. The command prints the application name,
+environment, and each setting; exit 0 requires all four checks to pass, exit 1
+means settings differ, and exit 2 means verification failed. This checks instance
+defaults only. Review existing users' organization-creation permission overrides
+if they can still create organizations; backend approval remains required.
+
+Finally, test an organization invitation for a fresh user and an existing user:
+accept it with the invited email, confirm the intended organization is selected,
+and open its shared experiment. An invitation must belong to the same Clerk
+instance as the site. Passing the settings check does not verify invitation
+acceptance or repair memberships in accidentally created organizations.
 
 ## Multi-tenancy
 

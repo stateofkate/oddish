@@ -2108,7 +2108,9 @@ exact `task_id` and `task_version_id`; the task-file request must include that
 version number. Audit keys have the same exact-version task-file access.
 Summarize keys receive no Oddish API reads, and every bound key is read-only.
 
-If a Clerk JWT arrives without `org_id`, the backend tries to resolve a single existing org membership, or provisions a personal org.
+If a Clerk JWT arrives without an active organization (`org_id`, or `o.id` in v2
+tokens), the backend returns 403 asking the user to select an organization or
+request access. It never creates a personal organization or guesses membership.
 
 ### Worker Architecture
 
@@ -2569,6 +2571,10 @@ lookups remain visible in the reconciler heartbeat rather than reporting health.
 Cleanup heartbeat errors include the exception class, including bare timeouts.
 See `backend/README.md` for initial migration IDs, deployment order, operator
 approval commands, and the separate live Clerk organization settings.
+Run `python3 -m check_clerk_onboarding CLERK_DOMAIN` from `backend/` to verify
+required membership and disabled organization creation against Clerk's public
+environment endpoint. This read-only operator check does not change Clerk or
+verify invitations; apply the dashboard settings in every hosted instance.
 
 ### Configuration (backend)
 

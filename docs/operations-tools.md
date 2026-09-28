@@ -15,6 +15,7 @@ the intended environment before running. Output may contain internal logs.
 | Command | Purpose |
 | --- | --- |
 | `modal run check_alembic_current_modal.py` | Read both database migration-version tables; compare with `uv run alembic heads` in `oddish/` and `backend/`. Does not apply migrations. |
+| `python3 -m check_clerk_onboarding CLERK_DOMAIN` | From `backend/`, verify that Clerk requires organization membership and disables automatic and user-created organizations. Reads public settings without credentials; see [onboarding setup](../backend/README.md#prevent-accidental-organization-creation) for the dashboard changes. |
 | `modal run probe_docker_failures_modal.py --hours 72 --limit 200` | Compare unscored trial state, saved result exceptions, and worker errors. Pending/running trials are not automatically failures; storage-read errors are reported separately. |
 | `modal run scripts/tail_budget_report.py --eid <experiment-id>` | Measure serialized trajectory sizes and the fraction retained at different proposed byte limits. Token counts are estimates; this does not change reviewer limits. |
 | `modal run ops_compare_token_costs.py --since <YYYY-MM-DD> --model <provider/model> --input-rate <rate> --cache-read-rate <rate> --cache-write-rate <rate> --output-rate <rate>` | Compare recorded trial costs with an estimate using explicit USD-per-million-token rates. Does not change costs or reconcile invoices. |
