@@ -1610,6 +1610,20 @@ Keep these routing rules in sync with `oddish/src/oddish/config.py` and
   gateway's mixed provider pool. See DOCS.md for the drain-before-deploy and
   drain-before-rollback requirements. Never infer prefixes for historical rows
   or transfer existing Bedrock concurrency overrides to Anthropic queues.
+- Claude Code keeps its native Anthropic/Bedrock/Vertex-Claude and existing
+  Anthropic-compatible provider connections. For other recognized providers,
+  `workers/agents/claude_code_proxy.py` starts a loopback-only, token-protected
+  LiteLLM adapter in the trial sandbox. `claude_proxy.py` pins the upstream
+  model and accepts only Anthropic message fields; callers cannot choose
+  credentials or a different endpoint in the request. The existing scoped
+  provider environment supplies credentials, including the configured Azure
+  deployment mapping. LiteLLM 1.83.14 owns tool, streaming and usage conversion.
+  Installation happens during the public setup phase; the adapter stops when
+  the agent finishes or raises. Non-Anthropic Claude Code costs use Oddish's
+  provider pricing rather than Claude's Anthropic-only native price table.
+  Provider/model capability is validated by running a case, not by assuming
+  every combination implements the same API. Restricted Compose execution
+  continues to require an attested agent network profile.
 - OpenAI-family jobs default to Azure OpenAI. Use
   `ODDISH_OPENAI_PROVIDER=openai` plus `OPENAI_API_KEY` only when intentionally
   routing to public OpenAI.

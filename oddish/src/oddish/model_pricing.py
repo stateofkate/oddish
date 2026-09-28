@@ -136,6 +136,12 @@ _CLAUDE_CODE_PASSTHROUGH_PROVIDERS: frozenset[str] = frozenset(
         "moonshot",
         "openrouter",
         "geometric",
+        "openai",
+        "azure",
+        "gemini",
+        "vertex_ai",
+        "xai",
+        "deepseek",
     }
 )
 

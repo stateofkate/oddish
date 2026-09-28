@@ -31,6 +31,7 @@ from oddish.config import (
     is_xai_model,
     is_xai_public_model,
     is_zai_model,
+    infer_model_provider_prefix,
     require_geometric_served_model_id,
     require_hunyuan_served_model_id,
     resolve_meta_public_api_key,
@@ -135,6 +136,7 @@ def _prepare_kimi_claude_code_agent(agent_config: AgentConfig) -> None:
         and not is_vertex_ai_model(model)
         and not claude_model_provider(model)
         and not is_anthropic_hdo_model(model)
+        and not (is_vertex_ai_model(model) and "claude" in (model or ""))
     ):
         bare = (
             moonshot_bare_model_id(model)
@@ -978,6 +980,22 @@ def _build_agent_config(
     _apply_geometric_mini_swe_agent(agent_config)
     _apply_hunyuan_mini_swe_agent(agent_config)
     _apply_mini_swe_agent(agent_config)
+    if (
+        agent == "claude-code" and agent_config.import_path is None
+        and not claude_model_provider(_selected_claude_model(agent, model))
+        and not is_anthropic_hdo_model(model)
+        and not agent_config.env.get("ANTHROPIC_BASE_URL")
+        and not gateway_env
+    ):
+        provider = infer_model_provider_prefix(model)
+        if provider and provider not in {"anthropic", "bedrock"}:
+            proxy_model = settings.normalize_trial_model(agent, model)
+            proxy_model = _to_litellm_gemini_model_id(proxy_model)
+            if "/" not in proxy_model:
+                proxy_model = f"{provider}/{proxy_model}"
+            agent_config.import_path = "oddish.workers.agents.claude_code_proxy:ProxiedClaudeCode"
+            agent_config.name = None
+            agent_config.kwargs = {**agent_config.kwargs, "proxy_model": proxy_model}
     # Harbor's kimi-claude-code class defaults to Moonshot; run stock ClaudeCode.
     if _is_kimi_claude_code_agent(agent_config):
         agent_config.name = "claude-code"
