@@ -595,13 +595,7 @@ def _build_harbor_config_for_trial(
     """Build the harbor_config JSONB payload for a single trial row."""
     base = submission.harbor.model_dump(mode="json", exclude_defaults=True)
 
-    agent_config_payload: dict[str, Any] = {}
-    if spec.agent_config:
-        agent_config_payload = spec.agent_config.model_dump(
-            mode="json", exclude_defaults=True
-        )
-        agent_config_payload.pop("name", None)
-        agent_config_payload.pop("model_name", None)
+    agent_config_payload = spec.agent_overrides()
 
     if agent_config_payload:
         base["agent_config"] = agent_config_payload

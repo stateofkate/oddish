@@ -4,6 +4,8 @@ command prints the link to the same view."""
 from __future__ import annotations
 
 import difflib
+import json
+import time
 from collections import Counter
 from pathlib import Path
 from typing import Annotated, Any, get_args
@@ -277,8 +279,13 @@ def start(
         ),
     ] = None,
     model: Annotated[
-        str | None, typer.Option(help="QA model. Omitted: the production QA model.")
+        list[str] | None, typer.Option(help="QA model (repeatable). Omitted: production QA model.")
     ] = None,
+    agent: Annotated[str, typer.Option(help="Execution harness, as in ordinary trials.")] = "claude-code",
+    agent_config: Annotated[Path | None, typer.Option(help="Harbor agent_config JSON file.", exists=True, dir_okay=False)] = None,
+    reasoning_effort: Annotated[str | None, typer.Option(help="Provider reasoning effort.")] = None,
+    skip_preflight: Annotated[bool, typer.Option(help="Launch without first validating one case.")] = False,
+    preflight_only: Annotated[bool, typer.Option(help="Validate one case per model without launching the full set.")] = False,
     stage: StageOption = QAStage.POST_TRIAL,
     yes: Annotated[
         bool, typer.Option("--yes", "-y", help="Start without asking.")
@@ -297,11 +304,31 @@ def start(
         raise typer.BadParameter("give exactly one of --prompt and --version")
     if only and not rerun:
         raise typer.BadParameter("--filter needs --rerun")
-    body: dict[str, Any] = {"stage": stage.value, "model": model}
+    if skip_preflight and preflight_only:
+        raise typer.BadParameter("--skip-preflight and --preflight-only are mutually exclusive")
+    try:
+        overrides = json.loads(agent_config.read_text()) if agent_config else {}
+    except json.JSONDecodeError as exc:
+        raise typer.BadParameter(f"Invalid agent_config JSON: {exc.msg}") from exc
+    if not isinstance(overrides, dict):
+        raise typer.BadParameter("agent_config must be a JSON object")
+    if not isinstance(overrides.get("kwargs", {}), dict):
+        raise typer.BadParameter("agent_config.kwargs must be a JSON object")
+    if reasoning_effort:
+        overrides["kwargs"] = {**overrides.get("kwargs", {}), "reasoning_effort": reasoning_effort}
+    body: dict[str, Any] = {"stage": stage.value}
+    if agent != "claude-code":
+        body["agent"] = agent
+    if overrides:
+        body["agent_config"] = overrides
     if prompt is not None:
         body |= {"prompt_name": prompt.stem, "prompt_text": prompt.read_text()}
     with qa_client(api) as client:
         status_data = _status(client, stage)
+        if not status_data.get("execution_configurable") and (
+            not skip_preflight or agent != "claude-code" or overrides
+        ):
+            raise typer.BadParameter("This API needs the QA execution-configuration update before it can validate these runs.")
         if not status_data["replayable"]:
             raise typer.BadParameter("cannot be replayed yet", param_hint="--stage")
         if version is not None:
@@ -317,13 +344,19 @@ def start(
         if (trial or rerun) and not picked:
             raise typer.BadParameter("no trials picked", param_hint="--rerun")
         count = len(picked) or status_data["goldens"]["counted"]
+        models = list(dict.fromkeys(model or [None]))
+        executions = (1 if preflight_only else count + int(not skip_preflight)) * len(models)
         per_trial = status_data["cost_per_trial"]
         estimate = (
-            f"about ${per_trial * count:.2f} at ${per_trial:.2f}/trial"
+            f"about ${per_trial * executions:.2f} at ${per_trial:.2f}/trial"
             if per_trial is not None
             else "no past runs to estimate cost from"
         )
         what = f"{count} picked trials" if picked else f"all {count} golden trials"
+        if preflight_only:
+            what = f"one check per model ({len(models)} models)"
+        elif not skip_preflight:
+            what += f" plus {len(models)} check{'s' if len(models) != 1 else ''}"
         if not yes and not typer.confirm(f"Replay {what} ({estimate})?", err=True):
             raise typer.Exit(1)
         if picked:
@@ -332,24 +365,52 @@ def start(
             body["goldens"] = True
         key = idempotency_key or str(uuid4())
         body["name"] = name or f"qa-eval-{key[:32]}"
+        results = []
         try:
-            created = client.call(
-                "POST", "/qa-evals", json=body, headers={"Idempotency-Key": key}
-            )
+            checks = []
+            for index, selected in enumerate(models):
+                run_body = {**body, "model": selected}
+                run_key = key if len(models) == 1 else f"{key}:{index}"
+                if len(models) > 1:
+                    run_body["name"] += f"-{selected}"
+                probe = None if skip_preflight else client.call(
+                    "POST", "/qa-evals", json={**run_body, "preflight": True, "name": f"{run_body['name']}-check"},
+                    headers={"Idempotency-Key": f"{run_key}:check"},
+                )
+                checks.append((run_body, run_key, probe))
+            for run_body, run_key, probe in checks:
+                if probe is not None:
+                    typer.echo(f"Checking {run_body['model'] or 'production model'}: {client.page_url(run=probe['experiment_id'])}", err=True)
+                    deadline = time.monotonic() + 3600
+                    while True:
+                        detail = client.call("GET", f"/qa-evals/runs/{probe['experiment_id']}")
+                        if detail["summary"]["preflight_passed"]:
+                            break
+                        if not detail["summary"]["pending"] or time.monotonic() >= deadline:
+                            typer.echo(f"Preflight did not pass: {detail['error_groups']}. Full run not submitted.", err=True)
+                            raise typer.Exit(1)
+                        time.sleep(5)
+                    run_body["preflight_run_id"] = probe["experiment_id"]
+                created = probe if preflight_only else client.call(
+                    "POST", "/qa-evals", json=run_body, headers={"Idempotency-Key": run_key}
+                )
+                results.append(created)
         except (httpx.TransportError, typer.Exit) as exc:
             typer.echo(
                 f"Retry with --idempotency-key {key!r} and the same options.", err=True
             )
             raise typer.Exit(1) from exc
         url = client.page_url(stage=stage, run=created["experiment_id"])
-    for line in created["skipped"]:
-        typer.echo(f"skipped {line}", err=True)
+    for created in results:
+        for line in created["skipped"]:
+            typer.echo(f"skipped {line}", err=True)
     emit(
         json_output,
-        created,
+        results[0] if len(results) == 1 else results,
         [
             f"started {created['experiment_id']}: {len(created['trials'])} trials, "
             f"prompt {created['prompt_sha256'][:8]}, model {created['model']}"
+            for created in results
         ],
         url,
     )

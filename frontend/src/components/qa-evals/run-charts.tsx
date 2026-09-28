@@ -25,6 +25,8 @@ import { PaperToggle } from "@/components/paper-toggle";
 import { formatCostUsd, formatDate } from "@/lib/format";
 import {
   formatAccuracy,
+  configurationKey,
+  configurationLabel,
   formatScore,
   shortSha,
   type QAEvalRun,
@@ -53,7 +55,7 @@ function RunTooltip({ active, payload }: ChartTooltipProps) {
         {run.title}
       </div>
       <div className="text-[color:var(--paper-ink-3)]">
-        {formatDate(run.created_at)} · {run.model_name} · prompt{" "}
+        {formatDate(run.created_at)} · {configurationLabel(run)} · prompt{" "}
         {shortSha(run.prompt_sha256)}
       </div>
       <div className="mt-1 font-mono">
@@ -243,18 +245,24 @@ export function RunCharts({
   const charted = status.runs.filter((run) => run.charted);
   const runById = new Map(status.runs.map((run) => [run.experiment_id, run]));
   const latest = new Map(
-    status.models.map((row) => [row.model_name, runById.get(row.latest_run_id)])
+    status.models.map((row) => {
+      const run = runById.get(row.latest_run_id)!;
+      return [configurationKey(run), run];
+    })
   );
   const models = [...latest.keys()].sort();
   const colors = stableSeriesColors(models, AGENT_COLORS);
-  const shown = models.filter((model) => !hidden.includes(model));
+  const hiddenConfigs = new Set(models.filter((key) =>
+    hidden.includes(key) || hidden.includes(latest.get(key)!.model_name)
+  ));
+  const shown = models.filter((model) => !hiddenConfigs.has(model));
   const seriesBy = (x: (run: QAEvalRun) => number | null): Series[] =>
     shown.map((model) => ({
       model,
       color: colors[model],
       points: charted.flatMap((run) => {
         const at = x(run);
-        return run.model_name === model && at !== null
+        return configurationKey(run) === model && at !== null
           ? [{ x: at, y: run.accuracy!, run }]
           : [];
       }),
@@ -345,15 +353,16 @@ export function RunCharts({
           nameHeading="Model"
           scoreHeading="Accuracy"
           rows={status.models
-            .filter((row) => !hidden.includes(row.model_name))
+            .filter((row) => !hiddenConfigs.has(configurationKey(runById.get(row.latest_run_id)!)))
             .map((row) => {
-              const run = latest.get(row.model_name)!;
+              const run = runById.get(row.latest_run_id)!;
+              const key = configurationKey(run);
               return {
-                key: row.model_name,
-                label: row.model_name,
+                key,
+                label: configurationLabel(run),
                 model: run.model,
                 value: run.accuracy ?? 0,
-                color: colors[row.model_name],
+                color: colors[key],
                 detail: [
                   run.cost_per_trial !== null &&
                     `${formatCostUsd(run.cost_per_trial)}/trial`,
@@ -398,16 +407,16 @@ export function RunCharts({
           <AgentLegend
             items={models.map((model) => ({
               key: model,
-              label: model,
+              label: configurationLabel(latest.get(model)!),
               color: colors[model],
               model: latest.get(model)?.model,
             }))}
-            hiddenKeys={new Set(hidden)}
+            hiddenKeys={hiddenConfigs}
             onToggle={(model) =>
               onHidden(
-                hidden.includes(model)
-                  ? hidden.filter((m) => m !== model)
-                  : [...hidden, model]
+                hiddenConfigs.has(model)
+                  ? [...hiddenConfigs].filter((m) => m !== model)
+                  : [...hiddenConfigs, model]
               )
             }
             hoverKey={hover}

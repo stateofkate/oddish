@@ -777,12 +777,14 @@ async def _store_trial_results(
             )
 
             trial.reward = derived_reward
-            if analysis_artifact_error:
-                trial.error_message = analysis_artifact_error
-            elif outcome.error:
+            if outcome.error and (
+                not analysis_artifact_error or invalidates_score(outcome.exception_type)
+            ):
                 trial.error_message = "\n".join(
-                    filter(None, [outcome.error, lost_artifacts])
+                    filter(None, [outcome.error, analysis_artifact_error, lost_artifacts])
                 )
+            elif analysis_artifact_error:
+                trial.error_message = analysis_artifact_error
             elif lost_artifacts:
                 trial.error_message = lost_artifacts
             elif derived_reward is not None:
@@ -847,6 +849,7 @@ async def _store_trial_results(
                 # closed because another sandbox cannot repair them.
                 elif _is_non_retryable_outcome(trial, outcome) and (
                     not analysis_artifact_error or has_non_retryable_oddish_failure
+                    or invalidates_score(outcome.exception_type)
                 ):
                     trial.status = TrialStatus.FAILED
                     trial.finished_at = utcnow()

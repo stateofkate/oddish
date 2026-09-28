@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { formatCostUsd, formatDate } from "@/lib/format";
 import {
   formatScore,
+  configurationLabel,
   shortSha,
   type QAEvalRun,
   type QAEvalStatus,
@@ -47,7 +48,7 @@ function RunRow({
             </Badge>
           )}
           <span className="truncate">
-            {run.model_name} · {formatDate(run.created_at)} ·{" "}
+            {run.preflight && "Check · "}{configurationLabel(run)} · {formatDate(run.created_at)} ·{" "}
             <span
               className={cn("font-mono", production && "text-emerald-600")}
               title={production ? "the production prompt" : undefined}

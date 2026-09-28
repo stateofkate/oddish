@@ -1,8 +1,9 @@
 """Analysis trials: the platform's own agents, run through the trial pipeline.
 
 The pre-trial audit, task QA, QA prompt replay, and single-trial summarizer are
-trials with a non-'agent' ``kind``. QA, QA replay, and audit run claude-code
-because they browse artifacts through oddish-query. Summarize runs one host-side
+trials with a non-'agent' ``kind``. QA and audit default to claude-code; QA replay
+accepts ordinary trial execution settings. They browse through oddish-query.
+Summarize runs one host-side
 LLM request over a trajectory the worker materializes before Harbor starts the
 agent. Every kind writes one JSON artifact that settlement imports into its
 owned columns.
@@ -54,6 +55,7 @@ from oddish.analyze.trajectory_taxonomy import (
     taxonomy_version,
 )
 from oddish.config import is_nop_oracle_agent, settings
+from oddish.schemas import TrialSpec
 from oddish.core.analysis_payload import (
     AnalysisPayloadError,
     audit_fingerprint,
@@ -313,6 +315,7 @@ async def create_analysis_trial(
     payload: dict | None = None,
     experiment_id: str | None = None,
     model: str | None = None,
+    execution: TrialSpec | None = None,
     environment: str | None = None,
     billed_user_id: str | None = None,
 ) -> TrialModel:
@@ -339,10 +342,14 @@ async def create_analysis_trial(
     next_index = await reserve_next_trial_index(session, task_id=task.id)
     trial_id = f"{task.id}-{next_index}"
     analysis_agent = "single-llm" if kind == "summarize" else "claude-code"
+    if execution:
+        analysis_agent, model = execution.agent, execution.model
     normalized_model = settings.normalize_trial_model(
         analysis_agent, model or settings.analysis_model
     )
     harbor_config: dict = {"extra_instructions": brief}
+    if execution and (overrides := execution.agent_overrides()):
+        harbor_config["agent_config"] = overrides
     if kind == "audit":
         payload = dict(payload or {})
         payload["audit_policy_hash"] = audit_policy_hash()

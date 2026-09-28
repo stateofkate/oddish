@@ -37,6 +37,7 @@ are excluded. This does not enable trace export or replace `ODDISH_API_KEY`.
 - `oddish ls` - list uploaded tasks
 - `oddish status` - view progress
 - `oddish qa export` - export existing QA findings and task statuses to CSV
+- `oddish qa evals start/status/run/diff` - compare QA models and prompts against reviewed golden labels
 - `oddish logs` - stream a running trial's live transcript and cost estimate
 - `oddish cancel` - stop in-flight task runs, or just the QA/audit runs with `--qa`
 - `oddish backfill-analysis` - (re)run trial analysis for a trial, task, or experiment
@@ -492,6 +493,36 @@ The file format is the unmodified `--ids --json` response, not a text ID list.
 Create/add deduplicate repeated IDs and send the whole selection in one
 transaction, so a rejected task cannot leave a partially populated delivery.
 `--ids`, `--count`, and `--filter-options` are mutually exclusive.
+
+## Compare QA models
+
+QA evaluations replay stored solver evidence against reviewed golden labels.
+Each selected model gets a saved run in Admin → QA Evals. Find a prompt hash
+with `oddish qa evals status`, then run:
+
+```bash
+oddish qa evals start --version PROMPT_SHA --agent claude-code \
+  --model anthropic/claude-sonnet-5 --model openai/gpt-6-sol \
+  --model openai/gpt-6-luna --reasoning-effort high --yes
+```
+
+`--agent` selects the same harness as ordinary trials; `mini-swe-agent` and
+`codex` are also available. Omitted agent/model retain production QA defaults.
+Use `--agent-config settings.json` for the ordinary Harbor agent settings
+object, such as `{"kwargs":{"version":"2.1.283","max_turns":100}}`.
+The selected model's provider still needs credentials and tool support.
+
+The CLI first runs one case per model and waits for valid QA output before
+submitting each full set. An incorrect classification can pass this execution
+check; absent or invalid output cannot. `--preflight-only` stops after checks;
+`--skip-preflight` explicitly skips them. Retain the printed idempotency key
+to resume an interrupted submission without duplicating saved runs.
+
+The page uses the same two steps: select harness/models/settings, check one
+golden per model, then replay all goldens when checks pass. Runs display the
+harness and reasoning effort and remain separately comparable. These commands
+require a CLI release containing `qa evals`; older Homebrew clients can use
+the page or a local checkout until the next CLI release.
 
 ## Export QA Feedback
 

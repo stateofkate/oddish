@@ -60,8 +60,8 @@ export function reasoningEffortOptions(agent: string, model: string): string[] {
       ? EXTENDED_EFFORTS
       : STANDARD_EFFORTS;
   }
-  if (agent === "codex" || modelRouted) {
-    if (/(?:^|\/)gpt-5/.test(model)) return EXTENDED_EFFORTS;
+  if (agent === "codex" || agent === "claude-code" || modelRouted) {
+    if (/(?:^|\/)gpt-[56]/.test(model)) return EXTENDED_EFFORTS;
     if (/(?:^|\/)o[134](?:-|$)/.test(model)) return STANDARD_EFFORTS;
   }
   return [];

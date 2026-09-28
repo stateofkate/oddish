@@ -599,3 +599,28 @@ def test_models_rank_by_latest_accuracy_then_cost_with_no_cost_last():
         ("a", 2, "a-new"),
         ("b", 1, "b-1"),
     ]
+
+
+def test_model_comparison_keeps_harness_and_effort_distinct():
+    base = _summary("claude-high", 0.5, 0.8)
+    base.reasoning_effort = "high"
+    other_agent = base.model_copy(update={"experiment_id": "mini-high", "agent": "mini-swe-agent"})
+    other_effort = base.model_copy(update={"experiment_id": "claude-low", "reasoning_effort": "low"})
+    assert len(_models([base, other_agent, other_effort])) == 3
+
+
+@needs_db
+@pytest.mark.asyncio
+async def test_saved_provider_error_remains_visible_after_cancellation(session):
+    ids = await _seed(session)
+    trial = await session.scalar(select(TrialModel).where(
+        TrialModel.experiment_id == ids["candidate"], TrialModel.status == BAD,
+    ))
+    trial.error_message = trial.analysis_error = "Cancelled by user"
+    trial.result = {"harbor_exception": {
+        "exception_type": "ApiClientError", "error": "ApiClientError: model identifier is invalid",
+    }}
+    await session.flush()
+    run = await get_qa_eval_run_core(session, org_id=ids["org"], experiment_id=ids["candidate"])
+    [case] = [case for case in run.cases if case.qa_eval_trial_id == trial.id]
+    assert case.error == "ApiClientError: model identifier is invalid"

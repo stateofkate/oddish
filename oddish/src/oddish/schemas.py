@@ -147,6 +147,15 @@ class TrialSpec(BaseModel):
         description="Per-trial Harbor AgentConfig overrides (env vars, kwargs, setup timeout, etc.)",
     )
 
+    def agent_overrides(self) -> dict[str, Any]:
+        """The row owns agent/model identity, including when overrides name them."""
+        return (
+            self.agent_config.model_dump(
+                mode="json", exclude_defaults=True, exclude={"name", "model_name"}
+            )
+            if self.agent_config else {}
+        )
+
     @model_validator(mode="after")
     def normalize_model_aliases(self) -> "TrialSpec":
         self.model = normalize_model_id(self.model)
@@ -612,7 +621,7 @@ class QARunRequest(BaseModel):
     )
 
 
-class QAEvalCreateRequest(BaseModel):
+class QAEvalCreateRequest(TrialSpec):
     """Replay one QA prompt version over exact historical solver trials:
     picked ones (a subset run) or every counted golden's."""
 
@@ -632,6 +641,11 @@ class QAEvalCreateRequest(BaseModel):
         None, description="Replay a recorded prompt version instead of sending text."
     )
     stage: QAStage = QAStage.POST_TRIAL
+    agent: str = "claude-code"
+    preflight: bool = Field(False, description="Run one selected case to validate execution.")
+    preflight_run_id: str | None = Field(
+        None, description="Require a successful preflight with identical inputs."
+    )
     model: str | None = Field(
         None,
         description=(
@@ -675,6 +689,11 @@ class QAEvalCreateRequest(BaseModel):
             raise ValueError("give exactly one of goldens and source_trial_ids")
         if self.model is not None:
             self.model = self.model.strip() or None
+        self.agent = self.agent.strip()
+        if not self.agent or is_nop_oracle_agent(self.agent):
+            raise ValueError("QA evaluation requires a model-backed agent")
+        if self.preflight and self.preflight_run_id:
+            raise ValueError("preflight and preflight_run_id are mutually exclusive")
         return self
 
 
@@ -1651,6 +1670,8 @@ class QAEvalCreateResponse(BaseModel):
     prompt_name: str
     prompt_sha256: str
     model: str
+    agent: str = "claude-code"
+    preflight: bool = False
     trials: list[QAEvalTrialResponse]
     # With ``goldens``: golden trials that can no longer be replayed, each as
     # "trial id: reason".
@@ -1682,6 +1703,12 @@ class QAEvalRunSummary(BaseModel):
     model: str | None
     # One name per model, whatever route it ran through.
     model_name: str
+    agent: str = "claude-code"
+    reasoning_effort: str | None = None
+    configuration_sha256: str | None = None
+    golden_set_sha256: str | None = None
+    preflight: bool = False
+    preflight_passed: bool = False
     prompt_sha256: str
     # Replayed picked trials, so its accuracy is over those alone.
     subset: bool
@@ -1761,6 +1788,7 @@ class QAPromptVersion(BaseModel):
 
 
 class QAEvalStatusResponse(BaseModel):
+    execution_configurable: bool = True
     replayable: bool
     production_prompt_sha256: str
     goldens: QAGoldensSummary

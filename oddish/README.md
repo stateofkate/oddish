@@ -72,6 +72,7 @@ Need package internals, architecture, or development notes? See [`AGENTS.md`](..
 
 ## Commands
 
+- `oddish qa evals start --version SHA --agent claude-code --model openai/gpt-6-sol --model openai/gpt-6-luna` — validate one case per model, then save full golden-set comparisons; `status`, `run`, and `diff` inspect them.
 - `oddish qa export --ids-file task-ids.txt --output qa-findings.csv` — export existing `must_fix` findings and a companion task-summary CSV; accepts positional task IDs and `--all-versions`.
 
 Run `oddish --help` or see [`../DOCS.md`](../DOCS.md) for the full CLI

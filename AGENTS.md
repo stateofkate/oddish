@@ -291,7 +291,23 @@ High-level flow:
    row without a readable trajectory returns HTTP 409 before stored analysis is
    reset or the current verdict is withdrawn.
    `POST /qa-evals` is the lower-level historical prompt-replay primitive. It
-   creates one output experiment and one `qa_eval` trial per exact source
+   inherits `TrialSpec`: `agent`, `model`, and `agent_config` use ordinary trial
+   routing. Missing agent/model retain Claude Code and the production QA model.
+   The row owns agent/model identity; `TrialSpec.agent_overrides()` strips those
+   fields from nested overrides for both sweeps and replays. QA still owns the
+   brief, evidence credentials, artifact contract and evaluation-only settlement.
+   `preflight=true` creates one subset trial. A subsequent `preflight_run_id`
+   requires a successful imported result with matching execution settings,
+   prompt, source versions/content, golden labels and audit context before
+   admitting the full set. Legacy requests without these fields keep working.
+   Each new run stores configuration and golden-set hashes in its analysis
+   payload; summaries expose the harness, effort and check outcome. Model
+   comparisons separate harnesses and settings, and include completed full runs.
+   Scoring still uses current counted labels, so editing a label rescores old
+   runs while preserving their creation-time golden-set identity. Provider
+   exceptions remain visible ahead of missing output errors and cancellation;
+   missing QA output cannot override terminal provider retry policy.
+   It creates one output experiment and one `qa_eval` trial per exact source
    solver trial. Terminal failed sources remain replayable when no trajectory
    was recorded; the QA brief then uses the result, verifier, exception, and
    authoritative trial facts without inventing agent actions. Each new trial

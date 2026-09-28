@@ -13,7 +13,7 @@ from oddish.analyze.qa_stages import prompt_sha256
 from oddish.core.endpoints.qa_eval import create_qa_eval_core
 from oddish.core.idempotency import _canonical_digest, compute_request_hash
 from oddish.db import AnalysisStatus, TaskModel, TaskVersionModel, TrialStatus
-from oddish.db.models import TrialModel
+from oddish.db.models import TrialModel, QAGoldenCaseModel
 from oddish.schemas import QAEvalCreateRequest
 from oddish.worker.analysis_result_check import check_analysis_result
 from oddish.workers.analysis_trials import (
@@ -183,6 +183,7 @@ class _CreateSession:
         return _Result(
             {
                 TrialModel: self.sources,
+                QAGoldenCaseModel: [],
                 TaskModel: [self.task],
                 TaskVersionModel: [self.version],
             }[entity]
@@ -450,7 +451,7 @@ def _patch_create(monkeypatch, *, goldens=(), version=None) -> dict:
 
     async def fake_counted_goldens(_session, org_id, stage):
         seen["goldens_for"] = (org_id, stage)
-        return {trial_id: object() for trial_id in goldens}
+        return {trial_id: SimpleNamespace(expected={"classification": "GOOD_FAILURE"}) for trial_id in goldens}
 
     async def fake_prompt_version(_session, org_id, stage, sha256):
         seen["version_for"] = (org_id, stage, sha256)
@@ -570,10 +571,71 @@ def test_an_older_replay_body_keeps_its_idempotency_hash():
         prompt_text="classify this",
     )
     legacy = request.model_dump(
-        mode="json", exclude={"stage", "goldens", "prompt_sha256"}
+        mode="json", exclude={"stage", "goldens", "prompt_sha256", "agent", "agent_config", "timeout_minutes", "preflight", "preflight_run_id"}
     )
     assert compute_request_hash(request) == _canonical_digest(legacy)
     by_hash = QAEvalCreateRequest(name="replay", goldens=True, prompt_sha256="abc")
     assert compute_request_hash(by_hash) != compute_request_hash(
         by_hash.model_copy(update={"prompt_sha256": "abd"})
     )
+
+
+@pytest.mark.asyncio
+async def test_preflight_limits_work_and_pins_inputs_before_full_submission(monkeypatch):
+    from unittest.mock import AsyncMock
+    from harbor.models.trial.config import AgentConfig
+
+    source = _source()
+    second = _source()
+    second.id = "source-2"
+    seen = _patch_create(monkeypatch, goldens=[source.id, second.id])
+    session = _CreateSession(source, second)
+    body = dict(
+        goldens=True, prompt_name="candidate", prompt_text="Classify.",
+        agent="mini-swe-agent", model="openai/gpt-6-sol",
+        agent_config=AgentConfig(kwargs={"reasoning_effort": "high"}),
+    )
+    await _create(session, **body, preflight=True)
+    assert seen["admitted"] == [1]
+    [payload] = seen["payloads"]
+    assert payload["preflight"] and payload["subset"]
+    probe = TrialModel(
+        id="probe", status=TrialStatus.SUCCESS, analysis_status=AnalysisStatus.SUCCESS,
+        analysis=_analysis(), harbor_config={"analysis_payload": payload},
+    )
+    session.scalar = AsyncMock(return_value=probe)
+    await _create(session, **body, preflight_run_id="check")
+    assert seen["admitted"] == [1, 2]
+    for change in [
+        {"agent": "claude-code"}, {"model": "openai/gpt-6-luna"},
+        {"agent_config": AgentConfig(kwargs={"reasoning_effort": "low"})},
+        {"prompt_text": "Different prompt"}, {"audit_context": "none"},
+        {"environment": "modal"},
+    ]:
+        with pytest.raises(HTTPException) as error:
+            await _create(session, **(body | change), preflight_run_id="check")
+        assert error.value.status_code == 409
+    for status, analysis_status, analysis in [
+        (TrialStatus.RUNNING, None, None),
+        (TrialStatus.FAILED, AnalysisStatus.FAILED, None),
+        (TrialStatus.SUCCESS, AnalysisStatus.FAILED, None),
+        (TrialStatus.SUCCESS, AnalysisStatus.SUCCESS, {}),
+    ]:
+        probe.status, probe.analysis_status, probe.analysis = status, analysis_status, analysis
+        with pytest.raises(HTTPException) as error:
+            await _create(session, **body, preflight_run_id="check")
+        assert error.value.status_code == 409
+    assert seen["admitted"] == [1, 2]
+
+
+def test_trial_and_qa_share_agent_override_identity_rules():
+    from oddish.schemas import TrialSpec
+
+    config = {"name": "codex", "model_name": "wrong", "kwargs": {"reasoning_effort": "high"}, "env": {"EXAMPLE": "value"}}
+    trial = TrialSpec(agent="mini-swe-agent", model="openai/gpt-6-sol", agent_config=config)
+    qa = QAEvalCreateRequest(name="x", goldens=True, prompt_name="p", prompt_text="p", **trial.model_dump())
+    assert qa.agent_overrides() == trial.agent_overrides() == {
+        "kwargs": {"reasoning_effort": "high"}, "env": {"EXAMPLE": "value"},
+    }
+    assert qa.agent == "mini-swe-agent"
+    assert qa.model == "openai/gpt-6-sol"

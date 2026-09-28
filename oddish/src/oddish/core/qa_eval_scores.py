@@ -175,11 +175,19 @@ async def _replays(
             TrialModel.task_id,
             TrialModel.task_version_id,
             TrialModel.model,
+            TrialModel.agent,
+            TrialModel.harbor_config["agent_config"]["kwargs"]["reasoning_effort"].astext.label("reasoning_effort"),
+            REPLAY_PAYLOAD["configuration_sha256"].astext.label("configuration_sha256"),
+            REPLAY_PAYLOAD["golden_set_sha256"].astext.label("golden_set_sha256"),
+            REPLAY_PAYLOAD["preflight"].as_boolean().label("preflight"),
             TrialModel.status,
             TrialModel.analysis_status,
             TrialModel.analysis,
             TrialModel.cost_usd,
-            func.coalesce(TrialModel.analysis_error, TrialModel.error_message).label(
+            func.coalesce(
+                TrialModel.result["harbor_exception"]["error"].astext,
+                TrialModel.error_message, TrialModel.analysis_error
+            ).label(
                 "error"
             ),
             REPLAY_STAGE.label("stage"),
@@ -288,6 +296,16 @@ def _summary(
         created_at=first.created_at,
         model=first.model,
         model_name=_model_name(first.model),
+        agent=first.agent,
+        reasoning_effort=first.reasoning_effort,
+        configuration_sha256=first.configuration_sha256,
+        golden_set_sha256=first.golden_set_sha256,
+        preflight=bool(first.preflight),
+        preflight_passed=bool(first.preflight) and all(
+            replay.status == TrialStatus.SUCCESS
+            and replay.analysis_status == AnalysisStatus.SUCCESS
+            for replay in replays
+        ),
         prompt_sha256=first.prompt_sha256,
         subset=first.subset,
         charted=not first.subset and judged > 0 and pending == 0,
@@ -396,9 +414,9 @@ def _frontier(charted: list[QAEvalRunSummary]) -> list[str]:
 def _models(charted: list[QAEvalRunSummary]) -> list[QAEvalModelRow]:
     """Each model's latest charted run, most accurate first, then cheapest;
     a run with no cost ranks after those with one."""
-    by_model: dict[str, list[QAEvalRunSummary]] = defaultdict(list)
+    by_model: dict[tuple, list[QAEvalRunSummary]] = defaultdict(list)
     for run in charted:
-        by_model[run.model_name].append(run)
+        by_model[(run.model_name, run.agent, run.reasoning_effort, run.configuration_sha256)].append(run)
     ranked = sorted(
         by_model.values(),
         key=lambda runs: (

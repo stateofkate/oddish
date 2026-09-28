@@ -97,6 +97,11 @@ _REMOVED_SWEEP_FIELD_DEFAULTS = {
 
 # QA replay fields added after clients shipped, at their defaults.
 _ADDED_QA_EVAL_FIELD_DEFAULTS = {
+    "agent": "claude-code",
+    "agent_config": None,
+    "timeout_minutes": None,
+    "preflight": False,
+    "preflight_run_id": None,
     "goldens": False,
     "prompt_sha256": None,
     "stage": "post_trial",

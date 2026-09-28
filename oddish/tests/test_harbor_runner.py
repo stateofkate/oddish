@@ -6372,3 +6372,23 @@ def test_native_drain_does_not_change_other_providers():
         {"OPENAI_BASE_URL": "https://gateway.test/v1"},
     )
     assert config.kwargs == {"drain_on_pause": True}
+
+
+@pytest.mark.parametrize("exception", ["ApiClientError", "ModelNotFoundError", "AgentAuthenticationError"])
+def test_qa_keeps_terminal_provider_error_when_result_is_missing(monkeypatch, exception):
+    trial = _make_retry_decision_trial(attempts=1, max_attempts=3)
+    trial.kind = "qa_eval"
+    _install_retry_decision_session_fakes(monkeypatch, trial)
+    outcome = harbor_runner.HarborOutcome(
+        reward=None, error=f"{exception}: model is unavailable", exception_type=exception,
+        exit_code=1, duration_sec=1, job_result_path=None, job_dir=None,
+    )
+    asyncio.run(trial_handler._store_trial_results(
+        trial_id=trial.id, outcome=outcome, trial_s3_key=None, execution_error=None,
+        trial_attempt=1, artifact_upload_error="the agent did not write /logs/qa_result.json",
+    ))
+    assert trial.status == trial_handler.TrialStatus.FAILED
+    assert trial.finished_at is not None
+    assert trial.error_message.splitlines() == [
+        f"{exception}: model is unavailable", "the agent did not write /logs/qa_result.json",
+    ]

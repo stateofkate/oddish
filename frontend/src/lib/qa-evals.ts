@@ -66,6 +66,12 @@ export interface QAEvalRun {
   created_at: string;
   model: string | null;
   model_name: string;
+  agent?: string;
+  reasoning_effort?: string | null;
+  configuration_sha256?: string | null;
+  golden_set_sha256?: string | null;
+  preflight?: boolean;
+  preflight_passed?: boolean;
   prompt_sha256: string;
   subset: boolean;
   /** Full and scored: plotted, and in the frontier and models. */
@@ -102,6 +108,7 @@ export interface QAPromptVersion {
 }
 
 export interface QAEvalStatus {
+  execution_configurable?: boolean;
   replayable: boolean;
   production_prompt_sha256: string;
   goldens: QAGoldensSummary;
@@ -347,7 +354,19 @@ export type QAEvalStart = {
   name: string;
   prompt_sha256: string;
   model: string | null;
+  agent?: string;
+  agent_config?: { kwargs?: Record<string, unknown>; [key: string]: unknown };
+  preflight?: boolean;
+  preflight_run_id?: string;
 } & ({ goldens: true } | { source_trial_ids: string[] });
+
+export function configurationKey(run: QAEvalRun): string {
+  return run.configuration_sha256 ?? `${run.agent ?? "claude-code"}:${run.model_name}:${run.reasoning_effort ?? "default"}`;
+}
+
+export function configurationLabel(run: QAEvalRun): string {
+  return `${run.model_name} · ${run.agent ?? "claude-code"}${run.reasoning_effort ? `/${run.reasoning_effort}` : ""}`;
+}
 
 /** The trial's live golden, as a list of zero or one QAGolden. */
 export function trialGoldenUrl(trialId: string): string {

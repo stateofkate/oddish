@@ -22,6 +22,23 @@ remain readable. Do not wait for or enqueue those job kinds.
 Every analysis trial has at most 3 attempts and a 60-minute timeout. Its own
 cost is analysis spend, not an additional evaluation attempt.
 
+## QA model comparisons
+
+`oddish qa evals start --version SHA --agent claude-code --model openai/gpt-6-sol
+--model openai/gpt-6-luna` creates one saved QA Evals run per model, using the
+ordinary trial agent/model/settings route. Use `--reasoning-effort` or
+`--agent-config settings.json` for agent settings. The CLI validates one case
+per model before the full set; `--preflight-only` stops after that check and
+`--skip-preflight` explicitly bypasses it. A failed check leaves its diagnostics
+in the UI and prevents the corresponding full submission. `--idempotency-key`
+resumes the same request without duplicating runs. Model-only older callers
+retain Claude Code and the production QA model default.
+
+`qa evals status`, `run RUN_ID`, and `diff SHA` inspect saved scores and prompts.
+`qa_eval` results belong to the replay run, never the source task's production
+classification or verdict. Run summaries retain harness, effort, prompt and
+golden-set identity; current reviewed labels still determine displayed scores.
+
 ## Automatic task QA
 
 For a new run or append, no `--run-analysis` flag exists. Oddish automatically

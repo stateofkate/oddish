@@ -64,6 +64,7 @@ def _version(sha: str, **fields) -> dict:
 
 
 STATUS = {
+    "execution_configurable": True,
     "replayable": True,
     "production_prompt_sha256": "b" * 64,
     "goldens": {
@@ -417,6 +418,7 @@ def _start_routes(overrides: dict | None = None) -> dict:
         ("GET", "/qa-evals/status"): STATUS,
         ("GET", "/qa-evals/runs/run-old"): RUN,
         ("POST", "/qa-evals"): CREATED,
+        ("GET", "/qa-evals/runs/run-started"): {"summary": {"preflight_passed": True}, "error_groups": []},
         **(overrides or {}),
     }
 
@@ -427,13 +429,14 @@ def test_start_asks_then_replays_every_golden(api, tmp_path):
     args = ["evals", "start", "--prompt", str(prompt)]
     result, calls = api(_start_routes(), args)
     # CliRunner sends no input: declined.
-    assert "Replay all 4 golden trials (about $2.00 at $0.50/trial)?" in result.output
+    assert "Replay all 4 golden trials plus 1 check (about $2.50 at $0.50/trial)?" in result.output
     assert result.exit_code == 1
     assert _sent(calls, "POST") == []
 
     result, calls = api(_start_routes(), [*args, "--name", "try-1"], input="y\n")
     assert result.exit_code == 0, result.output
-    assert _sent(calls, "POST") == [
+    assert _sent(calls, "POST")[0]["preflight"] is True
+    assert _sent(calls, "POST")[1:] == [
         {
             "stage": "post_trial",
             "model": None,
@@ -441,6 +444,7 @@ def test_start_asks_then_replays_every_golden(api, tmp_path):
             "prompt_text": "Classify carefully.",
             "goldens": True,
             "name": "try-1",
+            "preflight_run_id": "run-started",
         }
     ]
     assert "skipped t-gone: trial deleted" in result.output
@@ -460,7 +464,7 @@ def test_start_reruns_a_runs_group_by_version_prefix(api):
     # The skipped trials go to stderr, leaving the JSON clean.
     assert _json(result) == CREATED
     assert "skipped t-gone" in result.stderr
-    [body] = _sent(calls, "POST")
+    body = _sent(calls, "POST")[-1]
     assert body["prompt_sha256"] == "b" * 64
     assert body["source_trial_ids"] == ["t-extra", "t-wrong-1", "t-wrong-2"]
     assert "goldens" not in body and "prompt_text" not in body
@@ -983,3 +987,44 @@ def test_import_of_a_json_file_that_is_no_answer_key_exits_2(api, tmp_path, text
     assert result.exit_code == 2
     assert "expected schema_version" in result.output
     assert calls == []
+
+
+def test_start_stops_before_full_run_on_failed_preflight(api):
+    routes = _start_routes({("GET", "/qa-evals/runs/run-started"): {
+        "summary": {"preflight_passed": False, "pending": 0},
+        "error_groups": [{"message": "ModelNotFoundError", "count": 1}],
+    }})
+    result, calls = api(routes, ["evals", "start", "--version", "b", "--model", "openai/gpt-6-sol", "-y"])
+    assert result.exit_code == 1
+    assert "Full run not submitted" in result.output
+    [check] = _sent(calls, "POST")
+    assert check["preflight"] is True
+    assert check["model"] == "openai/gpt-6-sol"
+
+
+def test_start_checks_multiple_models_with_shared_execution_settings(api, tmp_path):
+    config = tmp_path / "agent.json"
+    config.write_text('{"kwargs":{"max_turns":20}}')
+    result, calls = api(_start_routes(), [
+        "evals", "start", "--version", "b", "-y", "--json", "--agent", "mini-swe-agent",
+        "--model", "openai/gpt-6-sol", "--model", "openai/gpt-6-luna",
+        "--reasoning-effort", "high", "--agent-config", str(config),
+    ], mix_stderr=False)
+    assert result.exit_code == 0, result.output
+    check_sol, check_luna, sol, luna = _sent(calls, "POST")
+    assert check_sol["preflight"] and check_luna["preflight"]
+    assert sol["preflight_run_id"] and luna["preflight_run_id"]
+    for body in (check_sol, check_luna, sol, luna):
+        assert body["agent"] == "mini-swe-agent"
+        assert body["agent_config"] == {"kwargs": {"max_turns": 20, "reasoning_effort": "high"}}
+    assert sol["model"] == "openai/gpt-6-sol"
+    assert luna["model"] == "openai/gpt-6-luna"
+    assert len(_json(result)) == 2
+
+
+def test_start_refuses_old_api_before_it_can_ignore_preflight(api):
+    routes = _start_routes({("GET", "/qa-evals/status"): {**STATUS, "execution_configurable": False}})
+    result, calls = api(routes, ["evals", "start", "--version", "b", "-y"])
+    assert result.exit_code == 2
+    assert "execution-configuration update" in result.output
+    assert _sent(calls, "POST") == []

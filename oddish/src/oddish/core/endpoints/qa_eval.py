@@ -7,10 +7,11 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from oddish.analyze.qa_stages import prompt_sha256
+from oddish.analyze.qa_stages import STAGES, prompt_sha256
 from oddish.config import is_nop_oracle_agent, settings
 from oddish.core.analysis_payload import qa_trial_evidence
 from oddish.core.idempotency import (
+    _canonical_digest,
     IdempotencyConflict,
     IdempotencyStore,
     Reservation,
@@ -21,11 +22,13 @@ from oddish.core.qa_eval_scores import counted_goldens, prompt_version
 from oddish.core.qa_goldens import FINISHED_STATUSES
 from oddish.core.quota_admission import admit_trials
 from oddish.db import (
+    AnalysisStatus,
     ExperimentModel,
     QAPromptModel,
     TaskModel,
     TaskVersionModel,
     TrialModel,
+    TrialStatus,
     utcnow,
 )
 from oddish.schemas import (
@@ -83,8 +86,9 @@ async def create_qa_eval_core(
         prompt_name, prompt_text = request.prompt_name or version[0], version[1]
 
     source_trial_ids = request.source_trial_ids
+    goldens = await counted_goldens(session, org_id, stage)
     if request.goldens:
-        source_trial_ids = sorted(await counted_goldens(session, org_id, stage))
+        source_trial_ids = sorted(goldens)
         if not source_trial_ids:
             raise HTTPException(
                 status_code=422, detail=f"no counted {stage.value} goldens to replay"
@@ -171,12 +175,52 @@ async def create_qa_eval_core(
             detail="no golden trial can be replayed: " + "; ".join(skipped),
         )
 
-    await admit_trials(session, org_id, billed_user_id, count=len(source_trial_ids))
-
     canonical_model = settings.normalize_trial_model(
-        "claude-code", request.model or settings.analysis_model
+        request.agent, request.model or settings.analysis_model
     )
     prompt_hash = prompt_sha256(prompt_text)
+    configuration_hash = _canonical_digest({
+        "agent": request.agent, "model": canonical_model,
+        "agent_config": request.agent_overrides(), "environment": request.environment,
+    })
+    case_versions = {
+        source_id: version_by_id[source_by_id[source_id].task_version_id]
+        for source_id in source_trial_ids
+    }
+    cases = {}
+    for source_id, version in case_versions.items():
+        imported = (source_by_id[source_id].harbor_config or {}).get("imported_source")
+        original = imported.get("trial_id") if isinstance(imported, dict) else None
+        golden = goldens.get(original) if isinstance(original, str) and original in goldens else goldens.get(source_id)
+        cases[source_id] = {
+            "version": version.id, "content_hash": version.content_hash,
+            "expected": golden.expected if golden else None,
+        }
+    golden_hash = _canonical_digest(cases)
+    input_hash = _canonical_digest({
+        "configuration": configuration_hash, "goldens": golden_hash,
+        "prompt": prompt_hash, "stage": stage.value,
+        "audit_context": request.audit_context,
+        "audit": {source_id: version.pre_trial for source_id, version in case_versions.items()}
+        if request.audit_context == "current" else None,
+    })
+    if request.preflight_run_id:
+        probe = await session.scalar(select(TrialModel).where(
+            TrialModel.experiment_id == request.preflight_run_id,
+            TrialModel.org_id == org_id, TrialModel.kind == "qa_eval",
+        ))
+        payload = (probe.harbor_config or {}).get("analysis_payload", {}) if probe else {}
+        if not (
+            probe and payload.get("preflight")
+            and payload.get("input_sha256") == input_hash
+            and probe.status == TrialStatus.SUCCESS
+            and probe.analysis_status == AnalysisStatus.SUCCESS
+            and STAGES[stage].grade.answer(probe.analysis) is not None
+        ):
+            raise HTTPException(409, "A completed, valid preflight with the same configuration, prompt and cases is required")
+    if request.preflight:
+        source_trial_ids = source_trial_ids[:1]
+    await admit_trials(session, org_id, billed_user_id, count=len(source_trial_ids))
     experiment = ExperimentModel(
         name=request.name,
         org_id=org_id,
@@ -242,6 +286,7 @@ async def create_qa_eval_core(
             task_version_id=task_version_id,
             experiment_id=experiment.id,
             model=canonical_model,
+            execution=request,
             environment=request.environment,
             billed_user_id=billed_user_id,
             payload={
@@ -254,7 +299,11 @@ async def create_qa_eval_core(
                 "stage": stage.value,
                 "prompt_name": prompt_name,
                 "prompt_sha256": prompt_hash,
-                "subset": not request.goldens,
+                "subset": not request.goldens or request.preflight,
+                "preflight": request.preflight,
+                "configuration_sha256": configuration_hash,
+                "golden_set_sha256": golden_hash,
+                "input_sha256": input_hash,
                 "audit_context": request.audit_context,
             },
         )
@@ -268,6 +317,8 @@ async def create_qa_eval_core(
         prompt_name=prompt_name,
         prompt_sha256=prompt_hash,
         model=canonical_model,
+        agent=request.agent,
+        preflight=request.preflight,
         trials=created,
         skipped=skipped,
     )
