@@ -549,6 +549,7 @@ def _settle_trial_metering(
     native_cost_trusted = is_native_cost_trusted(
         agent=getattr(trial, "agent", None),
         provider=provider,
+        model=trial.model,
     )
     trial.cost_usd = settle_cost_usd(
         outcome.cost_usd,

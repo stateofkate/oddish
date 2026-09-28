@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -27,6 +28,7 @@ from oddish.analyze.qa_stages import (
 from oddish.core.qa_eval_scores import (
     _frontier,
     _models,
+    _score_runs,
     get_prompt_version_text_core,
     get_qa_eval_run_core,
     qa_eval_status_core,
@@ -54,6 +56,65 @@ SHIPPED = shipped_prompt_sha256(POST)
 CANDIDATE = "Classify with the causal test first."
 OK, BAD, RUNNING = TrialStatus.SUCCESS, TrialStatus.FAILED, TrialStatus.RUNNING
 GOOD, FAILED = AnalysisStatus.SUCCESS, AnalysisStatus.FAILED
+
+
+@pytest.mark.parametrize("with_golden", [True, False])
+@pytest.mark.parametrize("preflight", [True, False])
+@pytest.mark.parametrize(
+    "status,analysis_status,analysis,valid",
+    [
+        (OK, GOOD, None, False),
+        (OK, GOOD, {}, False),
+        (OK, GOOD, {"classification": "maybe"}, False),
+        (OK, GOOD, {"classification": "BAD_FAILURE"}, True),
+        (OK, GOOD, {"classification": "GOOD_FAILURE"}, True),
+        (RUNNING, None, None, False),
+        (BAD, GOOD, {"classification": "BAD_FAILURE"}, False),
+        (OK, FAILED, {"classification": "BAD_FAILURE"}, False),
+    ],
+)
+def test_preflight_requires_a_usable_answer(
+    with_golden, preflight, status, analysis_status, analysis, valid
+):
+    replay = SimpleNamespace(
+        id="replay",
+        task_id="task",
+        task_version_id="version",
+        source_trial_id="source",
+        original_trial_id="source",
+        experiment_id="run",
+        experiment_name="check",
+        created_at=utcnow(),
+        model="anthropic/claude-sonnet-5",
+        agent="claude-code",
+        reasoning_effort=None,
+        configuration_sha256=None,
+        golden_set_sha256=None,
+        prompt_sha256=SHIPPED,
+        prompt_name="",
+        subset=True,
+        preflight=preflight,
+        status=status,
+        analysis_status=analysis_status,
+        analysis=analysis,
+        cost_usd=None,
+        error=None,
+    )
+    goldens = (
+        {
+            "source": QAGoldenCaseModel(
+                id="golden", expected={"classification": "BAD_FAILURE"}
+            )
+        }
+        if with_golden
+        else {}
+    )
+
+    [run] = _score_runs([replay], POST, goldens, {})
+
+    # A valid but incorrect answer still passes the execution check. Removing
+    # a golden affects accuracy, not whether the model produced usable output.
+    assert run.summary.preflight_passed is (preflight and valid)
 
 
 def _trial(ids: dict, trial_id: str, **values) -> TrialModel:

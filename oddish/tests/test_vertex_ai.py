@@ -284,6 +284,10 @@ def test_force_oauth_flags_are_not_secrets_to_harbor(flag):
 
 def test_claude_model_variables_only_for_claude_ids(service_account):
     gemini = _build("claude-code", "vertex_ai/gemini-3.8-flash")
+    assert (
+        gemini.import_path
+        == "oddish.workers.agents.claude_code_proxy:ProxiedClaudeCode"
+    )
     assert "ANTHROPIC_MODEL" not in gemini.env
     claude = _build(
         "claude-code",
@@ -291,6 +295,8 @@ def test_claude_model_variables_only_for_claude_ids(service_account):
         env={"CLAUDE_CODE_SUBAGENT_MODEL": "claude-haiku-4-5@20251001"},
     )
     assert claude.model_name == "vertex_ai/claude-sonnet-4-5@20250929"
+    assert claude.name == "claude-code"
+    assert claude.import_path is None
     assert claude.env["ANTHROPIC_MODEL"] == "claude-sonnet-4-5@20250929"
     for key in (
         "ANTHROPIC_DEFAULT_HAIKU_MODEL",

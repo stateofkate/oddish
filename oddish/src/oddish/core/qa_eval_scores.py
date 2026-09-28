@@ -304,7 +304,8 @@ def _summary(
         preflight_passed=bool(first.preflight) and all(
             replay.status == TrialStatus.SUCCESS
             and replay.analysis_status == AnalysisStatus.SUCCESS
-            for replay in replays
+            and case.got is not None
+            for replay, case in zip(replays, cases, strict=True)
         ),
         prompt_sha256=first.prompt_sha256,
         subset=first.subset,

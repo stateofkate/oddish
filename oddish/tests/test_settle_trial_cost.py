@@ -50,12 +50,27 @@ async def test_zero_harness_cost_settles_to_token_estimate(monkeypatch):
     [
         "claude-opus-4-7",
         "bedrock/global.anthropic.claude-opus-4-7",
+        "vertex_ai/claude-haiku-4-5@20251001",
     ],
 )
 async def test_positive_native_cost_is_kept_for_anthropic_claude(monkeypatch, model):
     trial = _trial(agent="claude-code", model=model)
     await _store(monkeypatch, trial, _outcome(cost_usd=4.56))
     assert trial.cost_usd == pytest.approx(4.56)
+
+
+@pytest.mark.asyncio
+async def test_vertex_gemini_claude_code_uses_token_pricing(monkeypatch):
+    from oddish import model_pricing
+
+    monkeypatch.setattr(
+        model_pricing,
+        "get_model_pricing",
+        lambda model: model_pricing.ModelPricing(input=2e-6, output=12e-6),
+    )
+    trial = _trial(agent="claude-code", model="vertex_ai/gemini-3.1-pro")
+    await _store(monkeypatch, trial, _outcome(cost_usd=99.0))
+    assert trial.cost_usd == pytest.approx(3.2)
 
 
 @pytest.mark.asyncio

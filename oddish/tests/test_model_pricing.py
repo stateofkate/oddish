@@ -500,6 +500,26 @@ def test_native_cost_policy_keeps_real_claude_costs(provider: str) -> None:
     assert is_native_cost_trusted(agent="claude-code", provider=provider)
 
 
+@pytest.mark.parametrize(
+    "model,trusted",
+    [
+        ("vertex_ai/claude-haiku-4-5@20251001", True),
+        ("vertex/claude-sonnet-5", True),
+        ("google-vertex/claude-sonnet-5", True),
+        ("vertex_ai/gemini-3.1-pro", False),
+        (None, False),
+    ],
+)
+def test_vertex_native_cost_policy_checks_model(model, trusted):
+    assert (
+        is_native_cost_trusted(agent="claude-code", provider="vertex_ai", model=model)
+        is trusted
+    )
+    assert is_native_cost_trusted(
+        agent="mini-swe-agent", provider="vertex_ai", model=model
+    )
+
+
 def test_settle_ignores_positive_untrusted_native_cost() -> None:
     cost = settle_cost_usd(
         99.0,

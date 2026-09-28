@@ -27,6 +27,7 @@ from oddish.config import (
     is_meta_public_model,
     is_minimax_model,
     is_moonshot_model,
+    is_vertex_ai_claude_model,
     is_vertex_ai_model,
     is_xai_model,
     is_xai_public_model,
@@ -984,6 +985,7 @@ def _build_agent_config(
         agent == "claude-code" and agent_config.import_path is None
         and not claude_model_provider(_selected_claude_model(agent, model))
         and not is_anthropic_hdo_model(model)
+        and not is_vertex_ai_claude_model(model)
         and not agent_config.env.get("ANTHROPIC_BASE_URL")
         and not gateway_env
     ):

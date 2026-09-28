@@ -310,6 +310,9 @@ High-level flow:
    requires a successful imported result with matching execution settings,
    prompt, source versions/content, golden labels and audit context before
    admitting the full set. Legacy requests without these fields keep working.
+   `preflight_passed` also requires a usable stage answer, even when the source
+   no longer has a counted golden. A valid but incorrect answer passes this
+   execution check; agreement with the golden is measured separately as accuracy.
    Each new run stores configuration and golden-set hashes in its analysis
    payload; summaries expose the harness, effort and check outcome. Model
    comparisons separate harnesses and settings, and include completed full runs.
@@ -1647,6 +1650,8 @@ Keep these routing rules in sync with `oddish/src/oddish/config.py` and
   Installation happens during the public setup phase; the adapter stops when
   the agent finishes or raises. Non-Anthropic Claude Code costs use Oddish's
   provider pricing rather than Claude's Anthropic-only native price table.
+  Cost settlement checks the model as well as the provider: native Vertex Claude
+  keeps its reported cost, while Vertex Gemini uses Oddish's token pricing.
   Provider/model capability is validated by running a case, not by assuming
   every combination implements the same API. Restricted Compose execution
   continues to require an attested agent network profile.

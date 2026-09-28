@@ -125,7 +125,7 @@ _ANTHROPIC_DOTTED_NAMESPACE_RE = re.compile(
 )
 
 # Claude Code computes ``total_cost_usd`` from its own Anthropic model table.
-# That value is authoritative for Anthropic/Bedrock Claude, but not when the
+# That value is authoritative for Anthropic/Bedrock/Vertex Claude, but not when the
 # same harness is pointed at an Anthropic-compatible third-party endpoint.
 _CLAUDE_CODE_PASSTHROUGH_PROVIDERS: frozenset[str] = frozenset(
     {
@@ -154,14 +154,22 @@ def untrusted_native_cost_providers(*, agent: str | None) -> frozenset[str]:
     return _CLAUDE_CODE_PASSTHROUGH_PROVIDERS
 
 
-def is_native_cost_trusted(*, agent: str | None, provider: str | None) -> bool:
+def is_native_cost_trusted(
+    *, agent: str | None, provider: str | None, model: str | None = None
+) -> bool:
     """Whether a harness-reported native cost is authoritative.
 
     Provider alone is insufficient: a LiteLLM-backed agent can report a valid
     native Fireworks cost. Only Claude Code's third-party compatibility routes
     use an Anthropic-only client-side price table for a non-Anthropic model.
+    Vertex hosts both native Claude and proxied models, so trust its Claude
+    costs only when the model identifies that native route.
     """
+    from oddish.config import is_vertex_ai_claude_model
+
     normalized_provider = (provider or "").strip().lower()
+    if normalized_provider == "vertex_ai" and is_vertex_ai_claude_model(model):
+        return True
     return normalized_provider not in untrusted_native_cost_providers(agent=agent)
 
 
