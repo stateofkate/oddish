@@ -698,7 +698,7 @@ export function ExperimentTrialsTable({
     Record<string, number>
   >({});
   const tableContainerRef = useRef<HTMLDivElement | null>(null);
-  const tableHeaderRef = useRef<HTMLTableSectionElement | null>(null);
+  const tableHeaderRef = useRef<HTMLDivElement | null>(null);
   const tableBodyRef = useRef<HTMLTableSectionElement | null>(null);
   const resizeRef = useRef<{
     columnKey: "task" | string;
@@ -1157,6 +1157,8 @@ export function ExperimentTrialsTable({
     [selectedTaskList]
   );
 
+  // The table (and its header and body refs) mounts only after this is false.
+  const isInitialLoading = isLoading && tasks.length === 0;
   const [tableOffset, setTableOffset] = useState<number | null>(null);
   // Measure before paint when table content or layout changes, including
   // while rendering fewer than the virtualization threshold.
@@ -1184,53 +1186,70 @@ export function ExperimentTrialsTable({
       setTableOffset(body.getBoundingClientRect().top + window.scrollY);
     });
     observer.observe(document.body);
-    if (body.previousElementSibling)
-      observer.observe(body.previousElementSibling);
+    if (tableHeaderRef.current) observer.observe(tableHeaderRef.current);
     return () => observer.disconnect();
-  }, [isLoading]);
+  }, [isInitialLoading]);
   useLayoutEffect(() => {
     const container = tableContainerRef.current;
     const header = tableHeaderRef.current;
     if (!container || !header) return;
 
-    // Horizontal overflow makes this wrapper the CSS sticky scroll container.
-    // Follow page scrolling explicitly while keeping one aligned, interactive
-    // header inside the horizontally scrolling table.
-    const updateHeaderPosition = () => {
-      const bounds = container.getBoundingClientRect();
-      const pageHeaderBottom = Math.max(
+    // Horizontal overflow makes the body wrapper a scroll container, so the
+    // header lives outside it and sticks to the page with CSS. Moving the
+    // header from a scroll handler lags a frame behind the page and jitters.
+    // Only the stuck offset (below the page's own sticky bars) is measured
+    // here; it does not change while the page scrolls.
+    const updateStickyTop = () => {
+      const top = Math.max(
         0,
         ...Array.from(
-          document.querySelectorAll("[data-page-sticky-header]"),
-          (element) => element.getBoundingClientRect().bottom
+          document.querySelectorAll<HTMLElement>("[data-page-sticky-header]"),
+          (element) =>
+            (parseFloat(getComputedStyle(element).top) || 0) +
+            element.getBoundingClientRect().height
         )
       );
-      const offset = Math.max(
-        0,
-        Math.min(
-          pageHeaderBottom - bounds.top,
-          bounds.height - header.offsetHeight
-        )
-      );
-      header.style.top = `${offset}px`;
+      const value = `${top}px`;
+      if (header.style.top !== value) header.style.top = value;
     };
-    updateHeaderPosition();
-    window.addEventListener("scroll", updateHeaderPosition, { passive: true });
-    window.addEventListener("resize", updateHeaderPosition);
-    const observer = new ResizeObserver(updateHeaderPosition);
+    // Header and body each scroll sideways on their own (wheel, touch, focus,
+    // find-in-page), so mirror both ways. Skip the scroll event a mirrored
+    // write causes; its stale position would pull the other side back.
+    const echoes = new Map<HTMLElement, number>();
+    const mirror = (source: HTMLElement, target: HTMLElement) => () => {
+      const echo = echoes.get(source);
+      echoes.delete(source);
+      if (echo !== undefined && Math.abs(source.scrollLeft - echo) < 1) return;
+      if (Math.abs(target.scrollLeft - source.scrollLeft) < 1) return;
+      target.scrollLeft = source.scrollLeft;
+      echoes.set(target, target.scrollLeft);
+    };
+    const syncHeader = mirror(container, header);
+    const syncBody = mirror(header, container);
+    updateStickyTop();
+    syncHeader();
+    // Bars can mount after this effect, so check again on scroll; the value
+    // stays constant, which keeps the header still.
+    window.addEventListener("scroll", updateStickyTop, { passive: true });
+    window.addEventListener("resize", updateStickyTop);
+    container.addEventListener("scroll", syncHeader, { passive: true });
+    header.addEventListener("scroll", syncBody, { passive: true });
+    const observer = new ResizeObserver(() => {
+      updateStickyTop();
+      syncHeader();
+    });
     observer.observe(container);
-    observer.observe(header);
-    observer.observe(document.body);
     document
       .querySelectorAll("[data-page-sticky-header]")
       .forEach((element) => observer.observe(element));
     return () => {
-      window.removeEventListener("scroll", updateHeaderPosition);
-      window.removeEventListener("resize", updateHeaderPosition);
+      window.removeEventListener("scroll", updateStickyTop);
+      window.removeEventListener("resize", updateStickyTop);
+      container.removeEventListener("scroll", syncHeader);
+      header.removeEventListener("scroll", syncBody);
       observer.disconnect();
-      header.style.top = "";
     };
-  }, [isLoading, tableOffset]);
+  }, [isInitialLoading]);
   // Render real rows until their document offset is known.
   const shouldVirtualize =
     filteredTasks.length >= VIRTUALIZATION_THRESHOLD && tableOffset !== null;
@@ -1559,7 +1578,9 @@ export function ExperimentTrialsTable({
           if (!res.ok) {
             const data = await res.json().catch(() => ({}));
             throw new Error(
-              data.detail || data.error || "Failed to queue QA verdict generation"
+              data.detail ||
+                data.error ||
+                "Failed to queue QA verdict generation"
             );
           }
         })
@@ -1754,8 +1775,6 @@ export function ExperimentTrialsTable({
       window.removeEventListener("mouseup", handleMouseUp);
     };
   }, [isResizing]);
-
-  const isInitialLoading = isLoading && tasks.length === 0;
 
   if (isInitialLoading) {
     return (
@@ -2006,6 +2025,27 @@ export function ExperimentTrialsTable({
     setSelectedTasks(new Set());
   };
 
+  // The header and body are separate tables so the header can stick to the
+  // page; both share these fixed column widths to stay aligned.
+  const tableStyle = {
+    tableLayout: "fixed",
+    width: "100%",
+    minWidth: tableMinWidth,
+  } as const;
+  const tableColumns = (
+    <colgroup>
+      <col style={{ width: `${getDisplayedWidth("task")}px` }} />
+      {renderedAgents.map((agent) => (
+        <col
+          key={`col-${agent.key}`}
+          style={{
+            width: `${getDisplayedWidth(agent.key)}px`,
+          }}
+        />
+      ))}
+    </colgroup>
+  );
+
   return (
     <TooltipProvider>
       <div className="space-y-4">
@@ -2086,7 +2126,7 @@ export function ExperimentTrialsTable({
           </div>
         ) : null}
 
-        <div className="max-w-full overflow-hidden rounded-[10px] border border-[color:var(--paper-line)] bg-[color:var(--paper-surface)]">
+        <div className="max-w-full overflow-clip rounded-[10px] border border-[color:var(--paper-line)] bg-[color:var(--paper-surface)]">
           <div className="relative z-30 flex flex-col gap-3 border-b border-[color:var(--paper-line-2)] bg-[color:var(--paper-surface)] px-4 pt-3.5 pb-3">
             <div className="flex flex-wrap items-stretch gap-3">
               {/* Fills the space left of the legend; stretches to its height. */}
@@ -2284,547 +2324,569 @@ export function ExperimentTrialsTable({
               </div>
             </div>
           </div>
-          <div
-            ref={tableContainerRef}
-            className={`overflow-x-auto ${isResizing ? "select-none" : ""}`}
-          >
-            <table
-              className="w-full min-w-[960px] caption-bottom text-sm"
-              style={{
-                tableLayout: "fixed",
-                width: "100%",
-                minWidth: tableMinWidth,
-              }}
+          {/* Two <table>s render one table: expose them as one to assistive
+              technology so cells keep their agent column headers. */}
+          <div role="table" aria-label="Trial results by task and agent">
+            <div
+              ref={tableHeaderRef}
+              className={`sticky z-20 overflow-x-auto bg-[color:var(--paper-surface-2)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${isResizing ? "select-none" : ""}`}
             >
-              <colgroup>
-                <col style={{ width: `${getDisplayedWidth("task")}px` }} />
-                {renderedAgents.map((agent) => (
-                  <col
-                    key={`col-${agent.key}`}
-                    style={{
-                      width: `${getDisplayedWidth(agent.key)}px`,
-                    }}
-                  />
-                ))}
-              </colgroup>
-              <TableHeader
-                ref={tableHeaderRef}
-                className="relative z-20 bg-[color:var(--paper-surface-2)]"
+              <table
+                role="presentation"
+                className="w-full min-w-[960px] caption-bottom text-sm"
+                style={tableStyle}
               >
-                <TableRow className="border-b border-[color:var(--paper-line)] hover:bg-transparent">
-                  <TableHead
-                    className="relative sticky left-0 z-30 h-auto border-r border-[color:var(--paper-line)] bg-[color:var(--paper-surface-2)] px-3 py-3 font-mono font-bold text-[color:var(--paper-ink)] [&:has([role=checkbox])]:pr-3"
-                    style={{ width: getDisplayedWidth("task") }}
+                {tableColumns}
+                <TableHeader
+                  role="rowgroup"
+                  className="bg-[color:var(--paper-surface-2)]"
+                >
+                  <TableRow
+                    role="row"
+                    className="border-b border-[color:var(--paper-line)] hover:bg-transparent"
                   >
-                    <div className="flex items-center gap-2">
-                      <span className="text-muted-foreground w-5 shrink-0 text-right text-[10px]">
-                        #
-                      </span>
-                      {!readOnly && (
-                        <Checkbox
-                          checked={
-                            filteredTasks.length > 0 &&
-                            selectedTasks.size === filteredTasks.length
-                          }
-                          onCheckedChange={(checked) => {
-                            if (checked) {
-                              selectAllVisible();
-                            } else {
-                              clearSelection();
-                            }
-                          }}
-                          className="h-4 w-4"
-                        />
-                      )}
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        onClick={() =>
-                          setTaskSort((prev) =>
-                            prev === "default"
-                              ? "name-asc"
-                              : prev === "name-asc"
-                                ? "name-desc"
-                                : "default"
-                          )
-                        }
-                        title={
-                          taskSort === "default"
-                            ? "Sort by task name (A→Z)"
-                            : taskSort === "name-asc"
-                              ? "Sort by task name (Z→A)"
-                              : "Clear sort (default order)"
-                        }
-                        aria-label="Toggle task sort"
-                        className="hover:bg-background/70 h-auto gap-1 rounded-sm bg-transparent px-1 py-0 text-xs font-normal transition hover:text-blue-400 sm:text-sm"
-                      >
-                        <span>Task</span>
-                        {taskSort === "name-asc" ? (
-                          <ArrowUp className="h-3 w-3" />
-                        ) : taskSort === "name-desc" ? (
-                          <ArrowDown className="h-3 w-3" />
-                        ) : (
-                          <ArrowUpDown className="text-muted-foreground/60 h-3 w-3" />
-                        )}
-                      </Button>
-                    </div>
-                    <div
-                      className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize"
-                      onMouseDown={(event) =>
-                        startResize(event, "task", taskColumnWidth)
-                      }
-                    />
-                  </TableHead>
-                  {renderedAgents.map((agent, agentIndex) => (
                     <TableHead
-                      key={agent.key}
-                      className="relative h-auto border-r border-[color:var(--paper-line)] bg-[color:var(--paper-surface-2)] px-1 py-3 text-center font-mono last:border-r-0 sm:px-2"
-                      style={{
-                        width: getDisplayedWidth(agent.key),
-                      }}
+                      role="columnheader"
+                      className="relative sticky left-0 z-30 h-auto border-r border-[color:var(--paper-line)] bg-[color:var(--paper-surface-2)] px-3 py-3 font-mono font-bold text-[color:var(--paper-ink)] [&:has([role=checkbox])]:pr-3"
+                      style={{ width: getDisplayedWidth("task") }}
                     >
-                      {showLoadingMatrixColumns ? (
-                        <div className="flex min-w-[60px] flex-col items-center gap-2 py-1 sm:min-w-[80px] md:min-w-[100px]">
-                          <Skeleton className="h-3 w-16" />
-                          <Skeleton className="h-3 w-20" />
-                        </div>
-                      ) : (
-                        <div className="flex min-w-[60px] flex-col items-center gap-0.5 sm:min-w-[80px] md:min-w-[100px]">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            onClick={() =>
-                              handleCopyAgentName(agent.key, agent.agent)
+                      <div className="flex items-center gap-2">
+                        <span className="text-muted-foreground w-5 shrink-0 text-right text-[10px]">
+                          #
+                        </span>
+                        {!readOnly && (
+                          <Checkbox
+                            checked={
+                              filteredTasks.length > 0 &&
+                              selectedTasks.size === filteredTasks.length
                             }
-                            className="text-foreground hover:bg-background/70 h-auto max-w-[70px] gap-1 rounded-sm bg-transparent px-1 py-0 text-[10px] font-bold transition hover:text-blue-400 sm:max-w-[110px] sm:text-xs md:max-w-none"
-                            aria-label={`Copy agent name ${agent.agent}`}
-                          >
-                            <QueueKeyIcon
-                              agent={agent.agent}
-                              size={12}
-                              className="shrink-0"
-                            />
-                            <span className="min-w-0 break-all whitespace-normal">
-                              {copiedAgentNameKey === agent.key
-                                ? "Copied"
-                                : agent.agent}
-                            </span>
-                          </Button>
-                          {!isBaselineAgentName(agent.agent) &&
-                            (agent.model ? (
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                onClick={() =>
-                                  handleCopyAgentModel(agent.key, agent.model!)
-                                }
-                                className="text-muted-foreground hover:bg-background/70 hover:text-foreground h-auto w-full min-w-0 gap-1 rounded-sm bg-transparent px-1 py-0 font-mono text-[9px] font-normal transition sm:text-[10px]"
-                                aria-label={`Copy model id ${agent.model}${agent.reasoningEffort == null ? "" : `; reasoning effort: ${agent.reasoningEffort}`}`}
-                              >
-                                {copiedAgentModelKey === agent.key ? (
-                                  <Check className="h-3 w-3 shrink-0 text-emerald-500" />
-                                ) : (
-                                  <QueueKeyIcon
-                                    queueKey={agent.queueKey}
-                                    model={agent.model}
-                                    size={10}
-                                    className="shrink-0"
-                                  />
-                                )}
-                                <span className="min-w-0 break-all whitespace-normal">
-                                  {agent.model}
-                                  {agent.reasoningEffort != null && (
-                                    <span className="whitespace-nowrap">
-                                      /{agent.reasoningEffort}
-                                    </span>
-                                  )}
-                                </span>
-                              </Button>
-                            ) : (
-                              <div className="text-muted-foreground flex w-full min-w-0 items-center justify-center gap-1 font-mono text-[9px] font-normal sm:text-[10px]">
-                                <span className="min-w-0 truncate">—</span>
-                              </div>
-                            ))}
-                        </div>
-                      )}
-                      {agentIndex < renderedAgents.length - 1 &&
-                        !showLoadingMatrixColumns && (
-                          <div
-                            className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize"
-                            onMouseDown={(event) =>
-                              startResize(
-                                event,
-                                agent.key,
-                                agentColumnWidths[agent.key] ??
-                                  DEFAULT_AGENT_WIDTH
-                              )
-                            }
+                            onCheckedChange={(checked) => {
+                              if (checked) {
+                                selectAllVisible();
+                              } else {
+                                clearSelection();
+                              }
+                            }}
+                            className="h-4 w-4"
                           />
                         )}
-                    </TableHead>
-                  ))}
-                </TableRow>
-              </TableHeader>
-              <TableBody ref={tableBodyRef}>
-                {shouldVirtualize && paddingTop > 0 && (
-                  <TableRow aria-hidden>
-                    <TableCell
-                      colSpan={Math.max(1, renderedAgents.length + 1)}
-                      style={{
-                        height: `${paddingTop}px`,
-                        padding: 0,
-                        border: 0,
-                      }}
-                    />
-                  </TableRow>
-                )}
-                {rowsToRender.map((row) => {
-                  const task = row.task;
-                  const index = row.index;
-                  if (!task) return null;
-                  const isTrialDataPending = !pagesComplete;
-                  const context = getTaskContext(task);
-                  const grouped =
-                    context?.groupedTrialsByAgent ?? EMPTY_TRIAL_MAP;
-                  const orderedTrials = context?.orderedTrials ?? EMPTY_TRIALS;
-                  const trialIndexById =
-                    context?.trialIndexById ?? EMPTY_TRIAL_INDEX;
-                  const trialGroups = context?.trialGroups ?? [];
-                  return (
-                    <TableRow
-                      key={task.id}
-                      data-index={index}
-                      ref={(node) => {
-                        if (node && row.virtualRow) {
-                          rowVirtualizer.measureElement(node);
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          onClick={() =>
+                            setTaskSort((prev) =>
+                              prev === "default"
+                                ? "name-asc"
+                                : prev === "name-asc"
+                                  ? "name-desc"
+                                  : "default"
+                            )
+                          }
+                          title={
+                            taskSort === "default"
+                              ? "Sort by task name (A→Z)"
+                              : taskSort === "name-asc"
+                                ? "Sort by task name (Z→A)"
+                                : "Clear sort (default order)"
+                          }
+                          aria-label="Toggle task sort"
+                          className="hover:bg-background/70 h-auto gap-1 rounded-sm bg-transparent px-1 py-0 text-xs font-normal transition hover:text-blue-400 sm:text-sm"
+                        >
+                          <span>Task</span>
+                          {taskSort === "name-asc" ? (
+                            <ArrowUp className="h-3 w-3" />
+                          ) : taskSort === "name-desc" ? (
+                            <ArrowDown className="h-3 w-3" />
+                          ) : (
+                            <ArrowUpDown className="text-muted-foreground/60 h-3 w-3" />
+                          )}
+                        </Button>
+                      </div>
+                      <div
+                        className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize"
+                        onMouseDown={(event) =>
+                          startResize(event, "task", taskColumnWidth)
                         }
-                      }}
-                      className="group bg-[color:var(--paper-surface)] hover:bg-[color:var(--paper-surface-2)] [&_td]:hover:!bg-[color:var(--paper-surface-2)]"
-                    >
-                      <TableCell
-                        className="sticky left-0 z-10 border-r border-b border-[color:var(--paper-line)] bg-[color:var(--paper-surface)] px-3.5 py-2.5 font-mono text-xs text-[color:var(--paper-ink)] [&:has([role=checkbox])]:pr-3.5"
+                      />
+                    </TableHead>
+                    {renderedAgents.map((agent, agentIndex) => (
+                      <TableHead
+                        role="columnheader"
+                        key={agent.key}
+                        className="relative h-auto border-r border-[color:var(--paper-line)] bg-[color:var(--paper-surface-2)] px-1 py-3 text-center font-mono last:border-r-0 sm:px-2"
                         style={{
-                          width: getDisplayedWidth("task"),
+                          width: getDisplayedWidth(agent.key),
                         }}
                       >
-                        <div className="flex min-w-0 items-start gap-2">
-                          <span className="text-muted-foreground w-5 shrink-0 text-right text-[10px]">
-                            {index + 1}
-                          </span>
-                          {!readOnly && (
-                            <Checkbox
-                              checked={selectedTasks.has(task.id)}
-                              onCheckedChange={() => {
-                                setSelectedTasks((prev) => {
-                                  const next = new Set(prev);
-                                  if (next.has(task.id)) {
-                                    next.delete(task.id);
-                                  } else {
-                                    next.add(task.id);
+                        {showLoadingMatrixColumns ? (
+                          <div className="flex min-w-[60px] flex-col items-center gap-2 py-1 sm:min-w-[80px] md:min-w-[100px]">
+                            <Skeleton className="h-3 w-16" />
+                            <Skeleton className="h-3 w-20" />
+                          </div>
+                        ) : (
+                          <div className="flex min-w-[60px] flex-col items-center gap-0.5 sm:min-w-[80px] md:min-w-[100px]">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              onClick={() =>
+                                handleCopyAgentName(agent.key, agent.agent)
+                              }
+                              className="text-foreground hover:bg-background/70 h-auto max-w-[70px] gap-1 rounded-sm bg-transparent px-1 py-0 text-[10px] font-bold transition hover:text-blue-400 sm:max-w-[110px] sm:text-xs md:max-w-none"
+                              aria-label={`Copy agent name ${agent.agent}`}
+                            >
+                              <QueueKeyIcon
+                                agent={agent.agent}
+                                size={12}
+                                className="shrink-0"
+                              />
+                              <span className="min-w-0 break-all whitespace-normal">
+                                {copiedAgentNameKey === agent.key
+                                  ? "Copied"
+                                  : agent.agent}
+                              </span>
+                            </Button>
+                            {!isBaselineAgentName(agent.agent) &&
+                              (agent.model ? (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  onClick={() =>
+                                    handleCopyAgentModel(
+                                      agent.key,
+                                      agent.model!
+                                    )
                                   }
-                                  return next;
-                                });
-                              }}
-                              className="h-4 w-4"
+                                  className="text-muted-foreground hover:bg-background/70 hover:text-foreground h-auto w-full min-w-0 gap-1 rounded-sm bg-transparent px-1 py-0 font-mono text-[9px] font-normal transition sm:text-[10px]"
+                                  aria-label={`Copy model id ${agent.model}${agent.reasoningEffort == null ? "" : `; reasoning effort: ${agent.reasoningEffort}`}`}
+                                >
+                                  {copiedAgentModelKey === agent.key ? (
+                                    <Check className="h-3 w-3 shrink-0 text-emerald-500" />
+                                  ) : (
+                                    <QueueKeyIcon
+                                      queueKey={agent.queueKey}
+                                      model={agent.model}
+                                      size={10}
+                                      className="shrink-0"
+                                    />
+                                  )}
+                                  <span className="min-w-0 break-all whitespace-normal">
+                                    {agent.model}
+                                    {agent.reasoningEffort != null && (
+                                      <span className="whitespace-nowrap">
+                                        /{agent.reasoningEffort}
+                                      </span>
+                                    )}
+                                  </span>
+                                </Button>
+                              ) : (
+                                <div className="text-muted-foreground flex w-full min-w-0 items-center justify-center gap-1 font-mono text-[9px] font-normal sm:text-[10px]">
+                                  <span className="min-w-0 truncate">—</span>
+                                </div>
+                              ))}
+                          </div>
+                        )}
+                        {agentIndex < renderedAgents.length - 1 &&
+                          !showLoadingMatrixColumns && (
+                            <div
+                              className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize"
+                              onMouseDown={(event) =>
+                                startResize(
+                                  event,
+                                  agent.key,
+                                  agentColumnWidths[agent.key] ??
+                                    DEFAULT_AGENT_WIDTH
+                                )
+                              }
                             />
                           )}
-                          <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-                            <div className="group/task-name flex w-full min-w-0 items-start gap-1.5">
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                onPointerEnter={() => prefetchTask(task)}
-                                onFocus={() => prefetchTask(task)}
-                                onClick={() =>
-                                  openTaskInDrawer(task, {
-                                    orderedTasks: filteredTasks,
-                                    taskIndex: index,
-                                  })
-                                }
-                                className="h-auto min-w-0 flex-1 cursor-pointer justify-start bg-transparent p-0 text-left font-mono text-[11.5px] leading-snug font-normal break-all whitespace-normal text-[color:var(--paper-ink)] transition-colors hover:bg-transparent hover:text-[color:oklch(40%_0.1_240)]"
-                              >
-                                {task.name}
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                onClick={(event) =>
-                                  handleCopyTaskName(event, task)
-                                }
-                                className={`h-5 w-5 shrink-0 rounded-sm bg-transparent text-[color:var(--paper-ink-3)] opacity-0 transition group-hover/task-name:opacity-100 hover:bg-[color:var(--paper-bg-2)] hover:text-[color:var(--paper-ink)] focus-visible:opacity-100 ${
-                                  copiedTaskNameId === task.id
-                                    ? "text-emerald-600 opacity-100"
-                                    : ""
-                                }`}
-                                aria-label={`Copy task name ${task.name}`}
-                                title={
-                                  copiedTaskNameId === task.id
-                                    ? "Copied"
-                                    : "Copy task name"
-                                }
-                              >
-                                {copiedTaskNameId === task.id ? (
-                                  <Check className="h-3.5 w-3.5" />
-                                ) : (
-                                  <Copy className="h-3.5 w-3.5" />
-                                )}
-                              </Button>
-                            </div>
-                            <div className="flex w-full min-w-0 flex-wrap items-center gap-1.5">
-                              {showAnalysis && (
-                                <TaskVerdictChip
-                                  task={task}
-                                  // Settled agent trials this verdict's run
-                                  // did not grade (baselines never are).
-                                  ungradedSettled={
-                                    orderedTrials.filter(
-                                      (t) =>
-                                        (t.kind ?? "agent") === "agent" &&
-                                        !isBaselineAgentName(t.agent) &&
-                                        (t.status === "success" ||
-                                          t.status === "failed") &&
-                                        !t.analysis?._graded_by &&
-                                        !t.analysis?.classification
-                                    ).length
-                                  }
-                                  onOpen={
-                                    onTaskSelect
-                                      ? () =>
-                                          openTaskInDrawer(task, {
-                                            orderedTasks: filteredTasks,
-                                            taskIndex: index,
-                                          })
-                                      : undefined
-                                  }
-                                  onPrefetch={() => prefetchTask(task)}
-                                />
-                              )}
-                              <NewTaskVersionBadge
-                                task={task}
-                                linked={!readOnly}
+                      </TableHead>
+                    ))}
+                  </TableRow>
+                </TableHeader>
+              </table>
+            </div>
+            <div
+              ref={tableContainerRef}
+              className={`overflow-x-auto ${isResizing ? "select-none" : ""}`}
+            >
+              <table
+                role="presentation"
+                className="w-full min-w-[960px] caption-bottom text-sm"
+                style={tableStyle}
+              >
+                {tableColumns}
+                <TableBody ref={tableBodyRef} role="rowgroup">
+                  {shouldVirtualize && paddingTop > 0 && (
+                    <TableRow aria-hidden>
+                      <TableCell
+                        colSpan={Math.max(1, renderedAgents.length + 1)}
+                        style={{
+                          height: `${paddingTop}px`,
+                          padding: 0,
+                          border: 0,
+                        }}
+                      />
+                    </TableRow>
+                  )}
+                  {rowsToRender.map((row) => {
+                    const task = row.task;
+                    const index = row.index;
+                    if (!task) return null;
+                    const isTrialDataPending = !pagesComplete;
+                    const context = getTaskContext(task);
+                    const grouped =
+                      context?.groupedTrialsByAgent ?? EMPTY_TRIAL_MAP;
+                    const orderedTrials =
+                      context?.orderedTrials ?? EMPTY_TRIALS;
+                    const trialIndexById =
+                      context?.trialIndexById ?? EMPTY_TRIAL_INDEX;
+                    const trialGroups = context?.trialGroups ?? [];
+                    return (
+                      <TableRow
+                        role="row"
+                        key={task.id}
+                        data-index={index}
+                        ref={(node) => {
+                          if (node && row.virtualRow) {
+                            rowVirtualizer.measureElement(node);
+                          }
+                        }}
+                        className="group bg-[color:var(--paper-surface)] hover:bg-[color:var(--paper-surface-2)] [&_td]:hover:!bg-[color:var(--paper-surface-2)]"
+                      >
+                        <TableCell
+                          role="cell"
+                          className="sticky left-0 z-10 border-r border-b border-[color:var(--paper-line)] bg-[color:var(--paper-surface)] px-3.5 py-2.5 font-mono text-xs text-[color:var(--paper-ink)] [&:has([role=checkbox])]:pr-3.5"
+                          style={{
+                            width: getDisplayedWidth("task"),
+                          }}
+                        >
+                          <div className="flex min-w-0 items-start gap-2">
+                            <span className="text-muted-foreground w-5 shrink-0 text-right text-[10px]">
+                              {index + 1}
+                            </span>
+                            {!readOnly && (
+                              <Checkbox
+                                checked={selectedTasks.has(task.id)}
+                                onCheckedChange={() => {
+                                  setSelectedTasks((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(task.id)) {
+                                      next.delete(task.id);
+                                    } else {
+                                      next.add(task.id);
+                                    }
+                                    return next;
+                                  });
+                                }}
+                                className="h-4 w-4"
                               />
+                            )}
+                            <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+                              <div className="group/task-name flex w-full min-w-0 items-start gap-1.5">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  onPointerEnter={() => prefetchTask(task)}
+                                  onFocus={() => prefetchTask(task)}
+                                  onClick={() =>
+                                    openTaskInDrawer(task, {
+                                      orderedTasks: filteredTasks,
+                                      taskIndex: index,
+                                    })
+                                  }
+                                  className="h-auto min-w-0 flex-1 cursor-pointer justify-start bg-transparent p-0 text-left font-mono text-[11.5px] leading-snug font-normal break-all whitespace-normal text-[color:var(--paper-ink)] transition-colors hover:bg-transparent hover:text-[color:oklch(40%_0.1_240)]"
+                                >
+                                  {task.name}
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={(event) =>
+                                    handleCopyTaskName(event, task)
+                                  }
+                                  className={`h-5 w-5 shrink-0 rounded-sm bg-transparent text-[color:var(--paper-ink-3)] opacity-0 transition group-hover/task-name:opacity-100 hover:bg-[color:var(--paper-bg-2)] hover:text-[color:var(--paper-ink)] focus-visible:opacity-100 ${
+                                    copiedTaskNameId === task.id
+                                      ? "text-emerald-600 opacity-100"
+                                      : ""
+                                  }`}
+                                  aria-label={`Copy task name ${task.name}`}
+                                  title={
+                                    copiedTaskNameId === task.id
+                                      ? "Copied"
+                                      : "Copy task name"
+                                  }
+                                >
+                                  {copiedTaskNameId === task.id ? (
+                                    <Check className="h-3.5 w-3.5" />
+                                  ) : (
+                                    <Copy className="h-3.5 w-3.5" />
+                                  )}
+                                </Button>
+                              </div>
+                              <div className="flex w-full min-w-0 flex-wrap items-center gap-1.5">
+                                {showAnalysis && (
+                                  <TaskVerdictChip
+                                    task={task}
+                                    // Settled agent trials this verdict's run
+                                    // did not grade (baselines never are).
+                                    ungradedSettled={
+                                      orderedTrials.filter(
+                                        (t) =>
+                                          (t.kind ?? "agent") === "agent" &&
+                                          !isBaselineAgentName(t.agent) &&
+                                          (t.status === "success" ||
+                                            t.status === "failed") &&
+                                          !t.analysis?._graded_by &&
+                                          !t.analysis?.classification
+                                      ).length
+                                    }
+                                    onOpen={
+                                      onTaskSelect
+                                        ? () =>
+                                            openTaskInDrawer(task, {
+                                              orderedTasks: filteredTasks,
+                                              taskIndex: index,
+                                            })
+                                        : undefined
+                                    }
+                                    onPrefetch={() => prefetchTask(task)}
+                                  />
+                                )}
+                                <NewTaskVersionBadge
+                                  task={task}
+                                  linked={!readOnly}
+                                />
 
-                              {(() => {
-                                // The version these trials ran, as the drawer shows.
-                                const taskVersion =
-                                  resolveExperimentTaskVersion(task);
-                                const showVersion =
-                                  showAnalysis && taskVersion != null;
-                                const cost = sumTaskTrialCost(orderedTrials);
-                                const showCost =
-                                  !readOnly &&
-                                  cost.pricedCount > 0 &&
-                                  hasDisplayableCostUsd(cost.costUsd);
+                                {(() => {
+                                  // The version these trials ran, as the drawer shows.
+                                  const taskVersion =
+                                    resolveExperimentTaskVersion(task);
+                                  const showVersion =
+                                    showAnalysis && taskVersion != null;
+                                  const cost = sumTaskTrialCost(orderedTrials);
+                                  const showCost =
+                                    !readOnly &&
+                                    cost.pricedCount > 0 &&
+                                    hasDisplayableCostUsd(cost.costUsd);
 
-                                if (!showVersion && !showCost) return null;
+                                  if (!showVersion && !showCost) return null;
 
-                                const marks = costEstimateMarks(
-                                  cost.hasEstimated,
-                                  cost.hasNative
-                                );
-                                const costTone = cost.hasEstimated
-                                  ? "text-amber-700 dark:text-amber-400"
-                                  : "text-[color:var(--paper-ink-3)]";
+                                  const marks = costEstimateMarks(
+                                    cost.hasEstimated,
+                                    cost.hasNative
+                                  );
+                                  const costTone = cost.hasEstimated
+                                    ? "text-amber-700 dark:text-amber-400"
+                                    : "text-[color:var(--paper-ink-3)]";
 
-                                return (
-                                  <div className="ml-auto flex shrink-0 items-center gap-1.5 leading-none">
-                                    {showVersion && (
-                                      <span className="inline-flex items-center rounded-[3px] bg-[color:var(--paper-bg-2)] px-1 py-px font-mono text-[9.5px] leading-none font-medium text-[color:var(--paper-ink-3)]">
-                                        v{taskVersion}
-                                      </span>
-                                    )}
-                                    {showCost && (
-                                      <span className="inline-flex items-center gap-1">
-                                        <Tooltip>
-                                          <TooltipTrigger asChild>
-                                            <span
-                                              className={`inline-flex items-center font-mono text-[9px] leading-none font-medium tabular-nums ${costTone}`}
-                                            >
-                                              {marks.prefix}
-                                              {formatCostUsd(cost.costUsd)}
-                                              {marks.suffix}
-                                            </span>
-                                          </TooltipTrigger>
-                                          <TooltipContent>
-                                            Total cost across {cost.pricedCount}{" "}
-                                            priced trial
-                                            {cost.pricedCount === 1 ? "" : "s"}
-                                            {cost.hasEstimated && cost.hasNative
-                                              ? " · * mixes native + token-estimated pricing"
-                                              : cost.hasEstimated
-                                                ? " · ~ token-estimated pricing"
-                                                : ""}
-                                          </TooltipContent>
-                                        </Tooltip>
-                                      </span>
-                                    )}
-                                  </div>
-                                );
-                              })()}
-                              {/* Jump from the experiment to this task's own
+                                  return (
+                                    <div className="ml-auto flex shrink-0 items-center gap-1.5 leading-none">
+                                      {showVersion && (
+                                        <span className="inline-flex items-center rounded-[3px] bg-[color:var(--paper-bg-2)] px-1 py-px font-mono text-[9.5px] leading-none font-medium text-[color:var(--paper-ink-3)]">
+                                          v{taskVersion}
+                                        </span>
+                                      )}
+                                      {showCost && (
+                                        <span className="inline-flex items-center gap-1">
+                                          <Tooltip>
+                                            <TooltipTrigger asChild>
+                                              <span
+                                                className={`inline-flex items-center font-mono text-[9px] leading-none font-medium tabular-nums ${costTone}`}
+                                              >
+                                                {marks.prefix}
+                                                {formatCostUsd(cost.costUsd)}
+                                                {marks.suffix}
+                                              </span>
+                                            </TooltipTrigger>
+                                            <TooltipContent>
+                                              Total cost across{" "}
+                                              {cost.pricedCount} priced trial
+                                              {cost.pricedCount === 1
+                                                ? ""
+                                                : "s"}
+                                              {cost.hasEstimated &&
+                                              cost.hasNative
+                                                ? " · * mixes native + token-estimated pricing"
+                                                : cost.hasEstimated
+                                                  ? " · ~ token-estimated pricing"
+                                                  : ""}
+                                            </TooltipContent>
+                                          </Tooltip>
+                                        </span>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
+                                {/* Jump from the experiment to this task's own
                                 page. Hidden on the read-only share view since
                                 /tasks/[id] is an authenticated route. */}
-                              {!readOnly && (
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Link
-                                      prefetch={false}
-                                      href={`/tasks/${encodeURIComponent(task.id)}`}
-                                      aria-label={`Open task page for ${task.name}`}
-                                      className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-sm bg-transparent text-[color:var(--paper-ink-3)] transition hover:bg-[color:var(--paper-bg-2)] hover:text-[color:var(--paper-ink)]"
-                                    >
-                                      <ArrowUpRight className="h-3.5 w-3.5" />
-                                    </Link>
-                                  </TooltipTrigger>
-                                  <TooltipContent>
-                                    Open task page
-                                  </TooltipContent>
-                                </Tooltip>
-                              )}
+                                {!readOnly && (
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Link
+                                        prefetch={false}
+                                        href={`/tasks/${encodeURIComponent(task.id)}`}
+                                        aria-label={`Open task page for ${task.name}`}
+                                        className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-sm bg-transparent text-[color:var(--paper-ink-3)] transition hover:bg-[color:var(--paper-bg-2)] hover:text-[color:var(--paper-ink)]"
+                                      >
+                                        <ArrowUpRight className="h-3.5 w-3.5" />
+                                      </Link>
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                      Open task page
+                                    </TooltipContent>
+                                  </Tooltip>
+                                )}
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      </TableCell>
-                      {renderedAgents.map((agent) => {
-                        const trials = grouped.get(agent.key) ?? EMPTY_TRIALS;
-                        return (
-                          <TableCell
-                            key={`${task.id}-${agent.key}`}
-                            className="border-r border-b border-[color:var(--paper-line)] bg-[color:var(--paper-surface)] px-3.5 py-2 text-center last:border-r-0"
-                            style={{
-                              width: getDisplayedWidth(agent.key),
-                            }}
-                          >
-                            {trials.length === 0 ? (
-                              isTrialDataPending ? (
-                                <div className="flex items-center justify-center gap-1">
-                                  <Skeleton className="h-5 w-5 rounded-sm" />
-                                  <Skeleton className="h-5 w-5 rounded-sm" />
-                                </div>
+                        </TableCell>
+                        {renderedAgents.map((agent) => {
+                          const trials = grouped.get(agent.key) ?? EMPTY_TRIALS;
+                          return (
+                            <TableCell
+                              role="cell"
+                              key={`${task.id}-${agent.key}`}
+                              className="border-r border-b border-[color:var(--paper-line)] bg-[color:var(--paper-surface)] px-3.5 py-2 text-center last:border-r-0"
+                              style={{
+                                width: getDisplayedWidth(agent.key),
+                              }}
+                            >
+                              {trials.length === 0 ? (
+                                isTrialDataPending ? (
+                                  <div className="flex items-center justify-center gap-1">
+                                    <Skeleton className="h-5 w-5 rounded-sm" />
+                                    <Skeleton className="h-5 w-5 rounded-sm" />
+                                  </div>
+                                ) : (
+                                  <span className="text-muted-foreground text-xs">
+                                    —
+                                  </span>
+                                )
                               ) : (
-                                <span className="text-muted-foreground text-xs">
-                                  —
-                                </span>
-                              )
-                            ) : (
-                              <div className="flex flex-wrap justify-center gap-[3px]">
-                                {trials.map((trial, trialIndex) => {
-                                  const status = getMatrixStatus(
-                                    trial.status,
-                                    trial.reward,
-                                    trial.error_message
-                                  );
-                                  const config = STATUS_CONFIG[status];
-                                  const isDimmed = dimmedStatuses.has(status);
-                                  const dimClass =
-                                    isDimmed && status !== "harness-error"
-                                      ? "opacity-25"
+                                <div className="flex flex-wrap justify-center gap-[3px]">
+                                  {trials.map((trial, trialIndex) => {
+                                    const status = getMatrixStatus(
+                                      trial.status,
+                                      trial.reward,
+                                      trial.error_message
+                                    );
+                                    const config = STATUS_CONFIG[status];
+                                    const isDimmed = dimmedStatuses.has(status);
+                                    const dimClass =
+                                      isDimmed && status !== "harness-error"
+                                        ? "opacity-25"
+                                        : "";
+                                    const analysisIndicator = showAnalysis
+                                      ? getAnalysisIndicator(trial)
+                                      : null;
+                                    const analysisLegendKey = showAnalysis
+                                      ? getAnalysisLegendKey(trial)
+                                      : null;
+                                    const analysisDimClass =
+                                      analysisLegendKey &&
+                                      dimmedAnalysisKeys.has(analysisLegendKey)
+                                        ? "opacity-25"
+                                        : "";
+                                    const baseTitle = getTrialTitle(
+                                      trial,
+                                      status
+                                    );
+                                    const isPartial = status === "partial";
+                                    const partialLabel = isPartial
+                                      ? formatPartialRewardBadgeValue(
+                                          trial.reward
+                                        )
+                                      : null;
+                                    const analysisTitle = analysisIndicator
+                                      ? ` · ${analysisIndicator.title}`
                                       : "";
-                                  const analysisIndicator = showAnalysis
-                                    ? getAnalysisIndicator(trial)
-                                    : null;
-                                  const analysisLegendKey = showAnalysis
-                                    ? getAnalysisLegendKey(trial)
-                                    : null;
-                                  const analysisDimClass =
-                                    analysisLegendKey &&
-                                    dimmedAnalysisKeys.has(analysisLegendKey)
-                                      ? "opacity-25"
-                                      : "";
-                                  const baseTitle = getTrialTitle(
-                                    trial,
-                                    status
-                                  );
-                                  const isPartial = status === "partial";
-                                  const partialLabel = isPartial
-                                    ? formatPartialRewardBadgeValue(
-                                        trial.reward
-                                      )
-                                    : null;
-                                  const analysisTitle = analysisIndicator
-                                    ? ` · ${analysisIndicator.title}`
-                                    : "";
-                                  const fullTitle = `${baseTitle}${analysisTitle}`;
-                                  return (
-                                    <span
-                                      key={trial.id}
-                                      className={`relative inline-flex ${dimClass || analysisDimClass ? "opacity-25" : ""}`}
-                                    >
-                                      <Button
-                                        type="button"
-                                        variant="unstyled"
-                                        onPointerDown={() => {
-                                          if (!readOnly) {
-                                            void preloadTrial("/api", trial.id);
-                                          }
-                                        }}
-                                        onClick={() => {
-                                          const trialIndexInGroup =
-                                            trialIndexById.get(trial.id) ?? 0;
-                                          onTrialSelect?.(trial, task, {
-                                            orderedTrials,
-                                            trialIndex: trialIndexInGroup,
-                                            trialGroups,
-                                            orderedTasks: filteredTasks,
-                                            taskIndex: index,
-                                            taskNavScope: rejectedOnly
-                                              ? "rejected"
-                                              : "experiment",
-                                          });
-                                        }}
-                                        className={`relative grid place-items-center gap-0 p-0 leading-none transition-transform hover:-translate-y-px ${STATUS_GLYPH_BOX} ${config.matrixClass} ${isPartial ? "font-mono text-[9.5px] font-semibold tracking-[-0.02em] tabular-nums" : ""}`}
-                                        style={getRewardStyle(trial.reward)}
-                                        aria-label={`Trial ${trialIndex + 1} ${config.shortLabel}`}
-                                        title={fullTitle}
+                                    const fullTitle = `${baseTitle}${analysisTitle}`;
+                                    return (
+                                      <span
+                                        key={trial.id}
+                                        className={`relative inline-flex ${dimClass || analysisDimClass ? "opacity-25" : ""}`}
                                       >
-                                        {isPartial ? (
-                                          partialLabel
-                                        ) : (
-                                          <StatusIcon status={status} />
+                                        <Button
+                                          type="button"
+                                          variant="unstyled"
+                                          onPointerDown={() => {
+                                            if (!readOnly) {
+                                              void preloadTrial(
+                                                "/api",
+                                                trial.id
+                                              );
+                                            }
+                                          }}
+                                          onClick={() => {
+                                            const trialIndexInGroup =
+                                              trialIndexById.get(trial.id) ?? 0;
+                                            onTrialSelect?.(trial, task, {
+                                              orderedTrials,
+                                              trialIndex: trialIndexInGroup,
+                                              trialGroups,
+                                              orderedTasks: filteredTasks,
+                                              taskIndex: index,
+                                              taskNavScope: rejectedOnly
+                                                ? "rejected"
+                                                : "experiment",
+                                            });
+                                          }}
+                                          className={`relative grid place-items-center gap-0 p-0 leading-none transition-transform hover:-translate-y-px ${STATUS_GLYPH_BOX} ${config.matrixClass} ${isPartial ? "font-mono text-[9.5px] font-semibold tracking-[-0.02em] tabular-nums" : ""}`}
+                                          style={getRewardStyle(trial.reward)}
+                                          aria-label={`Trial ${trialIndex + 1} ${config.shortLabel}`}
+                                          title={fullTitle}
+                                        >
+                                          {isPartial ? (
+                                            partialLabel
+                                          ) : (
+                                            <StatusIcon status={status} />
+                                          )}
+                                        </Button>
+                                        {analysisIndicator && (
+                                          <span
+                                            aria-hidden="true"
+                                            className={`pointer-events-none absolute -top-[1px] -right-[1px] h-[4px] w-[4px] rounded-full ring-[1px] ring-[color:var(--paper-surface)] ${analysisIndicator.dotClass} ${analysisIndicator.animate ? "animate-pulse" : ""}`}
+                                          />
                                         )}
-                                      </Button>
-                                      {analysisIndicator && (
-                                        <span
-                                          aria-hidden="true"
-                                          className={`pointer-events-none absolute -top-[1px] -right-[1px] h-[4px] w-[4px] rounded-full ring-[1px] ring-[color:var(--paper-surface)] ${analysisIndicator.dotClass} ${analysisIndicator.animate ? "animate-pulse" : ""}`}
-                                        />
-                                      )}
-                                    </span>
-                                  );
-                                })}
-                              </div>
-                            )}
-                          </TableCell>
-                        );
-                      })}
+                                      </span>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </TableCell>
+                          );
+                        })}
+                      </TableRow>
+                    );
+                  })}
+                  {shouldVirtualize && paddingBottom > 0 && (
+                    <TableRow aria-hidden>
+                      <TableCell
+                        colSpan={Math.max(1, renderedAgents.length + 1)}
+                        style={{
+                          height: `${paddingBottom}px`,
+                          padding: 0,
+                          border: 0,
+                        }}
+                      />
                     </TableRow>
-                  );
-                })}
-                {shouldVirtualize && paddingBottom > 0 && (
-                  <TableRow aria-hidden>
-                    <TableCell
-                      colSpan={Math.max(1, renderedAgents.length + 1)}
-                      style={{
-                        height: `${paddingBottom}px`,
-                        padding: 0,
-                        border: 0,
-                      }}
-                    />
-                  </TableRow>
-                )}
-                {filteredTasks.length === 0 && !isLoading && (
-                  <TableRow>
-                    <TableCell
-                      colSpan={Math.max(1, renderedAgents.length + 1)}
-                      className="text-muted-foreground py-8 text-center"
-                    >
-                      No tasks found for this experiment
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </table>
+                  )}
+                  {filteredTasks.length === 0 && !isLoading && (
+                    <TableRow role="row">
+                      <TableCell
+                        role="cell"
+                        colSpan={Math.max(1, renderedAgents.length + 1)}
+                        className="text-muted-foreground py-8 text-center"
+                      >
+                        No tasks found for this experiment
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </table>
+            </div>
           </div>
         </div>
       </div>

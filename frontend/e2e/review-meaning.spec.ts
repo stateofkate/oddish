@@ -117,7 +117,7 @@ test.describe("real components with local fixture API", () => {
       const header = page.locator("thead");
       await expect(page.locator("tbody tr[data-index]").first()).toBeVisible();
       await page.evaluate(() => {
-        const table = document.querySelector("table")!;
+        const table = document.querySelector("tbody")!.closest("table")!;
         window.scrollTo(
           0,
           table.getBoundingClientRect().top + window.scrollY + 500
@@ -136,11 +136,13 @@ test.describe("real components with local fixture API", () => {
       const before = await agentHeader.evaluate(
         (element) => element.getBoundingClientRect().left
       );
-      const distance = await page.locator("table").evaluate((table) => {
-        const wrapper = table.parentElement!;
-        wrapper.scrollLeft = 120;
-        return wrapper.scrollLeft;
-      });
+      const distance = await page
+        .locator("table:has(tbody)")
+        .evaluate((table) => {
+          const wrapper = table.parentElement!;
+          wrapper.scrollLeft = 120;
+          return wrapper.scrollLeft;
+        });
       expect(distance).toBeGreaterThan(0);
       await expect
         .poll(() =>
@@ -154,6 +156,40 @@ test.describe("real components with local fixture API", () => {
           taskHeader.evaluate((element) => element.getBoundingClientRect().left)
         )
         .toBeCloseTo(taskLeft, 0);
+      // The header scrolls on its own too (touch, focus, find-in-page); the
+      // body must follow it.
+      const scrollLefts = () =>
+        page.evaluate(() => {
+          const body = document.querySelector("tbody")!.closest("table")!;
+          const head = document.querySelector("thead")!.closest("table")!;
+          return [
+            head.parentElement!.scrollLeft,
+            body.parentElement!.scrollLeft,
+          ];
+        });
+      await header.evaluate((element) => {
+        element.closest("table")!.parentElement!.scrollLeft = 0;
+      });
+      await expect.poll(scrollLefts).toEqual([0, 0]);
+      await header
+        .getByRole("button", { name: /^Copy agent name/ })
+        .last()
+        .focus();
+      await expect
+        .poll(async () => {
+          const [head, body] = await scrollLefts();
+          return head > 0 && Math.abs(head - body) < 1;
+        })
+        .toBe(true);
+      // Screen readers still get one table whose cells sit under the agent
+      // column headers.
+      const results = page.getByRole("table", {
+        name: "Trial results by task and agent",
+      });
+      await expect(results.getByRole("columnheader")).toHaveCount(
+        await header.locator("th").count()
+      );
+      await expect(results.getByRole("row").nth(1)).toBeVisible();
       await expect(
         header.getByRole("button", { name: "Toggle task sort" })
       ).toBeInViewport();
@@ -173,7 +209,7 @@ test.describe("real components with local fixture API", () => {
         const spacer = document.createElement("div");
         spacer.style.height = "1000px";
         document.body.append(spacer);
-        const table = document.querySelector("table")!;
+        const table = document.querySelector("tbody")!.closest("table")!;
         window.scrollTo(
           0,
           table.getBoundingClientRect().bottom + window.scrollY - 30
@@ -357,7 +393,9 @@ test.describe("real components with local fixture API", () => {
       await route.fulfill({ json: panel });
     });
     await page.setViewportSize({ width: 1600, height: 900 });
-    await page.goto("/experiments/review-demo?scenario=older-trials&task=task-a");
+    await page.goto(
+      "/experiments/review-demo?scenario=older-trials&task=task-a"
+    );
     const drawer = page.locator("[data-slot=resizable-drawer]");
     const qa = drawer.getByRole("button", {
       name: "Generate QA verdict for v4",
@@ -369,7 +407,10 @@ test.describe("real components with local fixture API", () => {
       "This experiment ran v4. Add v7 trials to it to run this."
     );
     await expect(
-      drawer.getByRole("button", { name: "Run pre-trial audit v4", exact: true })
+      drawer.getByRole("button", {
+        name: "Run pre-trial audit v4",
+        exact: true,
+      })
     ).toBeDisabled();
     await expect(
       drawer.getByRole("link", {
@@ -411,7 +452,9 @@ test.describe("real components with local fixture API", () => {
     const row = page.getByRole("row").filter({
       has: page.getByRole("button", { name: "Task A", exact: true }),
     });
-    await expect(row.getByText("Verdict accepted", { exact: true })).toBeVisible();
+    await expect(
+      row.getByText("Verdict accepted", { exact: true })
+    ).toBeVisible();
     const drawer = page.locator("[data-slot=resizable-drawer]");
     await expect(
       drawer.getByText("Verdict accepted", { exact: true })
@@ -573,7 +616,9 @@ test.describe("real components with local fixture API", () => {
         exact: true,
       })
     ).toBeVisible();
-    await expect(page.getByText("ANALYSIS FAILED", { exact: true })).toBeVisible();
+    await expect(
+      page.getByText("ANALYSIS FAILED", { exact: true })
+    ).toBeVisible();
     await expect(
       page.getByText(
         "Trajectory analysis worker stopped before saving its report.",
@@ -829,7 +874,9 @@ test.describe("real components with local fixture API", () => {
     await expect(
       page.getByText("Execution could not run", { exact: true })
     ).toBeVisible();
-    await page.getByRole("button", { name: "1 Verdict rejected", exact: true }).click();
+    await page
+      .getByRole("button", { name: "1 Verdict rejected", exact: true })
+      .click();
     await expect(page).toHaveURL(/verdict=rejected/);
     await expect(page.getByText("Task A", { exact: true })).toBeVisible();
     await page.goBack();
@@ -982,7 +1029,9 @@ test.describe("real components with local fixture API", () => {
     await expect(
       page.getByRole("button", { name: "0 No verdict yet", exact: true })
     ).toHaveCount(0);
-    await page.getByRole("button", { name: "3 Verdict accepted", exact: true }).click();
+    await page
+      .getByRole("button", { name: "3 Verdict accepted", exact: true })
+      .click();
     await expect(
       page.getByRole("button", { name: "Unreviewed version", exact: true })
     ).toHaveCount(0);
