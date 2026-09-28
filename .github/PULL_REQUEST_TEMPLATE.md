@@ -23,4 +23,6 @@ For visible changes, include a screenshot or preview link with the state named.>
 <Explain the tests written or updated, what they prove, and observed results.
 Include meaningful failures or coverage gaps; omit resolved setup problems.>
 
+- [ ] Updated affected `docs/customer/` guides and packaged CLI skill, or explained why no guide change is needed.
+
 ---

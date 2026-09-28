@@ -3,7 +3,7 @@
 This file is the process guide: how a change gets from a branch to
 production, what a pull request must contain, and which documents a change
 obligates you to update. Architecture and gotchas live in `AGENTS.md`.
-End-user CLI documentation lives in `DOCS.md`.
+Customer CLI guides live in `docs/customer/`; `DOCS.md` indexes them.
 
 ## The three stages
 
@@ -157,7 +157,7 @@ procedure.
 
 | You changed | Update |
 |---|---|
-| CLI commands or options in `oddish/src/oddish/cli/` | `DOCS.md`, the command list in `oddish/README.md`, and the packaged skill under `oddish/src/oddish/assets/skills/oddish/` (served by `oddish skill`) |
+| CLI commands or options in `oddish/src/oddish/cli/` | `docs/customer/`, the command list in `oddish/README.md`, and the packaged skill under `oddish/src/oddish/assets/skills/oddish/` (served by `oddish skill`) |
 | API contracts, queue behavior, or storage layout | `AGENTS.md` |
 | `backend/` auth, deployment, or worker orchestration | `AGENTS.md` and `backend/README.md` |
 | `frontend/` routing, API proxy structure, or auth behavior | `AGENTS.md` and `frontend/README.md` |
@@ -185,3 +185,7 @@ integrations, cloud-only policy) belong in `backend/`.
   `backend/`. A migration parented on a `down_revision` that is no longer
   staging's head fails the `migration-head-guard` check; re-point it.
 - Self-hosting: `SELF_HOSTING.md`.
+
+## Customer docs publishing
+
+Keep customer guides in `docs/customer/` and update them with the feature they describe. The separate `abundant-ai/abundant-docs` platform imports those files after publication. Its failures never block application tests, merges or deployments. No docs website or required docs workflow belongs in this repository.

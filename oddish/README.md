@@ -1,148 +1,49 @@
 # Oddish CLI
 
-> Run Harbor tasks on Oddish infrastructure.
+Oddish runs Harbor tasks, records trial progress and scores, and downloads their logs and artifacts. Harbor is the tool that executes the task format.
 
-`oddish` is a Python CLI for submitting Harbor tasks, running multi-trial sweeps,
-monitoring experiments, and pulling logs and artifacts back to disk. If you
-already use `harbor run`, Oddish adds persistent state, retries, queueing, and
-better operational tooling around the same task format.
+## Install
 
-Homebrew manages the CLI's Python `3.13` runtime.
-
-## Quick Start
-
-Requires Homebrew and GitHub read access to `abundant-ai/homebrew-tap`.
+You need Homebrew and GitHub read access to `abundant-ai/homebrew-tap`, the private repository distributing the installer. Homebrew supplies Python 3.13.
 
 ```bash
 brew install gh
 gh auth login
 gh auth setup-git
 brew install abundant-ai/tap/oddish
-
-export ODDISH_API_KEY="ok_..."
-
-# Submit a run
-oddish run -d swebench@1.0 -a codex -m openai/gpt-5.2 --n-trials 3
-
-# Explicitly use an operator-enabled ephemeral EC2 backend
-# oddish run ./my-task --env ec2 -a codex -m openai/gpt-5.2
-
-# GPU tasks default to Thunder on a Thunder-enabled deployment; --env thunder
-# selects it explicitly, --env modal opts a GPU task back onto Modal
-# oddish run ./my-task --env thunder -a nop --n-trials 1 --max-trial-attempts 1
-
-# Append trials to a task an experiment already runs; add
-# --use-default-version to target the task's default version instead
-# oddish run --task <task_id> -E <experiment> -a codex --n-trials 2
-
-# List and watch progress
-oddish ls
-oddish status
-oddish status <task_id> --watch
-
-# Pull logs and artifacts locally
-oddish pull <task_id> --watch
+oddish version
 ```
 
-Omitted reasoning effort uses the agent’s own default.
-Use `--agent-kwarg reasoning_effort=high` (or another supported value) to set it explicitly.
+Set `ODDISH_API_KEY` to the key supplied for your own workspace before using API-backed commands. A docs invitation does not grant workspace access or an API key. Never paste the key into shared logs or source files.
 
-The CLI targets Oddish Cloud by default. All API-backed commands require
-`ODDISH_API_KEY`. For self-deployed instances, also set `ODDISH_API_URL`.
-
-## Installation
-
-After authenticating GitHub as shown above:
-
-```bash
-brew install abundant-ai/tap/oddish
-brew update && brew upgrade abundant-ai/tap/oddish
-```
-
-New Oddish releases are no longer published to PyPI. Existing PyPI users
-should follow the [migration instructions](../DOCS.md#installation) to receive
-new CLI releases through Homebrew.
-
-Common environment variables:
-
-```bash
-export ODDISH_API_KEY="ok_..."
-
-# Point at a self-deployed instance instead of Oddish Cloud
-# export ODDISH_API_URL="https://<workspace>--api.modal.run"
-
-# Optional dashboard override
-# export ODDISH_DASHBOARD_URL="https://www.oddish.app"
-```
-
-Controllers may pass W3C headers in `ODDISH_TRACE_CONTEXT` JSON to link CLI API
-calls to a parent trace. See [`../DOCS.md`](../DOCS.md). Storage requests do not
-receive this context.
-
-Need to deploy your own stack? See [`../SELF_HOSTING.md`](../SELF_HOSTING.md).
-Need package internals, architecture, or development notes? See [`AGENTS.md`](../AGENTS.md).
+Update with `brew update` followed by `brew upgrade abundant-ai/tap/oddish`. New versions are no longer published to PyPI. See the [installation and migration guide](../docs/customer/getting-started.md).
 
 ## Commands
 
-- `oddish qa evals start --version SHA --agent claude-code --model openai/gpt-6-sol --model openai/gpt-6-luna` — validate one case per model, then save full golden-set comparisons; `status`, `run`, and `diff` inspect them.
-- `oddish qa export --ids-file task-ids.txt --output qa-findings.csv` — export existing `must_fix` findings and a companion task-summary CSV; accepts positional task IDs and `--all-versions`.
+| Task | Command |
+| --- | --- |
+| Check local task files | `oddish preflight PATH` |
+| Register files / import existing trials | `oddish upload PATH` |
+| Submit trials / retry work | `oddish run` |
+| Browse / inspect / stream live output | `oddish ls`, `oddish status`, `oddish logs` |
+| Download outputs | `oddish pull ID` |
+| Inspect recorded spending | `oddish costs` |
+| Stop work / remove data | `oddish cancel`, `oddish delete` |
+| Combine / collect / edit results | `oddish combine`, `oddish collect`, `oddish experiment` |
+| Publish / revoke a public share | `oddish publish`, `oddish unpublish` |
+| Review task quality | `oddish qa export`, `oddish qa evals`, `oddish qa-issues`, `oddish backfill-analysis`, `oddish assign` |
+| Review and manage shipments | `oddish delivery` |
+| Print a dashboard link | `oddish link` |
+| Read / install the packaged agent guide | `oddish skill` |
+| Inspect / update the local installation | `oddish version`, `oddish update` |
 
-Run `oddish --help` or see [`../DOCS.md`](../DOCS.md) for the full CLI
-reference. The main commands are:
+Replace `PATH` with a local folder and `ID` with an identifier returned by Oddish. Run `oddish COMMAND --help` for installed options. Submitting or retrying trials can incur charges. `collect` publishes by default; pass `--no-publish` for a private collection.
 
-- `oddish run` — submit local tasks, registry datasets, sweeps, retries, and
-  task-level QA retries. Hosted environments are `modal`, `daytona`, `ec2`,
-  `gke`, `archil`, `thunder`, and `numinous`; Archil, EC2, and Numinous are controlled by
-  deployment settings. When Numinous is enabled it is the first CPU candidate;
-  otherwise Daytona is the hosted CPU baseline and the Archil rollout can select
-  the whole sweep. After two failed Archil attempts, an allowed retry uses Modal. GPU tasks are placed by the
-  deployment: Thunder when it enables it, otherwise Modal, and Modal whenever
-  the run needs a private-registry pull. Numinous GPU registration has a
-  separate deployment flag.
-- `oddish upload` — register task bundles or import off-oddish Harbor trial results; `--overwrite-current-version` corrects the selected version in place.
-- `oddish preflight` — check task name, internet/reward declarations, optional GPU types, and task integrity before `run` or `upload` (pass `--force` there to submit anyway).
-- `oddish ls` / `oddish status` — browse tasks (including lab history, QA, author, model, run coverage (`--run-coverage`), model-score sorting, and trajectory-metric filters; `--filter-options`, `--count`, and `--ids` for selection) and inspect progress. `oddish status <trial_id>` shows single-trial detail; `--detail`/`--versions` show a task's version history and cost rollups; `--queue` shows queue & worker scheduler diagnostics.
-- `oddish logs` — stream a running trial's live transcript and cost estimate (`--follow` to poll until it ends); finished trials are served by `oddish pull` instead.
-- `oddish costs` — billable-spend accounting (org-wide, per user, or per task with `--task`/`--experiment`).
-- `oddish admin concurrency` — inspect, set, or clear operator queue-key concurrency overrides with verified readback.
-- `oddish cost-exclusions` — hide spend for models and experiments that were never really paid for.
-- `oddish cancel` — cancel active runs or task-level QA.
-- `oddish pull` — download logs, results, trajectories, and artifacts; `--debug-files` lists a trial's raw S3 inventory instead.
-- `oddish combine` — merge finished trials from multiple experiments.
-- `oddish collect` / `oddish experiment create` — build read-only trial collections; `collect` can auto-publish a share link.
-- `oddish link` — print the dashboard URL for a task or trial (built locally; needs no API key).
-- `oddish delete` — delete trials against hosted Oddish (admin key); whole-task/experiment deletes are refused for Modal-hosted APIs, and a standalone core server has no delete endpoints at all.
-- `oddish publish` / `oddish unpublish` — toggle public read-only experiment sharing. QA is hidden by default; admins can enable **Show QA** in the dashboard.
-- `oddish backfill-analysis` — specialized QA tool.
-- `oddish delivery` — create and manage delivery checklists; `customers` / `create-customer` manage destinations, and `create` / `add --tasks-file` accept a complete `oddish ls --ids --json` selection. `oddish ls --delivery-history` shows recorded shipments. `oddish ls --share-selection NAME` saves matching task IDs for the organization; `--selection-id ID` reopens them.
-- `oddish delivery qa rerun NAME` — queue pre-trial and post-trial QA for all current task versions in an active delivery; `--limit 100 --offset 0` selects a batch in task-ID order, and `--dry-run` previews it. Keep membership unchanged between batches. `oddish delivery qa status NAME` shows each stage and its counts. Both accept `--json`.
-- `oddish qa-issues` — count QA issues by plain-English category for one experiment (`-e ID`) or one delivery (`-d ID|NAME`); `-c CATEGORY` lists that category's tasks and issues; `--json` for scripts.
-- `oddish assign` — assign QA review ownership by task IDs or `--tasks-file`; active delivery boards show the owner.
-- `oddish skill` — print the packaged SKILL.md or install the complete agent skill with its reference files.
-- `oddish version` — print the installed CLI version; `--check` prints Homebrew check instructions for Homebrew installs or compares legacy installs with PyPI. No API key.
-- `oddish update` — print Homebrew upgrade instructions for Homebrew installs; legacy PyPI installs can only upgrade to previously published PyPI versions. No API key.
+Customer guides have one maintained source in [docs/customer](../docs/customer/getting-started.md). [DOCS.md](../DOCS.md) indexes them and retained internal references. The website rollout and invitation requirements are recorded there. Operator commands such as `admin concurrency` and `cost-exclusions` belong in the [internal CLI reference](../docs/cli-advanced-internal.md).
 
-Most commands support `--json` for machine-readable output; `oddish logs`,
-`oddish link`, and `oddish skill` do not.
+Delivery QA: `oddish delivery qa rerun NAME --dry-run` previews the tasks; `oddish delivery qa rerun NAME` requests both review stages; `oddish delivery qa status NAME` reads their progress. Use `--limit 100 --offset 0` to select a batch in task-ID order; keep delivery membership unchanged between batches. See the [internal delivery QA reference](../docs/cli-advanced-internal.md#rerun-qa-for-a-delivery).
 
-## Typical Workflow
-
-```bash
-# 1. Submit a run
-oddish run -d swebench@1.0 -a claude-code -m anthropic/claude-sonnet-4-5
-
-# 2. Inspect or watch it later
-oddish status <task_id> --watch
-
-# 3. Pull outputs when you want them locally
-oddish pull <task_id> --watch
-```
-
-## More Technical Docs
-
-- Package internals and implementation notes: [`AGENTS.md`](../AGENTS.md)
-- Complete CLI reference: [`DOCS.md`](../DOCS.md)
-- Self-hosting and deployment: [`../SELF_HOSTING.md`](../SELF_HOSTING.md)
+Self-hosting: [SELF_HOSTING.md](../SELF_HOSTING.md). Package internals: [AGENTS.md](../AGENTS.md). Installed agents can still run `oddish skill` without a browser or docs account.
 
 ## License
 
@@ -153,20 +54,3 @@ those terms requires a separate license from the rights holders. Contact
 
 Rights already granted for code released under Apache 2.0 remain in place.
 See [LICENSE-APACHE-2.0](LICENSE-APACHE-2.0). Third-party code keeps its own license.
-
-Delivery sign-off requires a fix or individual acknowledgment for every reported
-task defect, including historical lower-severity findings. The CLI sends the
-reviewed version; new versions require a new decision. See `../DOCS.md`.
-
-### Homebrew installation
-
-The private Homebrew tap requires GitHub read access to `abundant-ai/homebrew-tap`.
-Install `gh` with `brew install gh`, then run `gh auth login` and
-`gh auth setup-git`. Install with `brew install abundant-ai/tap/oddish`.
-Set `ODDISH_API_KEY` for your Oddish organization before making API requests.
-Update with `brew update && brew upgrade abundant-ai/tap/oddish`. Homebrew owns
-this installation; `oddish update` directs you to Homebrew instead of replacing
-it from PyPI. `oddish version --check` prints the Homebrew check command.
-The Homebrew package includes CLI and shared client helpers, not the Oddish
-server, database, or worker implementations. Releases are maintained in
-https://github.com/abundant-ai/homebrew-tap.

@@ -1,0 +1,46 @@
+[
+  {
+    "slug": "getting-started",
+    "title": "Getting started"
+  },
+  {
+    "slug": "concepts",
+    "title": "Terms used in these guides"
+  },
+  {
+    "slug": "guides/first-run",
+    "title": "Run a task"
+  },
+  {
+    "slug": "guides/upload",
+    "title": "Upload task files"
+  },
+  {
+    "slug": "guides/monitoring",
+    "title": "Monitor runs"
+  },
+  {
+    "slug": "guides/results",
+    "title": "Download results"
+  },
+  {
+    "slug": "guides/retries",
+    "title": "Retry or cancel"
+  },
+  {
+    "slug": "guides/sharing",
+    "title": "Share results"
+  },
+  {
+    "slug": "guides/deliveries",
+    "title": "Review a delivery"
+  },
+  {
+    "slug": "reference/commands",
+    "title": "Command reference"
+  },
+  {
+    "slug": "troubleshooting",
+    "title": "Troubleshooting"
+  }
+]

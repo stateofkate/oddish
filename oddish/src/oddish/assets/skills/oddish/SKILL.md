@@ -9,6 +9,8 @@ Oddish is the scheduler and results store around Harbor, the task-execution
 harness. Use the installed CLI as the executable contract and this skill for
 the repository rules that are easy to misread from command output.
 
+Customer guides live in `docs/customer/`; the independent Abundant Docs website requires its own access. A docs account grants no Oddish task membership.
+
 ## Start safely
 
 ```bash

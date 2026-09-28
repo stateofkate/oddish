@@ -1,6 +1,6 @@
 # Oddish Repository Guide
 
-This file is the technical guide for the entire monorepo. End-user CLI docs live in `DOCS.md`.
+This file is the technical guide for the entire monorepo. Customer guides live in `docs/customer/`; `DOCS.md` is their index.
 Manually invoked diagnostics and statistics rebuild commands are indexed in
 `docs/operations-tools.md`; evaluate their operational use before pruning them.
 
@@ -17,9 +17,9 @@ Python `3.13` is required for `oddish` and `backend`. Node.js `20+` and `pnpm` a
 Process rules (the three PR stages, PR hygiene, the documents-to-update
 table, and the compatibility rule) live in `CONTRIBUTING.md`. In short:
 
-- Keep `DOCS.md` focused on end-user CLI workflows; keep `oddish/README.md` as a short package quick start.
+- Keep `docs/customer/` focused on end-user CLI workflows; keep `oddish/README.md` as a short package quick start.
 - Put `oddish` implementation details, architecture notes, and local development guidance here.
-- If you change the CLI surface in `oddish/src/oddish/cli/`, update `DOCS.md`,
+- If you change the CLI surface in `oddish/src/oddish/cli/`, update `docs/customer/`,
   the command list in `oddish/README.md`, and the packaged agent skill under
   `oddish/src/oddish/assets/skills/oddish/` (served by `oddish skill`).
 - If you change API contracts, queue behavior, or storage layout, update this file.
@@ -3351,3 +3351,7 @@ cases are excluded. Run rows, chart tooltips and model rows show scored coverage
 failed counts and pending counts. Pending scores are provisional. Picked subsets,
 preflight checks and runs with no scored cases remain uncharted; the run list
 still exposes their execution counts. No request or response fields changed.
+
+## Customer documentation
+
+The website lives in the separate `abundant-ai/abundant-docs` repository. It imports only approved `docs/customer/` pages and assets. Update these source guides alongside customer-visible changes or explain why no update is needed. Docs importing and publishing must never be required by Oddish CI or merge rules. Internal operations notes stay outside `docs/customer/`.
