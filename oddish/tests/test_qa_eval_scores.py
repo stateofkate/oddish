@@ -300,10 +300,10 @@ async def test_status_scores_each_run_on_the_counted_goldens(session):
     assert shipped.model_name == "claude-sonnet-5"
 
     assert status.production_run_id == ids["shipped"]
-    # A run still replaying is scored but not compared.
-    assert candidate.charted is False
-    assert status.frontier == [ids["shipped"]]
-    assert [(m.runs, m.latest_run_id) for m in status.models] == [(1, ids["shipped"])]
+    # Available scores remain visible while other cases run or await import.
+    assert candidate.charted is True
+    assert status.frontier == [ids["candidate"], ids["shipped"]]
+    assert [(m.runs, m.latest_run_id) for m in status.models] == [(2, ids["candidate"])]
     assert status.cost_per_trial == 2.5 / 3
     spend = status.spend
     assert (spend.total_usd, spend.trials, spend.cost_missing) == (2.5, 6, 2)
@@ -705,3 +705,58 @@ def test_model_aliases_with_different_execution_hashes_share_latest_score(model)
     assert rows[0].runs == 2
     assert old.configuration_sha256 == "old-fingerprint"
     assert new.configuration_sha256 == "new-fingerprint"
+
+@pytest.mark.parametrize(
+    "tail_status,tail_analysis", [(RUNNING, None), (OK, None), (BAD, None)]
+)
+@pytest.mark.parametrize(
+    "subset,preflight", [(False, False), (True, False), (False, True)]
+)
+def test_partial_run_visibility_preserves_scores(
+    tail_status, tail_analysis, subset, preflight
+):
+    rows = [
+        SimpleNamespace(
+            id=f"replay-{i}",
+            task_id="task",
+            source_trial_id=f"source-{i}",
+            original_trial_id=f"source-{i}",
+            experiment_id="run",
+            experiment_name="run",
+            created_at=utcnow(),
+            model="anthropic/claude-sonnet-5-5",
+            agent="claude-code",
+            reasoning_effort=None,
+            configuration_sha256=None,
+            golden_set_sha256=None,
+            prompt_sha256=SHIPPED,
+            prompt_name="",
+            subset=subset,
+            preflight=preflight,
+            status=OK if i == 0 else tail_status,
+            analysis_status=GOOD if i == 0 else tail_analysis,
+            analysis={"classification": "BAD_FAILURE"} if i == 0 else None,
+            cost_usd=0.1,
+            error="worker failed" if tail_status == BAD and i else None,
+        )
+        for i in range(2)
+    ]
+    goldens = {
+        f"source-{i}": QAGoldenCaseModel(
+            id=f"golden-{i}", expected={"classification": "BAD_FAILURE"}
+        )
+        for i in range(2)
+    }
+    [run] = _score_runs(rows, POST, goldens, {})
+    assert run.summary.charted is (not subset and not preflight)
+    assert (run.summary.correct, run.summary.judged, run.summary.accuracy) == (
+        1,
+        1,
+        1.0,
+    )
+    assert run.summary.pending == (0 if tail_status == BAD else 1)
+    assert run.summary.errored == (1 if tail_status == BAD else 0)
+    # With no scored cases there is no percentage to plot, even if all failed.
+    [unscored] = _score_runs(rows[1:], POST, goldens, {})
+    assert unscored.summary.charted is False
+    assert unscored.summary.accuracy is None

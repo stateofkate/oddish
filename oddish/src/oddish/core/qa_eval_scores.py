@@ -309,7 +309,7 @@ def _summary(
         ),
         prompt_sha256=first.prompt_sha256,
         subset=first.subset,
-        charted=not first.subset and judged > 0 and pending == 0,
+        charted=not first.subset and not first.preflight and judged > 0,
         replays=len(cases),
         with_golden=len(cases) - outcomes["off"],
         judged=judged,

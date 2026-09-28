@@ -28,6 +28,7 @@ import {
   configurationKey,
   compareThinkingEffort,
   formatScore,
+  formatRunStatus,
   shortSha,
   type QAEvalRun,
   type QAEvalStatus,
@@ -69,6 +70,7 @@ function RunTooltip({ active, payload }: ChartTooltipProps) {
         {run.cost_per_trial !== null &&
           ` · ${formatCostUsd(run.cost_per_trial)}/trial`}
       </div>
+      <div className="mt-1 text-[color:var(--paper-ink-3)]">{formatRunStatus(run)}</div>
     </div>
   );
 }
@@ -144,6 +146,8 @@ function RunScatter({
           fillOpacity={hover && hover !== model ? 0.2 : 1}
           stroke={ringed ? "var(--paper-ink)" : "var(--paper-surface)"}
           strokeWidth={isSelected ? 2.5 : 1.5}
+          strokeDasharray={run.pending > 0 ? "3 2" : undefined}
+          aria-label={`${run.model_name}: ${formatScore(run)} · ${formatRunStatus(run)}`}
           className="cursor-pointer"
           onClick={() => onSelect(run)}
           onMouseEnter={() => onHover(model)}
@@ -427,6 +431,7 @@ export function RunCharts({
               value: run.accuracy ?? 0,
               color: colors[run.model_name],
               detail: [
+                formatRunStatus(run),
                 run.agent ?? "claude-code",
                 run.cost_per_trial !== null &&
                   `${formatCostUsd(run.cost_per_trial)}/trial`,
@@ -447,6 +452,9 @@ export function RunCharts({
 
   return (
     <>
+      <p className="mb-2 text-xs text-[color:var(--paper-ink-3)]">
+        Accuracy uses scored cases. Failed and pending cases are excluded; pending runs show provisional scores.
+      </p>
       <div className="mb-2 flex flex-wrap items-center gap-2">
         {CHARTS.map((c) => (
           <PaperToggle

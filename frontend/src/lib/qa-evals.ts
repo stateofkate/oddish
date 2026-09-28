@@ -472,6 +472,17 @@ export function formatScore(
   return `${formatAccuracy(run.accuracy)} (${run.correct}/${run.judged})`;
 }
 
+/** Execution coverage alongside accuracy; failures are not wrong model answers. */
+export function formatRunStatus(
+  run: Pick<QAEvalRun, "judged" | "with_golden" | "errored" | "pending">
+): string {
+  return [
+    `${run.judged}/${run.with_golden} scored`,
+    run.errored > 0 && `${run.errored} failed`,
+    run.pending > 0 && `${run.pending} pending`,
+  ].filter(Boolean).join(" · ");
+}
+
 export function shortSha(sha: string): string {
   return sha.slice(0, 8);
 }

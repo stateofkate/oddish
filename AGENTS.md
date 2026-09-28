@@ -3324,3 +3324,11 @@ access. The shared effort selector offers low/medium/high/xhigh/max for 5.5
 while Sonnet 5 retains low/medium/high. Admin QA Evals keeps the existing
 one-golden preflight before full replay. The production QA default remains
 GPT-6 Luna. Launch-day token pricing has a local fallback for cost reports.
+
+QA comparison charts include full-golden runs as soon as a case has a score,
+including runs with failed cases or cases still running/awaiting result import.
+Accuracy remains correct divided by judged cases; execution failures and pending
+cases are excluded. Run rows, chart tooltips and model rows show scored coverage,
+failed counts and pending counts. Pending scores are provisional. Picked subsets,
+preflight checks and runs with no scored cases remain uncharted; the run list
+still exposes their execution counts. No request or response fields changed.

@@ -8,6 +8,7 @@ import {
   QA_EVAL_GROUPS,
   experimentFromInput,
   formatScore,
+  formatRunStatus,
   labelExperimentsUrl,
   labelTrialRequest,
   parseView,
@@ -288,4 +289,12 @@ test("thinking effort sorts by intensity and keeps missing effort distinct from 
     configurationKey(run("r", { reasoning_effort: null })),
     configurationKey(run("r", { reasoning_effort: "none" }))
   );
+});
+
+test("execution counts stay separate from model accuracy", () => {
+  const partial = { accuracy: 21 / 23, correct: 21, judged: 23, with_golden: 25, errored: 1, pending: 1 };
+  assert.equal(formatScore(partial), "91% (21/23)");
+  assert.equal(formatRunStatus(partial), "23/25 scored · 1 failed · 1 pending");
+  assert.equal(formatRunStatus({ ...partial, judged: 0, errored: 25, pending: 0 }), "0/25 scored · 25 failed");
+  assert.equal(formatRunStatus({ ...partial, judged: 25, errored: 0, pending: 0 }), "25/25 scored");
 });

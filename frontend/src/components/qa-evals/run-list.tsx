@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { formatCostUsd, formatDate } from "@/lib/format";
 import {
   formatScore,
+  formatRunStatus,
   configurationLabel,
   shortSha,
   type QAEvalRun,
@@ -72,14 +73,11 @@ function RunRow({
               {formatScore(run)}
             </span>
           </span>
-        ) : (
-          (run.pending > 0 || run.with_golden > 0) && (
-            <span className="block text-right text-xs text-[color:var(--paper-ink-3)]">
-              {run.pending > 0
-                ? `running · ${run.pending} of ${run.replays} left`
-                : `no judged cases · ${run.errored} errored`}
-            </span>
-          )
+        ) : null}
+        {run.with_golden > 0 && (
+          <span className="block text-right text-xs text-[color:var(--paper-ink-3)]">
+            {formatRunStatus(run)}
+          </span>
         )}
       </button>
     </li>

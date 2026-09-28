@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense } from "react";
+import { RunList } from "@/components/qa-evals/run-list";
 import { RunCharts } from "@/components/qa-evals/run-charts";
 import { useQAEvalsView } from "@/components/qa-evals/use-qa-evals-view";
 import type { QAEvalRun, QAEvalStatus } from "@/lib/qa-evals";
@@ -41,7 +42,7 @@ const runs = [
   run("luna-low", "gpt-6-luna", "low", 0.72, 0.05, "28"),
   run("sol-unknown", "openai/gpt-6-sol", null, 0.76, 1.86, "28"),
   run("luna-new", "gpt-6-luna", "high", 0.8, 0.18, "28"),
-  run("sonnet-new", "claude-sonnet-5", "high", 0.84, 0.62, "28"),
+  { ...run("sonnet-new", "claude-sonnet-5", "high", 21 / 23, 0.62, "28"), judged: 23, correct: 21, errored: 1, pending: 1 },
 ];
 const status: QAEvalStatus = {
   replayable: true,
@@ -71,6 +72,9 @@ function Chart() {
         selected={view.run}
         onSelect={(run) => show({ run: run.experiment_id })}
       />
+      <section aria-label="Runs" className="mt-4 max-w-sm">
+        <RunList status={status} selected={view.run} onSelect={(run) => show({run: run.experiment_id})} />
+      </section>
     </div>
   );
 }

@@ -219,3 +219,17 @@ for (const chart of ["history", "models"]) {
     await expect(page.locator(".recharts-scatter-symbol circle")).toHaveCount(1);
   });
 }
+
+for (const chart of ["history", "models"]) {
+  test(`QA ${chart} retains partial scores and shows execution failures`, async ({ page }) => {
+    await page.goto(`/admin?tab=qa-evals&chart=${chart}`);
+    await expect(page.getByLabel("claude-sonnet-5: 91% (21/23) · 23/25 scored · 1 failed · 1 pending", { exact: true })).toBeVisible();
+    const runs = page.getByRole("region", { name: "Runs", exact: true });
+    await expect(runs.getByText("23/25 scored · 1 failed · 1 pending", { exact: true })).toBeVisible();
+    await expect(runs.getByText("91% (21/23)", { exact: true })).toBeVisible();
+    if (chart === "models") {
+      await expect(page.getByRole("region", { name: "Models", exact: true }).getByText(/23\/25 scored · 1 failed · 1 pending/)).toBeVisible();
+      await page.screenshot({ path: "test-results/qa-partial-run.png", fullPage: true });
+    }
+  });
+}
