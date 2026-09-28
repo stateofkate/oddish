@@ -345,7 +345,8 @@ async def create_analysis_trial(
     if execution:
         analysis_agent, model = execution.agent, execution.model
     normalized_model = settings.normalize_trial_model(
-        analysis_agent, model or settings.analysis_model
+        analysis_agent,
+        model or (settings.analysis_model if kind == "summarize" else settings.qa_model),
     )
     harbor_config: dict = {"extra_instructions": brief}
     if execution and (overrides := execution.agent_overrides()):

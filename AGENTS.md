@@ -1462,6 +1462,14 @@ still turn the graph on.
 
 ### Configuration and model routing
 
+Task QA, pre-trial audits, and QA evals without an explicit model default to
+`openai/gpt-6-luna` through `settings.qa_model`. They retain Claude Code and its
+existing provider adapter. Trajectory summaries retain `settings.analysis_model`
+and its Sonnet 5 default with the single-LLM runner. `ODDISH_QA_MODEL` overrides
+QA only; an existing `ODDISH_ANALYSIS_MODEL` override still applies to both when
+`ODDISH_QA_MODEL` is unset. Explicit eval models take precedence. Reasoning
+effort is unchanged; the 25-golden Luna evaluation used explicit `high` effort.
+
 Settings are loaded from `oddish/.env`; see `oddish/env.example`,
 `backend/.env.example`, and `frontend/env.example` for the complete env surface.
 Keep these routing rules in sync with `oddish/src/oddish/config.py` and

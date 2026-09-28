@@ -176,7 +176,7 @@ async def create_qa_eval_core(
         )
 
     canonical_model = settings.normalize_trial_model(
-        request.agent, request.model or settings.analysis_model
+        request.agent, request.model or settings.qa_model
     )
     prompt_hash = prompt_sha256(prompt_text)
     configuration_hash = _canonical_digest({

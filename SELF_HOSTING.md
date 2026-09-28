@@ -42,6 +42,12 @@ modal setup
 
 ## Configure environment
 
+QA and pre-trial audits default to GPT-6 Luna through the existing OpenAI/Azure
+provider configuration. Set `ODDISH_QA_MODEL` to override that model without
+changing trajectory summaries, which retain Sonnet 5. Existing
+`ODDISH_ANALYSIS_MODEL` overrides still apply to QA as well as summaries unless
+`ODDISH_QA_MODEL` is set. Explicit QA eval model selections take precedence.
+
 For a traced controller that invokes the CLI, optional `ODDISH_TRACE_CONTEXT`
 JSON carries W3C `traceparent` and `tracestate` to API requests. With tracing
 configured on both API and workers, new queue rows retain that parent through

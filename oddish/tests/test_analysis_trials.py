@@ -58,10 +58,20 @@ def test_the_analysis_kinds_are_known():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("environment", [None, "modal", "daytona"])
-async def test_analysis_creation_stores_kind_only_once(monkeypatch, environment):
+@pytest.mark.parametrize("kind", ["qa", "qa_eval", "audit", "summarize"])
+async def test_analysis_creation_stores_kind_and_selects_its_default_model(
+    monkeypatch, environment, kind
+):
+    from oddish.config import Settings
     from oddish.db import TaskModel
     from oddish.workers.analysis_trials import create_analysis_trial
 
+    monkeypatch.delenv("ODDISH_ANALYSIS_MODEL", raising=False)
+    monkeypatch.delenv("ODDISH_QA_MODEL", raising=False)
+    monkeypatch.setattr(
+        "oddish.workers.analysis_trials.settings",
+        Settings(_env_file=None, claude_code_force_direct_api=True),
+    )
     task = TaskModel(
         id="task-1",
         name="task-1",
@@ -97,14 +107,18 @@ async def test_analysis_creation_stores_kind_only_once(monkeypatch, environment)
     trial = await create_analysis_trial(
         session,
         task=task,
-        kind="qa",
+        kind=kind,
         brief="grade the trials",
         payload={"trial_ids": ["source-1"]},
         experiment_id="analysis-experiment",
         environment=environment,
     )
 
-    assert trial.kind == "qa"
+    assert trial.kind == kind
+    assert trial.agent == ("single-llm" if kind == "summarize" else "claude-code")
+    assert trial.model == (
+        "anthropic/claude-sonnet-5" if kind == "summarize" else "openai/gpt-6-luna"
+    )
     assert trial.environment == environment
     assert "mode" not in trial.harbor_config
     assert trial.harbor_config["analysis_payload"]["trial_ids"] == ["source-1"]

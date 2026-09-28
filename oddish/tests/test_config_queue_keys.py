@@ -119,13 +119,39 @@ def test_bare_claude_uses_configured_default_but_explicit_prefix_wins(monkeypatc
     assert settings.get_provider_for_trial("claude-code", None) == "bedrock"
 
 
-def test_default_analysis_model_uses_configured_claude_default(monkeypatch):
+@pytest.mark.parametrize("force_direct", [False, True])
+def test_default_qa_model_routes_luna_without_changing_summaries(
+    monkeypatch, force_direct
+):
     monkeypatch.delenv("ODDISH_ANALYSIS_MODEL", raising=False)
-    settings = _settings(monkeypatch, claude_code_force_direct_api=True)
+    monkeypatch.delenv("ODDISH_QA_MODEL", raising=False)
+    settings = _settings(
+        monkeypatch, claude_code_force_direct_api=force_direct, openai_provider="openai"
+    )
     assert settings.analysis_model == "claude-sonnet-5"
+    assert settings.qa_model == "openai/gpt-6-luna"
+    assert settings.get_qa_queue_key() == "openai/gpt-6-luna"
+    assert (
+        settings.normalize_trial_model("claude-code", settings.qa_model)
+        == settings.qa_model
+    )
+    assert (
+        settings.get_provider_for_trial("claude-code", settings.qa_model) == "openai"
+    )
+
+
+def test_qa_model_preserves_legacy_override_and_prefers_qa_override(monkeypatch):
+    monkeypatch.delenv("ODDISH_QA_MODEL", raising=False)
+    monkeypatch.setenv("ODDISH_ANALYSIS_MODEL", "anthropic/claude-sonnet-5")
+    settings = _settings(monkeypatch, claude_code_force_direct_api=False)
+    assert settings.analysis_model == "anthropic/claude-sonnet-5"
+    assert settings.qa_model == "anthropic/claude-sonnet-5"
     assert settings.get_qa_queue_key() == "anthropic/claude-sonnet-5"
-    settings.claude_code_force_direct_api = False
-    assert settings.get_qa_queue_key() == "global.anthropic.claude-sonnet-5"
+    monkeypatch.setenv("ODDISH_QA_MODEL", "openai/gpt-6-sol")
+    settings = _settings(monkeypatch)
+    assert settings.qa_model == "openai/gpt-6-sol"
+    assert settings.get_qa_queue_key() == "openai/gpt-6-sol"
+    assert settings.analysis_model == "anthropic/claude-sonnet-5"
 
 
 def test_anthropic_hdo_prefix_has_a_separate_queue(monkeypatch):

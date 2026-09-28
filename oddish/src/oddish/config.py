@@ -7,7 +7,7 @@ from decimal import Decimal
 from enum import Enum
 from typing import Any, ClassVar
 
-from pydantic import Field, SecretStr, model_validator
+from pydantic import AliasChoices, Field, SecretStr, model_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -1891,6 +1891,10 @@ class Settings(BaseSettings):
     provider_rate_limits: dict[str, dict] = Field(default_factory=dict)
     queue_key_buckets: dict[str, str] = Field(default_factory=dict)
     analysis_model: str = ANALYSIS_MODEL
+    qa_model: str = Field(
+        default="openai/gpt-6-luna",
+        validation_alias=AliasChoices("ODDISH_QA_MODEL", "ODDISH_ANALYSIS_MODEL", "qa_model"),
+    )
 
     # Agent to provider mapping (computed from Harbor's AgentName enum)
     agent_to_provider: ClassVar[dict[str, str]] = _build_agent_provider_map()
@@ -2536,11 +2540,11 @@ class Settings(BaseSettings):
     def get_qa_queue_key(self) -> str:
         """Concurrency bucket for QA and audit trials.
 
-        Keyed off ``analysis_model``: analysis trials run the analysis model,
+        Keyed off ``qa_model``: QA and audit trials run the QA model,
         so they lease slots from its concurrency bucket (and existing
         per-model concurrency overrides keep applying).
         """
-        return self.normalize_queue_key(self.analysis_model)
+        return self.normalize_queue_key(self.qa_model)
 
     def get_task_expand_queue_key(self) -> str:
         """Dedicated queue key for task-expansion jobs.
