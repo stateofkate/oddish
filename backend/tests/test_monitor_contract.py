@@ -206,6 +206,7 @@ async def test_the_monitor_and_the_api_parse_each_other(tmp_path, monkeypatch):
         job_dir=job_dir,
         tool_counts={"bash": 3},
         metrics={"accuracy": 1.0},
+        expected_boundary_kill=True,
     )
     # As runner._deliver_result does: upload, then post the result.
     uploaded = await artifacts.upload(
@@ -242,7 +243,9 @@ async def test_the_monitor_and_the_api_parse_each_other(tmp_path, monkeypatch):
     [result] = sent["POST /monitor/result"]
     kept = {field.name for field in dataclasses.fields(HarborOutcome)}
     assert set(result["outcome"]) <= kept, "settlement keeps the whole outcome"
-    assert _outcome_from_payload(result["outcome"], None).reward == 1.0
+    parsed_outcome = _outcome_from_payload(result["outcome"], None)
+    assert parsed_outcome.reward == 1.0
+    assert parsed_outcome.expected_boundary_kill is True
 
 
 @pytest.mark.asyncio

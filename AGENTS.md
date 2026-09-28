@@ -229,13 +229,23 @@ High-level flow:
    invalidate the score, including failures after partial agent work. It does
    not classify all infrastructure failures. Every settlement path — the Harbor
    `END` hook, `_store_trial_results`, and the CLI's
-   `trial_result_to_import_spec` — drops the reward rather than publishing it
+   `trial_result_to_import_spec` — normally drops the reward rather than publishing it
    as a score. The trial follows the existing path for a missing
    verifier reward: the error surfaces and `RetryConfig` decides retry or
    fail. Endings the agent's own run caused — `AgentTimeoutError`,
    `AgentSafetyRefusalError`, and the context/output budget errors — keep their
    reward, because a real 0 must stay a real 0. Add a name to that set only when
    the provider, not the agent, ended the run.
+   Worker settlement has a narrow evidence-backed exception for a task
+   declaration freezer killing an agent's logging shell: a 137 exit keeps its
+   verifier score only when the protected boundary receipt names the same
+   initially exempted and later killed PID, the declared soak completed, the
+   verifier has a matching final verdict/reward, and no verifier-abort receipt
+   exists. The original Harbor exception stays in the trial result alongside
+   `expected_boundary_kill: true`. A bare 137 or a deterministic zero from an
+   aborted verifier remains unscored and follows the normal retry path.
+   The exception is independent of model and Harbor exception class, but it
+   requires the task's protected freezer and verifier receipts.
    Muse and Grok can surface provider rejection only in CLI output while Harbor
    initially sees a generic nonzero exit. Oddish refines strongly provider-shaped
    HTTP status, authentication, billing, credit, quota, and model-access messages

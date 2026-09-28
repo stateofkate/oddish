@@ -750,7 +750,10 @@ async def _store_trial_results(
             # after partial agent work. Drop it and use the existing scoreless
             # path: the error surfaces, and Harbor's RetryConfig -- read below
             # by ``_is_non_retryable_outcome`` -- decides retry or fail.
-            if invalidates_score(outcome.exception_type):
+            if (
+                invalidates_score(outcome.exception_type)
+                and not outcome.expected_boundary_kill
+            ):
                 if derived_reward is not None:
                     console.print(
                         f"[yellow]Trial {trial_id} discarding verifier "
@@ -777,7 +780,7 @@ async def _store_trial_results(
             )
 
             trial.reward = derived_reward
-            if outcome.error and (
+            if outcome.error and not outcome.expected_boundary_kill and (
                 not analysis_artifact_error or invalidates_score(outcome.exception_type)
             ):
                 trial.error_message = "\n".join(
@@ -817,6 +820,11 @@ async def _store_trial_results(
                 session_id=outcome.session_id,
                 retry_after_seconds=outcome.retry_after_seconds,
             )
+            if outcome.expected_boundary_kill:
+                trial.result = {
+                    **(trial.result or {}),
+                    "expected_boundary_kill": True,
+                }
 
             if judge_summary is not None:
                 trial.result = {**(trial.result or {}), "_verifier_judges": judge_summary}

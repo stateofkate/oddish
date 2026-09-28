@@ -121,6 +121,7 @@
         "outcome.error": {"required": true, "type": ["null", "string"]},
         "outcome.exception_type": {"required": false, "type": ["null", "string"]},
         "outcome.exit_code": {"required": true, "type": ["integer"]},
+        "outcome.expected_boundary_kill": {"required": false, "type": ["boolean"]},
         "outcome.has_trajectory": {"required": false, "type": ["boolean"]},
         "outcome.http_status": {"required": false, "type": ["integer", "null"]},
         "outcome.input_tokens": {"required": false, "type": ["integer", "null"]},

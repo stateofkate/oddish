@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -71,6 +73,60 @@ class HarborOutcome:
     request_id: str | None = None
     session_id: str | None = None
     retry_after_seconds: float | None = None
+    # A task-owned terminal freezer can kill the agent's logging shell after a
+    # valid declaration. This flag requires the task's protected boundary and
+    # completed-verifier receipts; the original exception remains in artifacts.
+    expected_boundary_kill: bool = False
+
+
+def _expected_boundary_kill(
+    job_dir: Path, error: str | None, reward: float | None
+) -> bool:
+    """Recognize a task freezer's logging-shell kill after a complete evaluation.
+
+    A reward file alone is insufficient: the task also writes a deterministic
+    zero when its verifier aborts. The boundary receipt must prove that the
+    freezer killed a shell it had initially exempted, and the final verdict
+    must agree with Harbor's extracted reward.
+    """
+    if (
+        error is None
+        or "Command failed (exit 137)" not in error
+        or reward is None
+        or not math.isfinite(reward)
+    ):
+        return False
+    boundaries = list(job_dir.glob("*/verifier/rundir/agent-boundary.json"))
+    if len(boundaries) != 1:
+        return False
+    boundary_path = boundaries[0]
+    verifier = boundary_path.parent.parent
+    rundir = boundary_path.parent
+    if (verifier / "verifier_abort.json").exists():
+        return False
+    try:
+        boundary = json.loads(boundary_path.read_text(encoding="utf-8"))
+        episode = json.loads((rundir / "episode_done.json").read_text(encoding="utf-8"))
+        verdict = json.loads((rundir / "verdict.json").read_text(encoding="utf-8"))
+        recorded = json.loads((verifier / "reward.json").read_text(encoding="utf-8"))
+        exempt = set(boundary["exempt_log_pipeline_pids"])
+        killed = set(boundary["sigkill_pids"])
+        recorded_reward = recorded["reward"]
+        return (
+            boundary["success"] is True
+            and boundary["reason"] == "declared"
+            and bool(exempt & killed)
+            and episode["done"] is True
+            and episode["freeze_reason"] == "declared"
+            and episode["completion_reason"] == "declared_soak_complete"
+            and reward in (0.0, 1.0)
+            and verdict["overall"] == ("PASS" if reward == 1.0 else "FAIL")
+            and type(recorded_reward) in (int, float)
+            and math.isfinite(recorded_reward)
+            and float(recorded_reward) == reward
+        )
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
 
 
 def _trial_results_from_job_dir(job_dir: Path) -> list[Any]:
@@ -200,6 +256,7 @@ def _extract_outcome_from_job_result(
             request_id=request_id,
             session_id=session_id,
             retry_after_seconds=retry_after_seconds,
+            expected_boundary_kill=_expected_boundary_kill(job_dir, error, reward),
         )
 
     # Harbor's AgentDatasetStats.reward_stats is

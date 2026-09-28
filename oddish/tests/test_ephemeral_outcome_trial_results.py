@@ -28,6 +28,7 @@ from harbor.models.trial.result import (
 from harbor.models.verifier.result import VerifierResult
 from oddish.db import TrialStatus
 from oddish.workers.harbor.ephemeral import _read_outcome
+from oddish.workers.harbor.outcome import _extract_outcome_from_job_result
 from oddish.workers.queue.trial_handler import _store_trial_results
 from test_scoreless_trial_no_retry import _patch_session, _trial
 
@@ -37,6 +38,7 @@ TRIAL_NAME = "my-task__claude-code__1"
 def _trial_result(
     *,
     exception_type: str | None,
+    exception_message: str | None = None,
     http_status: int | None = None,
     reward: float | None = None,
 ) -> TrialResult:
@@ -45,7 +47,10 @@ def _trial_result(
     if exception_type is not None:
         exception_info = ExceptionInfo(
             exception_type=exception_type,
-            exception_message=f"{exception_type}: the provider rejected the request",
+            exception_message=(
+                exception_message
+                or f"{exception_type}: the provider rejected the request"
+            ),
             exception_traceback="",
             occurred_at=started,
             http_status=http_status,
@@ -246,3 +251,122 @@ def test_ephemeral_outcome_prefers_the_job_stats_reward(tmp_path):
     )
 
     assert outcome.reward == 0.5
+
+
+def _write_terminal_boundary(
+    job_dir: Path, reward: float, *, abort: bool = False
+) -> None:
+    verifier = job_dir / TRIAL_NAME / "verifier"
+    rundir = verifier / "rundir"
+    rundir.mkdir(parents=True)
+    (rundir / "agent-boundary.json").write_text(
+        json.dumps(
+            {
+                "success": True,
+                "reason": "declared",
+                "exempt_log_pipeline_pids": [952, 955],
+                "sigkill_pids": [952, 3842],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (rundir / "episode_done.json").write_text(
+        json.dumps(
+            {
+                "done": True,
+                "freeze_reason": "declared",
+                "completion_reason": "declared_soak_complete",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (rundir / "verdict.json").write_text(
+        json.dumps({"overall": "PASS" if reward == 1 else "FAIL"}),
+        encoding="utf-8",
+    )
+    (verifier / "reward.json").write_text(
+        json.dumps({"reward": reward}), encoding="utf-8"
+    )
+    if abort:
+        (verifier / "verifier_abort.json").write_text(
+            json.dumps({"aborted": True}), encoding="utf-8"
+        )
+
+
+@pytest.mark.parametrize("reward", [0.0, 1.0])
+@pytest.mark.parametrize(
+    "agent,model,exception_type",
+    [
+        ("grok-build", "xai/grok-4.7", "NetworkConnectionError"),
+        ("claude-code", "anthropic/claude-opus-4-7", "AgentExecutionError"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_declared_freezer_kill_retains_completed_verifier_score(
+    monkeypatch, tmp_path, reward, agent, model, exception_type
+):
+    result = _trial_result(
+        exception_type=exception_type,
+        exception_message=f"Command failed (exit 137): {agent} | tee",
+        reward=reward,
+    )
+    job_dir, job_result_path = _ephemeral_job_dir(tmp_path, result)
+    _write_terminal_boundary(job_dir, reward)
+    outcome = _extract_outcome_from_job_result(
+        JobResult.model_validate_json(job_result_path.read_text()),
+        job_result_path,
+        job_dir,
+        11.0,
+    )
+    assert outcome.expected_boundary_kill is True
+    trial = _trial(agent=agent, model=model, attempts=1, max_attempts=3)
+    _patch_session(monkeypatch, trial)
+    await _store_trial_results(
+        trial_id=trial.id,
+        outcome=outcome,
+        trial_s3_key=None,
+        execution_error=None,
+        trial_attempt=trial.attempts,
+    )
+    assert trial.status == TrialStatus.SUCCESS
+    assert trial.reward == reward
+    assert trial.error_message is None
+    assert trial.result["expected_boundary_kill"] is True
+    assert trial.result["harbor_exception"]["exception_type"] == exception_type
+
+
+@pytest.mark.parametrize(
+    "invalid_evidence", ["missing", "abort", "wrong_pid", "wrong_reward", "wrong_error"]
+)
+def test_freezer_kill_without_complete_receipt_is_still_an_error(
+    tmp_path, invalid_evidence
+):
+    error = (
+        "Command failed (exit 137): grok | tee"
+        if invalid_evidence != "wrong_error"
+        else "API request timed out"
+    )
+    result = _trial_result(
+        exception_type="NetworkConnectionError",
+        exception_message=error,
+        reward=0.0,
+    )
+    job_dir, job_result_path = _ephemeral_job_dir(tmp_path, result)
+    if invalid_evidence != "missing":
+        _write_terminal_boundary(job_dir, 0.0, abort=invalid_evidence == "abort")
+    verifier = job_dir / TRIAL_NAME / "verifier"
+    if invalid_evidence == "wrong_pid":
+        boundary_path = verifier / "rundir/agent-boundary.json"
+        boundary = json.loads(boundary_path.read_text())
+        boundary["sigkill_pids"] = [3842]
+        boundary_path.write_text(json.dumps(boundary))
+    if invalid_evidence == "wrong_reward":
+        (verifier / "reward.json").write_text(json.dumps({"reward": 1.0}))
+    outcome = _extract_outcome_from_job_result(
+        JobResult.model_validate_json(job_result_path.read_text()),
+        job_result_path,
+        job_dir,
+        11.0,
+    )
+    assert outcome.expected_boundary_kill is False
+    assert outcome.error == error
