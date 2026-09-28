@@ -326,10 +326,17 @@ def rerun_delivery_qa(
     dry_run: Annotated[
         bool, typer.Option(help="List selected tasks without queuing QA.")
     ] = False,
+    limit: Annotated[
+        int | None, typer.Option("--limit", min=1, help="Maximum tasks to submit.")
+    ] = None,
+    offset: Annotated[
+        int,
+        typer.Option("--offset", min=0, help="Skip this many tasks in task-ID order."),
+    ] = 0,
     api_url: Annotated[str, _API_OPTION] = "",
     json_output: Annotated[bool, _JSON_OPTION] = False,
 ) -> None:
-    """Rerun pre-trial and post-trial QA for every current task version.
+    """Rerun pre-trial and post-trial QA for selected current task versions.
 
     Queues paid QA work; existing agent runs are reused. The server completes
     both stages after this command exits, even with automatic QA disabled.
@@ -342,6 +349,18 @@ def rerun_delivery_qa(
         tasks = list({row["task_id"]: row for row in board["tasks"]}.values())
         if not tasks:
             _fail("Delivery has no tasks.")
+
+        total_tasks = len(tasks)
+        tasks.sort(key=lambda row: row["task_id"])
+        tasks = tasks[offset : None if limit is None else offset + limit]
+        if not tasks:
+            _fail(f"Offset {offset} selects no tasks from {total_tasks} tasks.")
+        if not json_output:
+            action = "Selected" if dry_run else "Submitting"
+            console.print(
+                f"{action} {offset + 1}–{offset + len(tasks)} of {total_tasks} tasks "
+                "(task-ID order).",
+            )
 
         def submit(row: dict) -> dict:
             result = {
@@ -382,6 +401,9 @@ def rerun_delivery_qa(
             {
                 "delivery_id": board["delivery"]["id"],
                 "dry_run": dry_run,
+                "total_tasks": total_tasks,
+                "offset": offset,
+                "limit": limit,
                 "counts": counts,
                 "tasks": results,
             }

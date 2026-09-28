@@ -34,7 +34,7 @@ def board():
     }
 
 
-def invoke(args, payload=None, post=None):
+def invoke(args, payload=None, post=None, json_output=True):
     payload = payload if payload is not None else board()
     requests = []
 
@@ -55,7 +55,8 @@ def invoke(args, payload=None, post=None):
         patch("oddish.cli.delivery.get_auth_headers", return_value={}),
     ):
         result = CliRunner().invoke(
-            delivery_app, ["qa", *args, "--api", "http://api", "--json"]
+            delivery_app,
+            ["qa", *args, "--api", "http://api"] + (["--json"] if json_output else []),
         )
     return result, requests
 
@@ -159,3 +160,84 @@ def test_live_status_keeps_stale_evidence_outdated_despite_successful_execution(
         "outdated": 1,
         "accepted": 2,
     }
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_batches_cover_250_unique_tasks_in_stable_order(dry_run):
+    payload = board()
+    template = payload["tasks"][0]
+    payload["tasks"] = [
+        {**template, "task_id": f"task-{i:03}", "version_id": f"v-{i:03}"}
+        for i in reversed(range(250))
+    ]
+    payload["tasks"].append(copy.deepcopy(payload["tasks"][0]))
+    selected = []
+    for offset, size in [(0, 100), (100, 100), (200, 50)]:
+        args = ["rerun", "batch", "--limit", "100", "--offset", str(offset)]
+        if dry_run:
+            args.append("--dry-run")
+        result, requests = invoke(args, payload)
+        assert result.exit_code == 0, result.output
+        output = json.loads(result.stdout)
+        assert output["total_tasks"] == 250
+        assert output["offset"] == offset
+        assert output["limit"] == 100
+        assert output["counts"] == {"selected" if dry_run else "queued": size}
+        ids = [row["task_id"] for row in output["tasks"]]
+        assert ids == [f"task-{i:03}" for i in range(offset, offset + size)]
+        selected.extend(ids)
+        posts = [request for request in requests if request.method == "POST"]
+        assert len(posts) == (0 if dry_run else size)
+        for request in posts:
+            task_id = request.url.path.split("/")[2]
+            assert task_id in ids
+            assert json.loads(request.content) == {
+                "expected_version_id": task_id.replace("task-", "v-")
+            }
+        payload["tasks"].reverse()
+    assert len(selected) == len(set(selected)) == 250
+
+
+@pytest.mark.parametrize(
+    ("flags", "expected_ids"),
+    [
+        ([], ["task-0", "task-1", "task-2"]),
+        (["--limit", "2"], ["task-0", "task-1"]),
+        (["--limit", "100"], ["task-0", "task-1", "task-2"]),
+        (["--offset", "1"], ["task-1", "task-2"]),
+    ],
+)
+def test_optional_batch_flags(flags, expected_ids):
+    result, requests = invoke(["rerun", "batch", *flags])
+    assert result.exit_code == 0, result.output
+    output = json.loads(result.stdout)
+    assert [row["task_id"] for row in output["tasks"]] == expected_ids
+    assert len([r for r in requests if r.method == "POST"]) == len(expected_ids)
+
+
+@pytest.mark.parametrize(
+    "flags", [["--limit", "0"], ["--limit", "-1"], ["--offset", "-1"]]
+)
+def test_invalid_batch_flags_fail_before_requests(flags):
+    result, requests = invoke(["rerun", "batch", *flags])
+    assert result.exit_code == 2
+    assert requests == []
+
+
+@pytest.mark.parametrize("offset", [3, 100])
+def test_offset_at_or_past_end_submits_nothing(offset):
+    result, requests = invoke(["rerun", "batch", "--offset", str(offset)])
+    assert result.exit_code == 1
+    assert f"Offset {offset} selects no tasks from 3 tasks." in result.output
+    assert all(request.method == "GET" for request in requests)
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_text_output_reports_selected_range(dry_run):
+    args = ["rerun", "batch", "--limit", "1", "--offset", "1"]
+    if dry_run:
+        args.append("--dry-run")
+    result, _ = invoke(args, json_output=False)
+    assert result.exit_code == 0, result.output
+    action = "Selected" if dry_run else "Submitting"
+    assert f"{action} 2–2 of 3 tasks (task-ID order)." in result.stdout

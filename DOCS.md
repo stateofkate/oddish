@@ -811,6 +811,25 @@ oddish delivery qa status "september-batch"
 oddish delivery qa status "september-batch" --json
 ```
 
+To submit at most 100 tasks per invocation:
+
+```bash
+oddish delivery qa rerun "september-batch" --limit 100 --dry-run
+oddish delivery qa rerun "september-batch" --limit 100
+oddish delivery qa rerun "september-batch" --limit 100 --offset 100
+```
+
+`--limit` accepts any positive integer; `--offset` skips that many tasks and
+must be nonnegative. Tasks are deduplicated and sorted by task ID before
+selection. Without these flags, all tasks are submitted. An offset at or past
+the total fails without submitting work. Text output shows the selected range
+and total; JSON includes `total_tasks`, `offset`, and `limit` (null if omitted).
+Each invocation submits only its selected tasks and exits without waiting for
+QA to finish. Keep delivery membership unchanged between batches: adding or
+removing tasks can shift offsets and cause repeats or omissions. Current task
+versions are captured afresh on each invocation. Repeating the same offset
+reruns the same tasks; it does not automatically advance to the next batch.
+
 Use a delivery name or ID. `--dry-run` lists the selected task versions without
 starting paid work. The rerun captures the delivery's membership and current
 task versions, then submits up to four requests at once. Each request queues a

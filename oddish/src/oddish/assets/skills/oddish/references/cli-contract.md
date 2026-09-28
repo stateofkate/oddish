@@ -32,7 +32,14 @@ auto-publish (`run --publish` or GitHub-attributed CI runs); a member-created
 ## Command surface
 
 `oddish delivery qa rerun NAME_OR_ID` queues both QA stages for every task's
-current version in an active delivery. `--dry-run` previews without spending.
+current version in an active delivery. `--limit N` caps the selected task count;
+`--offset N` skips tasks in sorted task-ID order after deduplication. Limit must
+be positive and offset nonnegative; an offset past the last task fails without
+submission. Omit both to submit all tasks. Keep membership unchanged between
+batches to avoid repeats or omissions; versions are captured per invocation.
+Repeated offsets rerun the same tasks. The command does not wait for completion.
+`--dry-run` previews without spending. JSON adds `total_tasks`, `offset`, and
+`limit` (null when omitted); text output shows the selected range and total.
 It reuses a running source check, explicitly requests post-trial QA even when
 automatic analysis is disabled, and never reruns solver trials. Submission
 failures do not stop other tasks; exit 1 means at least one failed. Inspect
