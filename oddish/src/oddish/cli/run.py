@@ -48,6 +48,7 @@ from oddish.cli.config import (
 from oddish.cli.preflight import gate_preflight
 from oddish.experiment import generate_experiment_name
 from oddish.preflight.runner import run_checks
+from oddish.config import require_enabled_environment
 
 console = Console()
 
@@ -78,6 +79,7 @@ def _normalize_hosted_environment(
     environment: EnvironmentType | None, *, is_modal_api: bool
 ) -> EnvironmentType | None:
     """Preserve supported hosted providers and coerce local-only ones to Modal."""
+    require_enabled_environment(environment)
     if (
         environment is not None
         and is_modal_api
@@ -196,7 +198,7 @@ def _default_cloud_environment_for_task(
 
     The CLI resolves only what needs no knowledge of the deployment: TPU work
     can run nowhere but GKE, and opt-in Numinous keeps its existing precedence.
-    Plain CPU work leaves provider selection to the hosted Archil rollout.
+    Plain CPU work leaves provider selection to the hosted Modal default.
     Which GPU backend a deployment offers, and whether a private-registry pull
     forces Modal, is the hosted policy's call:
     the payload carries ``requires_gpu`` and ``registry_auth`` so it can decide.
@@ -396,9 +398,9 @@ def run(
             "--env",
             "-e",
             help=(
-                "Execution environment (docker, daytona, ec2, e2b, modal, archil, "
+                "Execution environment (docker, ec2, e2b, modal, archil, "
                 "runloop, gke, thunder). "
-                "Defaults: daytona for CPU-only hosted tasks, modal for GPU hosted "
+                "Defaults: modal for CPU-only hosted tasks, thunder or modal for GPU hosted "
                 "tasks, docker otherwise."
             ),
         ),
@@ -980,7 +982,7 @@ def run(
         )
         if environment is not None and normalized_environment != environment:
             console.print(
-                "[yellow]Oddish Cloud supports --env modal, --env daytona, --env ec2, "
+                "[yellow]Oddish Cloud supports --env modal, --env ec2, "
                 "--env gke, --env archil, --env numinous, and --env thunder; "
                 "forcing --env modal[/yellow]"
             )

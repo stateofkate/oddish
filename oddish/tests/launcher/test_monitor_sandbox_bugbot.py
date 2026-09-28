@@ -156,44 +156,6 @@ def test_modal_gpu_string_carries_the_exact_type():
 # --- 6. the warm-up sandbox outlives create, pull and snapshot --------------
 
 
-@pytest.mark.asyncio
-async def test_daytona_warm_up_sandbox_lives_through_create_pull_and_snapshot(
-    monkeypatch,
-):
-    from contextlib import asynccontextmanager
-
-    from oddish.workers.launcher.providers import daytona
-
-    created = []
-
-    async def _exec(command, timeout=None):
-        return SimpleNamespace(exit_code=NOTHING_TO_WARM)
-
-    class _Client:
-        async def create(self, params, timeout=None):
-            created.append(params)
-            return SimpleNamespace(process=SimpleNamespace(exec=_exec))
-
-        async def delete(self, sandbox):
-            pass
-
-    @asynccontextmanager
-    async def _client():
-        yield _Client()
-
-    monkeypatch.setattr(daytona, "_client", _client)
-    await daytona.DaytonaStarter().build_warm_image(
-        image="python:3.12-slim",
-        request=WarmRequest(task_archive_url="https://signed"),
-    )
-
-    needed = settings.monitor_daytona_create_timeout_seconds + 2 * WARM_UP_SECONDS
-    (params,) = created
-    assert int(params.labels["oddish.expires_at"]) - daytona.time.time() >= needed - 5
-    assert params.auto_stop_interval * 60 >= needed
-    assert cache.WARMING_TTL_SECONDS >= needed
-
-
 # --- 7. the GPU is part of the snapshot identity ----------------------------
 
 
@@ -238,25 +200,6 @@ async def test_sizes_differing_only_in_gpu_are_different_snapshots(monkeypatch):
         for size in sizes
     ]
     assert None not in keys and len(set(keys)) == len(sizes)
-
-
-def test_daytona_refuses_a_snapshot_booted_with_a_different_gpu():
-    from oddish.workers.launcher.providers.daytona import _check_size
-
-    cpu_only = SandboxSize(cpu=4, memory_mb=8192)
-    h100 = SandboxSize(cpu=4, memory_mb=8192, gpu_type="H100", gpu_count=1)
-    any_gpu = SandboxSize(cpu=4, memory_mb=8192, gpu_count=1)
-    plain = SimpleNamespace(cpu=4, memory=8, gpu=0, gpu_type=None)
-    on_h100 = SimpleNamespace(cpu=4, memory=8, gpu=1, gpu_type="H100")
-    on_h200 = SimpleNamespace(cpu=4, memory=8, gpu=1, gpu_type="H200")
-    snap = "snapshot:oddish-mon-warm-x"
-
-    for sandbox, size in [(plain, h100), (on_h100, cpu_only), (on_h200, h100)]:
-        with pytest.raises(MonitorSandboxError):
-            _check_size(sandbox, snap, size)
-    _check_size(plain, snap, cpu_only)  # the same size boots
-    _check_size(on_h100, snap, h100)
-    _check_size(on_h200, snap, any_gpu)  # no type asked: any type will do
 
 
 # --- 8. a cache hit never names a snapshot Modal has deleted ----------------

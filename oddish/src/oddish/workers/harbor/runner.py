@@ -44,6 +44,8 @@ from oddish.config import (
     is_anthropic_hdo_model,
     meta_harness_model_id,
     settings,
+    DisabledEnvironmentError,
+    require_enabled_environment,
 )
 from oddish.costs.modal_cost import (
     SpanResources,
@@ -151,7 +153,12 @@ def is_retryable_execution_error(exc: BaseException) -> bool:
     from .quota_control import QuotaPauseControlError
 
     return not isinstance(
-        exc, (QuotaPauseControlError, FallbackEnvironmentCompatibilityError)
+        exc,
+        (
+            QuotaPauseControlError,
+            FallbackEnvironmentCompatibilityError,
+            DisabledEnvironmentError,
+        ),
     )
 
 
@@ -1905,6 +1912,7 @@ async def run_harbor_trial_async(
     Returns a HarborOutcome with reward, error, tokens, cost, timing,
     trajectory presence, and artifact paths.
     """
+    require_enabled_environment(environment)
     apply_harbor_patches(
         require_ec2=environment == EnvironmentType.EC2,
         require_thunder=environment == EnvironmentType.THUNDER,

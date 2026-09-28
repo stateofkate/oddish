@@ -1,8 +1,4 @@
-"""The Archil rollout percentage set by a deploy workflow reaches the image
-env; an unset one leaves the code default (0) alone.
-
-Imports modal_app in a subprocess rather than reloading it here, because a
-reload leaves other modules holding the old module's secret objects."""
+"""Retired Archil rollout settings cannot override the deployed Modal default."""
 
 import json
 import os
@@ -15,7 +11,7 @@ import modal_app
 _CODE = """
 import json
 import modal_app
-print(json.dumps(modal_app.ENV_VARS.get("ODDISH_ARCHIL_TRAFFIC_PERCENT")))
+print(json.dumps([modal_app.ENV_VARS["ODDISH_HARBOR_ENVIRONMENT"], modal_app.ENV_VARS.get("ODDISH_ARCHIL_TRAFFIC_PERCENT")]))
 """
 
 
@@ -31,8 +27,11 @@ def _baked_value(env: dict[str, str]) -> str | None:
     return json.loads(result.stdout.splitlines()[-1])
 
 
-def test_archil_traffic_percent_is_baked_into_the_image() -> None:
-    assert _baked_value({**os.environ, "ODDISH_ARCHIL_TRAFFIC_PERCENT": "1"}) == "1"
+def test_archil_traffic_percent_cannot_change_modal_default() -> None:
+    assert _baked_value({**os.environ, "ODDISH_ARCHIL_TRAFFIC_PERCENT": "1"}) == [
+        "modal",
+        None,
+    ]
 
 
 def test_unset_archil_traffic_percent_is_not_baked() -> None:
@@ -40,4 +39,4 @@ def test_unset_archil_traffic_percent_is_not_baked() -> None:
     env.pop("ODDISH_ARCHIL_TRAFFIC_PERCENT", None)
     # A developer's backend/.env may set it; only the deploy env is under test.
     if "ODDISH_ARCHIL_TRAFFIC_PERCENT" not in modal_app.LOCAL_DOTENV_VARS:
-        assert _baked_value(env) is None
+        assert _baked_value(env) == ["modal", None]

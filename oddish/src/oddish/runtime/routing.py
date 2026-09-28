@@ -2,7 +2,7 @@
 
 The negotiation iterates ``ordered_backends()`` (cheap-first) and returns the
 first backend whose capabilities satisfy the requirements: plain CPU →
-Daytona, GPU → Thunder when the deployment enables it (otherwise Modal),
+Modal, GPU → Thunder when the deployment enables it (otherwise Modal),
 private registry → Modal. A GPU request also carries the task's acceptable
 ``gpu_types`` (``None`` = any), so a backend that only launches named
 accelerators (Thunder) is skipped for a task it would reject at launch.
@@ -25,7 +25,9 @@ class NoEligibleBackendError(RuntimeError):
 
 
 def allowed_cloud_environments() -> frozenset[EnvironmentType]:
-    return frozenset(EnvironmentType(b.name) for b in ordered_backends())
+    return frozenset(
+        EnvironmentType(b.name) for b in ordered_backends() if b.name != "daytona"
+    )
 
 
 def select_backend(
@@ -36,6 +38,10 @@ def select_backend(
     gpu_types: Sequence[str] | None = None,
 ) -> ExecutionBackend:
     for backend in ordered_backends():
+        if backend.name == "daytona":
+            continue  # Registered only for cleanup of existing sandboxes.
+        if not requires_gpu and not requires_tpu and backend.name != "modal":
+            continue  # CPU defaults to Modal; other providers require an explicit choice.
         caps = backend.capabilities()
         if requires_gpu and (caps.gpu is None or not caps.gpu.serves(gpu_types)):
             continue
@@ -61,7 +67,7 @@ def default_cloud_environment(
 ) -> EnvironmentType:
     """The cloud default via capability negotiation: TPU → GKE, GPU → Thunder
     when enabled and the task names one accelerator it offers (else Modal),
-    private-registry pull → Modal, else Daytona."""
+    private-registry pull → Modal, else Modal."""
     return EnvironmentType(
         select_backend(
             requires_gpu=requires_gpu,

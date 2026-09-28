@@ -69,4 +69,4 @@ print(json.dumps({
     # A task naming no GPU type would be rejected by Harbor's Thunder
     # environment, so it still defaults to Modal.
     assert resolved["untyped_gpu_default"] == "modal"
-    assert resolved["cpu_default"] == "daytona"
+    assert resolved["cpu_default"] == "modal"

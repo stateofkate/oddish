@@ -9,7 +9,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
 from oddish.config import settings
 from oddish.workers.jobs import handlers as handlers_module
 from oddish.workers.launcher.providers import base as monitor_sandbox
@@ -66,7 +65,7 @@ def test_an_unknown_provider_is_refused():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("environment", "drives"), [("modal", True), ("daytona", True), ("gke", False)]
+    ("environment", "drives"), [("modal", True), ("daytona", False), ("gke", False)]
 )
 async def test_the_gate_keeps_unsupported_environments_on_the_worker(
     monkeypatch, environment, drives
@@ -161,7 +160,6 @@ def fake_daytona(monkeypatch):
         yield fake
 
     monkeypatch.setattr(daytona_starter, "_client", _client)
-    monkeypatch.setattr(daytona_starter, "_image", lambda image: f"image:{image}")
     monkeypatch.setattr(daytona_starter, "_not_found_errors", lambda: (LookupError,))
     sdk = types.ModuleType("daytona")
     sdk.CreateSandboxFromImageParams = lambda **kwargs: SimpleNamespace(**kwargs)
@@ -169,25 +167,6 @@ def fake_daytona(monkeypatch):
     sdk.Resources = lambda **kwargs: SimpleNamespace(**kwargs)
     monkeypatch.setitem(sys.modules, "daytona", sdk)
     return fake
-
-
-@pytest.mark.asyncio
-async def test_start_passes_secrets_at_creation_and_starts_the_monitor_once(
-    fake_daytona,
-):
-    env = {"ODDISH_MON_TOKEN": "j.1.t", "ODDISH_MON_API_URL": "https://api"}
-    external_id = await daytona_starter.DaytonaStarter().start(
-        name="oddish-mon-wj-1", image="/oddish/mon.Dockerfile", env=env
-    )
-
-    params, _timeout = fake_daytona.created[0]
-    assert external_id == "dt-123"
-    assert params.env_vars == env  # the provider's creation slot, nowhere else
-    assert params.image == "image:/oddish/mon.Dockerfile"
-    assert params.auto_stop_interval == settings.monitor_attempt_deadline_seconds // 60
-    # Exactly one start, by the starter. Two monitors run the trial twice.
-    (command,) = fake_daytona.sandbox.commands
-    assert monitor_sandbox.ENTRYPOINT in command
 
 
 def test_the_image_never_starts_the_monitor_itself():
@@ -199,22 +178,9 @@ def test_the_image_never_starts_the_monitor_itself():
 
 
 @pytest.mark.asyncio
-async def test_a_monitor_that_cannot_be_started_does_not_leave_a_sandbox(
-    fake_daytona, monkeypatch
-):
-    async def _boom(self, command, timeout=None):
-        raise RuntimeError("exec refused")
-
-    monkeypatch.setattr(_Process, "exec", _boom)
-    with pytest.raises(RuntimeError):
-        await daytona_starter.DaytonaStarter().start(name="n", image="img", env={})
-    assert fake_daytona.deleted == ["dt-123"]
-
-
-@pytest.mark.asyncio
 async def test_status_asks_the_monitor_and_reports_a_gone_sandbox(fake_daytona):
     starter = daytona_starter.DaytonaStarter()
-    await starter.start(name="n", image="img", env={})
+    fake_daytona.sandbox = _Sandbox()
 
     reply = await starter.status("dt-123")
     assert reply.alive and reply.output == '{"alive": true}'
@@ -231,7 +197,7 @@ async def test_status_reports_an_exec_failure_as_no_verdict(fake_daytona, monkey
     from oddish.workers.launcher import reaper
 
     starter = daytona_starter.DaytonaStarter()
-    await starter.start(name="n", image="img", env={})
+    fake_daytona.sandbox = _Sandbox()
 
     async def _exec_refused(self, command, timeout=None):
         raise RuntimeError("exec refused")
@@ -265,7 +231,7 @@ async def test_a_dropped_warm_snapshot_is_deleted_by_name(fake_daytona):
 @pytest.mark.asyncio
 async def test_stop_deletes_one_sandbox_by_id_and_tolerates_a_missing_one(fake_daytona):
     starter = daytona_starter.DaytonaStarter()
-    await starter.start(name="n", image="img", env={})
+    fake_daytona.sandbox = _Sandbox()
 
     await starter.stop("dt-123")
     await starter.stop("dt-missing")
@@ -303,27 +269,6 @@ def test_a_request_only_task_is_sized_by_its_request():
 def test_a_task_that_pins_nothing_keeps_the_provider_default(source):
     assert SandboxSize.from_span_resources(_span(spec_source=source)) is None
     assert SandboxSize.from_span_resources(None) is None
-
-
-@pytest.mark.asyncio
-async def test_daytona_gets_the_tasks_size_rounded_up_to_whole_units(fake_daytona):
-    await daytona_starter.DaytonaStarter().start(
-        name="n", image="/oddish/mon.Dockerfile", env={},
-        size=SandboxSize(cpu=3.5, memory_mb=15000),
-    )  # fmt: skip
-    resources = fake_daytona.created[0][0].resources
-    assert (resources.cpu, resources.memory) == (4, 15)
-    assert resources.disk == settings.monitor_daytona_disk_gb
-
-
-@pytest.mark.asyncio
-async def test_daytona_without_a_size_uses_the_configured_default(fake_daytona):
-    await daytona_starter.DaytonaStarter().start(
-        name="n", image="/oddish/mon.Dockerfile", env={}
-    )
-    resources = fake_daytona.created[0][0].resources
-    assert resources.cpu == settings.monitor_daytona_cpu
-    assert resources.memory == settings.monitor_daytona_memory_gb
 
 
 def test_modal_size_carries_cpu_memory_and_gpu():
@@ -373,72 +318,6 @@ async def test_the_launcher_reads_the_size_from_the_tasks_own_toml(
 # --- Daytona warm snapshots ---------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_daytona_warms_at_the_tasks_size_without_secrets(fake_daytona):
-    from oddish.mon.contract import WarmRequest
-    from oddish.mon.contract import WARM_VAR
-
-    image = await daytona_starter.DaytonaStarter().build_warm_image(
-        image="/oddish/mon.Dockerfile",
-        request=WarmRequest(task_archive_url="https://signed"),
-        size=SandboxSize(cpu=4, memory_mb=16384),
-    )
-    params, _ = fake_daytona.created[0]
-    name = image.removeprefix(daytona_starter.SNAPSHOT_PREFIX)
-    assert name.startswith(daytona_starter.SNAPSHOT_NAME_PREFIX)
-    assert list(params.env_vars) == [WARM_VAR]  # no token, no model key
-    # The warm command runs once; the monitor itself is never started here.
-    assert fake_daytona.sandbox.commands[0] == f"{monitor_sandbox.ENTRYPOINT} warm"
-    assert not any("nohup" in c for c in fake_daytona.sandbox.commands)
-    assert (params.resources.cpu, params.resources.memory) == (4, 16)
-    assert fake_daytona.sandbox.snapshots == [name]
-    assert fake_daytona.deleted == ["dt-123"]  # the warm-up sandbox only
-
-
-@pytest.mark.asyncio
-async def test_nothing_pulled_means_no_snapshot(fake_daytona, monkeypatch):
-    from oddish.mon.contract import WarmRequest
-
-    from oddish.mon.contract import NOTHING_TO_WARM
-
-    # The task names no image: nothing to snapshot, and not a failure.
-    monkeypatch.setattr(_Process, "warm_exit_code", NOTHING_TO_WARM)
-    image = await daytona_starter.DaytonaStarter().build_warm_image(
-        image="/oddish/mon.Dockerfile", request=WarmRequest()
-    )
-    assert image is None and fake_daytona.sandbox.snapshots == []
-
-    # A pull that failed is an error the cache must not remember as "empty".
-    monkeypatch.setattr(_Process, "warm_exit_code", 1)
-    with pytest.raises(monitor_sandbox.MonitorSandboxError):
-        await daytona_starter.DaytonaStarter().build_warm_image(
-            image="/oddish/mon.Dockerfile", request=WarmRequest()
-        )
-
-
-@pytest.mark.asyncio
-async def test_a_snapshot_boots_without_resources_and_its_size_is_checked(fake_daytona):
-    starter = daytona_starter.DaytonaStarter()
-    fake_daytona.boot_size = (4, 16)
-    await starter.start(
-        name="n", image="snapshot:oddish-mon-warm-abc", env={},
-        size=SandboxSize(cpu=4, memory_mb=16384),
-    )  # fmt: skip
-    params, _ = fake_daytona.created[0]
-    assert params.snapshot == "oddish-mon-warm-abc"
-    assert not hasattr(params, "resources")
-
-    # The wrong size is refused and the sandbox removed: the launcher then
-    # forgets the cache entry and starts cold at the right size.
-    fake_daytona.boot_size = (2, 4)
-    with pytest.raises(monitor_sandbox.MonitorSandboxError):
-        await starter.start(
-            name="n", image="snapshot:oddish-mon-warm-abc", env={},
-            size=SandboxSize(cpu=4, memory_mb=16384),
-        )  # fmt: skip
-    assert fake_daytona.deleted == ["dt-123"]
-
-
 # --- pricing what is really provisioned ----------------------------------------
 
 
@@ -468,18 +347,6 @@ def test_the_cost_span_records_the_outer_sandbox_not_the_tasks_request():
     on_daytona = daytona_starter.DaytonaStarter().provisioned(size).billed_as(asked)
     assert (on_daytona.cpu_limit, on_daytona.mem_limit_mb) == (4.0, 15 * 1024)
     assert on_daytona.spec_source == "pinned"  # everything else is untouched
-
-
-@pytest.mark.asyncio
-async def test_a_snapshot_boot_starts_the_monitor_the_same_way(fake_daytona):
-    fake_daytona.boot_size = (1, 3)
-    await daytona_starter.DaytonaStarter().start(
-        name="n", image="snapshot:oddish-mon-warm-abc", env={},
-        size=SandboxSize(cpu=1, memory_mb=3072),
-    )  # fmt: skip
-    (command,) = fake_daytona.sandbox.commands
-    assert command.startswith(f"nohup {monitor_sandbox.ENTRYPOINT}")
-    assert fake_daytona.deleted == []
 
 
 def _fake_modal(monkeypatch, *, poll=None, not_found=False, error=None):
@@ -536,48 +403,6 @@ def _bundle():
 
 
 @pytest.mark.asyncio
-async def test_daytona_boots_a_snapshot_with_the_bundle_in_its_one_start_exec(
-    fake_daytona,
-):
-    import shlex
-
-    from oddish.mon.contract import BUNDLE_SHA256_VAR, BUNDLE_URL_VAR
-
-    bundle = _bundle()
-    await daytona_starter.DaytonaStarter().start(
-        name="n", image="snapshot:oddish-mon-warm-abc",
-        env={"ODDISH_MON_TOKEN": "j.1.t"}, bundle=bundle,
-    )  # fmt: skip
-    params, _ = fake_daytona.created[0]
-    # Where and which bundle: the creation slot, with the rest of the env.
-    assert params.env_vars == {
-        "ODDISH_MON_TOKEN": "j.1.t",
-        BUNDLE_URL_VAR: bundle.url,
-        BUNDLE_SHA256_VAR: bundle.sha256,
-    }
-    # Exactly one start, and it runs the boot script, which starts the monitor.
-    (command,) = fake_daytona.sandbox.commands
-    assert shlex.split(command) == [
-        "nohup", "sh", "-c", bundle.boot_script,
-        ">", "/var/log/oddish-mon-entry.log", "2>&1", "&",
-    ]  # fmt: skip
-    # Exec strings can be logged: neither the link nor its sha is in it.
-    assert "X-Amz-Signature" not in command and bundle.sha256 not in command
-
-
-@pytest.mark.asyncio
-async def test_daytona_starts_without_a_bundle_as_before(fake_daytona):
-    await daytona_starter.DaytonaStarter().start(
-        name="n", image="/oddish/mon.Dockerfile", env={"A": "1"}
-    )
-    params, _ = fake_daytona.created[0]
-    assert params.env_vars == {"A": "1"}
-    assert fake_daytona.sandbox.commands == [
-        f"nohup {monitor_sandbox.ENTRYPOINT} > /var/log/oddish-mon-entry.log 2>&1 &"
-    ]
-
-
-@pytest.mark.asyncio
 async def test_modal_boots_a_snapshot_with_the_boot_script_as_its_command(
     fake_modal,
 ):
@@ -623,7 +448,7 @@ async def test_daytona_sandbox_state_needs_no_monitor_and_reads_an_end_as_gone(
     fake_daytona,
 ):
     starter = daytona_starter.DaytonaStarter()
-    await starter.start(name="n", image="img", env={})
+    fake_daytona.sandbox = _Sandbox()
     execs = list(fake_daytona.sandbox.commands)
 
     assert not (await starter.sandbox_state("dt-123")).gone
@@ -696,36 +521,3 @@ class _WarmUpObserver:
 
     async def ended(self):
         self.events.append(("ended",))
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("ending", ["success", "failure", "cancel"])
-async def test_a_daytona_warm_up_opens_and_always_ends_its_span(
-    fake_daytona, monkeypatch, ending
-):
-    import asyncio
-
-    from oddish.mon.contract import WarmRequest
-
-    if ending == "failure":
-        monkeypatch.setattr(_Process, "warm_exit_code", 1)
-    if ending == "cancel":
-
-        async def _cancelled(self, command, timeout=None):
-            raise asyncio.CancelledError
-
-        monkeypatch.setattr(_Process, "exec", _cancelled)
-    observer = _WarmUpObserver()
-    warm = daytona_starter.DaytonaStarter().build_warm_image(
-        image="/oddish/mon.Dockerfile", request=WarmRequest(), observer=observer
-    )
-    if ending == "success":
-        assert (await warm).startswith(daytona_starter.SNAPSHOT_PREFIX)
-    else:
-        failed = ending == "failure"
-        with pytest.raises(
-            monitor_sandbox.MonitorSandboxError if failed else asyncio.CancelledError
-        ):
-            await warm
-    assert observer.events == [("started", "dt-123"), ("ended",)]
-    assert fake_daytona.deleted == ["dt-123"]

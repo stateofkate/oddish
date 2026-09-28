@@ -24,7 +24,6 @@ from harbor.trial.hooks import TrialEvent
 from harbor.utils.env import resolve_env_vars
 
 from oddish.core.harbor_source import harbor_git_requirement
-from oddish.runtime.backends.daytona import DaytonaBackend
 from oddish.workers.harbor import ephemeral as harbor_ephemeral
 from oddish.workers.harbor.agent_config import _build_agent_config
 from oddish.workers.harbor._entry import (
@@ -638,7 +637,7 @@ network_mode = "no-network"
 """,
         encoding="utf-8",
     )
-    environment_config = EnvironmentConfig(type=EnvironmentType.DAYTONA)
+    environment_config = EnvironmentConfig(type=EnvironmentType.MODAL)
     if unsupported_shape == "compose":
         (environment_dir / "docker-compose.yaml").write_text("services: {}\n")
     elif unsupported_shape == "extra-compose":
@@ -1235,38 +1234,6 @@ def test_ephemeral_extra_map_allows_harbor_without_thunder():
     assert "thunder" not in extras.values()
 
 
-def test_ephemeral_daytona_forces_ownership_labels():
-    raw_kwargs = {
-        "auto_labels": False,
-        "labels": {
-            "task": "x",
-            "oddish.managed": "false",
-            "oddish.expires_at": "0",
-        },
-    }
-    resolved = EnvironmentConfig.model_validate(
-        {
-            "type": "daytona",
-            "kwargs": DaytonaBackend().harbor_env_kwargs(raw_kwargs),
-        }
-    )
-    payload = _build_payload(
-        task_path=Path("/tmp/task"),
-        jobs_dir=Path("/tmp/jobs"),
-        outcome_path=Path("/tmp/jobs/outcome.json"),
-        agent="nop",
-        model=None,
-        environment_config=resolved,
-        raw_harbor_config={},
-    )
-    config = _build_job_config(payload)
-    assert config.environment.kwargs["auto_labels"] is True
-    labels = config.environment.kwargs["labels"]
-    assert labels["task"] == "x"
-    assert labels["oddish.managed"] == "true"
-    assert int(labels["oddish.expires_at"]) > 0
-
-
 def test_spawn_args_requests_ec2_extra_for_ec2_env():
     args = harbor_ephemeral._spawn_args(_SOURCE, _SHA, environment=EnvironmentType.EC2)
     req = args[args.index("--with") + 1]
@@ -1276,7 +1243,7 @@ def test_spawn_args_requests_ec2_extra_for_ec2_env():
 def test_payload_serializes_resolved_environment_config_without_child_merges():
     resolved = EnvironmentConfig.model_validate(
         {
-            "type": "daytona",
+            "type": "modal",
             "kwargs": {
                 "keep": "value",
                 "auto_stop_interval_mins": 17,

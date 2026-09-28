@@ -25,7 +25,11 @@ from harbor.models.trial.config import (
 
 from oddish.analyze.models import Classification
 from oddish.analyze.qa_stages import STAGES, QAStage
-from oddish.config import is_nop_oracle_agent, normalize_model_id
+from oddish.config import (
+    is_nop_oracle_agent,
+    normalize_model_id,
+    require_enabled_environment,
+)
 from oddish.db import (
     AnalysisStatus,
     Priority,
@@ -157,7 +161,8 @@ class TrialSpec(BaseModel):
         )
 
     @model_validator(mode="after")
-    def normalize_model_aliases(self) -> "TrialSpec":
+    def validate_execution_settings(self) -> "TrialSpec":
+        require_enabled_environment(self.environment)
         self.model = normalize_model_id(self.model)
         return self
 
@@ -315,7 +320,8 @@ class TaskSubmission(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _no_gpu_tpu_conflict(self) -> "TaskSubmission":
+    def _validate_execution_environment(self) -> "TaskSubmission":
+        require_enabled_environment(self.harbor.environment.type)
         _reject_gpu_tpu_conflict(self.harbor)
         for trial in self.trials:
             _reject_tpu_on_non_gke_environment(self.harbor, trial.environment)
@@ -469,7 +475,9 @@ class TaskSweepSubmission(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _no_gpu_tpu_conflict(self) -> "TaskSweepSubmission":
+    def _validate_execution_environment(self) -> "TaskSweepSubmission":
+        require_enabled_environment(self.environment)
+        require_enabled_environment(self.harbor.environment.type)
         _reject_gpu_tpu_conflict(self.harbor)
         for config in self.configs:
             resolved_environment = config.environment or self.environment
@@ -619,6 +627,11 @@ class QARunRequest(BaseModel):
         None,
         description="QA sandbox provider. Null uses the deployed worker default.",
     )
+
+    @model_validator(mode="after")
+    def reject_disabled_environment(self) -> "QARunRequest":
+        require_enabled_environment(self.environment)
+        return self
 
 
 class FullQARunRequest(BaseModel):

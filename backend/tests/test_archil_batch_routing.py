@@ -18,22 +18,17 @@ from oddish.schemas import (
 
 
 @pytest.mark.asyncio
-async def test_batch_hashes_each_raw_item_before_identity_defaults(
+async def test_batch_resolves_each_item_identity_before_routing(
     monkeypatch,
 ) -> None:
-    hashes = {"task-a": "0" * 64, "task-b": "f" * 64}
-    hashed_users = []
+    task_ids = ["task-a", "task-b"]
     routed = []
-
-    def compute_request_hash(submission):
-        hashed_users.append(submission.user)
-        return hashes[submission.task_id]
 
     async def resolve_submission_identity(_session, submission, _auth):
         submission.user = "server-default"
 
-    def get_default_cloud_environment(submission, *, request_hash):
-        routed.append((submission.task_id, submission.user, request_hash))
+    def get_default_cloud_environment(submission):
+        routed.append((submission.task_id, submission.user))
         return EnvironmentType.ARCHIL
 
     async def require_connected_github_user(*_args):
@@ -67,7 +62,6 @@ async def test_batch_hashes_each_raw_item_before_identity_defaults(
     async def spawn_gke_image_builds(*_args):
         pass
 
-    monkeypatch.setattr(tasks, "compute_request_hash", compute_request_hash)
     monkeypatch.setattr(
         tasks, "resolve_submission_identity", resolve_submission_identity
     )
@@ -89,7 +83,7 @@ async def test_batch_hashes_each_raw_item_before_identity_defaults(
                 task_id=task_id,
                 configs=[AgentModelPair(agent="oracle")],
             )
-            for task_id in hashes
+            for task_id in task_ids
         ]
     )
     auth = SimpleNamespace(
@@ -101,8 +95,7 @@ async def test_batch_hashes_each_raw_item_before_identity_defaults(
     result = await tasks.create_task_sweep_batch(payload, auth, Response())
 
     assert result.failed == 2
-    assert hashed_users == [None, None]
     assert routed == [
-        ("task-a", "server-default", hashes["task-a"]),
-        ("task-b", "server-default", hashes["task-b"]),
+        ("task-a", "server-default"),
+        ("task-b", "server-default"),
     ]

@@ -1,5 +1,12 @@
 # Oddish documentation
 
+Daytona execution is disabled. Use `oddish run <task> --env modal` for CPU tasks,
+`--env archil` for another CPU provider, or `--env thunder` / `--env modal` for
+GPU tasks. The task must still declare its GPU count and type. Requests and
+retries selecting Daytona fail without switching providers; resubmit with an
+explicit supported provider. Existing Daytona sandboxes remain available for
+status checks and cleanup. The default `ODDISH_HARBOR_ENVIRONMENT` is `modal`.
+
 Customer guides are maintained in [docs/customer](docs/customer/getting-started.md). Read the guides at https://docs.abundant.dev/docs/oddish. The website requires a separate Abundant Docs account with Oddish documentation access. A docs account grants no task-workspace membership.
 
 The [command reference](docs/customer/reference/commands.md) explains common commands. Run `oddish COMMAND --help` for options in your installed version. [Internal CLI details](docs/cli-advanced-internal.md) remain repository-only. [Migration inventory](docs/customer-docs-migration.md) records each moved section.

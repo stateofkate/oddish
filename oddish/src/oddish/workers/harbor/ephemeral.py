@@ -32,10 +32,10 @@ from oddish.config import (
     settings,
     to_anthropic_api_model_id,
     xai_public_bare_model_id,
+    require_enabled_environment,
 )
 from oddish.core.harbor_artifacts import THUNDER_CAPACITY_UNAVAILABLE_CODE
 from oddish.core.harbor_source import harbor_git_requirement
-from oddish.runtime.backends.daytona import DaytonaBackend
 from oddish.schemas import HarborConfig
 from oddish.task_timeouts import validate_task_timeout_config
 from ._entry import EVENT_SENTINEL
@@ -324,10 +324,7 @@ def _build_payload(
         )
         if environment is not None:
             environment_config.type = environment
-        if environment_config.type == EnvironmentType.DAYTONA:
-            environment_config.kwargs = DaytonaBackend().harbor_env_kwargs(
-                dict(environment_config.kwargs)
-            )
+    require_enabled_environment(environment_config.type)
     # Surface the selected Anthropic credential during config construction and
     # ship it to the child. The model's canonical provider owns the transport;
     # credentials do not change it. HDO keeps its separate key precedence.

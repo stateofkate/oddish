@@ -146,11 +146,11 @@ async def test_non_gke_environment_stays_on_default_variant():
     from harbor.models.environment_type import EnvironmentType
 
     async with get_session() as session:
-        await _cleanup(session, "hsweep-daytona")
+        await _cleanup(session, "hsweep-modal")
         session.add(
             TaskModel(
-                id="hsweep-daytona",
-                name="hsweep-daytona",
+                id="hsweep-modal",
+                name="hsweep-modal",
                 user="t",
                 org_id=None,
                 task_path="p",
@@ -160,10 +160,10 @@ async def test_non_gke_environment_stays_on_default_variant():
         _task, trials, _is_append, _exp = await create_task_sweep_core(
             session,
             submission=TaskSweepSubmission(
-                task_id="hsweep-daytona",
+                task_id="hsweep-modal",
                 configs=[AgentModelPair(agent="nop", n_trials=1)],
                 harbor=HarborConfig(),
-                environment=EnvironmentType.DAYTONA,
+                environment=EnvironmentType.MODAL,
             ),
         )
         assert trials and all(t.harbor_sha == HARBOR_DEFAULT_SHA for t in trials)
@@ -338,16 +338,15 @@ async def test_append_without_env_inherits_gke_and_routes_to_gke_variant():
 @pytest.mark.parametrize(
     "inherited,selected,submission_env,config_env,expected",
     [
-        ("daytona", "archil", None, None, "archil"),
-        ("daytona", "daytona", None, None, "daytona"),
-        ("daytona", "archil", "daytona", None, "daytona"),
-        ("daytona", "archil", None, "daytona", "daytona"),
-        ("modal", "archil", None, None, "modal"),
-        ("gke", "archil", None, None, "gke"),
-        ("archil", "daytona", None, None, "archil"),
+        ("daytona", "modal", None, None, None),
+        ("daytona", "modal", "modal", None, "modal"),
+        ("daytona", "modal", "archil", None, "archil"),
+        ("modal", "modal", None, None, "modal"),
+        ("gke", "modal", None, None, "gke"),
+        ("archil", "modal", None, None, "archil"),
     ],
 )
-async def test_archil_rollout_on_existing_task(
+async def test_explicit_provider_overrides_inheritance_without_rewriting_history(
     inherited, selected, submission_env, config_env, expected
 ):
     from uuid import uuid4
@@ -366,24 +365,40 @@ async def test_archil_rollout_on_existing_task(
             submission=TaskSweepSubmission(
                 task_id=task_id,
                 configs=[AgentModelPair(agent="nop", n_trials=1)],
-                environment=EnvironmentType(inherited),
+                environment=(
+                    EnvironmentType.MODAL if inherited == "daytona"
+                    else EnvironmentType(inherited)
+                ),
             ),
         )
+        # A historical Daytona row remains readable even though new launches
+        # are disabled. Only an explicit supported selection can append to it.
+        original_trials[0].environment = inherited
+        await session.flush()
         # Let the core detect append mode, as it does for existing-task reruns.
+        submission = TaskSweepSubmission(
+            task_id=task_id,
+            configs=[AgentModelPair(
+                agent="nop", model="distinct-model", n_trials=2,
+                environment=config_env,
+            )],
+            environment=submission_env,
+        )
+        if expected is None:
+            with pytest.raises(HTTPException, match="Daytona is disabled"):
+                await create_task_sweep_core(
+                    session, submission=submission,
+                    default_environment=EnvironmentType(selected),
+                )
+            from oddish.db import TrialModel
+
+            saved = (await session.scalars(
+                select(TrialModel).where(TrialModel.task_id == task_id)
+            )).all()
+            assert len(saved) == 1 and saved[0].environment == "daytona"
+            return
         _, new_trials, is_append, _ = await create_task_sweep_core(
-            session,
-            submission=TaskSweepSubmission(
-                task_id=task_id,
-                configs=[
-                    AgentModelPair(
-                        agent="nop",
-                        model="distinct-model",
-                        n_trials=2,
-                        environment=config_env,
-                    )
-                ],
-                environment=submission_env,
-            ),
+            session, submission=submission,
             default_environment=EnvironmentType(selected),
         )
         assert is_append and len(new_trials) == 2

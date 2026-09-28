@@ -20,7 +20,7 @@ def test_ec2_is_a_hosted_passthrough_environment() -> None:
     assert EnvironmentType.EC2 in run_module._HOSTED_PASSTHROUGH_ENVIRONMENTS
 
 
-def test_run_help_lists_explicit_providers_and_keeps_daytona_as_cpu_default() -> None:
+def test_run_help_lists_explicit_providers_and_keeps_modal_as_cpu_default() -> None:
     result = CliRunner().invoke(app, ["run", "--help"], env={"COLUMNS": "240"})
 
     assert result.exit_code == 0
@@ -28,5 +28,5 @@ def test_run_help_lists_explicit_providers_and_keeps_daytona_as_cpu_default() ->
     output = re.sub(r"\s+", " ", output)
     assert "ec2, e2b, modal" in output
     assert "modal, archil, runloop" in output
-    assert "Defaults: daytona" in output
+    assert "Defaults: modal" in output
     assert "for CPU-only" in output

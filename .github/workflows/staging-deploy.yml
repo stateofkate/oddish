@@ -36,8 +36,7 @@ jobs:
       ODDISH_GATE_LLM_ON_BASELINES: "1"
       # Numinous Cloud execution backend (merged in #1344, opt-in). Disabled:
       # staging is treated as main, so development happens on preview deploys
-      # only (pr-preview.yml keeps it on). Set to "1" to route CPU trials to
-      # Numinous first, then Daytona, then Modal.
+      # only (pr-preview.yml keeps it on). CPU tasks default to Modal.
       ODDISH_NUMINOUS_ENABLED: "0"
       # oddish-mon: staging runs every eligible trial on the monitor (code
       # defaults: flag on, sample 100). The 50/50 drill of 23 Sep is in

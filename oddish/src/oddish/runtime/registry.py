@@ -1,10 +1,9 @@
-"""Name → ExecutionBackend resolution + the ordered routing set.
+"""Provider lookup for launches, cleanup, and historical records.
 
-``ordered_backends()`` returns Daytona before the opt-in Thunder and EC2
-backends, Modal, and Archil, so capability negotiation keeps Daytona as the
-default CPU backend and escalates to the first GPU-capable backend only when a
-capability requires it: Thunder on deployments that enable it, otherwise
-Modal."""
+Daytona stays registered for teardown only. Routing excludes it from launch
+choices and selects Modal for CPU tasks, Thunder (when compatible) or Modal
+for GPU tasks. Explicit Archil and other enabled providers remain available.
+"""
 
 from __future__ import annotations
 
@@ -25,17 +24,15 @@ _ARCHIL = ArchilBackend()
 
 REGISTERED_BACKENDS: dict[str, ExecutionBackend] = {}
 
-# Numinous joins FIRST (cheapest CPU lane) when enabled, so cheap-first
-# negotiation hands plain-CPU trials to it before Daytona.
+# Numinous keeps its opt-in accelerator precedence; CPU selection uses Modal.
 if settings.numinous_enabled:
     _NUMINOUS = NuminousBackend()
     REGISTERED_BACKENDS[_NUMINOUS.name] = _NUMINOUS
 
+# Retained for cancellation and orphan cleanup; never a launch candidate.
 REGISTERED_BACKENDS[_DAYTONA.name] = _DAYTONA
 
-# Thunder follows Daytona in the ordered registry so enabling it cannot
-# replace the CPU default, and precedes Modal so that on deployments that
-# enable it, cheap-first negotiation hands GPU work to Thunder.
+# Thunder precedes Modal for compatible GPU requests. CPU selection uses Modal.
 if settings.thunder_enabled:
     _THUNDER = ThunderBackend()
     REGISTERED_BACKENDS[_THUNDER.name] = _THUNDER

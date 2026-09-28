@@ -78,7 +78,7 @@ not authorize a later mutation.
    the output; the `experiment` field is the experiment name, not a guaranteed
    identifier.
 
-   Without `--env`, hosted CPU runs use the deployment's Daytona/Archil rollout
+   Without `--env`, hosted CPU runs use Modal
    or enabled Numinous provider. Explicit environments choose initial placement;
    after two failed Archil attempts, an allowed retry uses Modal.
 
@@ -175,3 +175,9 @@ it from PyPI. `oddish version --check` prints the Homebrew check command.
 The Homebrew package includes CLI and shared client helpers, not the Oddish
 server, database, or worker implementations. Releases are maintained in
 https://github.com/abundant-ai/homebrew-tap.
+
+Daytona is disabled. Use `oddish run <task> --env modal` for CPU tasks or
+`--env archil` for an explicit alternative; GPU tasks use `--env thunder` or
+`--env modal`. Keep GPU counts/types in the task configuration. Daytona selections
+are rejected, including saved selections on retries; resubmit with a supported
+provider. There is no automatic replacement for a Daytona request.

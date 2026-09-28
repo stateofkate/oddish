@@ -221,7 +221,7 @@ def test_ec2_registry_entry_is_inserted_after_daytona_without_changing_defaults(
     names = _registered_backend_names(enabled=True)
 
     assert names.index("daytona") < names.index("ec2") < names.index("modal")
-    assert default_cloud_environment(requires_gpu=False) == EnvironmentType.DAYTONA
+    assert default_cloud_environment(requires_gpu=False) == EnvironmentType.MODAL
     assert default_cloud_environment(requires_gpu=True) == EnvironmentType.MODAL
 
 

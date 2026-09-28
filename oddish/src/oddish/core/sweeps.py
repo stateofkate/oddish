@@ -13,6 +13,8 @@ from oddish.config import (
     require_geometric_served_model_id,
     require_hunyuan_served_model_id,
     settings,
+    DisabledEnvironmentError,
+    require_enabled_environment,
 )
 from oddish.reasoning_effort import normalize_reasoning_effort
 from oddish.schemas import TaskSubmission, TaskSweepSubmission, TrialSpec
@@ -59,6 +61,10 @@ def build_trial_specs_from_sweep(
 ) -> list[TrialSpec]:
     trials: list[TrialSpec] = []
     effective_default_environment = submission.environment or default_environment
+    try:
+        require_enabled_environment(effective_default_environment)
+    except DisabledEnvironmentError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if effective_default_environment and allowed_environments:
         _validate_allowed_environment(
             effective_default_environment,

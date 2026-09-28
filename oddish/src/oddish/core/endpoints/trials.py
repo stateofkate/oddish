@@ -172,6 +172,17 @@ async def retry_trial_core(
     if old_trial is None:
         raise HTTPException(status_code=404, detail=f"Trial {trial_id} not found")
 
+    from oddish.config import settings
+    from oddish.config import (
+        DisabledEnvironmentError,
+        require_enabled_environment,
+    )
+
+    try:
+        require_enabled_environment(old_trial.environment or settings.harbor_environment)
+    except DisabledEnvironmentError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     if old_trial.superseded_by_trial_id is not None:
         raise HTTPException(
             status_code=400,

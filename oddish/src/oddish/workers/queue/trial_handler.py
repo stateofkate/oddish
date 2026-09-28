@@ -28,7 +28,11 @@ from oddish.core.trial_artifacts import (
     trial_name_from_manifest,
     validate_uploaded_analysis_artifacts,
 )
-from oddish.config import settings
+from oddish.config import (
+    settings,
+    DisabledEnvironmentError,
+    require_enabled_environment,
+)
 from oddish.costs.modal_cost import SpanResources
 from oddish.workers.queue.thunder_fallback import (
     emit_thunder_handoff_event,
@@ -1741,6 +1745,9 @@ async def _prepare_claimed_trial_attempt(
     failure because partial task, credential, and sandbox resources are
     released here first.
     """
+    require_enabled_environment(
+        prepared_trial.trial_environment or settings.harbor_environment
+    )
     prepared_task: PreparedTrialTask | None = None
     sandbox_launch: SandboxLaunchContext | None = None
     try:
@@ -1962,7 +1969,9 @@ async def run_trial_job(
             execution=TrialExecutionResult(
                 outcome=None,
                 execution_error=execution_error,
-                retryable=not isinstance(exc, QuotaPauseControlError),
+                retryable=not isinstance(
+                    exc, (QuotaPauseControlError, DisabledEnvironmentError)
+                ),
             ),
             worker_id=worker_id,
             worker_job_id=worker_job_id,

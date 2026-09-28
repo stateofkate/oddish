@@ -918,7 +918,7 @@ ENV_VARS = {
         or (LOCAL_DOTENV_VARS.get("ODDISH_OPERATOR_ORG_ID") or "").strip()
         or DEFAULT_OPERATOR_ORG_ID
     ),
-    "ODDISH_HARBOR_ENVIRONMENT": "daytona",
+    "ODDISH_HARBOR_ENVIRONMENT": "modal",
     "ODDISH_AUTO_START_WORKERS": "false",
     "ODDISH_ASYNCPG_POOL_MIN_SIZE": "0",
     "ODDISH_ASYNCPG_POOL_MAX_SIZE": "1",
@@ -939,14 +939,6 @@ ENV_VARS = {
         k: v
         for k, v in {**LOCAL_DOTENV_VARS, **os.environ}.items()
         if k.startswith("ODDISH_MONITOR_EXECUTION_")
-    },
-    # Archil CPU rollout lever (oddish.config.Settings.archil_traffic_percent),
-    # read by the API when it picks a provider for a new sweep. Unset keeps the
-    # code default of 0; each deploy workflow sets its own line.
-    **{
-        k: v
-        for k, v in {**LOCAL_DOTENV_VARS, **os.environ}.items()
-        if k == "ODDISH_ARCHIL_TRAFFIC_PERCENT"
     },
     # GKE coordinates resolved at deploy time (process env wins over
     # backend/.env, mirroring _effective_gke_cluster_name), baked into the
@@ -1016,7 +1008,7 @@ ENV_VARS = {
 
 
 # Named provider secrets can carry old settings and override image ENV.
-# Capture the deploy's limits and Thunder settings last so container imports
+# Capture the deploy's default environment, limits and Thunder settings last so imports
 # use the same secret dependencies and limits as the deployed functions.
 # Always append: Modal requires identical dependency counts on container import.
 runtime_secrets.append(
@@ -1024,6 +1016,7 @@ runtime_secrets.append(
         {
             name: ENV_VARS[name]
             for name in (
+                "ODDISH_HARBOR_ENVIRONMENT",
                 "ODDISH_MODAL_WORKER_CPU",
                 "ODDISH_MODAL_WORKER_MEMORY_MB",
                 "ODDISH_MODAL_WORKER_NONPREEMPTIBLE",

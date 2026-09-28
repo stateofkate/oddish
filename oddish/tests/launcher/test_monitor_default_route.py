@@ -98,7 +98,7 @@ def test_monitor_path_is_on_by_default():
 @pytest.mark.asyncio
 async def test_agent_trial_is_handed_to_the_monitor(monkeypatch):
     monkeypatch.setattr(settings, "monitor_execution_enabled", True)
-    trial = SimpleNamespace(kind="agent", harbor_config={})
+    trial = SimpleNamespace(environment=None, kind="agent", harbor_config={})
     monkeypatch.setattr(handlers_module, "get_session", _session_returning(trial))
     launched = _stub(
         monkeypatch, monitor_launch, "launch_monitor_attempt", JobOutcome.handed_off()
@@ -116,8 +116,8 @@ async def test_agent_trial_is_handed_to_the_monitor(monkeypatch):
 @pytest.mark.parametrize(
     "trial",
     [
-        SimpleNamespace(kind="analysis", harbor_config={}),
-        SimpleNamespace(kind="qa", harbor_config=None),
+        SimpleNamespace(environment=None, kind="analysis", harbor_config={}),
+        SimpleNamespace(environment=None, kind="qa", harbor_config=None),
     ],
     ids=["analysis", "qa"],
 )
@@ -132,7 +132,9 @@ async def test_missing_trial_is_not_sent_to_the_monitor(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_unset_kind_counts_as_agent(monkeypatch):
-    assert await _can_drive(monkeypatch, SimpleNamespace(kind=None, harbor_config=None))
+    assert await _can_drive(
+        monkeypatch, SimpleNamespace(environment=None, kind=None, harbor_config=None)
+    )
 
 
 async def _can_drive(monkeypatch, trial) -> bool:
@@ -144,7 +146,7 @@ async def _can_drive(monkeypatch, trial) -> bool:
 async def test_launch_that_settled_here_reports_the_settled_outcome(monkeypatch):
     """A failed launch settles the attempt itself and returns no handoff."""
     monkeypatch.setattr(settings, "monitor_execution_enabled", True)
-    trial = SimpleNamespace(kind="agent", harbor_config={})
+    trial = SimpleNamespace(environment=None, kind="agent", harbor_config={})
     monkeypatch.setattr(handlers_module, "get_session", _session_returning(trial))
     _stub(monkeypatch, monitor_launch, "launch_monitor_attempt", None)
     settled = JobOutcome.fail("sandbox refused", retryable=True)
@@ -208,7 +210,9 @@ async def test_no_control_plane_url_keeps_the_trial_on_the_worker(monkeypatch, u
 
     monkeypatch.setattr(monitor_launch, "control_plane_url", _url)
     assert (
-        await _can_drive(monkeypatch, SimpleNamespace(kind="agent", harbor_config={}))
+        await _can_drive(
+            monkeypatch, SimpleNamespace(environment=None, kind="agent", harbor_config={})
+        )
         is False
     )
 
@@ -223,11 +227,11 @@ def _settled_agent_trial():
     from oddish.db import TrialStatus
 
     return SimpleNamespace(
+        environment=None,
         kind="agent",
         harbor_config={},
         status=TrialStatus.SUCCESS,
         error_message=None,
-        environment=None,
     )
 
 
@@ -340,7 +344,10 @@ async def test_gpu_trial_runs_on_the_worker(
     assert warmed == []
     assert (len(launched), len(drove)) == ((1, 0) if on_monitor else (0, 1))
     gpu_line = any("route=worker reason=gpu" in line for line in lines)
-    assert gpu_line is not on_monitor
+    if environment == "daytona":
+        assert any("reason=disabled-environment" in line for line in lines)
+    else:
+        assert gpu_line is not on_monitor
 
 
 @pytest.mark.asyncio

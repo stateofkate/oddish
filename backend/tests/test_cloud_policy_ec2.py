@@ -37,7 +37,7 @@ def _cloud_policy_values(*, ec2_enabled: bool) -> tuple[set[str], str, str]:
         "from oddish.schemas import TaskSweepSubmission;"
         "print(','.join(sorted(e.value for e in "
         "cloud_policy.ALLOWED_CLOUD_ENVIRONMENTS)));"
-        "print(cloud_policy.get_default_cloud_environment(request_hash='0'*64).value);"
+        "print(cloud_policy.get_default_cloud_environment().value);"
         "submission=TaskSweepSubmission.model_validate({"
         "'task_id':'t','configs':[{'agent':'nop','n_trials':1}],"
         "'environment':'ec2'});"
@@ -75,7 +75,7 @@ def _cloud_policy_values(*, ec2_enabled: bool) -> tuple[set[str], str, str]:
     return set(allowed.split(",")), default, decision
 
 
-def test_ec2_is_allowed_only_when_enabled_and_daytona_remains_default() -> None:
+def test_ec2_is_allowed_only_when_enabled_and_modal_remains_default() -> None:
     disabled_allowed, disabled_default, disabled_decision = _cloud_policy_values(
         ec2_enabled=False
     )
@@ -85,7 +85,7 @@ def test_ec2_is_allowed_only_when_enabled_and_daytona_remains_default() -> None:
 
     assert "ec2" not in disabled_allowed
     assert "ec2" in enabled_allowed
-    assert disabled_default == "daytona"
-    assert enabled_default == "daytona"
+    assert disabled_default == "modal"
+    assert enabled_default == "modal"
     assert disabled_decision == "rejected:400"
     assert enabled_decision == "accepted"

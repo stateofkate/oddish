@@ -74,6 +74,10 @@ async def _monitor_blocker(trial_id: str) -> str | None:
     kind = trial.kind or "agent"
     if kind not in _MONITOR_TRIAL_KINDS:
         return f"kind={kind}"
+    from oddish.config import settings
+
+    if (trial.environment or settings.harbor_environment) == "daytona":
+        return "disabled-environment"
     # A trial runs on the provider it asked for. No starter for it: the worker.
     from oddish.workers.launcher.launch import control_plane_url
     from oddish.workers.launcher.providers.base import provider_for_environment

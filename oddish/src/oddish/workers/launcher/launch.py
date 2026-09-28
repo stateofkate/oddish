@@ -26,7 +26,12 @@ from sqlalchemy import exc as sa_exc
 from sqlalchemy import literal, select, update
 from sqlalchemy.dialects.postgresql import JSONB
 
-from oddish.config import api_base_url_for_modal_app, settings
+from oddish.config import (
+    api_base_url_for_modal_app,
+    settings,
+    DisabledEnvironmentError,
+    require_enabled_environment,
+)
 from oddish.db import WorkerJobModel, WorkerJobStatus, get_session
 from oddish.db.models import utcnow
 from oddish.db.storage import resolve_task_directory
@@ -472,7 +477,7 @@ async def fail_launch(
         execution=TrialExecutionResult(
             outcome=None,
             execution_error=f"Monitor launch failed: {type(exc).__name__}: {exc}",
-            retryable=True,
+            retryable=not isinstance(exc, DisabledEnvironmentError),
         ),
         worker_id=job.worker_id,
         worker_job_id=job.id,
@@ -634,6 +639,12 @@ async def launch_monitor_attempt(
                 await asyncio.sleep(_HEARTBEAT_SECONDS)
 
         launch_heartbeat = asyncio.create_task(_heartbeat_during_launch())
+        # Settle disabled selections through fail_launch, including a forced
+        # monitor provider. Validate before resolving images or minting secrets.
+        require_enabled_environment(
+            prepared.trial_environment or settings.harbor_environment
+        )
+        require_enabled_environment(provider)
         await _resolve_image(
             job, prepared.task_id, prepared.task_version, image_resolver
         )

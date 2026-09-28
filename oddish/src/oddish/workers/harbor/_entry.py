@@ -164,12 +164,9 @@ def _build_job_config(payload: dict[str, Any]):
     # already-resolved provider config in environment_config.
     if payload.get("environment"):
         env_config.type = EnvironmentType(payload["environment"])
-    if (
-        not payload.get("environment_config")
-        and env_config.type == EnvironmentType.DAYTONA
-        and payload.get("daytona_kwargs")
-    ):
-        env_config.kwargs = payload["daytona_kwargs"]
+    from oddish.config import require_enabled_environment
+
+    require_enabled_environment(env_config.type)
 
     agent_kwargs: dict[str, Any] = dict(payload.get("agent_config") or {})
     if agent_kwargs.get("import_path") is None:

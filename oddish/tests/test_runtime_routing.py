@@ -43,7 +43,7 @@ class _StubTpuBackend:
 
 def test_allowed_cloud_environments_includes_archil() -> None:
     assert allowed_cloud_environments() == frozenset(
-        {EnvironmentType.MODAL, EnvironmentType.DAYTONA, EnvironmentType.ARCHIL}
+        {EnvironmentType.MODAL, EnvironmentType.ARCHIL}
     )
 
 
@@ -61,7 +61,7 @@ def test_registered_thunder_wins_gpu_negotiation_but_not_cpu_or_registry(
     monkeypatch,
 ) -> None:
     # The registry places Thunder between Daytona and Modal; cheap-first
-    # negotiation must hand GPU work to it while plain CPU stays on Daytona
+    # negotiation must hand GPU work to it while plain CPU stays on Modal
     # and private-registry pulls (which Thunder lacks) still go to Modal.
     import oddish.runtime.routing as routing
     from oddish.runtime.backends.daytona import DaytonaBackend
@@ -73,7 +73,7 @@ def test_registered_thunder_wins_gpu_negotiation_but_not_cpu_or_registry(
         "ordered_backends",
         lambda: [DaytonaBackend(), ThunderBackend(), ModalBackend()],
     )
-    assert routing.select_backend().name == "daytona"
+    assert routing.select_backend().name == "modal"
     # Thunder launches only a task naming exactly one accelerator it offers
     # (Harbor's Thunder environment rejects anything else at construction),
     # so those are the GPU requests it wins; A100 memory variants count as A100.
@@ -118,8 +118,8 @@ def test_gpu_support_serves_any_request_unless_it_needs_a_named_accelerator() ->
         assert not named_only.serves(gpu_types)
 
 
-def test_default_cloud_environment_cpu_routes_to_daytona() -> None:
-    assert default_cloud_environment(requires_gpu=False) == EnvironmentType.DAYTONA
+def test_default_cloud_environment_cpu_routes_to_modal() -> None:
+    assert default_cloud_environment(requires_gpu=False) == EnvironmentType.MODAL
 
 
 def test_select_backend_gpu_skips_daytona_picks_modal() -> None:
@@ -131,8 +131,8 @@ def test_select_backend_private_registry_picks_modal() -> None:
     assert select_backend(requires_private_registry=True).name == "modal"
 
 
-def test_select_backend_plain_cpu_picks_daytona() -> None:
-    assert select_backend().name == "daytona"
+def test_select_backend_plain_cpu_picks_modal() -> None:
+    assert select_backend().name == "modal"
 
 
 def test_select_backend_raises_when_no_eligible_backend(monkeypatch) -> None:
@@ -216,5 +216,5 @@ def test_requires_tpu_does_not_disturb_cpu_and_gpu_defaults(monkeypatch) -> None
         "ordered_backends",
         lambda: [DaytonaBackend(), ModalBackend(), _StubTpuBackend()],
     )
-    assert routing.select_backend().name == "daytona"
+    assert routing.select_backend().name == "modal"
     assert routing.select_backend(requires_gpu=True).name == "modal"

@@ -51,9 +51,9 @@ def test_thunder_max_failed_attempts_cannot_be_negative() -> None:
 
 
 def test_thunder_fallback_provider_is_normalized() -> None:
-    settings = Settings(_env_file=None, thunder_fallback_provider=" Daytona ")
+    settings = Settings(_env_file=None, thunder_fallback_provider=" Modal ")
 
-    assert settings.thunder_fallback_provider == "daytona"
+    assert settings.thunder_fallback_provider == "modal"
 
 
 @pytest.mark.parametrize("provider", ["", "  ", "thunder", "ec2", "not-a-provider"])
@@ -62,3 +62,8 @@ def test_thunder_fallback_provider_must_name_a_different_provider(
 ) -> None:
     with pytest.raises(ValidationError, match="thunder_fallback_provider"):
         Settings(_env_file=None, thunder_fallback_provider=provider)
+
+
+def test_daytona_cannot_be_configured_as_a_fallback():
+    with pytest.raises(ValueError, match="Daytona is disabled"):
+        Settings(_env_file=None, thunder_fallback_provider="daytona")

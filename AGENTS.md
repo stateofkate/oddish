@@ -155,7 +155,7 @@ backend/                        # Hosted cloud layer (Modal deployment)
 │                               # verification (auth/verification.py), provisioning, types
 ├── worker/                     # Modal dispatcher and single-job worker orchestration
 ├── deploy.py                   # Modal app entrypoint
-├── modal_app.py                # Modal image, volumes, shared runtime, env knobs; CPU policy preserves enabled Numinous before the Daytona/Archil rollout
+├── modal_app.py                # Modal image, volumes, shared runtime, env knobs; CPU defaults to Modal; Daytona cleanup only
 ├── endpoints.py                # Modal ASGI app function with concurrency/volume wiring
 ├── serve.py                    # Railway/uvicorn entrypoint for non-Modal deployment
 ├── cloud_policy.py             # Hosted-only environment policy
@@ -310,7 +310,7 @@ High-level flow:
    operators can select versions that need a newer policy rerun. Historical
    audit trials and stored results can omit the hash.
    QA rerun and pre-trial audit endpoints accept an optional `environment`
-   (`modal` or `daytona`); omitted/null retains the worker default. The task
+   (`modal`; Daytona is rejected); omitted/null retains the worker default. The task
    panel and bulk Run QA toolbar use the worker default. Explicit API selections are
    stored on the new trial and survive retries; they do not change the global
    default or the environment of automatically enqueued follow-up QA.
@@ -585,7 +585,7 @@ findings or their task verdicts. The stored `audit_policy_hash` identifies which
 audit policy produced each result.
 
 `POST /tasks/{task_id}/qa/pre-trial` accepts an optional JSON body with
-`environment: "modal" | "daytona"`; `POST /qa-evals` accepts the same field.
+`environment: "modal"` (Daytona is rejected); `POST /qa-evals` accepts the same field.
 The provider is stored on each created analysis trial as `trials.environment`,
 so workers and retries execute on that provider. An omitted or null value
 retains the deployed worker default. Source solver trials are unchanged.
@@ -1494,24 +1494,16 @@ Settings are loaded from `oddish/.env`; see `oddish/env.example`,
 Keep these routing rules in sync with `oddish/src/oddish/config.py` and
 `oddish/src/oddish/workers/harbor/runner.py`:
 
-- `ODDISH_ARCHIL_TRAFFIC_PERCENT` (integer 0 through 100, default 0) replaces
-  a Daytona result for that percentage of newly submitted hosted CPU sweeps.
-  Enabled Numinous remains the first CPU candidate and is not replaced.
-  Production sets it in `.github/workflows/modal-deploy.yml` (currently 5);
-  `backend/modal_app.py` bakes the deploy-time value into the image.
-  `backend/api/routers/tasks.py` computes the request fingerprint before
-  identity or GitHub attribution mutates the submission; `backend/cloud_policy.py`
-  maps that SHA-256 value into a 0–99 bucket. The selected default reaches every
-  unset trial spec in the sweep, including newly appended trials on existing
-  Daytona tasks. An Archil selection replaces inherited Daytona before both
-  Harbor stamping and trial creation; existing trials remain unchanged.
-  Explicit submission/config environments, non-Daytona capability routes,
-  and inherited providers other than Daytona keep their provider. The batch route
-  applies the same rule independently to each raw item. When a retry starts after two failed Archil
-  attempts, `_prepare_trial_run` persists Modal on the trial and uses it for
-  attempt 3 and later retries, including retries recovered after worker loss.
-  This also applies to explicitly selected Archil trials. The existing attempt
-  limit and non-retryable failure rules still apply; no extra attempt is added.
+- Daytona is disabled for launches. CPU submissions default to Modal; Archil
+  remains an explicit `--env archil` choice. `ODDISH_HARBOR_ENVIRONMENT` defaults
+  to `modal` and the hosted deployment pins that value. Submitted or inherited
+  Daytona choices are rejected; queued Daytona attempts fail permanently without
+  allocating a sandbox or moving to another provider. Retry requests for saved
+  Daytona runs are rejected before copying a trial. Existing Daytona status,
+  cancellation, orphan cleanup, historical records, and snapshot deletion remain
+  available. The retired `ODDISH_ARCHIL_TRAFFIC_PERCENT` setting has no effect.
+  Explicit Archil trials still move to Modal after two failed attempts under the
+  existing policy; the Daytona restriction adds no fallback.
 - Thunder is an explicit, opt-in GPU backend. `ODDISH_THUNDER_ENABLED=true`
   registers it; `ODDISH_THUNDER_MAX_CAPACITY` (default 128) is a provider-wide
   limit enforced by durable leases across every organization, model, queue key,
@@ -1528,7 +1520,7 @@ Keep these routing rules in sync with `oddish/src/oddish/config.py` and
   sends `requires_gpu` and the task's GPU types (an exact `gpu_type`
   environment kwarg, else the task.toml `gpu_types` list) for a GPU request
   and lets `backend/cloud_policy.py` negotiate against the deployment's own
-  registry, where a `gpu_type` kwarg in the request itself wins the same way. Plain CPU work uses the Daytona/Archil rollout described above. Harbor's Thunder
+  registry, where a `gpu_type` kwarg in the request itself wins the same way. Plain CPU work defaults to Modal. Harbor's Thunder
   environment requires exactly one `[environment].gpu_types` entry (or a
   `gpu_type` kwarg) and a GPU count of 1, 2, 4, or 8, which `ThunderBackend`
   declares as `GpuSupport.requires_named_accelerator`; negotiation therefore
@@ -3238,7 +3230,7 @@ line range in the current task pane; they preserve the experiment route.
 from an immutable Oddish commit. Its client-files.txt owns the distribution list;
 an import-closure check rejects dependencies on excluded Oddish modules. Keep
 CLI imports independent of server and sandbox implementations. Client CPU/GPU
-selection uses Daytona/Modal (Numinous when explicitly enabled); hosted APIs
+selection uses Modal (Numinous when explicitly enabled); hosted APIs
 validate the requested environment. Homebrew installs carry a HOMEBREW marker
 in their distribution metadata so version/update commands never replace the
 Homebrew-managed environment through PyPI.

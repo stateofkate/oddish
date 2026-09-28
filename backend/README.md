@@ -50,7 +50,7 @@ Scheduled functions
        - Dispatches each to the registered handler
        - Writes heartbeats, records outcomes, exits
   ▼
-Harbor execution on Modal, Daytona, Archil, GKE (TPU), opt-in ephemeral EC2,
+Harbor execution on Modal, Archil, GKE (TPU), opt-in ephemeral EC2,
 opt-in Numinous Cloud (CPU and optionally GPU), or opt-in Thunder GPU sandboxes
   - logs/artifacts persisted to S3
 ```
@@ -495,26 +495,21 @@ its GPU lane. When enabled, the Modal deployment attaches the secret named by
 
 Local `backend/.env` values are layered on top of the shared Modal secret for local deploys.
 
-`ODDISH_ARCHIL_TRAFFIC_PERCENT` controls the hosted CPU rollout when capability
-routing selects Daytona and defaults to `0`. Production sets it to `5` (5%) in
-`.github/workflows/modal-deploy.yml`. The API maps the raw request
-fingerprint into a bucket from 0 through 99, then selects Archil when the bucket
-is below the configured percentage. One bucket applies to the whole sweep.
-Enabled Numinous, explicit environments, existing task appends, and
-other non-Daytona capability routes keep their resolved or stored provider.
-Archil trials switch to Modal when a retry starts after two failed attempts
-(attempt 3), including explicit Archil selections and recovered worker failures.
-Remaining retries stay on Modal within the existing attempt budget;
-non-retryable failures still stop without a fallback attempt.
-Values outside 0 through 100 fail settings validation at process startup.
-Production sets it in `.github/workflows/modal-deploy.yml`; `modal_app.py`
-bakes the deploy-time value into the image, so ramping or rolling back is an
-edit to that line followed by a promotion to `main`.
+CPU tasks default to Modal. Select Archil explicitly with `oddish run <task>
+--env archil`. Daytona launches are disabled: explicit and inherited selections
+are rejected, and waiting Daytona jobs fail without switching providers. To run
+one again, submit it with `--env modal` or `--env archil`; the retry command
+preserves the saved provider and therefore rejects Daytona trials. Existing
+Daytona sandboxes can still be inspected and deleted. The former
+`ODDISH_ARCHIL_TRAFFIC_PERCENT` deployment setting has been removed.
+
+Archil's existing retry policy still moves a trial to Modal after two failed
+attempts. Thunder's existing retry policy is also unchanged. Neither can launch
+Daytona as a fallback destination.
 
 ### Ephemeral EC2 Harbor backend
 
-EC2 is an explicit CPU-only provider; it is never selected by the Archil
-rollout or the ordinary Daytona default. Set the
+EC2 is an explicit CPU-only provider; it is never selected as the ordinary CPU default. Set the
 non-secret `ODDISH_EC2_*` launch coordinates from `backend/.env.example` and
 name two dedicated Modal secrets:
 
@@ -546,10 +541,10 @@ Railway/Docker deployment path, and the Modal worker image installs it as well.
 ### Thunder Harbor backend
 
 Thunder is the default GPU provider on deployments that enable it: it sits
-between Daytona and Modal in the runtime registry, so a GPU submission with no
+before Modal in the runtime registry, so a GPU submission with no
 explicit environment routes to Thunder when its `gpu_types` names exactly one
 accelerator Thunder offers (A6000, A100, H100), while plain-CPU work stays on
-Daytona and private-registry pulls, untyped GPU requests, and other GPU types
+Modal and private-registry pulls, untyped GPU requests, and other GPU types
 stay on Modal. Deployments that leave it disabled
 keep Modal as the GPU default. A trial that has failed
 `ODDISH_THUNDER_MAX_FAILED_ATTEMPTS` attempts on Thunder (default 2; 0

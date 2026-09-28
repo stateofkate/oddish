@@ -21,6 +21,21 @@ from oddish.harbor_pin import load_harbor_pin as _load_harbor_pin
 
 logger = logging.getLogger(__name__)
 
+DAYTONA_DISABLED_MESSAGE = (
+    "Daytona is disabled. Choose Modal or Archil for CPU tasks, "
+    "or Thundercompute or Modal for GPU tasks "
+    "(--env modal, --env archil, or --env thunder)."
+)
+
+
+class DisabledEnvironmentError(ValueError):
+    """A saved or submitted provider may no longer launch sandboxes."""
+
+
+def require_enabled_environment(environment: str | None) -> None:
+    if environment is not None and environment.strip().lower() == "daytona":
+        raise DisabledEnvironmentError(DAYTONA_DISABLED_MESSAGE)
+
 
 def split_provider_model_name(model_name: str) -> tuple[str | None, str]:
     # Harbor's utility module imports LiteLLM, which fetches its pricing table
@@ -1702,15 +1717,8 @@ class Settings(BaseSettings):
     # Local execution scratch paths
     harbor_jobs_dir: str = "/tmp/harbor-jobs"
 
-    # Default execution environment (daytona, docker, or modal)
-    harbor_environment: str = "daytona"
-
-    # Percentage of newly submitted hosted CPU sweeps whose Daytona default is
-    # replaced with Archil. The backend hashes the raw request body before it
-    # adds identity defaults, so retries and every trial in one sweep keep the
-    # same provider. Explicit environments and non-Daytona capability routes
-    # (GPU, TPU, Numinous previews) remain authoritative.
-    archil_traffic_percent: int = Field(0, ge=0, le=100)
+    # Default execution environment for trials without an explicit provider.
+    harbor_environment: str = "modal"
 
     # Live tail of agent output for running trials
     live_tail_enabled: bool = True
@@ -2260,6 +2268,7 @@ class Settings(BaseSettings):
         if self.thunder_max_failed_attempts < 0:
             raise ValueError("thunder_max_failed_attempts cannot be negative")
         fallback_provider = self.thunder_fallback_provider.strip().lower()
+        require_enabled_environment(fallback_provider)
         if not fallback_provider:
             raise ValueError("thunder_fallback_provider cannot be blank")
         if fallback_provider == "thunder":
