@@ -2655,7 +2655,7 @@ export function ExperimentTrialsTable({
                                 )}
                                 <NewTaskVersionBadge
                                   task={task}
-                                  linked={!readOnly}
+                                  readOnly={readOnly}
                                 />
 
                                 {(() => {

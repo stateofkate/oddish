@@ -688,7 +688,7 @@ test("the new version badge names both versions and links to the default", () =>
   const exports: {
     NewTaskVersionBadge?: React.ComponentType<{
       task: Task;
-      linked?: boolean;
+      readOnly?: boolean;
     }>;
   } = {};
   runInNewContext(
@@ -743,10 +743,11 @@ test("the new version badge names both versions and links to the default", () =>
     html.includes('href="/tasks/task-1?version=task-1-v6&amp;from=new-version"'),
     html
   );
-  assert.ok(
-    !renderToStaticMarkup(
-      React.createElement(Badge, { task: older, linked: false })
-    ).includes("href")
+  assert.equal(
+    renderToStaticMarkup(
+      React.createElement(Badge, { task: older, readOnly: true })
+    ),
+    ""
   );
   for (const current of [older.trial_version, 3, null]) {
     assert.equal(

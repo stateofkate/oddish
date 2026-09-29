@@ -10,20 +10,19 @@ import type { Task } from "@/lib/types";
  */
 export function NewTaskVersionBadge({
   task,
-  linked = true,
+  readOnly = false,
 }: {
   task: Task;
-  /** The task page is authenticated; public share views render plain text. */
-  linked?: boolean;
+  /** Public share views do not show task version updates. */
+  readOnly?: boolean;
 }) {
   const shown = task.trial_version;
   const latest = task.current_version;
-  if (shown == null || latest == null || latest <= shown) return null;
+  if (readOnly || shown == null || latest == null || latest <= shown) return null;
 
   const label = `Newer task version available · v${shown} of v${latest}`;
   const badgeClass =
     "inline-flex shrink-0 items-center gap-0.5 rounded-[3px] bg-amber-100 px-1 py-px font-mono text-[9.5px] leading-[14px] font-medium whitespace-nowrap text-amber-800 dark:bg-amber-900/40 dark:text-amber-300";
-  if (!linked) return <span className={badgeClass}>{label}</span>;
 
   // `from=new-version` makes the task page flash the version it opened on.
   const query = task.current_version_id

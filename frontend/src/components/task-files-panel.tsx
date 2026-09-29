@@ -2272,7 +2272,7 @@ export function TaskFilesPanel({
                 </span>
               )}
               {showAnalysis !== false && verdictSource && (
-                <NewTaskVersionBadge task={verdictSource} linked={!readOnly} />
+                <NewTaskVersionBadge task={verdictSource} readOnly={readOnly} />
               )}
             </DrawerTitle>
             <div className="mt-1 min-h-3 text-[10px] text-emerald-600">
