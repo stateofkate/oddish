@@ -2467,6 +2467,8 @@ silently breaks throughput or correctness — read before touching
    open session spanning the run: it pins one idle connection per running trial
    and exhausts the Supavisor/PgBouncer cap. (The API keeps a warm `QueuePool`
    only because it's short-lived — that reasoning doesn't transfer to workers.)
+   Open every connection through `oddish.db.connect_with_retry`, which retries
+   pooler stalls while connecting and never re-runs a statement.
    Quota pause signals come from live cost checkpoints. The owning worker calls
    Harbor `Job.pause()` / `Job.resume()` without holding a database session. A
    paused trial's `trials.status` becomes `PAUSED`, while its owning

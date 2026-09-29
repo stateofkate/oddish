@@ -1,10 +1,13 @@
 import asyncio
+import logging
+import random
 import re as _re
 import sys
 import subprocess
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
 import asyncpg
 from sqlalchemy import event, text
@@ -21,6 +24,8 @@ from oddish.timing import (
     now,
     timed_phase,
 )
+
+logger = logging.getLogger(__name__)
 
 # Install the soft-delete auto-filter exactly once at module load. The
 # listener is keyed on the SQLAlchemy ``Session`` class, so every session
@@ -54,11 +59,45 @@ def _base_connect_args() -> dict[str, object]:
     }
 
 
+# Supavisor occasionally stalls new connections for a few seconds while
+# established ones keep working. Workers open a connection per operation, so
+# each stall used to fail whatever job hit it. Only opening a connection is
+# retried: no statement has run yet, so nothing can execute twice.
+_CONNECT_ATTEMPTS = 3
+_CONNECT_RETRY_DELAY_SECONDS = 1.0
+_TRANSIENT_CONNECT_ERRORS = (
+    TimeoutError,
+    ConnectionError,
+    asyncpg.ConnectionFailureError,
+)
+
+
+async def connect_with_retry(*args: Any, **kwargs: Any) -> asyncpg.Connection:
+    """``asyncpg.connect`` that retries transient failures to open a connection."""
+    for attempt in range(1, _CONNECT_ATTEMPTS):
+        try:
+            return await asyncpg.connect(*args, **kwargs)
+        except _TRANSIENT_CONNECT_ERRORS as exc:
+            logger.warning(
+                "Database connect attempt %d/%d failed (%s); retrying",
+                attempt,
+                _CONNECT_ATTEMPTS,
+                type(exc).__name__,
+            )
+            # Jittered so containers hit by the same stall spread their retries.
+            await asyncio.sleep(
+                _CONNECT_RETRY_DELAY_SECONDS * attempt * random.uniform(0.5, 1.5)
+            )
+    return await asyncpg.connect(*args, **kwargs)
+
+
 def _create_engine() -> AsyncEngine:
     # Disable prepared statements for connection poolers (Supavisor, PgBouncer)
     # that run in transaction mode. Pre-ping and LIFO checkout reduce failures
     # from stale pooled connections in long-lived API containers.
-    connect_args = _base_connect_args()
+    # ``async_creator_fn`` swaps the driver's connect for the retrying one while
+    # SQLAlchemy still derives host, user and database from ``db_url``.
+    connect_args = {**_base_connect_args(), "async_creator_fn": connect_with_retry}
     if settings.db_use_null_pool:
         return create_async_engine(
             db_url,
@@ -153,6 +192,7 @@ async def get_pool() -> asyncpg.Pool:
             timeout=10,
             command_timeout=30,
             server_settings=settings.asyncpg_server_settings(),
+            connect=connect_with_retry,
         )
     return _pool
 

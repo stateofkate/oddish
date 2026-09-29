@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 import asyncpg
 
 from oddish.config import settings
+from oddish.db import connect_with_retry
 from oddish.workers.queue.worker_job_dispatcher import DispatchUnit, QueueDemandKey
 
 if TYPE_CHECKING:
@@ -36,7 +37,7 @@ async def _slot_connection() -> AsyncIterator[asyncpg.Connection]:
     # Slot bookkeeping only needs short, one-off queries. Using direct
     # connections here avoids keeping an extra asyncpg pool connection open for
     # the full lifetime of every long-running Modal worker.
-    conn = await asyncpg.connect(
+    conn = await connect_with_retry(
         settings.asyncpg_url,
         statement_cache_size=0,
         timeout=10,

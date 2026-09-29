@@ -34,7 +34,7 @@ from oddish.costs.recorder import (
     close_worker_span,
     open_worker_span,
 )
-from oddish.db import WorkerJobKind, WorkerJobStatus
+from oddish.db import WorkerJobKind, WorkerJobStatus, connect_with_retry
 from oddish.observability import (
     TRACE_CONTEXT_PAYLOAD_KEY,
     ThunderHandoffOutcome,
@@ -393,7 +393,7 @@ class ClaimedWorkerJob:
 
 
 async def _open_connection() -> asyncpg.Connection:
-    return await asyncpg.connect(
+    return await connect_with_retry(
         settings.asyncpg_url,
         statement_cache_size=0,
         server_settings=settings.asyncpg_server_settings(),
