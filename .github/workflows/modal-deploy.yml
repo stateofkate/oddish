@@ -71,6 +71,10 @@ jobs:
       # disable monitor routing: "0". At 100, retries also stay on the monitor.
       ODDISH_MONITOR_EXECUTION_SAMPLE_PERCENT: "5"
       ODDISH_MONITOR_EXECUTION_FALLBACK_AFTER_ATTEMPTS: "1"
+      # Route 20% of eligible new CPU submissions to Archil, otherwise Modal.
+      # Request-hash groups keep a submission's trials together. GPU/TPU,
+      # private-registry pulls and explicit providers are excluded. Rollback: "0".
+      ODDISH_ARCHIL_TRAFFIC_PERCENT: "20"
       # Thunder must be enabled in the deploy process itself so modal_app.py
       # attaches the worker-only oddish-thunder credential secret.
       ODDISH_THUNDER_ENABLED: "true"

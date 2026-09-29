@@ -1720,6 +1720,10 @@ class Settings(BaseSettings):
     # Default execution environment for trials without an explicit provider.
     harbor_environment: str = "modal"
 
+    # Hosted CPU submission rollout; the backend hashes the raw request before
+    # adding identity defaults. Zero leaves automatic Archil routing disabled.
+    archil_traffic_percent: int = Field(0, ge=0, le=100)
+
     # Live tail of agent output for running trials
     live_tail_enabled: bool = True
     live_tail_interval_sec: float = 30.0

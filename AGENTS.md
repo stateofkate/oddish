@@ -1507,14 +1507,21 @@ Settings are loaded from `oddish/.env`; see `oddish/env.example`,
 Keep these routing rules in sync with `oddish/src/oddish/config.py` and
 `oddish/src/oddish/workers/harbor/runner.py`:
 
-- Daytona is disabled for launches. CPU submissions default to Modal; Archil
-  remains an explicit `--env archil` choice. `ODDISH_HARBOR_ENVIRONMENT` defaults
-  to `modal` and the hosted deployment pins that value. Submitted or inherited
+- Daytona is disabled for launches. CPU submissions default to Modal before
+  the hosted Archil rollout; Archil also remains an explicit `--env archil`
+  choice. `ODDISH_HARBOR_ENVIRONMENT` defaults to `modal` and the hosted deployment pins that value. Submitted or inherited
   Daytona choices are rejected; queued Daytona attempts fail permanently without
   allocating a sandbox or moving to another provider. Retry requests for saved
   Daytona runs are rejected before copying a trial. Existing Daytona status,
   cancellation, orphan cleanup, historical records, and snapshot deletion remain
-  available. The retired `ODDISH_ARCHIL_TRAFFIC_PERCENT` setting has no effect.
+  available. `ODDISH_ARCHIL_TRAFFIC_PERCENT` (0–100, default 0) routes that
+  percentage of eligible new hosted CPU submissions from Modal to Archil;
+  production sets 20 in `.github/workflows/modal-deploy.yml`. The backend hashes
+  each raw submission before identity/attribution mutations and selects groups
+  0–19 out of 100. GPU/TPU, private-registry pulls, explicit selections and
+  inherited task environments are excluded. `backend/modal_app.py` pins the
+  deploy-time percentage in the image and final runtime secret; rollback to 0
+  stops new automatic selections without changing saved trials.
   Explicit Archil trials still move to Modal after two failed attempts under the
   existing policy; the Daytona restriction adds no fallback.
 - Thunder is an explicit, opt-in GPU backend. `ODDISH_THUNDER_ENABLED=true`

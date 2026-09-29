@@ -919,6 +919,10 @@ ENV_VARS = {
         or DEFAULT_OPERATOR_ORG_ID
     ),
     "ODDISH_HARBOR_ENVIRONMENT": "modal",
+    "ODDISH_ARCHIL_TRAFFIC_PERCENT": os.environ.get(
+        "ODDISH_ARCHIL_TRAFFIC_PERCENT",
+        LOCAL_DOTENV_VARS.get("ODDISH_ARCHIL_TRAFFIC_PERCENT", "0"),
+    ),
     "ODDISH_AUTO_START_WORKERS": "false",
     "ODDISH_ASYNCPG_POOL_MIN_SIZE": "0",
     "ODDISH_ASYNCPG_POOL_MAX_SIZE": "1",
@@ -1017,6 +1021,7 @@ runtime_secrets.append(
             name: ENV_VARS[name]
             for name in (
                 "ODDISH_HARBOR_ENVIRONMENT",
+                "ODDISH_ARCHIL_TRAFFIC_PERCENT",
                 "ODDISH_MODAL_WORKER_CPU",
                 "ODDISH_MODAL_WORKER_MEMORY_MB",
                 "ODDISH_MODAL_WORKER_NONPREEMPTIBLE",

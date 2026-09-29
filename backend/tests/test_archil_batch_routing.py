@@ -18,7 +18,7 @@ from oddish.schemas import (
 
 
 @pytest.mark.asyncio
-async def test_batch_resolves_each_item_identity_before_routing(
+async def test_batch_hashes_each_item_before_resolving_identity(
     monkeypatch,
 ) -> None:
     task_ids = ["task-a", "task-b"]
@@ -27,8 +27,8 @@ async def test_batch_resolves_each_item_identity_before_routing(
     async def resolve_submission_identity(_session, submission, _auth):
         submission.user = "server-default"
 
-    def get_default_cloud_environment(submission):
-        routed.append((submission.task_id, submission.user))
+    def get_default_cloud_environment(submission, *, request_hash):
+        routed.append((submission.task_id, submission.user, request_hash))
         return EnvironmentType.ARCHIL
 
     async def require_connected_github_user(*_args):
@@ -86,6 +86,7 @@ async def test_batch_resolves_each_item_identity_before_routing(
             for task_id in task_ids
         ]
     )
+    raw_hashes = [tasks.compute_request_hash(item) for item in payload.submissions]
     auth = SimpleNamespace(
         org_id="org-1",
         user_id="user-1",
@@ -96,6 +97,6 @@ async def test_batch_resolves_each_item_identity_before_routing(
 
     assert result.failed == 2
     assert routed == [
-        ("task-a", "server-default"),
-        ("task-b", "server-default"),
+        ("task-a", "server-default", raw_hashes[0]),
+        ("task-b", "server-default", raw_hashes[1]),
     ]

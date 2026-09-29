@@ -514,13 +514,23 @@ its GPU lane. When enabled, the Modal deployment attaches the secret named by
 
 Local `backend/.env` values are layered on top of the shared Modal secret for local deploys.
 
-CPU tasks default to Modal. Select Archil explicitly with `oddish run <task>
---env archil`. Daytona launches are disabled: explicit and inherited selections
+CPU tasks default to Modal before the hosted Archil rollout. Select Archil
+explicitly with `oddish run <task> --env archil`. Daytona launches are disabled: explicit and inherited selections
 are rejected, and waiting Daytona jobs fail without switching providers. To run
 one again, submit it with `--env modal` or `--env archil`; the retry command
 preserves the saved provider and therefore rejects Daytona trials. Existing
-Daytona sandboxes can still be inspected and deleted. The former
-`ODDISH_ARCHIL_TRAFFIC_PERCENT` deployment setting has been removed.
+Daytona sandboxes can still be inspected and deleted.
+
+`ODDISH_ARCHIL_TRAFFIC_PERCENT` (0–100, default 0) sends a percentage of
+eligible new hosted CPU submissions to Archil. Production sets `20` in
+`.github/workflows/modal-deploy.yml`; promotion to `main` and deployment activate
+it. The API hashes each raw submission into one of 100 groups and selects Archil
+for groups 0–19, keeping every unset trial in the submission together. GPU/TPU,
+private-registry pulls, explicit providers and inherited task environments are
+excluded. This targets submissions, not an exact share of jobs. The deployment
+pins the value in the image and final runtime secret so stale shared secrets
+cannot override it. Set `0` and redeploy to stop new automatic selections;
+saved trials and their retries retain their provider policy.
 
 Archil's existing retry policy still moves a trial to Modal after two failed
 attempts. Thunder's existing retry policy is also unchanged. Neither can launch
