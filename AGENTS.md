@@ -272,8 +272,13 @@ High-level flow:
    workers. Both CLIs stream the session (assistant text, tool output) on
    stdout, so only stderr, Grok's error events, and Muse's
    `run.terminal.failed` reason count as evidence; a Muse run that a tool call
-   ended stays a solver failure. Unrelated nonzero CLI exits remain solver
-   failures.
+   ended stays a solver failure. A Muse run reason with the
+   `model_stream_first_event_timeout` error kind becomes
+   `ApiResponseStalledError`, so Harbor retries it in the active sandbox. A
+   Muse "transport error: error sending request for url" on stderr, such as a
+   failed model-catalog fetch, becomes `NetworkConnectionError`. The
+   refinement wraps `muse-code` and `tbh`, which write the same run records.
+   Unrelated nonzero CLI exits remain solver failures.
    That rule needs the exception to reach settlement. Pinned Harbor omits
    `trial_results` from the job summary it writes, so a caller that rebuilds a
    `JobResult` from that file loses the per-trial exception and phase timing.

@@ -89,12 +89,14 @@ def _patch_provider_error_classifiers() -> None:
 
     Override-Harbor workers construct their stock Muse and Grok classes in an
     isolated interpreter, so Oddish's in-process agent adapters cannot own this
-    boundary. Patch those two stock classes before ``Job.create`` instead.
+    boundary. Patch those stock classes before ``Job.create`` instead. tbh is
+    Meta's other Muse CLI and writes the same ``run.terminal.failed`` records.
     """
     from oddish.workers.agents.provider_errors import refine_provider_exec_error
 
     targets = (
         ("harbor.agents.installed.muse_code", "MuseCode", "Meta"),
+        ("harbor.agents.installed.tbh", "Tbh", "Meta"),
         ("harbor.agents.installed.grok_build", "GrokBuild", "xAI"),
     )
     for module_name, class_name, provider in targets:

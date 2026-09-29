@@ -21,8 +21,10 @@ from harbor.agents.installed.base import (
     ApiOverloadedError,
     ApiRateLimitError,
     ApiRequestTimeoutError,
+    ApiResponseStalledError,
     ApiUsageLimitError,
     ModelNotFoundError,
+    NetworkConnectionError,
     NonZeroAgentExitCodeError,
     UnknownApiError,
 )
@@ -74,6 +76,15 @@ _MODEL_NOT_FOUND_PATTERN = re.compile(
     r"\bmodel\b.{0,80}\b(?:does not exist|not found|unknown|unavailable|"
     r"no access|do not have access|not permitted)\b",
     re.IGNORECASE,
+)
+# Muse ends a run with this error kind when no model stream sent a first event
+# before its deadline, after the CLI's own retries.
+_STREAM_STALL_PATTERN = re.compile(r"\bmodel_stream_first_event_timeout\b")
+# Muse's stderr when a request never reached its service, for example
+# "failed to fetch model catalog: transport error: error sending request for url
+# (https://api.meta.ai/muse-code/models)". It carries no HTTP status.
+_TRANSPORT_FAILURE_PATTERN = re.compile(
+    r"\btransport error: error sending request for url\b", re.IGNORECASE
 )
 
 
@@ -210,6 +221,8 @@ def _exception_class(output: str, http_status: int | None) -> type[ApiError] | N
         return _api_error_type(ApiInternalServerError)
     if http_status is not None and 400 <= http_status < 500:
         return _api_error_type(ApiClientError)
+    if _STREAM_STALL_PATTERN.search(output):
+        return _api_error_type(ApiResponseStalledError)
     if re.search(r"\b(?:API|provider) error\b", output, re.IGNORECASE):
         return _api_error_type(UnknownApiError)
     return None
@@ -239,9 +252,21 @@ def refine_provider_exec_error(
         # initially calls these ApiClientError/AgentAuthenticationError. The
         # accompanying billing language is the stronger, non-retryable signal.
         refinable.update({ApiClientError, AgentAuthenticationError})
+    if exception_class is ApiResponseStalledError:
+        # Harbor's text patterns read the whole session, so a tool's own
+        # "Connection refused" can arrive here as a network error that Harbor
+        # does not retry in place. The run's stall reason is stronger.
+        refinable.add(NetworkConnectionError)
     if type(fallback) not in refinable:
         return fallback
     if exception_class is None:
+        if _TRANSPORT_FAILURE_PATTERN.search(output):
+            # A network failure, not an API response, so it has no HTTP
+            # metadata. It invalidates the score like other transport errors.
+            return NetworkConnectionError(
+                f"{fallback}\n{provider} provider transport failure",
+                return_code=getattr(result, "return_code", None),
+            )
         return fallback
 
     return exception_class(

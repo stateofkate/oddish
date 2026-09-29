@@ -182,6 +182,46 @@ async def test_transient_provider_failure_discards_score_even_after_partial_work
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("attempts", "status"),
+    [(1, TrialStatus.RETRYING), (3, TrialStatus.FAILED)],
+)
+@pytest.mark.parametrize(
+    ("exception_type", "error"),
+    [
+        # Muse gave up on a model stream that never started.
+        ("ApiResponseStalledError", "model_stream_first_event_timeout"),
+        # Muse could not reach its service before the first model turn.
+        ("NetworkConnectionError", "transport error: error sending request"),
+    ],
+)
+async def test_muse_provider_failure_is_never_a_zero_score(
+    monkeypatch, attempts, status, exception_type, error
+):
+    # The verifier graded a workspace the solver never had a fair run on.
+    # That zero is not a solver result, on the last attempt either.
+    trial = _trial(
+        agent="muse-code",
+        model="meta/test-model",
+        attempts=attempts,
+        max_attempts=3,
+    )
+    await _store(
+        monkeypatch,
+        trial,
+        _outcome(
+            reward=0.0,
+            error=f"{exception_type}: {error}",
+            exception_type=exception_type,
+        ),
+    )
+
+    assert trial.reward is None
+    assert trial.status == status
+    assert trial.result["harbor_exception"]["exception_type"] == exception_type
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("exception_type", AGENT_OWNED_ENDINGS)
 async def test_agent_owned_ending_keeps_its_verifier_reward(
     monkeypatch, exception_type
