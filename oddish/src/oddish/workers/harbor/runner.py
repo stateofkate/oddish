@@ -2516,6 +2516,7 @@ async def _run_harbor_trial_async_impl(
             _claude_transport_env(
                 _selected_claude_model(agent, openai_model),
                 requested_model=openai_model,
+                scope="process",
             )
         )
         # Same idea for Google: the platform key is published as GEMINI_API_KEY

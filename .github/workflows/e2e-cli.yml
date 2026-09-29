@@ -104,6 +104,7 @@ jobs:
           ../oddish/tests/test_config_queue_keys.py
           ../oddish/tests/test_claude_routing.py
           ../oddish/tests/test_claude_transport.py
+          ../oddish/tests/test_verifier_credentials.py
           ../oddish/tests/test_harbor_environment_kwargs.py
           ../oddish/tests/test_model_concurrency_overrides.py
           ../oddish/tests/test_curated_model_submit.py -v

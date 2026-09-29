@@ -1645,8 +1645,12 @@ Keep these routing rules in sync with `oddish/src/oddish/config.py` and
   ID while LiteLLM uses `anthropic/` or `bedrock/` explicitly.
   Enforce credential selectors after BYOK, job-token, and child-payload merges.
   Anthropic BYOK cannot redirect or fund Bedrock work; Bedrock retains its AWS
-  credential chain and blanks Anthropic selectors. Missing credentials fail
-  on the selected route. The Oddish Mini SWE adapter forwards the full AWS
+  credential chain and blanks Anthropic selectors in the agent environment.
+  Keep the host `ANTHROPIC_API_KEY` intact in both the normal runner and
+  ephemeral child: Harbor resolves task `[verifier.env]` templates from that
+  process after agent execution. A task receives the key only when it declares
+  it; the Bedrock agent still receives an empty Anthropic key. Missing
+  credentials fail on the selected route. The Oddish Mini SWE adapter forwards the full AWS
   environment and supports Bedrock bearer credentials; Harbor's single-key
   guard alone is insufficient. Pin complete Bedrock ARNs in the final agent
   environment because Harbor otherwise splits their resource path as a provider

@@ -165,7 +165,9 @@ def _runtime_env_overrides(
         env.update(settings.get_openai_agent_env(model=openai_model))
     env.update(
         _claude_transport_env(
-            _selected_claude_model(agent, openai_model), requested_model=openai_model
+            _selected_claude_model(agent, openai_model),
+            requested_model=openai_model,
+            scope="process",
         )
     )
     if _claude_code_on_direct_anthropic(agent, openai_model):

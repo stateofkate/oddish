@@ -4,7 +4,7 @@ import contextlib
 import os
 import warnings
 from collections.abc import Mapping
-from typing import Any, Iterator
+from typing import Any, Iterator, Literal
 
 from harbor.models.trial.config import AgentConfig
 
@@ -707,9 +707,12 @@ def _selected_claude_model(agent: str, model: str | None) -> str | None:
 
 
 def _claude_transport_env(
-    model: str | None, *, requested_model: str | None = None
+    model: str | None,
+    *,
+    requested_model: str | None = None,
+    scope: Literal["agent", "process"] = "agent",
 ) -> dict[str, str]:
-    """Selectors that pin a canonical Claude model to its chosen transport."""
+    """Pin Claude transport without erasing host keys used by task verifiers."""
     provider = claude_model_provider(model)
     if provider == "anthropic":
         env = {
@@ -725,18 +728,22 @@ def _claude_transport_env(
             env["ANTHROPIC_BASE_URL"] = ""
         return env
     if provider == "bedrock":
-        return {
+        env = {
             # Harbor strips everything before the first slash, including the
             # slash inside an ARN. Agent env wins over its per-exec default.
             "ANTHROPIC_MODEL": to_bedrock_model_id(model) or "",
             "CLAUDE_CODE_USE_BEDROCK": "1",
-            "ANTHROPIC_API_KEY": "",
             "ANTHROPIC_AUTH_TOKEN": "",
             "ANTHROPIC_BASE_URL": "",
             "CLAUDE_CODE_USE_VERTEX": "",
             "CLAUDE_CODE_OAUTH_TOKEN": "",
             "CLAUDE_FORCE_OAUTH": "0",
         }
+        # Only the solving agent must suppress direct Anthropic auth. Harbor
+        # resolves verifier.env templates from the host during the same job.
+        if scope == "agent":
+            env["ANTHROPIC_API_KEY"] = ""
+        return env
     return {}
 
 

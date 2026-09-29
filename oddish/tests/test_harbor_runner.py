@@ -4534,7 +4534,7 @@ def test_run_harbor_trial_async_no_byok_keeps_bedrock_without_platform_key(
 
     assert outcome.error is None
     assert seen["model_name"] == "global.anthropic.claude-sonnet-4-6"
-    assert seen["ambient_anthropic"] == ""
+    assert seen["ambient_anthropic"] is None
     assert seen["ambient_bedrock"] == "1"
 
 

@@ -1792,7 +1792,7 @@ def test_payload_bedrock_route_ignores_trial_anthropic_key(monkeypatch, force_di
     assert child_agent.model_name == "global.anthropic.claude-opus-5"
     assert child_agent.env["CLAUDE_CODE_USE_BEDROCK"] == "1"
     assert payload["runtime_env"]["CLAUDE_CODE_USE_BEDROCK"] == "1"
-    assert payload["runtime_env"]["ANTHROPIC_API_KEY"] == ""
+    assert "ANTHROPIC_API_KEY" not in payload["runtime_env"]
 
 
 @pytest.mark.parametrize("force_direct", [True, False])
