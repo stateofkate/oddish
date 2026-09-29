@@ -372,6 +372,25 @@ Common optional settings:
 - `ODDISH_SLACK_UNFURL_*` for a lean, single-workspace Slack app that unfurls Oddish task, experiment, and public-share links. It requires `links:read` and `links:write`, a `link_shared` event subscription pointed at `/webhooks/slack/events`, a signing secret, bot token, and bound Oddish org. Optional team/channel allowlists add defense in depth. This is separate from the expense notifications above.
 - `ODDISH_CARL_*`, `ODDISH_API_KEY`, and `ODDISH_DATABASE_URL_RO` extend that same Slack app with read-only answers to permitted `app_mention` events. Carl keeps the existing `/webhooks/slack/events` URL and `link_shared` subscription; add `app_mentions:read` and subscribe the installed app to `app_mention`. The SQL DSN must use a dedicated non-superuser role restricted to the analytics table allow-list. Cloud-bill answers (`catfish_costs`, `catfish_breakdown`) need `CATFISH_API_TOKEN` and optional `CATFISH_API_URL` (defaults to `https://costs.abundant.run`) plus `CATFISH_VERCEL_BYPASS` when Vercel Authentication is on. After changing those keys in `oddish-prod`, recycle only `carl_answer`. Carl's code lives in `carl.py`, `carl_agent.py`, `carl_tools.py`, and `carl_catfish.py`.
 
+### In-sandbox monitor rollout
+
+`oddish-mon` drives a trial inside its sandbox after the worker launches it.
+The production workflow, `.github/workflows/modal-deploy.yml`, sets
+`ODDISH_MONITOR_EXECUTION_SAMPLE_PERCENT=5` and
+`ODDISH_MONITOR_EXECUTION_FALLBACK_AFTER_ATTEMPTS=1`. Stable trial-ID buckets
+0–4 select eligible trials on attempt 1; later attempts use the worker.
+GPU, Daytona, non-agent, and unsupported-provider exclusions still apply.
+`modal_app.py` copies these deployment settings into the worker image.
+Staging keeps the 100% default; a PR merged into staging changes production
+only after promotion to `main` and a successful production deployment.
+
+After deployment, compare monitor launches with accepted results, accounting
+for cancellations and jobs still running. Check launch errors, worker fallback,
+missing archives, and jobs requiring stale-heartbeat cleanup. Restore the
+sample to 1 if these regress, or 0 to disable monitor routing, then deploy
+through the normal release process. Existing monitor attempts continue.
+At 100%, the routing code disables fallback and selects every eligible attempt.
+
 ### Where provider keys actually live
 
 Provider keys are environment variables **inside the `oddish-prod` Modal

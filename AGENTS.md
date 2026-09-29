@@ -1275,6 +1275,14 @@ Handler registration lives in `oddish.workers.jobs` (`registry.py`,
 `handlers.py`). Both the standalone worker and the backend call
 `ensure_builtin_handlers_registered()` at startup.
 
+Production's `.github/workflows/modal-deploy.yml` sets the oddish-mon sample
+to 5%: trial-ID buckets 0–4 use the in-sandbox monitor on attempt 1, subject
+to the handler's eligibility checks. Attempt 2 onward uses the worker because
+the fallback limit remains 1. Staging keeps the 100% code default. This
+production setting takes effect only after promotion to `main` and deployment.
+Restore sample 1 to undo this increase, or 0 to disable monitor routing;
+these routing settings do not cancel already-running monitor attempts.
+
 The experimental monitor cache builds standard single-Dockerfile task images
 before snapshotting. Images use Harbor's environment content hash; restored
 monitors verify them locally and select Harbor's existing prebuilt-image path.
