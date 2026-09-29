@@ -151,7 +151,10 @@ def test_scoped_model_env_anthropic_hdo_uses_hdo_key_not_platform() -> None:
         model="anthropic-hdo/claude-sonnet-4-5",
         settings=settings,
     )
-    assert env == {"ANTHROPIC_API_KEY": "sk-hdo"}
+    assert env == {
+        "ANTHROPIC_API_KEY": "sk-hdo",
+        "ANTHROPIC_HDO_API_KEY": "sk-hdo",
+    }
 
 
 def test_scoped_model_env_openai_only_carries_openai() -> None:

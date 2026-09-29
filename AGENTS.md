@@ -1677,6 +1677,9 @@ Keep these routing rules in sync with `oddish/src/oddish/config.py` and
   prefix. Restricted-network hosts follow the AWS/SDK/ARN region and validate
   region syntax before building domains. Direct Anthropic child trials support
   BYOK with the same funding attribution as the normal runner.
+  HDO credential bundles carry the selected key as both `ANTHROPIC_API_KEY`
+  (read by the agent) and `ANTHROPIC_HDO_API_KEY` (read by Oddish when rebuilding
+  agent configuration inside a monitor sandbox).
   `anthropic-hdo/` retains its separate key and opt-in
   gateway behavior; explicit ordinary Anthropic/Bedrock routes bypass the QA
   gateway's mixed provider pool. See DOCS.md for the drain-before-deploy and

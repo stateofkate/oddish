@@ -4,7 +4,9 @@ the launcher minted and resolved. No database, no ambient process env."""
 from __future__ import annotations
 
 import json
+import os
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
@@ -134,3 +136,42 @@ def test_a_public_meta_sandbox_gets_only_the_public_key(monkeypatch):
     assert agent_env["META_API_KEY"] == "public-key"
     assert agent_env["META_PUBLIC_API_KEY"] == "public-key"
     assert "internal-key" not in json.dumps(env)
+
+
+def test_hdo_key_survives_sandbox_agent_configuration(monkeypatch):
+    from oddish.config import Settings
+    from oddish.mon import env as monitor_env
+    from oddish.workers.harbor import agent_config
+
+    model = "anthropic-hdo/claude-sonnet-5-5"
+    monkeypatch.setattr(launch_env.settings, "anthropic_hdo_api_key", "hdo-key")
+    monkeypatch.setattr(launch_env.settings, "anthropic_api_key", "platform-key")
+    prepared = SimpleNamespace(
+        trial_agent="claude-code",
+        trial_model=model,
+        trial_harbor_config={},
+    )
+    sandbox_env = launch_env.build_sandbox_env(
+        prepared,
+        api_url="https://api.test",
+        credential="tok",
+        byok_env=None,
+        judge_env={},
+        ambient={},
+    )
+    forwarded = monitor_env.load(sandbox_env).agent_env
+
+    # A fresh sandbox has only the forwarded credentials. Rebuild Settings
+    # there, just as the monitor does before configuring the agent.
+    with patch.dict(os.environ, forwarded, clear=True):
+        monkeypatch.setattr(agent_config, "settings", Settings(_env_file=None))
+        config = agent_config._build_agent_config(
+            agent="claude-code",
+            model=model,
+            raw_harbor_config={},
+            probe_oddish_env=forwarded,
+        )
+
+    assert config.env["ANTHROPIC_API_KEY"] == "hdo-key"
+    assert config.env["CLAUDE_CODE_USE_BEDROCK"] == ""
+    assert "platform-key" not in json.dumps(forwarded)

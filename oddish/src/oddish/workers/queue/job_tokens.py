@@ -181,10 +181,13 @@ def scoped_model_env(
         key = getattr(settings, "anthropic_api_key", None)
         return {"ANTHROPIC_API_KEY": key} if key else {}
     if provider == "anthropic-hdo":
-        # HDO-prefixed Claude trials overwrite ANTHROPIC_API_KEY with the
-        # separate HDO credential (same shape Claude Code / litellm expect).
+        # Claude Code reads ANTHROPIC_API_KEY; Oddish re-resolves the HDO
+        # source key when configuring the agent inside a monitor sandbox.
         key = getattr(settings, "anthropic_hdo_api_key", None)
-        return {"ANTHROPIC_API_KEY": key} if key else {}
+        return {
+            "ANTHROPIC_API_KEY": key,
+            "ANTHROPIC_HDO_API_KEY": key,
+        } if key else {}
     if provider == "bedrock":
         # Bedrock keeps its selected transport for every agent. The monitor
         # sandbox has no worker ambient environment, so copy only the AWS
