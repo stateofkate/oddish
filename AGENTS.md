@@ -3316,6 +3316,11 @@ substituting another row. See `docs/task-browser-navigation.md` for CLI mappings
 
 ### Scheduled queue progress and cancellation
 
+Queue slot creation excludes already-visible rows before `ON CONFLICT DO NOTHING`.
+This prevents an uncommitted heartbeat or release update on an existing slot from
+blocking the dispatcher while it ensures capacity. The later `SKIP LOCKED` claim
+still skips busy slots; conflict handling still protects concurrent creation.
+
 Hosted dispatch and reconciliation use `backend/worker/scheduled.py` to reserve
 45 seconds before Modal's timeout for rollback and finalization. Independent
 reconciliation phase deadlines preserve time for later phases. Queue status

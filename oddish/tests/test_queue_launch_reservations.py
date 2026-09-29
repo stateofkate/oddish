@@ -96,6 +96,28 @@ def plan_factory(limit=600, max_workers=256):
 
 
 @pytest.mark.asyncio
+async def test_dispatch_skips_updated_slots_and_creates_missing_capacity(database):
+    await enqueue(database, count=3)
+    await slots.ensure_queue_slots("sonnet", 2)
+    async with database.acquire() as connection:
+        async with connection.transaction():
+            await connection.execute(
+                "UPDATE queue_slots SET locked_by = 'starting-worker' "
+                "WHERE queue_key = 'sonnet' AND slot = 0"
+            )
+            # An existing row's uncommitted update must not block capacity
+            # creation. The later SKIP LOCKED claim leaves slot 0 untouched.
+            async with asyncio.timeout(2):
+                _, reservations = await slots.reserve_queue_launches(
+                    plan_factory(limit=3)
+                )
+            assert {reservation.slot for reservation in reservations} == {1, 2}
+    assert await database.fetchval(
+        "SELECT locked_by FROM queue_slots WHERE queue_key = 'sonnet' AND slot = 0"
+    ) == "starting-worker"
+
+
+@pytest.mark.asyncio
 async def test_overlapping_cycles_reserve_demand_once_and_share_model_limit(database):
     await enqueue(database)
     await enqueue(database, priority=0)

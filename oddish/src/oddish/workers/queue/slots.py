@@ -19,9 +19,17 @@ if TYPE_CHECKING:
 LAUNCH_LEASE_SECONDS = 300
 
 
+# ON CONFLICT alone waits for concurrent updates even when the row already
+# exists. Exclude visible slots before inserting so their heartbeat/release
+# transactions cannot block the entire dispatch cycle.
 _ENSURE_QUEUE_SLOTS_SQL = """
     INSERT INTO queue_slots (queue_key, slot)
-    SELECT $1, slot FROM generate_series(0, $2 - 1) AS slot
+    SELECT $1, candidate.slot
+    FROM generate_series(0, $2 - 1) AS candidate(slot)
+    WHERE NOT EXISTS (
+        SELECT 1 FROM queue_slots existing
+        WHERE existing.queue_key = $1 AND existing.slot = candidate.slot
+    )
     ON CONFLICT DO NOTHING
 """
 
