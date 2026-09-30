@@ -29,6 +29,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy import DDL
+from sqlalchemy.types import TypeDecorator
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy import column as sql_column
 from sqlalchemy import event as sa_event
@@ -49,6 +50,28 @@ from oddish.reasoning_effort import (
 def utcnow() -> datetime:
     """Return timezone-aware UTC datetime."""
     return datetime.now(timezone.utc)
+
+
+INT32_MAX = 2**31 - 1
+
+
+class CappedTokenCount(TypeDecorator):
+    """INTEGER token count that saturates at 2^31 - 1 instead of failing.
+
+    Long cache-heavy runs report more than 2^31 input tokens (cache reads are
+    counted), and one out-of-range value makes Postgres reject the whole final
+    trial UPDATE, losing the reward and artifact pointer. Widening the columns
+    rewrites ``trials`` under ACCESS EXCLUSIVE, so until that happens the count
+    is capped; the exact figures remain in the uploaded Harbor artifacts.
+    """
+
+    impl = Integer
+    cache_ok = True
+
+    def process_bind_param(self, value: int | None, dialect: Any) -> int | None:
+        if value is None:
+            return None
+        return min(int(value), INT32_MAX)
 
 
 class Base(AsyncAttrs, DeclarativeBase):
@@ -1080,10 +1103,12 @@ class TrialModel(TimestampedMixin, Base):
     result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     # Token usage, steps & cost (extracted from Harbor's AgentContext / trajectory)
-    input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    cache_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    cache_write_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    input_tokens: Mapped[int | None] = mapped_column(CappedTokenCount, nullable=True)
+    cache_tokens: Mapped[int | None] = mapped_column(CappedTokenCount, nullable=True)
+    cache_write_tokens: Mapped[int | None] = mapped_column(
+        CappedTokenCount, nullable=True
+    )
+    output_tokens: Mapped[int | None] = mapped_column(CappedTokenCount, nullable=True)
     total_steps: Mapped[int | None] = mapped_column(Integer, nullable=True)
     trajectory_duration_seconds: Mapped[float | None] = mapped_column(
         Float, nullable=True
@@ -1322,10 +1347,14 @@ class AnalysisCostModel(TimestampedMixin, Base):
     billed_user_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     task_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     model: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    cache_read_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    cache_write_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    input_tokens: Mapped[int | None] = mapped_column(CappedTokenCount, nullable=True)
+    output_tokens: Mapped[int | None] = mapped_column(CappedTokenCount, nullable=True)
+    cache_read_tokens: Mapped[int | None] = mapped_column(
+        CappedTokenCount, nullable=True
+    )
+    cache_write_tokens: Mapped[int | None] = mapped_column(
+        CappedTokenCount, nullable=True
+    )
     cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     # "native" = harness-reported (CLI total_cost_usd); "estimated" = priced
     # via model_pricing. "pending" is an unpriced verifier-judge attempt
@@ -1392,10 +1421,14 @@ class VerifierCostModel(TimestampedMixin, Base):
     route: Mapped[str] = mapped_column(String(16), nullable=False)
     # Hash of the CUA key, never a copy of ``trials.llm_key_hash``.
     llm_key_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    cache_read_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    cache_write_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    input_tokens: Mapped[int | None] = mapped_column(CappedTokenCount, nullable=True)
+    output_tokens: Mapped[int | None] = mapped_column(CappedTokenCount, nullable=True)
+    cache_read_tokens: Mapped[int | None] = mapped_column(
+        CappedTokenCount, nullable=True
+    )
+    cache_write_tokens: Mapped[int | None] = mapped_column(
+        CappedTokenCount, nullable=True
+    )
     cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     # ``native`` | ``estimated`` | ``backfill``
     cost_source: Mapped[str] = mapped_column(String(16), nullable=False)
