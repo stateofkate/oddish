@@ -278,6 +278,8 @@ def test_deepseek_model_routes_to_deepseek_provider(monkeypatch):
         "deepseek/deepseek-v4-pro": "deepseek/deepseek-v4-pro",
         "deepseek/deepseek-v4-pro-0813": "deepseek/deepseek-v4-pro",
         "ds/deepseek-v4-flash": "deepseek/deepseek-v4-flash",
+        "deepseek-flash": "deepseek/deepseek-flash",
+        "deepseek/deepseek-v4.1-flash": "deepseek/deepseek-flash",
     }
     for raw, canonical in cases.items():
         assert settings.normalize_trial_model("dsh", raw) == canonical, raw
@@ -299,6 +301,8 @@ def test_fireworks_models_route_to_fireworks_not_direct_providers(monkeypatch):
         "fireworks/kimi-k2.7": "fireworks/kimi-k2p7-code",
         "fireworks/kimi-k2.7-code": "fireworks/kimi-k2p7-code",
         "fireworks/kimi-k2p7-code": "fireworks/kimi-k2p7-code",
+        "fireworks/deepseek-v4.1-flash": "fireworks/deepseek-v4p1-flash",
+        "fw/deepseek-v4p1-flash": "fireworks/deepseek-v4p1-flash",
     }
     for raw, canonical in cases.items():
         assert settings.normalize_trial_model("claude-code", raw) == canonical, raw

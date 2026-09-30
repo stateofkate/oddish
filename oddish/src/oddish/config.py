@@ -498,6 +498,10 @@ _DEEPSEEK_MODEL_ALIASES: dict[str, str] = {
     "deepseek-v4-pro": "deepseek-v4-pro",
     "deepseek-v4-pro-0813": "deepseek-v4-pro",
     "deepseek-v4-flash": "deepseek-v4-flash",
+    # V4.1 Flash. DeepSeek's docs name it ``deepseek-flash``; the dotted spelling
+    # is only a friendly alias and is never sent to DeepSeek.
+    "deepseek-flash": "deepseek-flash",
+    "deepseek-v4.1-flash": "deepseek-flash",
 }
 
 
@@ -570,6 +574,8 @@ _FIREWORKS_SHORT_MODEL_IDS: dict[str, str] = {
     # Serverless id. Plain ``deepseek-v4-flash`` is on-demand only on Fireworks,
     # so it is deliberately absent and the curated check suggests this one.
     "deepseek-v4-flash-0731": "deepseek-v4-flash-0731",
+    "deepseek-v4.1-flash": "deepseek-v4p1-flash",
+    "deepseek-v4p1-flash": "deepseek-v4p1-flash",
 }
 
 
