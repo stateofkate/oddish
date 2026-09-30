@@ -116,7 +116,7 @@ def test_task_declared_gpu_need_is_negotiated_like_an_override(monkeypatch) -> N
     assert requirements == [True, True, False]
 
 
-@pytest.mark.parametrize("percent", [0, 20, 100])
+@pytest.mark.parametrize("percent", [0, 20, 40, 100])
 def test_archil_rollout_selects_exactly_the_configured_request_groups(
     monkeypatch, percent
 ):
