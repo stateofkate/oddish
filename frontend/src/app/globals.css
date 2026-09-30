@@ -370,6 +370,7 @@
   html {
     overflow-y: scroll !important;
     overflow-x: clip;
+    overscroll-behavior-y: none;
     scrollbar-gutter: stable;
   }
   /* Drawers only mount while open. Lock the page, including wheel gestures
