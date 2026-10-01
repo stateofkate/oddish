@@ -414,7 +414,11 @@ async def list_trial_files(
     limit: int = Query(1000, ge=1, le=1000),
     cursor: str | None = Query(None),
     presign: bool = Query(True),
+    indexed: bool = False,
     attempt: int | None = Query(None, ge=1),
+    revision: str | None = None,
+    artifacts: bool = Query(False),
+    directories: list[str] | None = Query(None),
 ) -> dict:
     """List all files in S3 for a trial, with presigned URLs for direct access.
 
@@ -432,7 +436,11 @@ async def list_trial_files(
         limit=limit,
         cursor=cursor,
         presign=presign,
+        indexed=indexed,
         attempt=attempt,
+        revision=revision,
+        artifacts=artifacts,
+        directories=directories,
     )
 
 
@@ -457,7 +465,10 @@ async def get_trial_file(
     trial_id: str,
     file_path: str,
     auth: Annotated[AuthContext, Depends(get_auth_context)],
+    max_bytes: Annotated[int | None, Query(ge=1, le=1048576)] = None,
+    indexed: bool = False,
     attempt: int | None = Query(None, ge=1),
+    revision: str | None = None,
 ) -> Response:
     """Get a file from a trial's S3 directory by relative path.
 
@@ -469,10 +480,17 @@ async def get_trial_file(
     trial = await _get_authorized_trial(trial_id, auth, request)
     try:
         content, media_type = await get_trial_file_content_s3(
-            trial, file_path, attempt=attempt
+            trial,
+            file_path,
+            max_bytes=max_bytes,
+            indexed=indexed,
+            attempt=attempt,
+            revision=revision,
         )
         return Response(content=content, media_type=media_type)
     except HTTPException:
+        if indexed or max_bytes is not None:
+            raise
         pass
     content, media_type = await read_trial_agent_file(trial, file_path, attempt=attempt)
     return Response(content=content, media_type=media_type)
