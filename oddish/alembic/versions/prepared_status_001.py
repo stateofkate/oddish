@@ -15,18 +15,19 @@ TASK_COLUMNS = """created_at, "user", tags, link, created_by_user_id,
 
 
 def upgrade():
-    op.execute("DROP TRIGGER experiment_summary_changed ON tasks")
+    # Replace in place: DROP TRIGGER needs an ACCESS EXCLUSIVE lock on tasks
+    # after prepared_reads_001 already holds a weaker one in this transaction,
+    # and that upgrade deadlocked with a live writer on the 2026-10-01 deploy.
     op.execute(
-        f"CREATE TRIGGER experiment_summary_changed AFTER INSERT OR DELETE OR "
+        f"CREATE OR REPLACE TRIGGER experiment_summary_changed AFTER INSERT OR DELETE OR "
         f"UPDATE OF {TASK_COLUMNS}, status ON tasks "
         "FOR EACH ROW EXECUTE FUNCTION record_experiment_summary_change()"
     )
 
 
 def downgrade():
-    op.execute("DROP TRIGGER experiment_summary_changed ON tasks")
     op.execute(
-        f"CREATE TRIGGER experiment_summary_changed AFTER INSERT OR DELETE OR "
+        f"CREATE OR REPLACE TRIGGER experiment_summary_changed AFTER INSERT OR DELETE OR "
         f"UPDATE OF {TASK_COLUMNS} ON tasks "
         "FOR EACH ROW EXECUTE FUNCTION record_experiment_summary_change()"
     )
