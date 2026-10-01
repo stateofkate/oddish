@@ -98,3 +98,33 @@ test("member picker filters its loaded list and restores the selected account fr
   await expect(page).toHaveURL(/author=me/);
   await expect(picker).toContainText("Mine");
 });
+
+test("Back during a pending search keeps the restored URL", async ({ page }) => {
+  await page.route("**/api/**", (route) =>
+    route.fulfill({
+      json: { items: [], leaders: [], limit_usd: 100, used_usd: 0 },
+    })
+  );
+  await page.route("**/api/people/search?*", (route) =>
+    route.fulfill({ json: { items: [] } })
+  );
+
+  await page.goto("/dashboard");
+  await page
+    .getByRole("button", { name: "Filter experiments by member" })
+    .click();
+  await page
+    .getByLabel("Member results")
+    .getByRole("button", { name: "Mine" })
+    .click();
+  await expect(page).toHaveURL(/author=me/);
+
+  const search = page.getByPlaceholder("Search anything...");
+  await search.fill("grok");
+  await page.goBack();
+  await expect(page).toHaveURL(/\/dashboard$/);
+  // Outlast the 400 ms search debounce.
+  await page.waitForTimeout(800);
+  await expect(page).toHaveURL(/\/dashboard$/);
+  await expect(search).toHaveValue("");
+});

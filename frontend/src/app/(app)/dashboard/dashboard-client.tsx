@@ -984,12 +984,21 @@ export function DashboardClient() {
   const searchQuery =
     searchDraft?.query === committedQuery ? searchDraft.value : committedQuery;
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    const cancelSearch = () => {
       if (searchTimer.current) clearTimeout(searchTimer.current);
-    },
-    [userId, orgId]
-  );
+    };
+    // Back/Forward restores a URL; a pending search must not rewrite it.
+    const handlePopState = () => {
+      cancelSearch();
+      setSearchDraft(null);
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+      cancelSearch();
+    };
+  }, [userId, orgId]);
 
   // Build a dashboard URL for the given selection/page, preserving the current
   // search and any params this helper doesn't manage (e.g. trial metric
