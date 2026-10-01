@@ -851,9 +851,13 @@ async def precompute_dashboard_stats():
 
         from oddish.core.experiment_summaries import prepared_read_health
 
-        health = await prepared_read_health()
-        with _otel_span("worker.prepared_read_health", **health):
-            pass
+        # Telemetry only: a failed sample must not skip the precompute below.
+        try:
+            health = await prepared_read_health()
+            with _otel_span("worker.prepared_read_health", **health):
+                pass
+        except Exception as e:  # noqa: BLE001 - best-effort health sample
+            console.print(f"[yellow]Prepared read health sample skipped: {e}[/yellow]")
         org_count = await precompute_dashboard_queue_pipeline()
         console.print(
             f"metric=dashboard_precompute orgs={org_count} "
