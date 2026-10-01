@@ -1,19 +1,12 @@
+import { Suspense } from "react";
 import { DashboardClient } from "@/app/(app)/dashboard/dashboard-client";
 
-export default async function DashboardFixture({
-  searchParams,
-}: {
-  searchParams: Promise<{ author?: string }>;
-}) {
-  const { author = "all" } = await searchParams;
+// Mirrors src/app/(app)/dashboard/page.tsx: DashboardClient reads its filters
+// from the URL, so it needs the same Suspense boundary.
+export default function DashboardFixture() {
   return (
-    <DashboardClient
-      initialAuthor={author}
-      experimentsPromise={Promise.resolve({
-        experiments: [],
-        hasMore: false,
-        ok: true,
-      })}
-    />
+    <Suspense>
+      <DashboardClient />
+    </Suspense>
   );
 }

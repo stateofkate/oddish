@@ -63,7 +63,8 @@ class _FakeDeleteExperimentSession:
             return _FakeRowsResult(rowcount=1)
         if self.execute_calls == 6:
             return _FakeRowsResult(rowcount=1)
-        if self.execute_calls == 7:
+        if self.execute_calls in (7, 8, 9):
+            # Retire orphaned analysis jobs and trials, then the task itself.
             return _FakeRowsResult(rowcount=1)
 
         raise AssertionError(f"Unexpected execute() call #{self.execute_calls}")
@@ -115,7 +116,11 @@ async def test_delete_experiment_core_soft_deletes_domain_rows(monkeypatch):
     }
     assert session.delete_called is False
 
-    write_statements = session.execute_statements[3:]
+    analysis_cleanup = session.execute_statements[6:8]
+    assert "UPDATE worker_jobs" in str(analysis_cleanup[0])
+    assert "UPDATE trials" in str(analysis_cleanup[1])
+    assert all("kind != 'agent'" in str(stmt) for stmt in analysis_cleanup)
+    write_statements = session.execute_statements[3:6] + session.execute_statements[8:]
     table_names = [stmt.table.name for stmt in write_statements]
     assert table_names == [
         "trials",
@@ -178,28 +183,18 @@ def test_backend_router_exposes_delete_experiment_endpoint():
 def test_dashboard_cache_invalidation_scopes_to_org():
     """Delete handlers need stale dashboard rows gone immediately."""
     dashboard._dashboard_primary_cache.clear()
-    dashboard._dashboard_experiments_cache.clear()
     dashboard._dashboard_primary_cache.update(
         {
             "dashboard.primary:org-1:1": ({"old": True}, 1.0),
             "dashboard.primary:org-2:1": ({"old": True}, 1.0),
         }
     )
-    dashboard._dashboard_experiments_cache.update(
-        {
-            "dashboard.experiments:org-1:1": ({"old": True}, 1.0),
-            "dashboard.experiments:org-2:1": ({"old": True}, 1.0),
-        }
-    )
 
     dashboard.invalidate_dashboard_cache(org_id="org-1")
 
     assert "dashboard.primary:org-1:1" not in dashboard._dashboard_primary_cache
-    assert "dashboard.experiments:org-1:1" not in dashboard._dashboard_experiments_cache
     assert "dashboard.primary:org-2:1" in dashboard._dashboard_primary_cache
-    assert "dashboard.experiments:org-2:1" in dashboard._dashboard_experiments_cache
 
     dashboard.invalidate_dashboard_cache()
 
     assert dashboard._dashboard_primary_cache == {}
-    assert dashboard._dashboard_experiments_cache == {}

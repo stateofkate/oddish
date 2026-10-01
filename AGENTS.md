@@ -1101,6 +1101,25 @@ usage across every trial owned by the experiment, including older versions,
 superseded retries, and soft-deleted trials. Its `billed_*` cost and
 token fields are the billed-user subset used by the frontend's New spend tile.
 
+### Prepared dashboard and directory reads
+
+The web dashboard reads `experiment_summaries`; background maintenance calls
+`rebuild_dashboard_experiments` for the authoritative aggregate rules. Core
+migration `prepared_reads_001` installs transactionally coalesced revision markers
+on task/trial/version/experiment membership changes. Publication acknowledges the
+captured revision only. Publication and retry scheduling acquire summary locks
+with `FOR UPDATE SKIP LOCKED` after calculation; skipped rows stay pending.
+`prepared_status_001` upgrades existing task triggers to watch execution status
+as well as verdict fields. Do not add a request-time aggregate fallback. Pending
+first builds report `summary_pending`; status predicates apply before pagination.
+`merge_prepared_delivery_001` joins this migration chain with
+`delivery_selection_002`, retaining the task browser indexes and a single
+`alembic upgrade head` target.
+
+Org/Mine uses the existing dashboard JSON endpoint with account/filter-scoped
+SWR and browser history. Applied filters belong to the URL; search input remains
+an editable draft. See `docs/prepared-webapp-reads.md` for maintenance and tests.
+
 ### Task-file publication and read latency
 
 Task-file publication writes complete, immutable directories under

@@ -269,18 +269,13 @@ async def _enrich_experiment_authors(
 
     Email is never promoted into a label; this only ever replaces an email
     with a name/handle, never the reverse. At most two queries per request:
-    the org's active users, plus one ``include_deleted=True`` id lookup for
+    only referenced ids or fallback labels among active org users, plus one ``include_deleted=True`` id lookup for
     referenced ids not found among them (historical/deactivated owners --
     mirrors the cost path). Select identity columns directly so label reads
     do not also load account relationships (organizations and API keys).
 
-    The experiment row dicts are the *same objects* the core layer stores in
-    its module-level experiments cache, so this function must never mutate
-    them: doing so would destroy the cached github/api fallback for the rest
-    of the cache TTL (and race concurrent requests sharing the cached list).
-    Enriched rows are shallow copies; the top-level ``dashboard`` dict is a
-    fresh per-request merge, so reassigning its ``experiments`` key is safe.
-    ``last_author`` (deprecated mirror of ``last_runner``) is kept in sync.
+    Return shallow copies so enrichment cannot alter the prepared core payload.
+    Keep ``last_author`` (the deprecated mirror of ``last_runner``) in sync.
     """
     experiments = dashboard.get("experiments")
     if not experiments:
@@ -304,11 +299,29 @@ async def _enrich_experiment_authors(
     by_email: dict[str, RowMapping] = {}
     by_handle: dict[str, RowMapping] = {}
 
+    fallback_labels = {
+        label
+        for row in experiments
+        if isinstance(row, dict)
+        for id_key, value_key in (
+            ("owner_user_id", "author"),
+            ("last_runner_user_id", "last_runner"),
+        )
+        if not row.get(id_key) and isinstance(row.get(value_key), dict)
+        if (label := _normalize_label_key(row[value_key].get("name")))
+    }
     if org_id:
         rows = await session.execute(
             select(*identity_columns).where(
                 UserModel.org_id == org_id,
                 UserModel.is_active.is_(True),
+                or_(
+                    UserModel.id.in_(referenced_ids),
+                    func.lower(func.trim(UserModel.email)).in_(fallback_labels),
+                    func.lower(func.trim(UserModel.github_username)).in_(
+                        fallback_labels
+                    ),
+                ),
             )
         )
         email_buckets: dict[str, list[RowMapping]] = {}

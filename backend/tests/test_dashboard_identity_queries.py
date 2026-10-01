@@ -118,7 +118,7 @@ async def test_people_query_email_order_search_and_scope(
         user_role=UserRole.MEMBER,
         scope=APIKeyScope.READ,
     )
-    response = await dashboard_router.search_people(auth=auth, q=query, limit=limit)
+    response = await dashboard_router.search_people(auth=auth, q=query, limit=limit, offset=0)
     assert [person.id for person in response.items] == expected
     assert all(person.display_name == person.email for person in response.items)
     assert len(statements) == 1

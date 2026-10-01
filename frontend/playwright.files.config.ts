@@ -4,6 +4,7 @@ export default defineConfig({
   testMatch: [
     "dashboard-member-filter.spec.ts",
     "file-loading.spec.ts",
+    "prepared-reads.spec.ts",
     "public-experiment-tasks.spec.ts",
     "public-share-qa.spec.ts",
     "review-meaning.spec.ts",

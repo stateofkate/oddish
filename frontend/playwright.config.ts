@@ -15,6 +15,7 @@ export default defineConfig({
     "tasks-picker.spec.ts",
     "task-run-coverage.spec.ts",
     "file-loading.spec.ts",
+    "prepared-reads.spec.ts",
     "member-filter-pagination.spec.ts",
     "reasoning-effort.spec.ts",
     "user-ui-layout.spec.ts",
