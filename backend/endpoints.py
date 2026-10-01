@@ -12,13 +12,13 @@ from oddish.config import Settings
 # Connection budget is bounded by Supabase's two limits: the pooler's max
 # *client* connections (3000 on the 4XL tier) and the transaction-mode *pool
 # size* — the real Postgres backends behind it (~150-200, within the 480
-# max_connections). pool_size + max_overflow is sized to API_CONCURRENCY_MAX so
-# a fully-loaded container never has requests blocking on SQLAlchemy pool
-# checkout (the prior 4-conn pool vs 8 inputs caused checkout waits that looked
-# like DB latency under load).
+# max_connections). pool_size + max_overflow is sized to twice
+# API_CONCURRENCY_MAX so a fully-loaded container never has requests blocking
+# on SQLAlchemy pool checkout (the prior 4-conn pool vs 8 inputs caused
+# checkout waits that looked like DB latency under load).
 #
 # Client-connection budget (worst case):
-#   API:     64 containers × (pool_size 2 + max_overflow 1) = up to 192
+#   API:     64 containers × (pool_size 2 + max_overflow 4) = up to 384
 #   Workers: NullPool (worker/functions.py) → ~0 held during the long trial;
 #            only workers writing at a given instant + the
 #            <=MAX_WORKERS_PER_POLL claim burst consume client connections, so
@@ -29,11 +29,14 @@ from oddish.config import Settings
 # API_CONCURRENCY_MAX was lowered 8->3 (with API_MAX_CONTAINERS raised 24->64)
 # to bound the OOM blast radius (the memory hog itself is fixed in
 # oddish.core.endpoints.list_tasks_core -- see modal_app.py). The pool is
-# resized to match the new per-container concurrency so the budget above is
-# unchanged (64 × 3 == 24 × 8 == 192 API client connections).
+# resized to match the new per-container concurrency (64 × 3 == 24 × 8 == 192
+# API client connections). Overflow is 4, not 1, because a dashboard request
+# with unbuilt experiment summaries checks out a second connection
+# (core/dashboard.py _live_summaries): 3 requests × 2 = 6 = 2 + 4. Overflow
+# connections close when returned, so idle containers still hold 2.
 Settings.db_use_null_pool = False
 Settings.db_pool_size = 2
-Settings.db_pool_max_overflow = 1
+Settings.db_pool_max_overflow = 4
 
 import modal  # noqa: E402
 

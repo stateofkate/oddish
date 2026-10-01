@@ -1,4 +1,6 @@
 from __future__ import annotations
+import asyncio
+import contextlib
 import json
 import logging
 import re
@@ -67,6 +69,7 @@ from oddish.db import (
     WorkerJobStatus,
     WORKER_OWNED_TRIAL_STATUSES,
     experiment_trials,
+    get_session,
     task_experiments,
 )
 from oddish.db.models import ExperimentSummaryModel
@@ -83,6 +86,13 @@ UNRESOLVED_EXPERIMENTS_OWNER = "__unresolved_owner__"
 # indexed owner_user_id fast path once an org has zero NULL owners, while
 # never matching a real user id.
 EXPERIMENTS_UNATTRIBUTED_OWNER = "__unattributed__"
+
+# Per-statement cap for computing a page's unbuilt summaries during a read.
+# Experiments too large to finish in time stay "Preparing" for the maintainer.
+LIVE_SUMMARY_STATEMENT_TIMEOUT_MS = 1500
+# The caller already holds a pooled connection; waiting for a second one when
+# every connection is held by such a caller would never succeed, so skip.
+LIVE_SUMMARY_CHECKOUT_TIMEOUT_S = 0.05
 
 
 def _parse_github_meta(raw_github_meta: str | None) -> dict[str, Any] | None:
@@ -1288,9 +1298,20 @@ async def load_dashboard_experiments(
     if not page_rows:
         return [], False
 
+    live = await _live_summaries(
+        rows=[
+            row
+            for row in page_rows[:experiments_limit]
+            if row["summary_payload"] is None
+        ],
+        org_id=org_id,
+        record_timing=record_timing,
+    )
     rows = []
     for page_row in page_rows[:experiments_limit]:
-        payload = page_row["summary_payload"]
+        payload = page_row["summary_payload"] or live.get(
+            str(page_row["experiment_id"])
+        )
         if payload is None:
             # Counts are unknown until the durable worker completes the first build.
             payload = {
@@ -1339,7 +1360,8 @@ async def load_dashboard_experiments(
                     if page_row["last_activity_at"]
                     else None
                 ),
-                "summary_pending": page_row["summary_payload"] is None,
+                "summary_pending": str(page_row["experiment_id"]) not in live
+                and page_row["summary_payload"] is None,
             }
         )
     tags = await list_direct_tags_for_targets(
@@ -1353,13 +1375,64 @@ async def load_dashboard_experiments(
     return rows, len(page_rows) > experiments_limit
 
 
+async def _live_summaries(
+    *,
+    rows: Sequence[Mapping[str, Any]],
+    org_id: str | None,
+    record_timing: TimingRecorder | None,
+) -> dict[str, dict[str, Any]]:
+    """Compute summaries the maintainer has not built yet for this page only.
+
+    Read-only: publication stays with the maintainer. Like the maintainer,
+    this runs in its own short transaction, never the caller's session: the
+    dashboard reads in autocommit, where neither a SAVEPOINT nor a SET LOCAL
+    timeout can exist. A timeout or error leaves the rows pending.
+    """
+    if not rows:
+        return {}
+    started_at = now()
+    try:
+        async with contextlib.AsyncExitStack() as stack:
+            try:
+                async with asyncio.timeout(LIVE_SUMMARY_CHECKOUT_TIMEOUT_S):
+                    reader = await stack.enter_async_context(get_session())
+                    await reader.connection()
+            except TimeoutError:
+                logger.info("dashboard live summary skipped: no free connection")
+                return {}
+            await reader.execute(
+                text(
+                    f"SET LOCAL statement_timeout = '{LIVE_SUMMARY_STATEMENT_TIMEOUT_MS}ms'"
+                )
+            )
+            payloads = await rebuild_dashboard_experiments(
+                reader, page_rows=rows, org_id=org_id
+            )
+    except Exception:
+        logger.warning(
+            "dashboard live summary fallback failed experiment_ids=%s",
+            [str(row["experiment_id"]) for row in rows],
+            exc_info=True,
+        )
+        return {}
+    finally:
+        if record_timing is not None:
+            record_timing(
+                "dashboard_experiments_live_summaries",
+                elapsed_ms(started_at),
+                "Dashboard live summaries for unbuilt rows",
+            )
+    return {str(payload["id"]): payload for payload in payloads}
+
+
 async def rebuild_dashboard_experiments(
     session: AsyncSession,
     *,
     page_rows: Sequence[Mapping[str, Any]],
     org_id: str | None,
 ) -> list[dict[str, Any]]:
-    """Authoritative summary calculation, used only by background maintenance."""
+    """Authoritative summary calculation for background maintenance and for
+    page rows whose summary has not been built yet."""
     experiment_ids = [str(row["experiment_id"]) for row in page_rows]
 
     # ------------------------------------------------------------------

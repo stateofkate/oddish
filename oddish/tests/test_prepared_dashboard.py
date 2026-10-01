@@ -11,7 +11,14 @@ from sqlalchemy import select, text, update
 
 from oddish.core.dashboard import load_dashboard_experiments
 from oddish.core.experiment_summaries import refresh_experiment_summaries
-from oddish.db import ExperimentModel, TaskModel, TrialModel, TrialStatus, get_session
+from oddish.db import (
+    ExperimentModel,
+    TaskModel,
+    TrialModel,
+    TrialStatus,
+    get_read_session,
+    get_session,
+)
 from oddish.db.models import ExperimentSummaryModel, experiment_trials
 
 
@@ -67,7 +74,11 @@ async def test_prepared_read_and_durable_invalidation(experiment):
     org, eid, tid = experiment
     async with get_session() as session:
         rows, _ = await page(session, org)
-        assert rows[0]["summary_pending"] is True
+        # Unbuilt rows are computed on read and never published by the read.
+        assert rows[0]["active_trials"] == 1
+        assert rows[0]["summary_pending"] is False
+        marker = await session.get(ExperimentSummaryModel, eid)
+        assert marker.payload is None
     assert await refresh_experiment_summaries() >= 1
     async with get_session() as session:
         rows, _ = await page(session, org)
@@ -602,3 +613,72 @@ async def test_pending_rebuild_precedes_daily_reconciliation(experiment):
     async with get_session() as session:
         clean = await session.get(ExperimentSummaryModel, clean_id)
         assert clean.refreshed_at > utcnow() - timedelta(minutes=1)
+
+
+@pytest.mark.asyncio
+async def test_live_summary_timeout_leaves_row_pending(experiment, monkeypatch):
+    import oddish.core.dashboard as dashboard
+
+    org, eid, _ = experiment
+
+    async def slow_rebuild(session, **_):
+        await session.execute(text("SELECT pg_sleep(1)"))
+        return []
+
+    monkeypatch.setattr(dashboard, "LIVE_SUMMARY_STATEMENT_TIMEOUT_MS", 50)
+    monkeypatch.setattr(dashboard, "rebuild_dashboard_experiments", slow_rebuild)
+    async with get_session() as session:
+        before = await session.scalar(text("SHOW statement_timeout"))
+        rows, _ = await page(session, org)
+        assert rows[0]["id"] == eid
+        assert rows[0]["summary_pending"] is True
+        assert rows[0]["author"] is None
+        # The cancelled savepoint leaves the outer transaction usable and the
+        # caller's timeout unchanged.
+        assert await session.scalar(text("SHOW statement_timeout")) == before
+
+
+@pytest.mark.asyncio
+async def test_live_summary_restores_statement_timeout(experiment):
+    org, _, _ = experiment
+    async with get_session() as session:
+        await session.execute(text("SET LOCAL statement_timeout = '7s'"))
+        rows, _ = await page(session, org)
+        assert rows[0]["summary_pending"] is False
+        assert await session.scalar(text("SHOW statement_timeout")) == "7s"
+
+
+@pytest.mark.asyncio
+async def test_live_summary_under_autocommit_read_session(experiment):
+    # The hosted and standalone dashboards read through get_read_session.
+    org, _, _ = experiment
+    async with get_read_session() as session:
+        rows, _ = await page(session, org)
+    assert rows[0]["summary_pending"] is False
+    assert rows[0]["active_trials"] == 1
+
+
+@pytest.mark.asyncio
+async def test_live_summary_skips_when_pool_has_no_free_connection(
+    experiment, monkeypatch
+):
+    # The hosted API pool has as many connections as concurrent requests, each
+    # already holding one; the fallback must not wait for a second.
+    from oddish.db import connection
+
+    org, eid, _ = experiment
+    monkeypatch.setattr(type(connection.settings), "db_use_null_pool", False)
+    monkeypatch.setattr(type(connection.settings), "db_pool_size", 1)
+    monkeypatch.setattr(type(connection.settings), "db_pool_max_overflow", 0)
+    engine = connection._create_engine()
+    monkeypatch.setattr(connection, "engine", engine)
+    monkeypatch.setattr(
+        connection, "async_session_maker", connection._create_session_maker(engine)
+    )
+    try:
+        async with get_read_session() as session:
+            rows, _ = await asyncio.wait_for(page(session, org), timeout=5)
+        assert rows[0]["id"] == eid
+        assert rows[0]["summary_pending"] is True
+    finally:
+        await engine.dispose()

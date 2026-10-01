@@ -635,7 +635,7 @@ that the `sandbox_capacity_leases` count returns to its pre-smoke value.
 
 `endpoints.py`, `serve.py`, and `worker/runtime.py` patch oddish settings at startup:
 
-- `endpoints.py` / `serve.py`: set `db_use_null_pool = False` and configure a small real pool (size 2, overflow 1) for the API; NullPool is the *workers'* setting (`worker/functions.py`)
+- `endpoints.py` / `serve.py`: set `db_use_null_pool = False` and configure a small real pool for the API (`endpoints.py`: size 2, overflow 4; `serve.py`: size 2, overflow 0); NullPool is the *workers'* setting (`worker/functions.py`)
 - `worker/runtime.py`: refresh DB connections per container, ensure the per-container Harbor scratch dir exists (defaults to `/tmp/harbor-jobs`), and materialize GCP application-default credentials when configured
 
 ## API Endpoints
