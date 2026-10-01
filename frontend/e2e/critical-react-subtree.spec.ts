@@ -52,7 +52,6 @@ const trial: Trial = {
   cost_usd: 0.12,
   cost_is_estimated: false,
   has_trajectory: true,
-  playback: { manifest_path: null },
   created_at: NOW,
   started_at: "2026-08-10T20:00:00Z",
   finished_at: "2026-08-10T20:00:04Z",
@@ -605,18 +604,16 @@ test.describe("critical task and trial subtree", () => {
     await prefetchedTrialRequest;
     expect(requestCount(requests, trialDetailPattern)).toBe(1);
     await trialButton.click();
-    // The compact browse row has no playback index. Keep the header visible
-    // with a neutral body until the shared detail request resolves the tabs.
-    await expect(page.getByRole("heading", { name: trial.name, exact: true })).toBeVisible();
-    await expect(page.getByRole("status").filter({ hasText: "Loading run views…" })).toBeVisible();
-    await expect(page.getByRole("tab", { name: "Overview" })).toHaveCount(0);
-    await page.getByRole("button", { name: "Trial actions" }).click();
-    await expect(page.getByRole("menuitem", { name: "Retry trial" })).toHaveAttribute("aria-disabled", "true");
-    await page.keyboard.press("Escape");
-    await expect(page.getByRole("menuitem", { name: "Retry trial" })).toHaveCount(0);
+    // The compact row paints immediately while the hover-prefetched detail
+    // remains blocked. SWR shares that request with the mounted drawer.
+    await expect(page.getByRole("tab", { name: "Summary" })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Retry Trial" })
+    ).toBeDisabled();
     await expect(
       page.getByRole("button", { name: "Run analysis", exact: true })
-    ).toHaveCount(0);
+    ).toBeDisabled();
+    await expect(page.getByText("Loading latest trial state.")).toBeVisible();
 
     await page.waitForTimeout(300);
     expect(requestCount(requests, taskDetailPattern)).toBe(0);
@@ -633,14 +630,6 @@ test.describe("critical task and trial subtree", () => {
     await expect(
       page.getByRole("button", { name: "Re-run Trajectory analysis", exact: true })
     ).toBeEnabled();
-    // Overview keeps, collapsed, the cost and spend details that once sat in
-    // the drawer header.
-    const executionDetails = page
-      .locator("details")
-      .filter({ hasText: "Execution details" });
-    await expect(executionDetails.getByText("$0.12", { exact: true })).toBeHidden();
-    await executionDetails.getByText("Execution details", { exact: true }).click();
-    await expect(executionDetails.getByText("$0.12", { exact: true })).toBeVisible();
 
     const taskPanelPattern = new RegExp(`/api/tasks/${TASK_ID}/panel(?:\\?|$)`);
     const taskPanelRequest = page.waitForRequest(taskPanelPattern);
@@ -665,7 +654,7 @@ test.describe("critical task and trial subtree", () => {
     await expect(
       page.getByRole("status", { name: "Loading files", exact: true })
     ).toBeVisible();
-    await expect(page.getByRole("tab", { name: "Overview" })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Summary" })).toBeVisible();
     taskPanelGate.release();
     taskFilesGate.release();
     await expect(
@@ -694,7 +683,7 @@ test.describe("critical task and trial subtree", () => {
     expect(requestCount(requests, trajectoryPattern)).toBe(0);
 
     const trajectoryRequest = page.waitForRequest(trajectoryPattern);
-    await page.getByRole("tab", { name: "Run" }).click();
+    await page.getByRole("tab", { name: "Trajectory" }).click();
     await trajectoryRequest;
     expect(requestCount(requests, trajectoryPattern)).toBeGreaterThan(0);
     await expect(page.getByText("DEFERRED_TRAJECTORY_STEP_BODY")).toHaveCount(
@@ -709,7 +698,7 @@ test.describe("critical task and trial subtree", () => {
         request.url().endsWith(`/api/trials/${TRIAL_ID}/trajectory/summary`)
     );
     await page
-      .getByRole("tabpanel", { name: "Run", exact: true })
+      .getByRole("tabpanel", { name: "Trajectory", exact: true })
       .getByRole("button", { name: "Generate", exact: true })
       .click();
     await summaryPost;
@@ -725,13 +714,13 @@ test.describe("critical task and trial subtree", () => {
         response.status() === 503
     );
     await page
-      .getByRole("tabpanel", { name: "Run", exact: true })
+      .getByRole("tabpanel", { name: "Trajectory", exact: true })
       .getByRole("button", { name: "Regenerate", exact: true })
       .click();
     await failedSummaryPost;
     await expect(page.getByText("Replacement summary published")).toBeVisible();
     const regenerationAlert = page
-      .getByRole("tabpanel", { name: "Run" })
+      .getByRole("tabpanel", { name: "Trajectory" })
       .getByRole("alert");
     await expect(regenerationAlert).toContainText(
       "Summary refresh temporarily unavailable"
@@ -750,7 +739,7 @@ test.describe("critical task and trial subtree", () => {
       "Trajectory summary refresh failed after it started"
     );
 
-    await page.getByRole("tab", { name: "Overview" }).click();
+    await page.getByRole("tab", { name: "Summary" }).click();
     const secondTrialPattern = new RegExp(
       `/api/trials/${SECOND_TRIAL_ID}(?:\\?|$)`
     );
@@ -793,10 +782,9 @@ test.describe("critical task and trial subtree", () => {
     await page.clock.fastForward(30_000);
     await settledTaskQaResponse;
     await failedTrialRevalidation;
-    await page.getByRole("button", { name: "Trial actions" }).click();
-    await expect(page.getByRole("menuitem", { name: "Retry trial" })).not.toHaveAttribute("aria-disabled", "true");
-    await page.keyboard.press("Escape");
-    await expect(page.getByRole("menuitem", { name: "Retry trial" })).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "Retry Trial" })
+    ).toBeEnabled();
 
     await page.goto("/tasks");
     const failedTaskLink = page.getByRole("link", {

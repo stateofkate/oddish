@@ -127,7 +127,7 @@ test.describe("experiment page network shape", () => {
     const openMark = Date.now();
     await trialCell.hover();
     await trialCell.click();
-    await expect(page.getByRole("tab", { name: "Overview" })).toBeVisible({
+    await expect(page.getByRole("tab", { name: "Summary" })).toBeVisible({
       timeout: 15_000,
     });
     await expect

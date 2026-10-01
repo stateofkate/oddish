@@ -285,7 +285,3 @@ def test_sanitize_task_result_removes_reserved_verifier_summary():
         "latency_ms": 12
     }
     assert sanitize_task_result({"_verifier": {"passed": 999}}) is None
-
-
-def test_task_metrics_cannot_supply_playback_index():
-    assert build_trial_result({"_playback": {"manifest_path": "outside"}}, None, None, None) is None

@@ -4,14 +4,6 @@ These are manually invoked tools, not modules called by the application. Lack of
 an application import is not evidence that an operator tool is unused. Before
 retiring one, check whether its operational purpose has a replacement.
 
-## Playback repair
-
-`oddish playback rebuild TRIAL_ID --api API_URL --json` rebuilds one completed
-trial's playback index from saved evidence. The API key must allow task writes
-in the owning organization. It reports `ready`, `absent`, or `invalid`; invalid
-evidence exits 1 and supplies `index_error`. Repeating the command is safe. It
-does not rerun a trial or alter its score.
-
 ## Read-only diagnostics
 
 Run the Modal commands from `backend/` using its installed dependencies. Modal is

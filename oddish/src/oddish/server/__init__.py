@@ -874,13 +874,6 @@ async def rerun_trial_analysis(trial_id: str) -> dict:
         return await rerun_trial_analysis_core(session, trial_id=trial_id)
 
 
-@api.post("/trials/{trial_id}/playback/rebuild")
-async def rebuild_playback(trial_id: str) -> dict:
-    from oddish.core.playback import rebuild_trial_playback
-
-    return await rebuild_trial_playback(trial_id)
-
-
 @api.post("/trials/{trial_id}/retry")
 async def retry_trial(
     trial_id: str,

@@ -1,9 +1,19 @@
 import { Check, Clock, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type { Trial } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-type PhaseTiming = NonNullable<Trial["phase_timing"]>;
+interface PhaseTimingEntry {
+  started_at: string;
+  finished_at: string;
+  duration_sec: number;
+}
+
+interface PhaseTiming {
+  environment_setup?: PhaseTimingEntry;
+  agent_setup?: PhaseTimingEntry;
+  agent_execution?: PhaseTimingEntry;
+  verifier?: PhaseTimingEntry;
+}
 
 interface HarborStageTimelineProps {
   currentStage: string | null | undefined;

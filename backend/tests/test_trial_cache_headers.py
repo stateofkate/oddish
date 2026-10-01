@@ -80,7 +80,6 @@ def _identity(**overrides) -> TrialCacheIdentity:
         finished_at=FINISHED,
         analysis_status=AnalysisStatus.SUCCESS,
         analysis_finished_at=FINISHED,
-        playback=None,
     )
     fields.update(overrides)
     return TrialCacheIdentity(**fields)
@@ -94,7 +93,6 @@ def _detail(**overrides):
         finished_at=FINISHED,
         analysis_status=AnalysisStatus.SUCCESS,
         analysis_finished_at=FINISHED,
-        playback=None,
     )
     fields.update(overrides)
     return SimpleNamespace(**fields)

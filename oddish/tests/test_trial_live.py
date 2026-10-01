@@ -19,7 +19,6 @@ def make_trial(**overrides):
         output_tokens=50,
         cost_usd=1.25,
         harbor_stage="agent_running",
-        phase_timing=None,
         finished_at=None,
     )
     base.update(overrides)
@@ -149,12 +148,3 @@ async def test_public_live_reads_only_token_scoped_trial(monkeypatch):
         await get_public_trial_live("share-token", "private-trial", after_seq=0)
 
     assert exc.value.status_code == 404
-
-
-@pytest.mark.asyncio
-async def test_live_response_includes_agent_clock_without_waiting_for_outputs():
-    timing = {"started_at": "2026-09-30T12:00:00+00:00"}
-    trial = make_trial(phase_timing={"agent_execution": timing})
-    response = await read_trial_live(FakeSession(), trial)
-    assert response["events"] == []
-    assert response["agent_timing"] == timing

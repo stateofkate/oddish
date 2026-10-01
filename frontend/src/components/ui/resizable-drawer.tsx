@@ -136,10 +136,10 @@ export function ResizableDrawer({
     onResizeEnd?.();
   }, [maximized, setMaximized, onResizeEnd]);
 
-  // Nested menus/dialogs consume Escape before it reaches this handler.
+  // Handle escape key to close
   React.useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && open && !e.defaultPrevented) {
+      if (e.key === "Escape" && open) {
         onOpenChange(false);
       }
     };

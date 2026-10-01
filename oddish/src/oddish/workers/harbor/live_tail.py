@@ -361,9 +361,6 @@ def _render_codex_item(item: Any) -> list[dict[str, Any]]:
     if not isinstance(item, dict):
         return []
     item_type = item.get("type")
-    if item_type == "error":
-        message = item.get("message")
-        return [_event("summary", "text", message)] if message else []
     if item_type in ("agent_message", "reasoning"):
         text = item.get("text")
         if not text:
@@ -421,7 +418,7 @@ class CodexUsageFold:
             if isinstance(usage, dict):
                 self.usage = usage
             return []
-        if event_type in ("error", "turn.failed"):
+        if event_type == "turn.failed":
             error = event.get("error")
             message = (
                 error.get("message")

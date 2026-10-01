@@ -25,9 +25,7 @@ export default function TrajectoryPreview() {
         ))}
       </div>
       <div data-testid="trajectory-panel" style={{ width: width ?? undefined }}>
-        <TrajectoryViewer trialId="trajectory-fixture" hasTrajectory agentTiming={{
-          started_at: "2026-09-30T12:00:00Z", finished_at: "2026-09-30T12:02:30Z", duration_sec: 150,
-        }} />
+        <TrajectoryViewer trialId="trajectory-fixture" hasTrajectory />
       </div>
       <div data-testid="live-panel" className="h-96 rounded border">
         <LiveTranscriptPanel trialId="trajectory-fixture" agent="claude-code" />

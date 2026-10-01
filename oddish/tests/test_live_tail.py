@@ -338,20 +338,6 @@ def codex_item(item) -> bytes:
     return codex_line({"type": "item.completed", "item": item})
 
 
-@pytest.mark.parametrize("record", [
-    {"type": "error", "message": "Reconnecting... failed to lookup address information"},
-    {"type": "item.completed", "item": {
-        "type": "error", "message": "Falling back from WebSockets to HTTPS transport"}},
-])
-def test_codex_connection_errors_are_visible_live(record):
-    fold = CodexUsageFold()
-    message = record.get("message") or record["item"]["message"]
-    assert fold.feed_line(codex_line(record)) == [
-        {"kind": "summary", "payload": {"text": message}}
-    ]
-    assert not fold.has_usage
-
-
 def test_codex_fold_keeps_last_cumulative_usage():
     fold = CodexUsageFold(model="gpt-5.3-codex")
     assert not fold.has_usage

@@ -215,7 +215,6 @@ async def list_tasks_core(
                 TrialModel.harbor_sha,
                 TrialModel.kind,
                 TrialModel.has_trajectory,
-                TrialModel.playback,
                 TrialModel.phase_timing,
                 TrialModel.analysis_status,
                 TrialModel.analysis,

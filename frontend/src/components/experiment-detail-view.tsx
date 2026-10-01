@@ -1317,7 +1317,7 @@ export function ExperimentDetailView({
   ]);
 
   useEffect(() => {
-    if (hydratedFromUrl.current || (!focusUrl && tasksForExperiment.length === 0)) return;
+    if (hydratedFromUrl.current || tasksForExperiment.length === 0) return;
     hydratedFromUrl.current = true;
 
     const urlTaskId = searchParams.get("task");
@@ -1388,7 +1388,7 @@ export function ExperimentDetailView({
       trialGroups,
       groupEfforts,
     });
-  }, [tasksForExperiment, searchParams, buildTrialGroups, groupEfforts, focusUrl]);
+  }, [tasksForExperiment, searchParams, buildTrialGroups, groupEfforts]);
 
   // Re-sync the open drawer with freshly-loaded trial data. On direct URL
   // loads the drawer opens as soon as the lightweight task shells arrive,
@@ -1561,8 +1561,8 @@ export function ExperimentDetailView({
         isOpen: true,
         mode: "trial",
         task: host,
-        taskIndex: Math.max(0, tasksForExperiment.findIndex((task) => task.id === host.id)),
-        orderedTasks: tasksForExperiment.some((task) => task.id === host.id) ? tasksForExperiment : [host],
+        taskIndex: tasksForExperiment.findIndex((task) => task.id === host.id),
+        orderedTasks: tasksForExperiment,
         taskNavScope: "experiment",
         trial: index >= 0 ? orderedTrials[index] : trial,
         trialIndex: index >= 0 ? index : null,
@@ -1607,7 +1607,7 @@ export function ExperimentDetailView({
       if (!isRetryableFocusError(urlFocusError)) cancelPendingDeepLink();
       return;
     }
-    if (!resolvedUrlFocus) return;
+    if (!resolvedUrlFocus || tasksForExperiment.length === 0) return;
 
     const focusedTrial = resolvedUrlFocus.trial
       ? trialFromExperimentCell(resolvedUrlFocus.trial)
@@ -1624,12 +1624,12 @@ export function ExperimentDetailView({
     const experiment = tasksForExperiment[0];
     const host: Task = {
       ...resolvedUrlFocus.task,
-      experiment_id: experiment?.experiment_id ?? experimentId,
-      experiment_name: experiment?.experiment_name,
-      experiment_is_public: experiment?.experiment_is_public ?? readOnly,
-      experiment_created_at: experiment?.experiment_created_at,
-      experiment_owner: experiment?.experiment_owner,
-      experiment_link: experiment?.experiment_link,
+      experiment_id: experiment.experiment_id,
+      experiment_name: experiment.experiment_name,
+      experiment_is_public: experiment.experiment_is_public,
+      experiment_created_at: experiment.experiment_created_at,
+      experiment_owner: experiment.experiment_owner,
+      experiment_link: experiment.experiment_link,
       ...loadedTask,
       trials,
     };
@@ -1651,8 +1651,8 @@ export function ExperimentDetailView({
       isOpen: true,
       mode: "task",
       task: host,
-      taskIndex: Math.max(0, tasksForExperiment.findIndex((task) => task.id === host.id)),
-      orderedTasks: tasksForExperiment.some((task) => task.id === host.id) ? tasksForExperiment : [host],
+      taskIndex: tasksForExperiment.findIndex((task) => task.id === host.id),
+      orderedTasks: tasksForExperiment,
       taskNavScope: "experiment",
       trial: null,
       trialIndex: null,
@@ -1663,8 +1663,6 @@ export function ExperimentDetailView({
     clearPendingDeepLink();
   }, [
     resolvedUrlFocus,
-    experimentId,
-    readOnly,
     urlFocusError,
     hasPendingUrlFocus,
     drawerState,

@@ -37,7 +37,6 @@ of live and imported rows.
 from __future__ import annotations
 
 import hashlib
-import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -48,11 +47,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from oddish.config import normalize_model_id, settings
 from oddish.core.harbor_artifacts import build_trial_result
-from oddish.core.playback import (
-    clobbers_ready_index,
-    index_stored_trial,
-    invalid_descriptor,
-)
 from oddish.core.task_browse_summary import refresh_task_browse_summaries
 from oddish.core.trial_artifacts import (
     TrialArtifactMode,
@@ -78,7 +72,6 @@ from oddish.schemas import (
     TrialImportInitResponse,
 )
 
-logger = logging.getLogger(__name__)
 
 # =============================================================================
 # Helpers
@@ -495,7 +488,6 @@ async def complete_trial_import(
             )
 
         task_id = trial.task_id
-        indexed_attempt = (trial.attempts, trial.trial_s3_key)
 
     storage = get_storage_client()
     archive_key = StorageClient._trial_import_archive_key(trial_id)
@@ -527,15 +519,6 @@ async def complete_trial_import(
             detail=f"Imported trial artifacts are unreadable: {layout.failure_reason}",
         )
 
-    assert layout.artifact_prefix is not None
-    try:
-        # The same builder as worker settlement and the operator rebuild.
-        playback = await index_stored_trial(trial, storage)
-    except Exception:
-        # The import itself succeeded; the score and files stay published.
-        logger.exception("Playback indexing failed for imported trial %s", trial_id)
-        playback = invalid_descriptor(None, "unreadable_artifacts")
-
     # After the artifacts are in place, nudge the task status forward
     # the same way the live trial handler does when a trial finishes.
     # Retried on a deadlock loss: this task UPDATE races TAG_PROJECT
@@ -546,16 +529,6 @@ async def complete_trial_import(
 
     async def _finalize_once() -> str:
         async with get_session() as session:
-            imported = await session.get(TrialModel, trial_id, with_for_update=True)
-            assert imported is not None
-            # Publish only for the artifacts that were indexed, and never let a
-            # retried completion's storage failure replace a ready index.
-            previous = (imported.result or {}).get("_playback")
-            if (
-                imported.attempts,
-                imported.trial_s3_key,
-            ) == indexed_attempt and not clobbers_ready_index(previous, playback):
-                imported.result = {**(imported.result or {}), "_playback": playback}
             await maybe_start_qa_stage(session, trial_id)
             await session.commit()
 

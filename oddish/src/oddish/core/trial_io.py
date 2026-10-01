@@ -859,17 +859,6 @@ def _read_local_trial_trajectory(trial: TrialModel) -> dict | None:
         return None
 
 
-async def read_layout_trajectory(
-    trial: TrialModel, storage: StorageClient, layout: TrialArtifactLayout
-) -> dict | None:
-    """Read one resolved layout's trace exactly as the trajectory route returns it."""
-    return repair_trajectory_unicode(
-        normalize_codex_trajectory(
-            await _read_trial_trajectory_from_s3(trial, storage, layout)
-        )
-    )
-
-
 async def _read_trial_trajectory_uncached(trial: TrialModel) -> dict | None:
     """Read ATIF trajectory.json for a trial."""
     storage = get_storage_client()

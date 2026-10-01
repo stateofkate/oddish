@@ -1,5 +1,3 @@
-import type { TrialPlaybackDescriptor } from "@/lib/run-playback";
-
 type TaskStatus =
   | "pending"
   | "running"
@@ -197,7 +195,6 @@ export interface Trial {
   verifier_cost_usd?: number | null;
   is_billed?: boolean;
   cost_exclusion_reason?: string | null;
-  playback?: TrialPlaybackDescriptor | null;
   has_trajectory?: boolean;
   kind?: TrialKind;
   created_at: string;
@@ -216,8 +213,8 @@ export interface Trial {
     };
     agent_execution?: {
       started_at: string;
-      finished_at?: string | null;
-      duration_sec?: number;
+      finished_at: string;
+      duration_sec: number;
     };
     verifier?: {
       started_at: string;
@@ -667,7 +664,6 @@ export interface TaskOpenTrialRef {
   cost_usd?: number | null;
   cost_is_estimated?: boolean | null;
   is_billed: boolean;
-  playback?: TrialPlaybackDescriptor | null;
   has_trajectory: boolean;
   created_at: string;
   started_at?: string | null;

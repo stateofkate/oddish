@@ -1,13 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, type ReactNode } from "react";
-import useSWRInfinite from "swr/infinite";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import useSWR from "swr";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Code, Eye, Loader2, Package, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { Code, Eye, Loader2, Package } from "lucide-react";
 import { FileTreePane } from "@/components/file-tree-pane";
-import { ArtifactFrameCommand } from "@/components/artifact-frame-command";
 import {
   FileRenderer,
   isBinaryRendererFile,
@@ -18,8 +17,6 @@ import { formatFileSize } from "@/lib/format";
 import { sameFilePath } from "@/lib/file-path";
 import { recordClientError } from "@/lib/observability";
 import type { LineRange } from "@/lib/line-range";
-import { runFileUrl } from "@/lib/run-playback";
-import type { RunPlayback } from "@/lib/use-run-playback";
 
 // Preview truncation threshold; matches TaskFilesPanel.
 const TRUNCATE_THRESHOLD = 100 * 1024;
@@ -32,8 +29,19 @@ interface ArtifactFile {
 }
 
 interface ArtifactsListing {
-  cursor?: string | null;
   files?: ArtifactFile[];
+}
+
+interface ArtifactEntry {
+  // Relative path inside the synthetic artifact root — the tree row's
+  // identity, stripped of the Harbor `<trial_name>/` (and `steps/<step>/`)
+  // wrapper dirs so the tree reads like a normal filesystem.
+  path: string;
+  // Original S3-relative path returned by /trials/{id}/files. Used to build
+  // the backend proxy URL for content fetches.
+  fullPath: string;
+  size?: number;
+  url?: string;
 }
 
 // Harbor writes artifacts inside the per-trial subdirectory of the job dir,
@@ -46,57 +54,83 @@ function isArtifactPath(path: string): boolean {
   return path.split("/").includes("artifacts");
 }
 
+// Strip the Harbor wrapper dirs before `artifacts/` so the tree shows clean
+// paths. For multi-step trials, prefix with the step name so per-step
+// artifacts get grouped together (e.g. `setup/log.txt`, `main/result.json`).
+function relativizeArtifactPath(path: string): string {
+  const segments = path.split("/");
+  const lastArtifactsIdx = segments.lastIndexOf("artifacts");
+  if (lastArtifactsIdx === -1) return path;
+  const inside = segments.slice(lastArtifactsIdx + 1).join("/");
+  const stepsIdx = segments.indexOf("steps");
+  if (
+    stepsIdx !== -1 &&
+    stepsIdx < lastArtifactsIdx &&
+    segments[stepsIdx + 1]
+  ) {
+    return `${segments[stepsIdx + 1]}/${inside}`;
+  }
+  return inside;
+}
+
+/**
+ * One entry per artifact file, keyed by relativized path. Colliding
+ * relativized paths (a multi-step and a single-step artifact reducing to the
+ * same name) keep the first entry — `path` is the tree row's identity.
+ */
+function buildArtifactEntries(
+  files: ArtifactFile[]
+): Map<string, ArtifactEntry> {
+  const entries = new Map<string, ArtifactEntry>();
+  for (const file of files) {
+    const path = relativizeArtifactPath(file.path);
+    if (!path || entries.has(path)) continue;
+    entries.set(path, {
+      path,
+      fullPath: file.path,
+      size: file.size,
+      url: file.url,
+    });
+  }
+  return entries;
+}
+
 interface ArtifactsViewerProps {
   filesUrl: string;
-  /** Show only artifact files; the selection survives when still eligible. */
-  artifactsOnly: boolean;
-  onArtifactsOnlyChange?: (value: boolean) => void;
   trialId?: string;
   successfulAnalysisTrial?: boolean;
   /**
-   * File addressed by the URL (``?file=``). A full storage path is read
-   * directly; an older shortened link resolves to the one full path that
-   * ends with it, across every listing page.
+   * Deep-linked file to select once the listing loads (``?file=`` while
+   * ``tab=artifacts``). Accepts the tree path shown in the browser, the
+   * original storage path, or a suffix of either (bare file name).
    */
-  filePath?: string | null;
+  initialFilePath?: string | null;
   /** Line range to highlight in the selected file (``?lines=``). */
   selectedLines?: LineRange | null;
   onSelectLinesChange?: (range: LineRange | null) => void;
-  /** Reports the selected full storage path, or null when none is selected. */
-  onSelectedFileChange?: (fullPath: string | null, options?: { preserveLines: boolean }) => void;
-  /** The trial's playback, for observation captions and navigation. */
-  playback?: RunPlayback;
-  onOpenScene?: () => void;
-  traceHref?: (step: number, observationId: string) => string;
-  onOpenTrace?: (step: number, observationId: string) => void;
+  /**
+   * Reports the selected file's tree path (and its original storage path,
+   * when known) whenever a file is selected, for URL sync. The storage path
+   * lets the parent recognize a deep link that addressed the file by
+   * storage path — the two forms differ for multi-step artifacts. Never
+   * called with null — transient resets are not reported.
+   */
+  onSelectedFileChange?: (path: string, fullPath?: string) => void;
 }
 
 export function ArtifactsViewer({
   filesUrl,
-  artifactsOnly,
-  onArtifactsOnlyChange,
   trialId,
   successfulAnalysisTrial = false,
-  filePath,
+  initialFilePath,
   selectedLines,
   onSelectLinesChange,
   onSelectedFileChange,
-  playback,
-  onOpenScene,
-  traceHref,
-  onOpenTrace,
 }: ArtifactsViewerProps) {
-  const { data: pages, isLoading, isValidating, error, mutate, size, setSize } =
-    useSWRInfinite<ArtifactsListing>(
-      (index, previous: ArtifactsListing | null) => {
-        if (index > 0 && !previous?.cursor) return null;
-        return `${filesUrl}?recursive=1${previous?.cursor ? `&cursor=${encodeURIComponent(previous.cursor)}` : ""}`;
-      },
-      fetcher,
-      { revalidateOnFocus: false, revalidateFirstPage: false }
-    );
-  const files = useMemo(() => pages?.flatMap(page => page.files ?? []) ?? [], [pages]);
-  const hasMore = !!pages?.at(-1)?.cursor;
+  const { data, isLoading, isValidating, error, mutate } =
+    useSWR<ArtifactsListing>(`${filesUrl}?recursive=1`, fetcher, {
+      revalidateOnFocus: false,
+    });
   const errorStatus = (error as { status?: number } | undefined)?.status;
   const reportedIntegrityFailureRef = useRef<{
     trialId: string | undefined;
@@ -121,106 +155,78 @@ export function ArtifactsViewer({
     });
   }, [errorStatus, filesUrl, successfulAnalysisTrial, trialId]);
 
-  // Full storage paths are the tree keys; the tree shortens only labels.
-  const entries = useMemo(
-    () => new Map(files.map(file => [file.path, file])),
-    [files]
-  );
-  // Identity must only change with the listing or filter — FileTreePane
-  // rebuilds (and re-expands) the tree on any new array.
-  const treePaths = useMemo(
-    () => [...entries.keys()].filter(path => !artifactsOnly || isArtifactPath(path)),
-    [entries, artifactsOnly]
+  const entriesByPath = useMemo(
+    () =>
+      buildArtifactEntries(
+        (data?.files ?? []).filter((f) => isArtifactPath(f.path))
+      ),
+    [data]
   );
 
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  // Identity must only change with the listing — FileTreePane rebuilds (and
+  // re-expands) the tree on any new array.
+  const treePaths = useMemo(() => [...entriesByPath.keys()], [entriesByPath]);
+
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"rendered" | "raw">("rendered");
-  // The drawer owns selection, including an explicit null from Back/Forward.
-  const selected = filePath ?? null;
-  const initialized = useRef(!!filePath);
-  const publishSelection = useEffectEvent((path: string, preserveLines = false) => {
-    onSelectedFileChange?.(path, { preserveLines });
+
+  // A deep-linked path owns the first selection; read through a ref so the
+  // load effect doesn't re-run when the parent echoes selections back.
+  const initialFilePathRef = useRef(initialFilePath);
+  useEffect(() => {
+    initialFilePathRef.current = initialFilePath;
   });
-  function select(path: string | null, preserveLines = false) {
-    initialized.current = true;
-    onSelectedFileChange?.(path, { preserveLines });
-  }
 
-  const knownPaths = playback?.data?.observationPaths;
-  const listed = !!selected && (entries.has(selected) || knownPaths?.[selected] !== undefined);
-  // Only asynchronous lookup status belongs here; every result names its path.
-  const [probe, setProbe] = useState<{ path: string; exists: boolean } | null>(null);
+  // Re-runs as the listing grows (a live trial keeps producing artifacts);
+  // a still-present selection is kept.
   useEffect(() => {
-    if (!selected || listed) return;
-    const abort = new AbortController();
-    void fetch(runFileUrl(filesUrl, selected), { signal: abort.signal, credentials: "include" })
-      .then(response => {
-        if (!abort.signal.aborted) setProbe({ path: selected, exists: response.ok });
-        abort.abort();
-      })
-      .catch(() => {
-        if (!abort.signal.aborted) setProbe({ path: selected, exists: false });
-      });
-    return () => abort.abort();
-  }, [selected, listed, filesUrl]);
-
-  const exact = listed || (probe?.path === selected && probe.exists);
-  const probedMissing = probe?.path === selected && !probe.exists;
-  // Exact stored paths win. Short links wait for all pages before deciding
-  // whether they are unique, including the old step-name/artifact-name form.
-  const matches = useMemo(() => {
-    if (!selected || exact || !probedMissing || !pages || hasMore || error) return null;
-    return [...entries.keys()].filter(path => {
-      const step = path.match(/(?:^|\/)steps\/([^/]+)\/artifacts\/(.+)$/);
-      return sameFilePath(path, selected) || (step !== null && `${step[1]}/${step[2]}` === selected);
-    });
-  }, [selected, exact, probedMissing, pages, hasMore, error, entries]);
-  const candidates = matches && matches.length > 1 ? matches : null;
-  const resolving = !!selected && !exact && matches === null;
-
-  useEffect(() => {
-    if (!selected || exact || !probedMissing || !pages) return;
-    if (hasMore) {
-      if (!error && pages.length === size) void setSize(size + 1);
-    } else if (matches?.length === 1) {
-      publishSelection(matches[0], true);
+    if (!entriesByPath.size) {
+      setSelectedPath(null);
+      return;
     }
-  }, [selected, exact, probedMissing, pages, hasMore, error, size, setSize, matches]);
+    setSelectedPath((prev) => {
+      if (prev && entriesByPath.has(prev)) return prev;
+      const wanted = initialFilePathRef.current;
+      if (wanted) {
+        // Match against the relativized tree path and the original storage
+        // path: multi-step artifacts insert the step segment into the tree
+        // path (steps/setup/artifacts/x → setup/x), so a storage path from
+        // the files API is not a suffix of it and only fullPath can match.
+        const entries = [...entriesByPath.values()];
+        const match =
+          entriesByPath.get(wanted) ??
+          entries.find((f) => f.fullPath === wanted) ??
+          entries.find((f) => sameFilePath(f.path, wanted)) ??
+          entries.find((f) => sameFilePath(f.fullPath, wanted));
+        // An unresolved deep link keeps the selection empty instead of
+        // falling through to the first file: reporting that fallback
+        // would wipe the ?file= / ?lines= address it couldn't resolve.
+        // The effect re-runs as the listing grows, so a late-arriving
+        // artifact still resolves.
+        return match?.path ?? null;
+      }
+      return firstFilePath(treePaths);
+    });
+  }, [entriesByPath, treePaths]);
 
-  // Initialize once. Later clearing file= must leave the content area empty.
+  // Report file selections upward for URL sync. Nulls (transient resets)
+  // are never reported — they would wipe a live ?file= anchor.
+  const onSelectedFileChangeRef = useRef(onSelectedFileChange);
   useEffect(() => {
-    if (selected) initialized.current = true;
-    if (initialized.current || !treePaths.length) return;
-    initialized.current = true;
-    const first = firstFilePath(treePaths);
-    if (first) publishSelection(first);
-  }, [selected, treePaths]);
+    onSelectedFileChangeRef.current = onSelectedFileChange;
+  });
+  useEffect(() => {
+    if (selectedPath === null) return;
+    const file = entriesByPath.get(selectedPath);
+    onSelectedFileChangeRef.current?.(selectedPath, file?.fullPath);
+    // entriesByPath is a dependency only to read fullPath; a listing refresh
+    // re-reports the same selection, a no-op upstream.
+  }, [selectedPath, entriesByPath]);
 
-  const selectedFile = selected ? entries.get(selected) : undefined;
+  const selectedFile =
+    selectedPath != null ? (entriesByPath.get(selectedPath) ?? null) : null;
 
-  // Captions for the agent's observation images, from the cached index.
-  const source = playback?.data ?? null;
-  const episode = source?.manifest.version === 2 ? source.manifest : null;
-  const observationId = selected ? source?.observationPaths[selected] : undefined;
-  const observation = observationId ? episode?.observations.find(o => o.id === observationId) : undefined;
-  const frameCommand = episode && observation && selected && traceHref ? (
-    <ArtifactFrameCommand
-      episode={episode}
-      observation={observation}
-      command={source!.commands[observation.id] ?? null}
-      traceHref={traceHref}
-      onOpenTrace={onOpenTrace}
-      imageUrl={image => runFileUrl(filesUrl, selected.slice(0, selected.lastIndexOf("/") + 1) + image)}
-      onSelectObservation={id => {
-        // Stay in the selected copy's directory (verifier or collected).
-        const directory = selected.slice(0, selected.lastIndexOf("/") + 1);
-        const paths = Object.entries(source!.observationPaths).filter(([, obs]) => obs === id).map(([path]) => path);
-        select(paths.find(path => path.startsWith(directory) && !path.slice(directory.length).includes("/")) ?? paths[0] ?? null);
-      }}
-    />
-  ) : null;
-
-  if (isLoading && !selected) {
+  if (isLoading) {
     return (
       <div className="space-y-2 p-4">
         <Skeleton className="h-4 w-full" />
@@ -229,7 +235,7 @@ export function ArtifactsViewer({
     );
   }
 
-  if (error && !files.length && !selected) {
+  if (error) {
     if (errorStatus === 404) {
       return (
         <div className="p-6 text-center">
@@ -281,84 +287,50 @@ export function ArtifactsViewer({
     );
   }
 
-  const fileCountLabel = `${treePaths.length} ${
-    treePaths.length === 1 ? "file" : "files"
+  if (entriesByPath.size === 0) {
+    return (
+      <div className="p-6 text-center">
+        <Package className="text-muted-foreground/50 mx-auto mb-2 h-8 w-8" />
+        <p className="text-muted-foreground text-sm">No artifacts</p>
+        <p className="text-muted-foreground/70 mt-1 text-xs">
+          No artifacts were collected from the sandbox
+        </p>
+      </div>
+    );
+  }
+
+  const fileCountLabel = `${entriesByPath.size} ${
+    entriesByPath.size === 1 ? "file" : "files"
   }`;
 
   return (
-    <div className="@container/file-browser flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
-      <div className="border-border flex shrink-0 items-center gap-2 border-b px-2 py-1">
-        <Button variant="ghost" size="sm" onClick={() => setSidebarOpen(!sidebarOpen)} aria-label={sidebarOpen ? "Hide file list" : "Show file list"} aria-expanded={sidebarOpen}>
-          {sidebarOpen ? <PanelLeftClose className="size-4" /> : <PanelLeftOpen className="size-4" />}
-        </Button>
-        {onArtifactsOnlyChange ? <label className="flex items-center gap-2 text-xs">
-          Show
-          <select aria-label="File filter" value={artifactsOnly ? "artifacts" : "all"}
-            onChange={event => {
-              const only = event.target.value === "artifacts";
-              if (only && selected && !isArtifactPath(selected)) {
-                select(null);
-                onSelectLinesChange?.(null);
-              }
-              onArtifactsOnlyChange(only);
-            }}
-            className="bg-background rounded border px-2 py-1">
-            <option value="all">All files</option><option value="artifacts">Artifacts only</option>
-          </select>
-        </label> : <span className="text-xs">Artifacts</span>}
-        <span className="text-muted-foreground ml-auto text-xs">{fileCountLabel}{hasMore ? " loaded" : ""}</span>
-        {selected && source && selected === source.recordingPath && onOpenScene && (
-          <Button size="sm" variant="outline" onClick={onOpenScene}>Scene and observations</Button>
-        )}
-      </div>
+    <div className="@container/file-browser flex h-full min-h-0 min-w-0 overflow-hidden">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden @2xl/file-browser:flex-row">
         {/* Stacked layout needs a definite height: FileTreePane virtualizes
             against this viewport. Once the viewer's own container is wide
             enough for a row, the tree stretches to the full pane height. */}
-        {sidebarOpen && <div className="border-border bg-muted/30 flex h-[20vh] w-full flex-col overflow-hidden border-b p-2 @2xl/file-browser:h-auto @2xl/file-browser:w-56 @2xl/file-browser:shrink-0 @2xl/file-browser:border-r @2xl/file-browser:border-b-0 @3xl/file-browser:w-64">
+        <div className="border-border bg-muted/30 flex h-[30vh] w-full flex-col overflow-hidden border-b p-2 @2xl/file-browser:h-auto @2xl/file-browser:w-56 @2xl/file-browser:shrink-0 @2xl/file-browser:border-r @2xl/file-browser:border-b-0 @3xl/file-browser:w-64">
+          <div className="text-muted-foreground flex items-center justify-between gap-2 px-2 py-2 font-mono text-[10px] font-semibold tracking-wide uppercase sm:text-xs">
+            <span>Artifacts</span>
+            <span className="text-muted-foreground/70 font-sans text-[10px] font-normal normal-case">
+              {fileCountLabel}
+            </span>
+          </div>
           <FileTreePane
             className="min-h-0 flex-1"
-            onSelectPath={path => select(path)}
+            onSelectPath={setSelectedPath}
             paths={treePaths}
-            selectedPath={selected}
+            selectedPath={selectedPath}
           />
-          {hasMore && <Button size="sm" variant="ghost" disabled={isValidating}
-            onClick={() => { if (error) void mutate(); else void setSize(size + 1); }}>
-            {isValidating ? "Loading files…" : error ? "Retry loading files" : "Load more files"}
-          </Button>}
-          {error && <p role="alert" className="px-2 text-xs text-destructive">Could not load more files.</p>}
-        </div>}
-        {candidates ? (
-          <div className="min-w-0 flex-1 space-y-2 p-4 text-sm">
-            <p>Several files match this link. Choose one:</p>
-            <ul className="space-y-1">
-              {candidates.map(path => <li key={path}>
-                <button type="button" className="font-mono text-xs underline underline-offset-4" onClick={() => select(path, true)}>{path}</button>
-              </li>)}
-            </ul>
-          </div>
-        ) : selected ? (
-          <ArtifactContentPane
-            filesUrl={filesUrl}
-            key={selected}
-            fullPath={selected}
-            presignedUrl={selectedFile?.url}
-            fileSize={selectedFile?.size}
-            resolving={resolving}
-            viewMode={viewMode}
-            onViewModeChange={setViewMode}
-            selectedLines={selectedLines}
-            onSelectLinesChange={onSelectLinesChange}
-            frameCommand={frameCommand}
-          />
-        ) : pages && treePaths.length === 0 && !hasMore ? (
-          <div className="min-w-0 flex-1 p-6 text-center">
-            <Package className="text-muted-foreground/50 mx-auto mb-2 h-8 w-8" />
-            <p className="text-muted-foreground text-sm">{artifactsOnly ? "No artifacts" : "No files"}</p>
-          </div>
-        ) : (
-          <p className="text-muted-foreground min-w-0 flex-1 p-6 text-sm">Select a file</p>
-        )}
+        </div>
+        <ArtifactContentPane
+          filesUrl={filesUrl}
+          selectedFile={selectedFile}
+          viewMode={viewMode}
+          onViewModeChange={setViewMode}
+          selectedLines={selectedLines}
+          onSelectLinesChange={onSelectLinesChange}
+        />
       </div>
     </div>
   );
@@ -366,29 +338,20 @@ export function ArtifactsViewer({
 
 interface ArtifactContentPaneProps {
   filesUrl: string;
-  fullPath: string;
-  presignedUrl?: string;
-  fileSize?: number;
-  /** A URL path still being matched against listings; errors wait for it. */
-  resolving?: boolean;
+  selectedFile: ArtifactEntry | null;
   viewMode: "rendered" | "raw";
   onViewModeChange: (mode: "rendered" | "raw") => void;
   selectedLines?: LineRange | null;
   onSelectLinesChange?: (range: LineRange | null) => void;
-  frameCommand?: ReactNode;
 }
 
 function ArtifactContentPane({
   filesUrl,
-  fullPath,
-  presignedUrl,
-  fileSize,
-  resolving = false,
+  selectedFile,
   viewMode,
   onViewModeChange,
   selectedLines,
   onSelectLinesChange,
-  frameCommand,
 }: ArtifactContentPaneProps) {
   const contentRef = useRef<HTMLDivElement>(null);
   const [content, setContent] = useState<string | null>(null);
@@ -397,9 +360,11 @@ function ArtifactContentPane({
   const [isTruncated, setIsTruncated] = useState(false);
   const [loadingFullFile, setLoadingFullFile] = useState(false);
 
-  const fileName = fullPath.split("/").pop() ?? "";
+  const fullPath = selectedFile?.fullPath ?? null;
+  const presignedUrl = selectedFile?.url;
+  const fileSize = selectedFile?.size;
+  const fileName = selectedFile?.path.split("/").pop() ?? "";
   const isBinary = fileName ? isBinaryRendererFile(fileName) : false;
-  const isImage = /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(fileName);
 
   // Each path segment is URL-encoded individually so `/` separators in the
   // path stay intact for the backend file route (encodeURIComponent would
@@ -412,10 +377,10 @@ function ArtifactContentPane({
 
   useEffect(() => {
     if (contentRef.current) contentRef.current.scrollTop = 0;
-  }, [fullPath]);
+  }, [selectedFile?.path]);
 
   useEffect(() => {
-    if (!proxyUrl) {
+    if (!selectedFile || !proxyUrl) {
       setContent(null);
       setContentLoading(false);
       setContentError(null);
@@ -486,10 +451,10 @@ function ArtifactContentPane({
     return () => {
       cancelled = true;
     };
-  }, [fullPath, proxyUrl, presignedUrl, isBinary, fileSize]);
+  }, [selectedFile, proxyUrl, presignedUrl, isBinary, fileSize]);
 
   const loadFullFile = useCallback(async () => {
-    if (!proxyUrl) return;
+    if (!selectedFile || !proxyUrl) return;
     setLoadingFullFile(true);
     try {
       if (presignedUrl) {
@@ -517,22 +482,25 @@ function ArtifactContentPane({
     } finally {
       setLoadingFullFile(false);
     }
-  }, [proxyUrl, presignedUrl]);
+  }, [selectedFile, proxyUrl, presignedUrl]);
+
+  if (!selectedFile) {
+    return null;
+  }
 
   const renderUrl = presignedUrl || proxyUrl || null;
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+    <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
       <div className="border-border bg-muted/30 flex items-center justify-between gap-2 border-b px-3 py-2 sm:px-4">
         <div className="text-muted-foreground min-w-0 flex-1 truncate font-mono text-[10px] sm:text-xs">
-          {fullPath}
+          {selectedFile.path}
           {typeof fileSize === "number" && (
             <span className="text-muted-foreground/70 ml-2">
               ({formatFileSize(fileSize)})
             </span>
           )}
         </div>
-        {renderUrl && <a href={renderUrl} download={fileName} className="shrink-0 text-xs underline underline-offset-4">Download file</a>}
         {!isBinary && (
           <Tabs
             value={viewMode}
@@ -551,8 +519,7 @@ function ArtifactContentPane({
           </Tabs>
         )}
       </div>
-      <div ref={contentRef} className={`bg-card min-h-0 flex-1 ${isImage ? "flex flex-col overflow-hidden" : "overflow-auto"}`}>
-
+      <div ref={contentRef} className="bg-card flex-1 overflow-auto">
         {contentLoading ? (
           <div className="space-y-2 p-4">
             <Skeleton className="h-4 w-full" />
@@ -560,29 +527,19 @@ function ArtifactContentPane({
             <Skeleton className="h-4 w-5/6" />
           </div>
         ) : contentError && !isBinary ? (
-          resolving ? (
-            <p role="status" className="text-muted-foreground p-4 text-sm">Locating {fileName}…</p>
-          ) : (
-            <div className="text-destructive p-4 text-sm">
-              Failed to load {fileName}: {contentError}
-            </div>
-          )
+          <div className="text-destructive p-4 text-sm">
+            Failed to load {fileName}: {contentError}
+          </div>
         ) : (
-          <>
-            <div className={isImage ? "min-h-0 flex-1" : "h-full"}>
-            <FileRenderer
-              fileName={fileName}
-              fitImage={isImage}
-              url={renderUrl}
-              content={isBinary ? null : content}
-              fileSize={fileSize}
-              viewMode={viewMode}
-              selectedLines={selectedLines}
-              onSelectLines={onSelectLinesChange}
-            />
-            </div>
-            {frameCommand && <div className="max-h-[42%] shrink-0 overflow-auto">{frameCommand}</div>}
-          </>
+          <FileRenderer
+            fileName={fileName}
+            url={renderUrl}
+            content={isBinary ? null : content}
+            fileSize={fileSize}
+            viewMode={viewMode}
+            selectedLines={selectedLines}
+            onSelectLines={onSelectLinesChange}
+          />
         )}
       </div>
       {!isBinary && isTruncated && (

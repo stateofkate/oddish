@@ -1,9 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
-const port = process.env.REVIEW_TEST_PORT ?? "3207";
 export default defineConfig({
   testDir: "e2e",
   testMatch: [
-    "robot-recording.spec.ts",
     "qa-evals.spec.ts",
     "qa-feedback.spec.ts",
     "dashboard-member-filter.spec.ts",
@@ -17,15 +15,15 @@ export default defineConfig({
   workers: 1,
   reporter: "list",
   use: {
-    baseURL: `http://127.0.0.1:${port}`,
+    baseURL: "http://127.0.0.1:3207",
     trace: "retain-on-failure",
     ...devices["Desktop Chrome"],
   },
   webServer: {
     command:
-      `cd e2e/review-app && node ../../node_modules/next/dist/bin/next build --webpack && node ../../node_modules/next/dist/bin/next start --hostname 127.0.0.1 --port ${port}`,
-    url: `http://127.0.0.1:${port}`,
-    reuseExistingServer: false,
+      "cd e2e/review-app && node ../../node_modules/next/dist/bin/next build --webpack && node ../../node_modules/next/dist/bin/next start --hostname 127.0.0.1 --port 3207",
+    url: "http://127.0.0.1:3207",
+    reuseExistingServer: true,
     timeout: 120000,
   },
 });

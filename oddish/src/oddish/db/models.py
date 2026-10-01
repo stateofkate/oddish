@@ -38,7 +38,7 @@ from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.ext.hybrid import hybrid_property
 
 from sqlalchemy.ext.asyncio import AsyncAttrs  # type: ignore[attr-defined]
-from sqlalchemy.orm import Mapped, column_property, relationship
+from sqlalchemy.orm import Mapped, relationship
 from sqlalchemy.orm import DeclarativeBase, mapped_column  # type: ignore[attr-defined]
 
 from oddish.reasoning_effort import (
@@ -1134,8 +1134,6 @@ class TrialModel(TimestampedMixin, Base):
         Text, nullable=True
     )  # S3 prefix for trial results/logs
     result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    # Read only projection: compact responses select this JSON fragment alone.
-    playback: Mapped[dict | None] = column_property(result["_playback"])
 
     # Token usage, steps & cost (extracted from Harbor's AgentContext / trajectory)
     input_tokens: Mapped[int | None] = mapped_column(CappedTokenCount, nullable=True)

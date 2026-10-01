@@ -510,7 +510,6 @@ def build_trial_response(
             else None
         ),
         phase_timing=trial.phase_timing,
-        playback=trial.playback,
         has_trajectory=_has_fetchable_trajectory(trial),
         analysis_status=trial.analysis_status,
         analysis=trial.analysis,
@@ -605,7 +604,6 @@ def build_compact_trial_response(
             else None
         ),
         phase_timing=trial.phase_timing,
-        playback=trial.playback,
         has_trajectory=_has_fetchable_trajectory(trial),
         analysis_status=trial.analysis_status,
         analysis=resolved_analysis_summary,
@@ -1241,7 +1239,6 @@ SLIM_TRIAL_RESPONSE_COLUMNS = (
     TrialModel.output_tokens,
     TrialModel.cost_usd,
     TrialModel.has_trajectory,
-    TrialModel.playback,
     TrialModel.billed_user_id,
     TrialModel.llm_key_hash,
     TrialModel.superseded_by_trial_id,
@@ -1320,7 +1317,6 @@ def build_slim_trial_response(
             if exclusions
             else None
         ),
-        playback=trial.playback,
         has_trajectory=trial.has_trajectory,
     )
 

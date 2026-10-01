@@ -34,14 +34,6 @@ Run `oddish <command> --help` before relying on an option not shown here.
 
 ## Authorization boundaries
 
-For a completed trial whose recording is not viewable, inspect `oddish status
-TRIAL_ID --json` and its `playback` field. `oddish playback rebuild TRIAL_ID
---json` prepares playback from saved files; it does not execute the agent or
-change its score. It requires task-write access and supports the normal `--api`
-target. `ready` means playback is prepared, `absent` means no playback description,
-and `invalid` includes `index_error` and exits 1. A missing status means it has
-not been prepared. Download evidence with `oddish pull TRIAL_ID`.
-
 Treat these as separate mutations:
 
 - `run`, trial retry, and QA backfill can spend money. Get authorization for
