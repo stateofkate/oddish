@@ -2787,18 +2787,21 @@ class ExperimentOptionsResponse(BaseModel):
 
 
 FEEDBACK_BODY_MAX_CHARS = 20_000
-FeedbackTarget = Literal["qa_verdict", "qa_action_item"]
+FeedbackTarget = Literal[
+    "qa_verdict", "qa_action_item", "qa_trajectory", "qa_task_verdict", "qa_pre_trial"
+]
 FeedbackVote = Literal["agree", "disagree"]
 
 
 class FeedbackCreate(BaseModel):
-    """Agree or disagree with one QA verdict or action item."""
+    """Agree or disagree with one analysis report or action item."""
 
     body: str = Field(default="", max_length=FEEDBACK_BODY_MAX_CHARS)
     target: FeedbackTarget
     target_key: str = Field(min_length=1, max_length=160)
     vote: FeedbackVote
     trial_id: str = Field(min_length=1)
+    report_trial_id: str | None = Field(default=None, min_length=1, max_length=160)
 
     @model_validator(mode="after")
     def normalize_text(self) -> "FeedbackCreate":
@@ -2807,6 +2810,13 @@ class FeedbackCreate(BaseModel):
         self.trial_id = self.trial_id.strip()
         if not self.target_key or not self.trial_id:
             raise ValueError("target_key and trial_id cannot be blank")
+        if self.report_trial_id is not None:
+            self.report_trial_id = self.report_trial_id.strip()
+            if not self.report_trial_id:
+                raise ValueError("report_trial_id cannot be blank")
+        if self.target in {"qa_trajectory", "qa_task_verdict", "qa_pre_trial"}:
+            if not self.report_trial_id:
+                raise ValueError("report_trial_id is required for report feedback")
         return self
 
 
@@ -2816,6 +2826,7 @@ class FeedbackResponse(BaseModel):
     id: str
     experiment_id: str
     trial_id: str
+    report_trial_id: str | None = None
     target: FeedbackTarget
     target_key: str
     vote: FeedbackVote

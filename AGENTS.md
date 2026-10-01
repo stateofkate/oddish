@@ -852,14 +852,27 @@ by model (`series_qa_by_model`) and by analyzer job kind
 `Analyzer` stack; analyzer spend does not belong on the people leaderboard.
 
 QA agree/disagree submissions live in the append-only core `feedback` table
-(`FeedbackModel`) and use the hosted backend's authenticated
-`POST /experiments/{id}/feedback` route. Every row requires a `trial_id`, a
-`target` (`qa_verdict` or `qa_action_item`), the verdict classification or
-action-item id as `target_key`, and an `agree` or `disagree` vote. Creation
-validates organization scope and experiment membership through the shared
-`trial_in_experiment` predicate. The dashboard waits for persistence, reports
-errors, and permits one successful submission per mounted control. There are
-no public, read, update, triage, snapshot, or notification paths.
+(`FeedbackModel`) and use authenticated `POST /experiments/{id}/feedback` or
+`POST /tasks/{id}/feedback`. New report targets are `qa_trajectory`,
+`qa_task_verdict`, and `qa_pre_trial`; each requires `report_trial_id`, the
+QA/audit run that produced the displayed report. `trial_id` identifies the
+reviewed agent trial for trajectory feedback, or the producing run itself for
+verdict/audit feedback. Report validation checks organization, task, version,
+run kind, and trajectory membership in the producing run's stored input IDs.
+`target_key` records the classification, accept/reject, or `report`, respectively.
+Each row retains reviewer, vote, optional note, and timestamp. Superseded runs
+remain valid feedback subjects. Apply `feedback_reports_001` before deploying
+writers; legacy `qa_verdict` and `qa_action_item` requests remain accepted.
+Historical votes are not relabeled because their original intent is ambiguous.
+
+The task overview and trial drawer expose report controls only with recorded
+producing-run IDs. Clean pre-trial audits are voteable. Running/failed task
+verdicts and public shares have no report controls. A replaced report resets
+its control; persistence errors leave the vote retryable. The trial drawer has
+no Correct label card; the admin golden-label queue retains its own controls.
+Votes never change task acceptance, delivery eligibility, or evaluation labels.
+There are no feedback read, update, triage, or notification endpoints. See
+`docs/qa-report-feedback-design.md` for the proposed independent verdict worker.
 
 ### Reward Kit agent-judge costs
 

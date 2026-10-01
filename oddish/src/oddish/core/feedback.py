@@ -38,11 +38,14 @@ async def create_feedback_core(
             status_code=404, detail="trial not found in this experiment"
         )
 
+    await validate_feedback_report(session, data=data, org_id=org_id)
+
     feedback = FeedbackModel(
         org_id=org_id,
         created_by_user_id=user_id,
         experiment_id=experiment_id,
         trial_id=trial_id,
+        report_trial_id=data.report_trial_id,
         target=data.target,
         target_key=data.target_key,
         vote=data.vote,
@@ -79,11 +82,14 @@ async def create_task_feedback_core(
     if experiment_id is None:
         raise HTTPException(status_code=404, detail="trial not found for this task")
 
+    await validate_feedback_report(session, data=data, org_id=org_id)
+
     feedback = FeedbackModel(
         org_id=org_id,
         created_by_user_id=user_id,
         experiment_id=experiment_id,
         trial_id=data.trial_id,
+        report_trial_id=data.report_trial_id,
         target=data.target,
         target_key=data.target_key,
         vote=data.vote,
@@ -92,3 +98,38 @@ async def create_task_feedback_core(
     session.add(feedback)
     await session.flush()
     return feedback
+
+
+async def validate_feedback_report(
+    session: AsyncSession, *, data: FeedbackCreate, org_id: str | None
+) -> None:
+    """Bind new report votes to the producing run, including superseded runs."""
+    if data.report_trial_id is None:
+        return  # Legacy clients have no report identity.
+    subject = await session.get(TrialModel, data.trial_id)
+    report = await session.get(TrialModel, data.report_trial_id)
+    if (
+        subject is None
+        or report is None
+        or report.org_id != org_id
+        or report.task_id != subject.task_id
+        or report.task_version_id != subject.task_version_id
+    ):
+        raise HTTPException(status_code=404, detail="report not found for this trial")
+    expected_kind = "audit" if data.target == "qa_pre_trial" else "qa"
+    if report.kind != expected_kind:
+        raise HTTPException(
+            status_code=422, detail="report kind does not match feedback target"
+        )
+    if data.target in {"qa_pre_trial", "qa_task_verdict"}:
+        if report.id != subject.id:
+            raise HTTPException(
+                status_code=422,
+                detail="report feedback must reference its producing trial",
+            )
+    elif data.target == "qa_trajectory":
+        payload = (report.harbor_config or {}).get("analysis_payload", {})
+        if subject.id not in payload.get("trial_ids", []):
+            raise HTTPException(
+                status_code=422, detail="report did not analyze this trial"
+            )

@@ -173,7 +173,7 @@ test("hosted overview votes on audit findings, trial findings, and analyses", as
     status: "completed",
     created_at: "2026-09-17T00:00:00Z",
     analysis_status: "success",
-    analysis: { classification: "BAD_FAILURE", action_items: [trialFinding] },
+    analysis: { classification: "BAD_FAILURE", action_items: [trialFinding], _graded_by: "qa-run-1" },
   } as Trial;
   const render = (apiBaseUrl: string) =>
     renderToStaticMarkup(
@@ -197,14 +197,23 @@ test("hosted overview votes on audit findings, trial findings, and analyses", as
       "action item: Audit finding",
       "action item: Trial finding",
       "the Bad failure analysis of codex · gpt-5",
+      "the pre-trial audit",
     ]
   );
   for (const control of controls) await control.onSubmit("agree");
-  await controls[0].onSubmit("disagree", " not in this task ");
+  await controls[1].onSubmit("disagree", " not in this task ");
   assert.ok(requests.every((r) => r.url === "/api/tasks/task-1/feedback"));
   assert.deepEqual(
     requests.map((r) => r.body),
     [
+      {
+        body: "",
+        target: "qa_pre_trial",
+        target_key: "report",
+        vote: "agree",
+        trial_id: "task-1-audit",
+        report_trial_id: "task-1-audit",
+      },
       {
         body: "",
         target: "qa_action_item",
@@ -221,10 +230,11 @@ test("hosted overview votes on audit findings, trial findings, and analyses", as
       },
       {
         body: "",
-        target: "qa_verdict",
+        target: "qa_trajectory",
         target_key: "BAD_FAILURE",
         vote: "agree",
         trial_id: "trial-1",
+        report_trial_id: "qa-run-1",
       },
       {
         body: "not in this task",
@@ -270,6 +280,33 @@ test("an audit without a recorded trial id takes no finding vote", () => {
   );
   assert.deepEqual(
     controls.map((c) => c.label).sort(),
-    ["action item: Trial finding", "the Good failure analysis of codex"]
+    ["action item: Trial finding"]
   );
+});
+
+
+test("task verdict votes are separate and only appear for a published result", async () => {
+  for (const status of ["success", "running", "failed"] as const) {
+    controls.length = 0;
+    requests.length = 0;
+    renderToStaticMarkup(React.createElement(TaskOverviewPanel, {
+      taskId: "task-1", version: 2, scopeTrials: [], checksFindings: [],
+      verdictTask: {
+        id: "task-1", current_version: 2, verdict_status: status,
+        verdict: { is_good: true, confidence: "high", _graded_by: "qa-1" },
+      } as Task,
+      checksStatus: "success", checksTrialId: "audit-1", checksRerunning: false,
+    }));
+    const verdict = controls.find((control) => control.label === "the task verdict");
+    assert.equal(Boolean(verdict), status === "success");
+    if (verdict) {
+      await verdict.onSubmit("disagree", "Missed a task defect");
+      assert.deepEqual(requests[0].body, {
+        body: "Missed a task defect", target: "qa_task_verdict", target_key: "accept",
+        vote: "disagree", trial_id: "qa-1", report_trial_id: "qa-1",
+      });
+    }
+    const audit = controls.find((control) => control.label === "the pre-trial audit");
+    assert.ok(audit, "A clean audit remains independently reviewable");
+  }
 });

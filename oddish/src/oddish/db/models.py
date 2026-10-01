@@ -2738,7 +2738,8 @@ class FeedbackModel(Base):
     __tablename__ = "feedback"
     __table_args__ = (
         CheckConstraint(
-            "target IN ('qa_verdict', 'qa_action_item')", name="ck_feedback_target"
+            "target IN ('qa_verdict', 'qa_action_item', 'qa_trajectory', "
+            "'qa_task_verdict', 'qa_pre_trial')", name="ck_feedback_target"
         ),
         CheckConstraint("vote IN ('agree', 'disagree')", name="ck_feedback_vote"),
     )
@@ -2748,6 +2749,7 @@ class FeedbackModel(Base):
     created_by_user_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     experiment_id: Mapped[str] = mapped_column(String(64), nullable=False)
     trial_id: Mapped[str] = mapped_column(String(160), nullable=False)
+    report_trial_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
     target: Mapped[str] = mapped_column(String(32), nullable=False)
     target_key: Mapped[str] = mapped_column(String(160), nullable=False)
     vote: Mapped[str] = mapped_column(String(16), nullable=False)

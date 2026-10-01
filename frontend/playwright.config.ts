@@ -22,6 +22,7 @@ export default defineConfig({
     "public-experiment-tasks.spec.ts",
     "public-share-qa.spec.ts",
     "qa-evals.spec.ts",
+    "qa-feedback.spec.ts",
     "trajectory-rendering.spec.ts",
   ],
   fullyParallel: true,

@@ -13,6 +13,7 @@ const isNa = (s: string | null | undefined) => !s || /^n\/a/i.test(s);
 
 export function QaAssessmentReport({
   classification,
+  reportTrialId,
   subtype,
   rootCause,
   recommendation,
@@ -24,6 +25,7 @@ export function QaAssessmentReport({
   className,
 }: {
   classification: string;
+  reportTrialId?: string;
   subtype?: string | null;
   rootCause?: string | null;
   recommendation?: string | null;
@@ -106,13 +108,13 @@ export function QaAssessmentReport({
           </div>
         ) : null}
 
-        {onFeedback ? (
+        {onFeedback && reportTrialId ? (
           <FeedbackControl
             label={`the ${EXECUTION_LABELS[classification as AnalysisClassification] ?? classification.replace(/_/g, " ")} analysis`}
             className="mt-3"
             onSubmit={(vote, note) =>
               onFeedback({
-                target: { kind: "verdict", classification },
+                target: { kind: "trajectory", classification, reportTrialId },
                 vote,
                 note,
               })

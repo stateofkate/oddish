@@ -1,9 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { useAuth } from "@clerk/nextjs";
 import { markOpenIntent } from "@/lib/open-intent";
-import { isOrgAdminRole } from "@/lib/org-roles";
 import dynamic from "next/dynamic";
 import Image from "next/image";
 import useSWR from "swr";
@@ -13,7 +11,6 @@ import {
   DrawerTitle,
   DrawerDescription,
 } from "@/components/ui/resizable-drawer";
-import { TrialLabel } from "@/components/qa-evals/trial-label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -410,7 +407,8 @@ function TrialAnalysisCard({
               </p>
             )}
             <QaAssessmentReport
-              key={trial.id}
+              key={`${trial.id}:${trial.analysis?._graded_by}`}
+              reportTrialId={trial.analysis?._graded_by}
               classification={trial.analysis!.classification!}
               subtype={trial.analysis?.subtype}
               rootCause={trial.analysis?.root_cause || trial.analysis?.evidence}
@@ -775,9 +773,6 @@ export function TrialDetailPanel({
   contentOnly = false,
   paneAction,
 }: TrialDetailPanelProps) {
-  // Golden labels belong to QA evals, an admin panel tool.
-  const { orgRole } = useAuth();
-  const canLabel = !readOnly && isOrgAdminRole(orgRole);
   // Public result pages carry compact trial rows. Read the shared task to
   // fill in report evidence without using the private trial-detail route.
   const { data: publicTask } = useSWR<Task>(
@@ -1729,12 +1724,6 @@ export function TrialDetailPanel({
                   }
                 />
               )}
-              {showAnalysis &&
-                canLabel &&
-                isAgentTrial(trial) &&
-                (trial.status === "success" || trial.status === "failed") && (
-                  <TrialLabel key={`label-${trial.id}`} trial={trial} />
-                )}
 
               {/* Execution Timeline - shows progress during running trials */}
               {trial.harbor_stage && (

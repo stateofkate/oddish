@@ -3,7 +3,13 @@ export type FeedbackVote = "agree" | "disagree";
 /** Emitted whenever a reviewer votes. `target` says what was voted on. */
 export type FeedbackRecord = {
   target:
-    | { kind: "verdict"; classification: string }
+    | { kind: "trajectory"; classification: string; reportTrialId: string }
+    | {
+        kind: "task_verdict";
+        verdict: "accept" | "reject";
+        reportTrialId: string;
+      }
+    | { kind: "pre_trial"; reportTrialId: string }
     | { kind: "action_item"; id: string };
   vote: FeedbackVote;
   note?: string;
@@ -19,14 +25,20 @@ export function feedbackRequestInit(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       body: record.note?.trim() ?? "",
-      target:
-        record.target.kind === "verdict" ? "qa_verdict" : "qa_action_item",
+      target: `qa_${record.target.kind}`,
       target_key:
-        record.target.kind === "verdict"
+        record.target.kind === "trajectory"
           ? record.target.classification
-          : record.target.id,
+          : record.target.kind === "task_verdict"
+            ? record.target.verdict
+            : record.target.kind === "pre_trial"
+              ? "report"
+              : record.target.id,
       vote: record.vote,
       trial_id: trialId,
+      ...(record.target.kind !== "action_item"
+        ? { report_trial_id: record.target.reportTrialId }
+        : {}),
     }),
   };
 }

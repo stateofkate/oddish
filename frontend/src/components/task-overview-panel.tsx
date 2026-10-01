@@ -11,6 +11,7 @@ import {
   findingHref,
   isReviewableTrial,
   runReviewSummary,
+  taskReviewStatus,
 } from "@/lib/review";
 import { cn, encodeExperimentRouteParam } from "@/lib/utils";
 import { fetcher } from "@/lib/api";
@@ -462,6 +463,9 @@ export function TaskOverviewPanel({
       record
     );
 
+  const verdictReview = verdictTask ? taskReviewStatus(verdictTask) : null;
+  const verdictReportId = verdictTask?.verdict?._graded_by;
+
   const mustFixCount = findingItems.filter(
     (item) => (item.tier ?? item.severity) === "must_fix"
   ).length;
@@ -679,6 +683,27 @@ export function TaskOverviewPanel({
             action={readOnly ? undefined : executionReviewAction}
             error={executionReviewError}
           />
+          {canVote &&
+          !qaActive &&
+          verdictReportId &&
+          (verdictReview === "accepted" || verdictReview === "rejected") ? (
+            <FeedbackControl
+              key={verdictReportId}
+              label="the task verdict"
+              className="mt-3"
+              onSubmit={(vote, note) =>
+                postFeedback(verdictReportId, {
+                  target: {
+                    kind: "task_verdict",
+                    verdict: verdictReview === "accepted" ? "accept" : "reject",
+                    reportTrialId: verdictReportId,
+                  },
+                  vote,
+                  note,
+                })
+              }
+            />
+          ) : null}
           {verdictTask.review_version_matches === true ||
           defaultVersionElsewhere(verdictTask) == null
             ? analysisTrialLink(verdictTask.verdict?._graded_by, "View QA run")
@@ -732,6 +757,22 @@ export function TaskOverviewPanel({
           <p className="text-[11px] text-red-500">{checksQueueError}</p>
         ) : null}
 
+        {canVote &&
+        !checksStateUnknown &&
+        checksTrialId &&
+        (checkState === "clean" || checkState === "findings") ? (
+          <FeedbackControl
+            key={checksTrialId}
+            label="the pre-trial audit"
+            onSubmit={(vote, note) =>
+              postFeedback(checksTrialId, {
+                target: { kind: "pre_trial", reportTrialId: checksTrialId },
+                vote,
+                note,
+              })
+            }
+          />
+        ) : null}
         {findingsBody()}
       </div>
 
@@ -830,15 +871,17 @@ function TrialQaRow({
     : FALLBACK_TOKEN;
   const Icon = token.icon;
   const voteControl =
-    analysis && onFeedback ? (
+    analysis?._graded_by && onFeedback ? (
       <FeedbackControl
+        key={analysis._graded_by}
         label={`the ${EXECUTION_LABELS[analysis.classification]} analysis of ${trialLabel(trial)}`}
         className="mt-1"
         onSubmit={(vote, note) =>
           onFeedback({
             target: {
-              kind: "verdict",
+              kind: "trajectory",
               classification: analysis.classification,
+              reportTrialId: analysis._graded_by!,
             },
             vote,
             note,

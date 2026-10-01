@@ -387,3 +387,11 @@ Archil request draining is enabled by default. Set `drain_on_pause=false` to
 disable it. `drain_on_pause_hosts` adds hostname globs for custom model gateways;
 known model base URLs are discovered automatically. The Archil runtime handles
 HTTP/HTTPS on ports 80/443 and matches the whole hostname, not URL paths.
+
+### Report feedback migration
+
+Apply the core `feedback_reports_001` migration with `cd oddish && uv run alembic
+upgrade head` before deploying the new feedback writers. It adds the nullable
+`feedback.report_trial_id` column and allows three separate report target names.
+Existing votes remain unchanged. Downgrade refuses to run while votes use the
+new targets, because changing their names would lose which report was reviewed.

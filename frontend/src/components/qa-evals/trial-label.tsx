@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 import type { RefObject } from "react";
-import useSWR, { useSWRConfig } from "swr";
-import { Card, CardContent } from "@/components/ui/card";
+import { useSWRConfig } from "swr";
 import { fetcher } from "@/lib/api";
 import {
   labelTrialRequest,
@@ -13,7 +12,7 @@ import {
   type QAQueue,
 } from "@/lib/qa-evals";
 import { EXECUTION_LABELS } from "@/lib/review";
-import type { AnalysisClassification, Trial } from "@/lib/types";
+import type { AnalysisClassification } from "@/lib/types";
 import { isEditableTarget } from "@/lib/editable-target";
 import { cn } from "@/lib/utils";
 
@@ -163,64 +162,5 @@ export function LabelButtons({
         );
       })}
     </div>
-  );
-}
-
-/** The trial drawer's card for labeling a finished agent trial with the
- * classification QA should give it: the golden replays are scored against.
- * Keys 1–5 and clicks save the label, with the note. */
-export function TrialLabel({ trial }: { trial: Trial }) {
-  const card = useRef<HTMLDivElement>(null);
-  const note = useRef<HTMLInputElement>(null);
-  const { saving, error, save } = useSaveLabel();
-  const goldens = useSWR<QAGolden[]>(trialGoldenUrl(trial.id), fetcher, {
-    revalidateOnFocus: true,
-  });
-  const golden = goldens.data?.[0];
-  const busy = !goldens.data || saving.size > 0;
-
-  const label = (classification: AnalysisClassification) => {
-    if (busy) return;
-    void save(trial.id, {
-      classification,
-      note: note.current?.value ?? "",
-    });
-  };
-
-  useLabelKeys(card, (event) => {
-    const classification = classificationForKey(event.key);
-    if (!classification || busy) return false;
-    void label(classification);
-    return true;
-  });
-
-  const saved = golden?.expected.classification;
-  return (
-    <Card ref={card}>
-      <CardContent className="space-y-2 px-4 py-3 text-xs">
-        <span className="font-semibold">Correct label</span>
-        <LabelButtons
-          golden={golden}
-          qaSaid={trial.analysis?.classification}
-          disabled={busy}
-          numbered
-          onPick={(classification) => void label(classification)}
-        />
-        <input
-          key={golden?.id}
-          ref={note}
-          aria-label="Label note"
-          defaultValue={golden?.note}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && saved) void label(saved);
-          }}
-          placeholder="Note: why this label is right (Enter saves)"
-          className="bg-background h-7 w-full rounded border px-2"
-        />
-        {(error || goldens.error) && (
-          <p className="text-red-500">{error ?? goldens.error.message}</p>
-        )}
-      </CardContent>
-    </Card>
   );
 }

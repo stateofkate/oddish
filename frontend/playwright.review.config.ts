@@ -3,6 +3,7 @@ export default defineConfig({
   testDir: "e2e",
   testMatch: [
     "qa-evals.spec.ts",
+    "qa-feedback.spec.ts",
     "dashboard-member-filter.spec.ts",
     "review-meaning.spec.ts",
     "ui-duplication.spec.ts",
