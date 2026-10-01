@@ -36,6 +36,10 @@
     "title": "Review a delivery"
   },
   {
+    "slug": "guides/qa-goldens",
+    "title": "Update the QA golden set"
+  },
+  {
     "slug": "reference/commands",
     "title": "Command reference"
   },
