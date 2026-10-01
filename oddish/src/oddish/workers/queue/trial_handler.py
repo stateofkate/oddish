@@ -2114,7 +2114,6 @@ async def run_trial_job(
                         if job_scoped_bundle is not None
                         else None
                     ),
-                    index_attempt=prepared_trial.trial_attempt,
                     subprefix=artifact_subprefix(
                         trial_kind, prepared_trial.trial_attempt
                     ),

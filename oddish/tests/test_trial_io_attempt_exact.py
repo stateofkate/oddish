@@ -36,9 +36,8 @@ class _Storage:
         except KeyError as exc:
             raise ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject") from exc
 
-    async def download_bytes(self, key: str, *, max_bytes: int | None = None) -> bytes:
-        content = (await self.download_text(key)).encode()
-        return content if max_bytes is None else content[:max_bytes]
+    async def download_bytes(self, key: str) -> bytes:
+        return (await self.download_text(key)).encode()
 
     async def object_exists(self, key: str) -> bool:
         return key in self.objects
@@ -1383,36 +1382,6 @@ def test_explicit_attempt_selects_the_named_attempt_not_the_latest():
     )
     assert layout.mode is TrialArtifactMode.EXACT
     assert layout.attempt_prefix == f"{root_prefix}attempt-1/"
-
-
-@pytest.mark.parametrize("attempt,run", [(1, "first-run"), (2, "second-run")])
-@pytest.mark.parametrize("max_bytes", [None, 5])
-def test_file_content_preserves_explicit_attempt_with_and_without_preview_limit(
-    monkeypatch, attempt, run, max_bytes
-):
-    from oddish.core.sharing import helpers
-
-    root_prefix = "tasks/task-1/trials/task-1-7/"
-    objects = _multi_attempt_objects(root_prefix)
-    for number, name in [(1, "first-run"), (2, "second-run")]:
-        objects[f"{root_prefix}attempt-{number}/{name}/agent/log.txt"] = name
-    storage = _Storage(objects, listed=list(objects))
-    monkeypatch.setattr(helpers, "get_storage_client", lambda: storage)
-
-    content, media_type = asyncio.run(
-        helpers.get_trial_file_content_s3(
-            _trial(prefix=None, attempts=2),
-            "agent/log.txt",
-            attempt=attempt,
-            max_bytes=max_bytes,
-        )
-    )
-
-    assert content == (run.encode() if max_bytes is None else run.encode()[:max_bytes])
-    assert media_type == "text/plain"
-    assert storage.download_calls[-1] == (
-        f"{root_prefix}attempt-{attempt}/{run}/agent/log.txt"
-    )
 
 
 def test_explicit_attempt_that_does_not_exist_stays_unavailable():
