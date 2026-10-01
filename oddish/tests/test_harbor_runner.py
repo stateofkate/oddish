@@ -5998,6 +5998,41 @@ def test_antigravity_environment_hosts_span_install_and_model():
     assert "generativelanguage.googleapis.com" in hosts  # ...and inference works
 
 
+@pytest.mark.parametrize(
+    ("model_name", "transport_host"),
+    [
+        ("xai/vendor-latest-learnability", "api.x.ai"),
+        ("xai-public/grok-4", "api.x.ai"),
+    ],
+)
+def test_grok_build_environment_hosts_span_install_and_model(
+    model_name, transport_host
+):
+    """grok-build installs from x.ai during setup, like opencode.
+
+    A legacy closed task (allow_internet=false) otherwise dies at
+    ``curl: (6) Could not resolve host: x.ai`` before the model is dialed.
+    """
+    hosts = harbor_runner._grok_build_environment_hosts(
+        HarborAgentConfig(name="grok-build", model_name=model_name)
+    )
+
+    assert "x.ai" in hosts  # install.sh + binary
+    assert "storage.googleapis.com" in hosts  # install.sh GCS fallback
+    assert transport_host in hosts
+    assert len(hosts) == len(set(hosts))
+
+
+def test_is_grok_build_agent_matches_name_and_import_path():
+    assert harbor_runner._is_grok_build_agent(agent="grok-build", agent_config=None)
+    assert harbor_runner._is_grok_build_agent(agent=" Grok-Build ", agent_config=None)
+    config = HarborAgentConfig(
+        import_path="oddish.workers.agents.grok_build:OddishGrokBuild"
+    )
+    assert harbor_runner._is_grok_build_agent(agent=None, agent_config=config)
+    assert not harbor_runner._is_grok_build_agent(agent="codex", agent_config=None)
+
+
 @pytest.mark.parametrize("gpu_type", ["A6000", "A100-NOT-A-GPU"])
 def test_thunder_fallback_rejects_a6000_on_modal(tmp_path, gpu_type):
     from oddish.runtime.backends.modal import ModalBackend

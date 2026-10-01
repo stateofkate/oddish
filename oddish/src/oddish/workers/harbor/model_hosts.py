@@ -246,6 +246,15 @@ ANTIGRAVITY_RUNTIME_HOSTS: tuple[str, ...] = (
     *_GEMINI_HOSTS,
     *ANTIGRAVITY_STARTUP_HOSTS,
 )
+# grok-build has no pre-baked worker image: ``OddishGrokBuild.install`` runs
+# x.ai's install.sh during agent SETUP, under the environment baseline. The
+# script fetches the channel manifest and binary from x.ai/cli and falls back
+# to the public GCS bucket when that host is unreachable. The runner's
+# grok-build arm merges these, mirroring OPENCODE_INSTALL_HOSTS above.
+GROK_BUILD_INSTALL_HOSTS: tuple[str, ...] = (
+    "x.ai",  # install.sh, channel manifest, binary
+    "storage.googleapis.com",  # grok-build-public-artifacts fallback
+)
 _AGENT_RUNTIME_HOSTS: dict[str, tuple[str, ...]] = {
     "tbh": _TBH_RUNTIME_HOSTS,
     "muse-code": _MUSE_CODE_RUNTIME_HOSTS,

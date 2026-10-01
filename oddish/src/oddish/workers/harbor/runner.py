@@ -85,6 +85,7 @@ from .model_hosts import (
     GEMINI_BASE_URL_KEYS,
     GEMINI_CLI_INSTALL_HOSTS,
     GEMINI_OAUTH_ENV_KEYS,
+    GROK_BUILD_INSTALL_HOSTS,
     MUSE_CODE_INSTALL_HOSTS,
     OPENCODE_INSTALL_HOSTS,
     agent_runtime_hosts,
@@ -1600,6 +1601,38 @@ def _gemini_cli_environment_hosts(agent_config: HarborAgentConfig) -> list[str]:
     ]
 
 
+def _is_grok_build_agent(
+    *, agent: str | None, agent_config: HarborAgentConfig | None
+) -> bool:
+    """Whether a trial runs grok-build, by name or by class import path."""
+    if (agent or "").strip().lower() == "grok-build":
+        return True
+    import_path = (getattr(agent_config, "import_path", None) or "").strip().lower()
+    return "grok_build:" in import_path
+
+
+def _grok_build_environment_hosts(agent_config: HarborAgentConfig) -> list[str]:
+    """Hosts grok-build needs across install *and* run.
+
+    The grok CLI self-installs (x.ai install.sh -> manifest -> binary) during
+    agent SETUP, which runs under the ENVIRONMENT baseline -- same shape as the
+    opencode arm above. On a legacy closed task the model transport host
+    (api.x.ai) rides along, since no restricted agent phase grants it.
+    """
+    return list(
+        dict.fromkeys(
+            [
+                *GROK_BUILD_INSTALL_HOSTS,
+                *outbound_hosts_for_model(
+                    agent_config.model_name,
+                    agent_kwargs=agent_config.kwargs,
+                    agent_env=agent_config.env,
+                ),
+            ]
+        )
+    )
+
+
 def _antigravity_environment_hosts(agent_config: HarborAgentConfig) -> list[str]:
     """Hosts agy needs across install *and* run.
 
@@ -2469,6 +2502,22 @@ async def _run_harbor_trial_async_impl(
             )
         ):
             hosts = _antigravity_environment_hosts(agent_config)
+            env_config.extra_allowed_hosts = [
+                *env_config.extra_allowed_hosts,
+                *[h for h in hosts if h not in env_config.extra_allowed_hosts],
+            ]
+
+        # grok-build self-installs (x.ai install.sh -> binary) at agent-setup
+        # under the environment baseline -- same lifecycle problem and
+        # solution as the opencode arm above. Without it a legacy closed task
+        # dies at ``curl: (6) Could not resolve host: x.ai``.
+        if _is_grok_build_agent(agent=agent, agent_config=agent_config) and not (
+            _supports_daytona_compose_restricted_agent_network(
+                task_path=effective_task_path,
+                environment_config=env_config,
+            )
+        ):
+            hosts = _grok_build_environment_hosts(agent_config)
             env_config.extra_allowed_hosts = [
                 *env_config.extra_allowed_hosts,
                 *[h for h in hosts if h not in env_config.extra_allowed_hosts],
