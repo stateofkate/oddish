@@ -9,6 +9,7 @@ A trajectory is the sequence of actions taken by an agent during one trial.
 
 The task verdict, pre-trial audit, and each trajectory report have independent
 Agree/Disagree controls. A pre-trial audit with no findings still accepts feedback.
+Evidence and finding details are displayed inline without expansion controls.
 The trial drawer's five-button Correct label card is removed. The separate admin
 queue for labeling evaluation examples remains available.
 

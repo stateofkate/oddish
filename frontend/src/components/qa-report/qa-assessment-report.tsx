@@ -143,29 +143,23 @@ export function QaAssessmentReport({
         ) : null}
 
         {evidence ? (
-          <details className="group mt-3">
-            <summary className="text-muted-foreground hover:text-foreground flex cursor-pointer list-none items-center gap-2 text-[11px] font-medium transition-colors select-none">
-              <span
-                aria-hidden="true"
-                className="text-[9px] transition-transform group-open:rotate-90"
-              >
-                &#9654;
-              </span>
-              Evidence
+          <section className="mt-3">
+            <div className="text-muted-foreground flex items-center gap-2 text-[11px] font-medium">
+              <h3>Evidence</h3>
               <CopyJsonButton
                 value={evidence}
                 label="the evidence"
                 compact
                 className="ml-auto"
               />
-            </summary>
+            </div>
             <div className="border-border mt-2 border-l pl-3">
               <AnalysisProse
                 text={evidence}
                 className="text-muted-foreground/90"
               />
             </div>
-          </details>
+          </section>
         ) : null}
       </div>
     </article>

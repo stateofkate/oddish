@@ -966,16 +966,10 @@ function TrialQaRow({
   }
 
   return (
-    <details className="group border-border bg-background/40 rounded-lg border">
-      <summary className="hover:bg-foreground/5 flex cursor-pointer list-none items-center gap-2.5 px-3 py-2 transition-colors select-none">
-        <span
-          aria-hidden="true"
-          className="text-muted-foreground text-[9px] transition-transform group-open:rotate-90"
-        >
-          &#9654;
-        </span>
+    <article className="border-border bg-background/40 rounded-lg border">
+      <header className="flex items-center gap-2.5 px-3 py-2">
         {header}
-      </summary>
+      </header>
       <div className="border-border flex flex-col gap-2 border-t px-3 py-3">
         {analysis?.root_cause ? (
           <div className="flex items-baseline gap-2">
@@ -1012,6 +1006,6 @@ function TrialQaRow({
         ) : null}
         {voteControl}
       </div>
-    </details>
+    </article>
   );
 }

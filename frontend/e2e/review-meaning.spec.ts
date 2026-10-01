@@ -1240,7 +1240,7 @@ test.describe("real components with local fixture API", () => {
   });
 });
 
-test("task-page findings are counted and open independently", async ({
+test("task-page findings show their evidence immediately", async ({
   page,
 }) => {
   test.skip(process.env.E2E_REVIEW_FIXTURES !== "1");
@@ -1289,18 +1289,12 @@ test("task-page findings are counted and open independently", async ({
   await expect(
     page.getByText("Rejection reason", { exact: true })
   ).toBeVisible();
-  const one = page.locator('details[data-finding="first-fix"]');
-  const two = page.locator('details[data-finding="second-fix"]');
-  await expect(one).not.toHaveAttribute("open", "");
-  await expect(two).not.toHaveAttribute("open", "");
-  await one.locator("summary").click();
+  const one = page.locator('article[data-finding="first-fix"]');
+  const two = page.locator('article[data-finding="second-fix"]');
   await expect(one.getByText(first.detail, { exact: true })).toBeVisible();
-  await expect(two.getByText(second.detail, { exact: true })).not.toBeVisible();
-  await two.locator("summary").click();
   await expect(two.getByText(second.detail, { exact: true })).toBeVisible();
-  await one.locator("summary").click();
-  await expect(one.getByText(first.detail, { exact: true })).not.toBeVisible();
-  await expect(two.getByText(second.detail, { exact: true })).toBeVisible();
+  await expect(one.locator("summary")).toHaveCount(0);
+  await expect(two.locator("summary")).toHaveCount(0);
 });
 
 test("linked retained must-fix survives a historical optional audit finding", async ({
@@ -1352,10 +1346,10 @@ test("linked retained must-fix survives a historical optional audit finding", as
     page.getByText(/^(Verdict rejected: )?1 Must fix$/)
   ).toBeVisible();
   await expect(
-    page.locator('details[data-finding="retained-fix"]')
+    page.locator('article[data-finding="retained-fix"]')
   ).toBeVisible();
   await expect(
-    page.locator('details[data-finding="audit-finding"]')
+    page.locator('article[data-finding="audit-finding"]')
   ).toBeVisible();
 });
 
@@ -1490,10 +1484,10 @@ for (const address of ["retained-fix", "historical-audit"]) {
       `/tasks/task-a?version=7&drawer=task&taskPane=overview&finding=${address}`
     );
     await expect(
-      page.locator('details[data-finding="retained-fix"]')
-    ).toHaveAttribute("open", "");
+      page.locator('article[data-finding="retained-fix"]')
+    ).toBeVisible();
     await expect(
-      page.locator('details[data-finding="retained-fix"]')
+      page.locator('article[data-finding="retained-fix"]')
     ).toHaveClass(/ring-amber-500\/40/);
     await expect(
       page.getByText("Required fix evidence", { exact: true })
@@ -1533,9 +1527,8 @@ for (const origin of ["this experiment", "another experiment"]) {
       route.fulfill({ json: trial })
     );
     await page.goto("/experiments/review-demo?task=task-a&taskPane=overview");
-    const finding = page.locator('details[data-finding="attributed-finding"]');
+    const finding = page.locator('article[data-finding="attributed-finding"]');
     await expect(finding).toBeVisible();
-    await finding.locator("summary").click();
     await finding
       .locator('button[title^="Open trial attributed-trial"]')
       .click();
@@ -1551,9 +1544,8 @@ test("finding source opens the file and line inside the experiment pane", async 
 }) => {
   test.skip(process.env.E2E_REVIEW_FIXTURES !== "1");
   await page.goto("/experiments/review-demo?task=task-a&taskPane=overview");
-  const finding = page.locator('details[data-finding="empty-answer"]');
+  const finding = page.locator('article[data-finding="empty-answer"]');
   await expect(finding).toBeVisible();
-  await finding.locator("summary").click();
   await finding
     .getByRole("link", { name: "Open tests/test.sh:7", exact: true })
     .click();

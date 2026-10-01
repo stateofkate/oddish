@@ -13,6 +13,11 @@ test("three reports submit independent votes and replacement reports reset contr
     3
   );
   await expect(page.getByText("Correct label", { exact: true })).toHaveCount(0);
+  await expect(
+    page.getByRole("tabpanel", { name: "Summary" })
+      .getByText("The verifier recorded the result.", { exact: true })
+  ).toBeVisible();
+  await expect(page.locator("details")).toHaveCount(0);
   await page
     .getByRole("button", { name: "Agree with the task verdict", exact: true })
     .click();

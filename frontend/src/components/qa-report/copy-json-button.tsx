@@ -26,8 +26,7 @@ export function CopyJsonButton({
   }, []);
 
   async function copy(event: React.MouseEvent) {
-    // The compact variant sits inside a <summary>; a plain click there also
-    // toggles the disclosure the button lives in.
+    // Copying evidence must not trigger a surrounding row's click action.
     event.preventDefault();
     event.stopPropagation();
     // Prose copies as-is; JSON.stringify would quote it and escape newlines.

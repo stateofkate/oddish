@@ -120,7 +120,7 @@ function ActionItemDetail({
   );
 }
 
-/** Each finding opens independently; addressed findings open from the URL. */
+/** Findings stay visible; a URL address scrolls to and highlights its finding. */
 export function FindingList({
   items,
   onFeedback,
@@ -152,10 +152,6 @@ export function FindingList({
         node.dataset.finding === selectedFinding ||
         node.dataset.findingLink === selectedFinding
     );
-    for (const item of matches) {
-      const disclosure = item.closest("details");
-      if (disclosure) disclosure.open = true;
-    }
     matches[0]?.scrollIntoView({ block: "center" });
   }, [selectedFinding, items]);
   const ordered = TIER_ORDER.flatMap((tier) =>
@@ -169,25 +165,19 @@ export function FindingList({
         const tier = item.tier ?? item.severity ?? "optional";
         const key = item.id ?? `${tier}-${item.title ?? index}`;
         return (
-          <details
+          <article
             key={key}
             data-finding={item.id}
             data-finding-link={item.links_to}
             className={cn(
-              "group border-border bg-background/40 rounded-lg border",
+              "border-border bg-background/40 rounded-lg border",
               selectedFinding &&
                 (item.id === selectedFinding ||
                   item.links_to === selectedFinding) &&
                 "ring-1 ring-amber-500/40"
             )}
           >
-            <summary className="hover:bg-foreground/5 flex cursor-pointer list-none items-start gap-3 px-4 py-3 select-none">
-              <span
-                aria-hidden="true"
-                className="text-muted-foreground mt-1 text-[9px] transition-transform group-open:rotate-90"
-              >
-                &#9654;
-              </span>
+            <header className="flex items-start gap-3 px-4 py-3">
               <span
                 className={cn(
                   "shrink-0 rounded px-2 py-0.5 text-xs font-medium",
@@ -199,7 +189,7 @@ export function FindingList({
               <h4 className="min-w-0 text-sm leading-relaxed font-medium">
                 {item.title || `Finding ${index + 1}`}
               </h4>
-            </summary>
+            </header>
             <div className="border-border border-t px-4 py-4">
               <ActionItemDetail
                 item={item}
@@ -211,7 +201,7 @@ export function FindingList({
                 renderItemFooter={renderItemFooter}
               />
             </div>
-          </details>
+          </article>
         );
       })}
     </div>

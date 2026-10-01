@@ -108,13 +108,11 @@ test("usage, action counts and experiment groups retain their meaning at desktop
     "href",
     "/experiments/source-a"
   );
-  const runs = sourceA.locator("details");
-  await runs.nth(0).locator("summary").click();
+  const runs = sourceA.locator("article");
   await expect(runs.nth(0).getByText("CAUSE", { exact: true })).toBeVisible();
   await expect(runs.nth(0).getByText("EVIDENCE", { exact: true })).toHaveCount(
     0
   );
-  await runs.nth(1).locator("summary").click();
   await expect(
     runs.nth(1).getByText("EVIDENCE", { exact: true })
   ).toBeVisible();

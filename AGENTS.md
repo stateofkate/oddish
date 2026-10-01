@@ -865,6 +865,8 @@ remain valid feedback subjects. Apply `feedback_reports_001` before deploying
 writers; legacy `qa_verdict` and `qa_action_item` requests remain accepted.
 Historical votes are not relabeled because their original intent is ambiguous.
 
+QA report evidence, trial-analysis rows, and pre-/post-trial findings render
+inline without disclosure controls. Finding URLs still scroll and highlight.
 The task overview and trial drawer expose report controls only with recorded
 producing-run IDs. Clean pre-trial audits are voteable. Running/failed task
 verdicts and public shares have no report controls. A replaced report resets
