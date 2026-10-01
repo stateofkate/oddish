@@ -535,6 +535,40 @@ async def test_status_only_completion_invalidates_pending_qa(
 
 
 @pytest.mark.asyncio
+async def test_recently_active_experiment_builds_before_older_backlog(experiment):
+    from datetime import timedelta
+    from oddish.db import utcnow
+
+    org, eid, _ = experiment
+    async with get_session() as session:
+        old = ExperimentModel(
+            name="old-backlog",
+            org_id=org,
+            last_activity_at=utcnow() - timedelta(days=30),
+        )
+        session.add(old)
+        await session.flush()
+        old_id = old.id
+        await session.execute(
+            update(ExperimentModel)
+            .where(ExperimentModel.id == eid)
+            .values(last_activity_at=utcnow())
+        )
+        await session.execute(
+            update(ExperimentSummaryModel)
+            .where(ExperimentSummaryModel.experiment_id == old_id)
+            .values(next_attempt_at=utcnow() - timedelta(hours=1))
+        )
+        await session.commit()
+    assert await refresh_experiment_summaries(batch_size=1) == 1
+    async with get_session() as session:
+        recent = await session.get(ExperimentSummaryModel, eid)
+        old = await session.get(ExperimentSummaryModel, old_id)
+        assert recent.revision == recent.built_revision
+        assert old.built_revision == 0
+
+
+@pytest.mark.asyncio
 async def test_pending_rebuild_precedes_daily_reconciliation(experiment):
     from datetime import timedelta
     from oddish.db import utcnow

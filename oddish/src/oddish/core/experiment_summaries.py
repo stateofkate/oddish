@@ -59,6 +59,9 @@ async def refresh_experiment_summaries(*, batch_size: int = 32) -> int:
                 )
                 .order_by(
                     (summary.revision > summary.built_revision).desc(),
+                    # A migration queues every experiment at one timestamp;
+                    # build the ones the dashboard lists first.
+                    ExperimentModel.last_activity_at.desc().nulls_last(),
                     summary.next_attempt_at,
                     summary.dirty_since,
                 )
