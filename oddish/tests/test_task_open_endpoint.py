@@ -552,7 +552,7 @@ def test_task_open_queries_encode_detail_eligible_population():
         "tr.trajectory_summary",
         "tr.error_message",
     ):
-        assert heavy_column not in aggregate_sql
+        assert heavy_column not in aggregate_sql.replace("tr.result -> '_playback' AS playback", "playback")
     assert "AS duration_sum_seconds" in aggregate_sql
     assert "AS duration_trial_count" in aggregate_sql
     assert "tr.finished_at >= tr.started_at" in aggregate_sql

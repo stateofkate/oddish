@@ -31,6 +31,7 @@ function compactTrial(id: string, kind: "agent" | "qa", status: string) {
     cost_is_estimated: false,
     is_billed: kind === "agent",
     has_trajectory: status === "success",
+    playback: { manifest_path: null },
     created_at: CREATED_AT,
     started_at: status === "running" ? CREATED_AT : null,
     finished_at: status === "success" ? CREATED_AT : null,
@@ -255,7 +256,7 @@ test.describe("task QA live observability", () => {
     await clerk.signIn({ page, emailAddress: CLERK_EMAIL! });
   });
 
-  test("running QA opens Live, shares one detail request, and settles on Summary", async ({
+  test("running QA opens Live output, shares detail polling, and settles on the agent trace", async ({
     page,
   }) => {
     test.setTimeout(30_000);
@@ -273,23 +274,22 @@ test.describe("task QA live observability", () => {
     await expect
       .poll(() => new URL(page.url()).searchParams.get("tab"))
       .toBe("live");
-    await expect(page.getByRole("tab", { name: "Live" })).toHaveAttribute(
+    await expect(page.getByRole("tab", { name: "Run" })).toHaveAttribute(
       "data-state",
       "active"
     );
     await page.waitForTimeout(1_000);
     expect(qaDetailRequests).toBe(1);
 
-    await expect(page.getByRole("tab", { name: "Summary" })).toHaveAttribute(
-      "data-state",
-      "active",
-      { timeout: 10_000 }
-    );
-    expect(qaDetailRequests).toBe(2);
-    await expect(page.getByRole("tab", { name: "Live" })).toHaveCount(0);
+    // Run stays selected across Live output and Full agent trace. Wait for
+    // the completed detail response instead of an already-active tab.
+    await expect.poll(() => qaDetailRequests, { timeout: 10_000 }).toBe(2);
+    await expect(page.getByRole("tab", { name: "Run" })).toHaveAttribute("data-state", "active");
+    await expect(page.getByText("graded this trial", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Live output" })).toHaveCount(0);
   });
 
-  test("queued QA opens Summary", async ({ page }) => {
+  test("queued QA opens Overview", async ({ page }) => {
     let qaDetailRequests = 0;
     await installRoutes(page, "queued", () => {
       qaDetailRequests += 1;
@@ -304,7 +304,7 @@ test.describe("task QA live observability", () => {
     await expect
       .poll(() => new URL(page.url()).searchParams.get("tab"))
       .toBe("summary");
-    await expect(page.getByRole("tab", { name: "Summary" })).toHaveAttribute(
+    await expect(page.getByRole("tab", { name: "Overview" })).toHaveAttribute(
       "data-state",
       "active"
     );
@@ -325,7 +325,7 @@ test.describe("task QA live observability", () => {
     await expect
       .poll(() => new URL(page.url()).searchParams.get("trial"))
       .toBe(QA_TRIAL_ID);
-    await expect(page.getByRole("tab", { name: "Trajectory" })).toHaveAttribute(
+    await expect(page.getByRole("tab", { name: "Run" })).toHaveAttribute(
       "data-state",
       "active"
     );

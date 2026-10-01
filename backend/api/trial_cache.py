@@ -27,6 +27,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from hashlib import sha1
+import json
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -85,11 +86,16 @@ def trial_etag(
     attempts: int,
     finished_at: datetime | None,
     analysis_finished_at: datetime | None = None,
+    playback: dict | None = None,
 ) -> str:
     """Weak validator over the fields that change when the payload does."""
     raw = "|".join(
         (trial_id, str(attempts), _iso(finished_at), _iso(analysis_finished_at))
     )
+    if playback is not None:
+        raw += "|" + json.dumps(
+            {k: v for k, v in playback.items() if v is not None}, sort_keys=True
+        )
     return f'W/"{sha1(raw.encode()).hexdigest()[:20]}"'
 
 
@@ -116,6 +122,7 @@ class TrialCacheIdentity:
     finished_at: datetime | None
     analysis_status: object
     analysis_finished_at: datetime | None
+    playback: dict | None = None
 
     @property
     def final(self) -> bool:
@@ -132,6 +139,7 @@ class TrialCacheIdentity:
             attempts=self.attempts,
             finished_at=self.finished_at,
             analysis_finished_at=self.analysis_finished_at,
+            playback=self.playback,
         )
 
     @property
@@ -156,6 +164,7 @@ async def load_trial_cache_identity(
                 TrialModel.finished_at,
                 TrialModel.analysis_status,
                 TrialModel.analysis_finished_at,
+                TrialModel.playback,
                 TaskModel.org_id,
             )
             .join(TaskModel, TaskModel.id == TrialModel.task_id)
@@ -171,6 +180,7 @@ async def load_trial_cache_identity(
         finished_at,
         analysis_status,
         analysis_finished_at,
+        playback,
         task_org_id,
     ) = row
     if org_id is not None and task_org_id != org_id:
@@ -182,4 +192,5 @@ async def load_trial_cache_identity(
         finished_at=finished_at,
         analysis_status=analysis_status,
         analysis_finished_at=analysis_finished_at,
+        playback=playback,
     )

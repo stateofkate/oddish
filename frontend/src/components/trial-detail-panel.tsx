@@ -5,6 +5,7 @@ import { markOpenIntent } from "@/lib/open-intent";
 import dynamic from "next/dynamic";
 import Image from "next/image";
 import useSWR from "swr";
+import useSWRMutation from "swr/mutation";
 import {
   ResizableDrawer,
   DrawerHeader,
@@ -13,6 +14,7 @@ import {
 } from "@/components/ui/resizable-drawer";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
@@ -36,33 +38,32 @@ import {
   ChevronRight,
   RotateCcw,
   Loader2,
-  Radio,
   Microscope,
   CheckCircle2,
   XCircle,
   ExternalLink,
-  Route,
-  Package,
+  Play,
   Trash2,
+  MoreHorizontal,
 } from "lucide-react";
 import { cn, encodeExperimentRouteParam, urlWithSearch } from "@/lib/utils";
 import { isEditableTarget } from "@/lib/editable-target";
 import {
   formatLineRange,
   parseLineRange,
-  type LineRange,
 } from "@/lib/line-range";
 import { experimentModelLabel } from "@/lib/experiment-agent-grouping";
 import { sameFilePath } from "@/lib/file-path";
 
 /**
- * Read a query param from the live URL. The panel keeps the URL current
- * via replaceState, which never refreshes Next's useSearchParams hook —
- * so live reads must come straight from location.
+ * Decode the drawer location from the live URL. The panel keeps the URL
+ * current via replaceState, which never refreshes Next's useSearchParams
+ * hook — so live reads must come straight from location.
  */
-function getLiveParam(name: string): string | null {
-  if (typeof window === "undefined") return null;
-  return new URLSearchParams(window.location.search).get(name);
+function liveLocation(): DrawerLocation {
+  return decodeDrawerLocation(
+    new URLSearchParams(typeof window === "undefined" ? "" : window.location.search)
+  );
 }
 import { Skeleton } from "@/components/ui/skeleton";
 import { QaAssessmentReport } from "@/components/qa-report/qa-assessment-report";
@@ -90,7 +91,6 @@ import {
   getRewardStyle,
   STATUS_CONFIG,
   STATUS_GLYPH_BOX,
-  type MatrixStatus,
 } from "@/lib/status-config";
 import { HarborStageTimeline } from "@/components/harbor-stage-timeline";
 import { HarborStageBadge } from "@/components/harbor-stage-badge";
@@ -113,15 +113,19 @@ import {
 } from "@/lib/use-trial";
 import { embeddedCtrfSummary } from "@/lib/verifier-results";
 import { fetcher } from "@/lib/api";
+import {
+  decodeDrawerLocation,
+  drawerTabParam,
+  resolveDrawerView,
+  type DrawerLocation,
+  type DrawerSection,
+  type RunView,
+} from "@/lib/run-playback";
+import { useRunPlayback } from "@/lib/use-run-playback";
 
-const TaskFilesPanel = dynamic(
-  () =>
-    import("@/components/task-files-panel").then((mod) => mod.TaskFilesPanel),
-  {
-    ssr: false,
-    loading: () => <DrawerPanelLoading label="Loading files..." />,
-  }
-);
+const RunOutcome = dynamic(() => import("@/components/run-playback").then(m => m.RunOutcome), { ssr: false });
+
+const RunPlayback = dynamic(() => import("@/components/run-playback").then(m => m.RunPlayback), { ssr: false });
 
 const LiveTranscriptPanel = dynamic(
   () =>
@@ -209,19 +213,6 @@ interface TrialDetailPanelProps {
 // Hardcoded feature flag: shows the per-trial "Re-run analysis" button on the
 // QA card. Testing-only for now — flip to false to hide it.
 const ENABLE_RERUN_ANALYSIS_BUTTON = true;
-
-const OUTCOME_CARD_TONE: Record<MatrixStatus, string> = {
-  pass: "border-emerald-500/30 bg-emerald-500/10",
-  partial: "border-amber-500/30 bg-amber-500/10",
-  fail: "border-red-500/30 bg-red-500/10",
-  "harness-error": "border-yellow-500/30 bg-yellow-500/10",
-  scoreless: "border-slate-500/30 bg-slate-500/10",
-  skipped: "border-slate-500/25 bg-slate-500/5",
-  pending: "border-gray-500/30 bg-gray-500/10",
-  queued: "border-purple-500/30 bg-purple-500/10",
-  running: "border-blue-500/30 bg-blue-500/10",
-  paused: "border-amber-500/30 bg-amber-500/10",
-};
 
 // The QA assessment card. It renders before any analysis exists, so the
 // run button is reachable. It shows queued/running state with elapsed
@@ -839,7 +830,25 @@ export function TrialDetailPanel({
   const actionsReady = !loadTrialDetail || canonicalTrial !== null;
   const trial = canonicalTrial ?? selectedTrial;
   const verifierSummary = embeddedCtrfSummary(trial?.result);
-
+  const finished = trial != null && ["success", "failed"].includes(trial.status);
+  const filesUrl = trial ? `${apiBaseUrl}/trials/${trial.id}/files` : "";
+  // A stored descriptor lets the index request start alongside trial details;
+  // compact rows without one wait for the authoritative record.
+  const playback = useRunPlayback(
+    isOpen && finished && (trial.playback != null || actionsReady) ? filesUrl : null,
+    trial?.playback,
+  );
+  const { trigger: preparePlayback, isMutating: preparingPlayback, error: preparationError } = useSWRMutation(
+    trial && !readOnly ? `${apiBaseUrl}/trials/${trial.id}/playback/rebuild` : null,
+    async (url: string) => {
+      await fetcher(url, { method: "POST" });
+      await revalidateTrial();
+    },
+  );
+  const showLive =
+    !readOnly &&
+    trial != null &&
+    (isWorkerOwnedTrialStatus(trial.status) || trial.status === "retrying");
   // QA votes require authenticated routes and an experiment anchor. Public
   // share drawers use a different apiBaseUrl, so they do not render controls.
   const feedbackExperimentId =
@@ -856,60 +865,37 @@ export function TrialDetailPanel({
     );
   }
 
-  const validTabs = useMemo(
-    () => new Set(["summary", "live", "files", "trajectory", "artifacts"]),
-    []
-  );
-
-  const [activeTab, setActiveTab] = useState(() => {
-    const urlTab = getLiveParam("tab");
-    return urlTab && validTabs.has(urlTab) ? urlTab : "summary";
+  // One owner for where the drawer points: section, Run view, file and
+  // observation. Explicit selections and Back/Forward beat the defaults.
+  const [location, setLocation] = useState<DrawerLocation>(liveLocation);
+  const view = resolveDrawerView(location, {
+    running: showLive,
+    playback: finished ? playback.available : false,
   });
 
   // Selecting the trial is not the moment someone asks for its trajectory:
-  // the drawer opens on Summary, and `ActiveTabContent` renders null for every
-  // other tab, so `TrajectoryViewer` -- a dynamic import -- does not mount
-  // until this tab is chosen. Stamping only the trial click would fold however
+  // the drawer opens on Overview, and `ActiveTabContent` renders null for every
+  // other view, so `TrajectoryViewer` -- a dynamic import -- does not mount
+  // until the trace is chosen. Stamping only the trial click would fold however
   // long they read the summary into the trajectory's load time, or age out
   // past MAX_INTENT_AGE_MS and lose the chunk download the stamp exists to
   // capture. The intent map overwrites by key, so this supersedes the trial
   // click while leaving it correct for a `?tab=trajectory` deep link, where
   // the viewer really does mount with the drawer.
-  const handleTabChange = useCallback(
-    (next: string) => {
-      if (next === "trajectory" && trial) {
-        markOpenIntent("ui.trajectory.open", trial.id);
-      }
-      setActiveTab(next);
-    },
-    [trial]
-  );
+  function selectView(section: DrawerSection, runView?: RunView) {
+    if (runView === "trace" && trial) markOpenIntent("ui.trajectory.open", trial.id);
+    setLocation(current => ({
+      ...current,
+      section,
+      runView: runView ?? current.runView,
+    }));
+  }
   const [showFullError, setShowFullError] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
-  // ``?file=`` / ``?lines=`` are scoped by ``?tab=``: on the artifacts tab
-  // they address the artifact browser, otherwise the files tab. Each tab
-  // keeps its own state; the URL carries the active tab's pair.
-  const [filesTargetPath, setFilesTargetPath] = useState<string | null>(() =>
-    getLiveParam("tab") === "artifacts" ? null : getLiveParam("file")
-  );
-  // Line-anchor range within the selected file (``?lines=L12-L20``).
-  const [selectedLines, setSelectedLines] = useState<LineRange | null>(() =>
-    getLiveParam("tab") === "artifacts"
-      ? null
-      : parseLineRange(getLiveParam("lines"))
-  );
-  const [artifactsTargetPath, setArtifactsTargetPath] = useState<string | null>(
-    () => (getLiveParam("tab") === "artifacts" ? getLiveParam("file") : null)
-  );
-  const [artifactsLines, setArtifactsLines] = useState<LineRange | null>(() =>
-    getLiveParam("tab") === "artifacts"
-      ? parseLineRange(getLiveParam("lines"))
-      : null
-  );
 
   const hydratedFromUrl = useRef(false);
 
@@ -921,79 +907,53 @@ export function TrialDetailPanel({
   useEffect(() => {
     if (!isOpen || hydratedFromUrl.current) return;
     hydratedFromUrl.current = true;
-    const urlTab = getLiveParam("tab");
-    const urlFile = getLiveParam("file");
-    const urlLines = parseLineRange(getLiveParam("lines"));
-    if (urlTab && validTabs.has(urlTab)) setActiveTab(urlTab);
-    if (urlTab === "artifacts") {
-      // ?file=/?lines= address the artifact browser while tab=artifacts.
-      if (urlFile) {
-        setArtifactsTargetPath(urlFile);
-        artifactsTargetPathRef.current = urlFile;
-      }
-      if (urlLines) setArtifactsLines(urlLines);
-      return;
-    }
-    if (urlFile) {
-      setFilesTargetPath(urlFile);
-      filesTargetPathRef.current = urlFile;
-      if (!urlTab) setActiveTab("files");
-    }
-    if (urlLines) setSelectedLines(urlLines);
-  }, [isOpen, validTabs]);
+    setLocation(liveLocation());
+  }, [isOpen]);
 
-  // The file viewer reports every selection change (tree clicks and
-  // auto-selects alike): the ?file= param stays live, and switching to a
-  // different file drops the line anchor — the old range would otherwise
-  // highlight arbitrary lines of the new file. The ref mirrors the state
-  // so the comparison doesn't need an impure setState updater.
-  const filesTargetPathRef = useRef<string | null>(filesTargetPath);
-  const handleSelectedFileChange = useCallback((path: string | null) => {
-    if (!sameFilePath(filesTargetPathRef.current, path)) setSelectedLines(null);
-    filesTargetPathRef.current = path;
-    setFilesTargetPath(path);
+  // Browser Back/Forward restores the drawer location it recorded.
+  useEffect(() => {
+    if (!isOpen) return;
+    const restore = () => setLocation(liveLocation());
+    window.addEventListener("popstate", restore);
+    return () => window.removeEventListener("popstate", restore);
+  }, [isOpen]);
+
+  // The file browser reports every selection (clicks, resolved links and
+  // cleared selections). A different file drops the line anchor — the old
+  // range would otherwise highlight arbitrary lines of the new file.
+  const handleSelectedFileChange = useCallback((path: string | null, options?: { preserveLines: boolean }) => {
+    setLocation(current =>
+      current.filePath === path
+        ? current
+        : {
+            ...current,
+            filePath: path,
+            // A shortened link resolving to its full path is the same file.
+            lines: options?.preserveLines || sameFilePath(current.filePath, path) ? current.lines : null,
+          }
+    );
   }, []);
 
-  // Same shape for the artifacts tab: its browser reports selections the
-  // same way, and a different file drops the artifact line anchor. The
-  // comparison also accepts the file's storage path — a deep link can
-  // address a multi-step artifact by storage path, and the browser echoes
-  // back the relativized tree path, which is not a suffix match of it.
-  const artifactsTargetPathRef = useRef<string | null>(artifactsTargetPath);
-  const handleArtifactsFileChange = useCallback(
-    (path: string | null, fullPath?: string) => {
-      const prev = artifactsTargetPathRef.current;
-      const same =
-        sameFilePath(prev, path) ||
-        (fullPath !== undefined && sameFilePath(prev, fullPath));
-      if (!same) setArtifactsLines(null);
-      artifactsTargetPathRef.current = path;
-      setArtifactsTargetPath(path);
-    },
-    []
-  );
-
-  // Navigating to a different trial keeps the file paths (attempts share
+  // Navigating to a different trial keeps the file path (attempts share
   // layouts, and comparing the same file across attempts is the point) but
-  // drops the line anchors — they addressed the previous trial's content
-  // and would highlight arbitrary lines here.
+  // drops the line anchor and observation — they addressed the previous
+  // trial's content.
   const lastTrialIdRef = useRef<string | null>(trial?.id ?? null);
   useEffect(() => {
     const id = trial?.id ?? null;
     if (id && lastTrialIdRef.current && id !== lastTrialIdRef.current) {
-      setSelectedLines(null);
-      setArtifactsLines(null);
+      setLocation(current => ({ ...current, lines: null, observationId: null }));
     }
     lastTrialIdRef.current = id;
   }, [trial?.id]);
 
-  // Sync tab, file & lines to URL (without triggering router navigation).
-  // Based on the live URL rather than the useSearchParams snapshot:
-  // replaceState doesn't refresh that hook, and the experiment view writes
-  // its own params (task/trial/taskFile/taskLines) the same way — a stale
-  // base would silently wipe them. The tab is written explicitly even for
-  // summary, so every tab is its own address and every tab click visibly
-  // updates the URL.
+  const viewSection = view?.section ?? null;
+  const viewRunView = view?.runView ?? null;
+  // Sync the location to the URL (without triggering router navigation),
+  // using the existing `tab` values. Based on the live URL rather than the
+  // useSearchParams snapshot: replaceState doesn't refresh that hook, and the
+  // experiment view writes its own params (task/trial/taskFile/taskLines) the
+  // same way — a stale base would silently wipe them.
   useEffect(() => {
     if (!isOpen || !hydratedFromUrl.current) return;
     const current = new URLSearchParams(window.location.search);
@@ -1004,54 +964,65 @@ export function TrialDetailPanel({
     // cannot turn a trial drawer URL back into a task-only URL.
     if (trial?.id) next.set("trial", trial.id);
 
-    if (activeTab) {
-      next.set("tab", activeTab);
-    } else {
-      next.delete("tab");
-    }
+    // While discovery decides the default, the URL keeps its explicit tab.
+    if (viewSection && viewRunView)
+      next.set("tab", drawerTabParam(viewSection, viewRunView, location.fileFilter));
+    else if (!location.section) next.delete("tab");
 
-    // ?file=/?lines= describe the active tab's view: the files tab's pair
-    // or the artifacts tab's pair. On tabs with no file view (summary,
-    // live, trajectory) they drop out of the URL — the tab states stay in
-    // React, so flipping back restores and re-writes them.
-    const paneFile =
-      activeTab === "artifacts"
-        ? artifactsTargetPath
-        : activeTab === "files"
-          ? filesTargetPath
-          : null;
-    const paneLines =
-      activeTab === "artifacts"
-        ? artifactsLines
-        : activeTab === "files"
-          ? selectedLines
-          : null;
-
-    if (paneFile) {
-      next.set("file", paneFile);
-    } else {
-      next.delete("file");
-    }
-
-    if (paneLines) {
-      next.set("lines", formatLineRange(paneLines));
-    } else {
-      next.delete("lines");
-    }
+    // ?file=/?lines= describe the file browser; ?observation= the frame a
+    // trace link left from. Other views drop them from the URL while the
+    // location keeps them, so returning restores and re-writes them.
+    const files = viewSection === "files";
+    const setOrDelete = (key: string, value: string | null) =>
+      value ? next.set(key, value) : next.delete(key);
+    setOrDelete("file", files ? location.filePath : null);
+    setOrDelete("lines", files ? location.lines : null);
+    setOrDelete("observation", viewSection === "run" ? location.observationId : null);
 
     if (next.toString() !== current.toString()) {
       const url = urlWithSearch(next.toString());
       window.history.replaceState(window.history.state, "", url);
     }
-  }, [
-    isOpen,
-    activeTab,
-    filesTargetPath,
-    selectedLines,
-    artifactsTargetPath,
-    artifactsLines,
-    trial?.id,
-  ]);
+  }, [isOpen, viewSection, viewRunView, location, trial?.id]);
+
+  // Frame captions link to the trace step that produced the frame. The link
+  // is a new history entry, so Back returns to the inspected scene or file.
+  function traceHref(step: number, observationId: string) {
+    const params = new URLSearchParams(window.location.search);
+    if (trial) params.set("trial", trial.id);
+    params.set("tab", "trajectory");
+    params.set("observation", observationId);
+    params.delete("file");
+    params.delete("lines");
+    return `${urlWithSearch(params.toString())}#step-${step}`;
+  }
+  function openTrace(step: number, observationId: string) {
+    if (trial) markOpenIntent("ui.trajectory.open", trial.id);
+    // Files already records its selected image and filter in the URL. The
+    // scene clock advances independently, so save its departure frame now.
+    if (view?.section === "run" && view.runView === "scene") {
+      const departure = new URLSearchParams(window.location.search);
+      departure.set("tab", "playback");
+      departure.set("observation", observationId);
+      window.history.replaceState(window.history.state, "", urlWithSearch(departure.toString()));
+    }
+    window.history.pushState(window.history.state, "", traceHref(step, observationId));
+    setLocation(current => ({ ...current, section: "run", runView: "trace", observationId }));
+  }
+
+  // The scene mounts when first shown for a trial attempt and then stays
+  // mounted until the drawer closes or moves to another attempt.
+  const sceneKey = trial ? `${trial.id}:${trial.attempts}` : null;
+  const sceneShown = view?.section === "run" && view.runView === "scene";
+  const [mountedScene, setMountedScene] = useState<string | null>(null);
+  useEffect(() => {
+    if (!isOpen) setMountedScene(null);
+    else if (sceneShown) setMountedScene(sceneKey);
+  }, [isOpen, sceneShown, sceneKey]);
+  const sceneMounted = isOpen && sceneKey !== null && (sceneShown || mountedScene === sceneKey);
+  // Sum the navigable trials for this view (version-scoped in both callers),
+  // not task.trials, which on the task page spans every version.
+  const taskCost = sumTaskTrialCost(orderedTrials);
 
   // Agent rows only: the generic retry endpoint refuses qa/audit kinds, so
   // offering the button on their drawers would only ever render its 400.
@@ -1129,24 +1100,26 @@ export function TrialDetailPanel({
 
   const handleTimelineStageClick = (stageId: string) => {
     const filePath = STAGE_FILE_MAP[stageId] ?? null;
-    setActiveTab("files");
-    // Through the shared handler so a file change drops the old line
-    // anchor and the path ref stays in sync — a bare setFilesTargetPath
-    // would let the previous ?lines= range land on the new file.
-    handleSelectedFileChange(filePath);
+    // A different file drops the old line anchor with it.
+    setLocation(current => ({
+      ...current,
+      section: "files",
+      fileFilter: "all",
+      filePath,
+      lines: current.filePath === filePath ? current.lines : null,
+    }));
   };
 
   // Reset state when panel closes
   useEffect(() => {
     if (!isOpen) {
-      setActiveTab("summary");
+      setLocation(decodeDrawerLocation(new URLSearchParams()));
       setShowFullError(false);
       setRetrying(false);
       setRetryError(null);
       setDeleteDialogOpen(false);
       setDeleting(false);
       setDeleteError(null);
-      setFilesTargetPath(null);
       hydratedFromUrl.current = false;
     }
   }, [isOpen]);
@@ -1219,11 +1192,8 @@ export function TrialDetailPanel({
     trial.reward,
     trial.error_message
   );
-  const showLive =
-    !readOnly &&
-    (isWorkerOwnedTrialStatus(trial.status) || trial.status === "retrying");
-  const effectiveTab =
-    activeTab === "live" && !showLive ? "summary" : activeTab;
+  const runView = view?.section === "run" ? view.runView : null;
+  const sceneVisible = runView === "scene";
   const trialDetailErrorContent = (
     <div className="p-4 sm:p-6">
       <Alert variant="destructive">
@@ -1249,9 +1219,6 @@ export function TrialDetailPanel({
   );
   const trialStatusConfig = STATUS_CONFIG[trialStatus];
   const TrialStatusIcon = trialStatusConfig.icon;
-  // Sum the navigable trials for this view (version-scoped in both callers),
-  // not task.trials, which on the task page spans every version.
-  const taskCost = sumTaskTrialCost(orderedTrials);
   const showQueueSnapshot =
     hasLiveQueueSnapshot(trial) && getQueueSnapshotItems(trial).length > 0;
   const sandboxBackend = getSandboxBackend(trial);
@@ -1288,57 +1255,107 @@ export function TrialDetailPanel({
   };
 
   const handleOpenActiveQaTrial = (qaTrial: Trial) => {
-    setActiveTab(
-      isWorkerOwnedTrialStatus(qaTrial.status) || qaTrial.status === "retrying"
-        ? "live"
-        : "summary"
-    );
+    if (isWorkerOwnedTrialStatus(qaTrial.status) || qaTrial.status === "retrying")
+      selectView("run", "live");
+    else selectView("overview");
     const index = orderedList.findIndex((item) => item.id === qaTrial.id);
     onNavigate?.(qaTrial, index >= 0 ? index : null);
   };
 
   const content = (
     <>
-      <DrawerHeader className="border-border border-b px-4 py-3 sm:px-6 sm:py-4">
-        <DrawerTitle className="flex min-w-0 items-center gap-2 pr-16 font-mono text-sm sm:text-base">
-          <span className="min-w-0 truncate">{trial.name}</span>
-          {(trial.kind ?? "agent") !== "agent" && (
-            <span className="inline-flex shrink-0 items-center rounded-md border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[11px] font-medium text-amber-700 dark:text-amber-400">
-              {trial.kind}
-            </span>
-          )}
-          {showAnalysis && trial.task_version != null && (
-            <span className="border-border bg-muted/50 text-muted-foreground inline-flex shrink-0 items-center rounded-md border px-1.5 py-0.5 font-mono text-[11px] font-medium">
-              v{trial.task_version}
-            </span>
-          )}
-        </DrawerTitle>
-        <DrawerDescription className="text-muted-foreground font-mono">
-          <span className="truncate">{trial.id}</span>
-        </DrawerDescription>
-        <div className="text-muted-foreground flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 pr-16 font-mono text-[10px] sm:text-xs">
-          <span className="text-foreground/80 inline-flex shrink-0 items-center gap-1 font-semibold">
-            <QueueKeyIcon
-              queueKey={trial.provider}
-              model={trial.model}
-              agent={trial.agent}
-              size={11}
-              className="shrink-0"
-            />
-            {trial.agent}
-          </span>
-          <span className="text-muted-foreground/50 shrink-0">·</span>
-          <span className="flex max-w-full min-w-0 flex-1 basis-52 items-center gap-1.5">
+      <DrawerHeader className="border-border shrink-0 border-b px-4 py-2 sm:px-6">
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 pr-16">
+          <div className="min-w-0">
+            <DrawerTitle className="truncate font-mono text-sm">
+              {trial.name}
+              {showAnalysis && trial.task_version != null && (
+                <span className="text-muted-foreground ml-2 text-xs">
+                  v{trial.task_version}
+                </span>
+              )}
+            </DrawerTitle>
+            <DrawerDescription>{trial.id}</DrawerDescription>
+            <div className="text-muted-foreground flex items-center gap-2 text-xs">
+              <QueueKeyIcon
+                queueKey={trial.provider}
+                model={trial.model}
+                agent={trial.agent}
+                size={11}
+              />
+              <span>{trial.agent}</span>
+              <span
+                className="max-w-64 truncate"
+                title={experimentModelLabel(trial.model, trial.reasoning_effort)}
+              >
+                {experimentModelLabel(trial.model, trial.reasoning_effort)}
+              </span>
+              {(trial.kind ?? "agent") !== "agent" && <span>{trial.kind}</span>}
+            </div>
+          </div>
+          <div className="flex items-center gap-3 text-xs">
             <span
-              className="min-w-0 flex-1 truncate"
-              title={experimentModelLabel(trial.model, trial.reasoning_effort)}
+              className="flex items-center gap-1.5"
+              title={`Reward: ${formatRewardPercent(trial.reward)}`}
             >
-              {experimentModelLabel(trial.model, trial.reasoning_effort)}
+              <TrialStatusIcon className="size-3.5" />
+              <span>
+                {trialStatusConfig.shortLabel} · {formatRewardValue(trial.reward)}
+              </span>
             </span>
-            {sandboxBackend && <SandboxBackendBadge backend={sandboxBackend} />}
-          </span>
+            {(showRetry || showDelete || daytonaSandboxUrl) && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-7"
+                    aria-label="Trial actions"
+                  >
+                    <MoreHorizontal className="size-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {showRetry && (
+                    <DropdownMenuItem
+                      onSelect={() => void handleRetry()}
+                      disabled={!canRetry || retrying}
+                    >
+                      <RotateCcw className="size-4" />
+                      {retrying ? "Retrying…" : "Retry trial"}
+                    </DropdownMenuItem>
+                  )}
+                  {daytonaSandboxUrl && (
+                    <DropdownMenuItem asChild>
+                      <a
+                        href={daytonaSandboxUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        <ExternalLink className="size-4" />
+                        Open sandbox
+                      </a>
+                    </DropdownMenuItem>
+                  )}
+                  {showDelete && (
+                    <DropdownMenuItem
+                      disabled={!canDelete || deleting}
+                      className="text-destructive"
+                      onSelect={() => {
+                        setDeleteError(null);
+                        setDeleteDialogOpen(true);
+                      }}
+                    >
+                      <Trash2 className="size-4" />
+                      Delete trial
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+          </div>
         </div>
-        <div className="text-muted-foreground flex flex-wrap items-stretch justify-between gap-2 pt-2 text-xs">
+        <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-1">
             {paneAction}
             {hasNavigation && (
@@ -1378,7 +1395,7 @@ export function TrialDetailPanel({
                   const groupStatus = getMatrixStatus(
                     groupTrial.status,
                     groupTrial.reward,
-                    groupTrial.error_message
+                    groupTrial.error_message,
                   );
                   const groupConfig = STATUS_CONFIG[groupStatus];
                   const isPartial = groupStatus === "partial";
@@ -1402,7 +1419,7 @@ export function TrialDetailPanel({
                           : "",
                         isActive
                           ? "ring-primary/60 ring-offset-background ring-2 ring-offset-1"
-                          : ""
+                          : "",
                       )}
                       style={getRewardStyle(groupTrial.reward)}
                       aria-label={`Trial ${index + 1} ${groupConfig.shortLabel}`}
@@ -1431,214 +1448,32 @@ export function TrialDetailPanel({
               </>
             )}
           </div>
-          <div className="flex min-w-0 flex-wrap items-stretch justify-end gap-2">
-            <Card
-              className={cn(
-                "min-w-[145px] border",
-                OUTCOME_CARD_TONE[trialStatus]
-              )}
-              style={getRewardStyle(trial.reward, "panel")}
-            >
-              <CardContent className="px-2 py-1">
-                <div className="flex items-center gap-1.5">
-                  <TrialStatusIcon
-                    className={cn(
-                      "h-3.5 w-3.5 shrink-0",
-                      trialStatus === "pass"
-                        ? "text-emerald-500"
-                        : trialStatus === "partial"
-                          ? "text-amber-500"
-                          : trialStatus === "fail"
-                            ? "text-red-500"
-                            : trialStatus === "harness-error"
-                              ? "text-yellow-500"
-                              : trialStatus === "queued"
-                                ? "text-purple-500"
-                                : trialStatus === "running"
-                                  ? "text-blue-500"
-                                  : trialStatus === "paused"
-                                    ? "text-amber-500"
-                                    : "text-gray-500",
-                      (trialStatus === "pending" ||
-                        trialStatus === "queued" ||
-                        trialStatus === "running") &&
-                        "animate-spin"
-                    )}
-                  />
-                  <div className="min-w-0">
-                    <div className="text-muted-foreground text-[8px] leading-none tracking-wider uppercase">
-                      Reward
-                    </div>
-                    <div className="flex items-baseline gap-1">
-                      <span className="font-mono text-sm leading-none font-bold">
-                        {formatRewardValue(trial.reward)}
-                      </span>
-                      {trial.reward !== null && (
-                        <span className="text-muted-foreground text-[9px] leading-none">
-                          {formatRewardPercent(trial.reward)}
-                        </span>
-                      )}
-                      <span className="text-muted-foreground text-[9px] leading-none capitalize">
-                        {trialStatusConfig.shortLabel}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-            {(trial.cost_usd != null ||
-              trial.input_tokens != null ||
-              trial.output_tokens != null ||
-              // A trial can be QA'd without the agent ever reporting a cost;
-              // keep the card so its QA sidecar isn't hidden.
-              hasDisplayableCostUsd(trial.qa_cost_usd) ||
-              hasDisplayableCostUsd(trial.verifier_cost_usd)) && (
-              <Card className="min-w-[120px] border">
-                <CardContent className="flex h-full items-center px-2 py-1">
-                  <div className="min-w-0">
-                    <div className="text-muted-foreground text-[8px] leading-none tracking-wider uppercase">
-                      Cost
-                    </div>
-                    <div className="mt-1 flex items-baseline gap-1">
-                      <span className="font-mono text-sm leading-none font-bold tabular-nums">
-                        {hasDisplayableCostUsd(trial.cost_usd) ? (
-                          <>
-                            {trial.cost_is_estimated ? "~" : ""}
-                            {formatCostUsd(trial.cost_usd)}
-                          </>
-                        ) : (
-                          "—"
-                        )}
-                      </span>
-                      {hasDisplayableCostUsd(trial.cost_usd) &&
-                        taskCost.pricedCount > 1 &&
-                        hasDisplayableCostUsd(taskCost.costUsd) &&
-                        (() => {
-                          const marks = costEstimateMarks(
-                            taskCost.hasEstimated,
-                            taskCost.hasNative
-                          );
-                          return (
-                            <span className="text-muted-foreground text-[9px] leading-none">
-                              of {marks.prefix}
-                              {formatCostUsd(taskCost.costUsd)}
-                              {marks.suffix} task
-                            </span>
-                          );
-                        })()}
-                      <QaCostSuffix
-                        costUsd={trial.qa_cost_usd}
-                        title="QA/analysis spend for this trial. Not included in the cost figure."
-                      />
-                      <VerifierCostSuffix costUsd={trial.verifier_cost_usd} />
-                    </div>
-                    {(trial.input_tokens != null ||
-                      trial.output_tokens != null) && (
-                      <div className="text-muted-foreground mt-1 font-mono text-[9px] leading-none">
-                        {formatTokenCount(
-                          (trial.input_tokens ?? 0) + (trial.output_tokens ?? 0)
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-            {showRetry && (
-              <Button
-                onClick={handleRetry}
-                disabled={!canRetry || retrying}
-                title={actionsReady ? undefined : "Loading latest trial state."}
-                variant="outline"
-                size="sm"
-                className="h-7 min-w-[128px] px-2 text-[10px] font-semibold tracking-wide uppercase"
-              >
-                {retrying ? (
-                  <>
-                    <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-                    Retrying...
-                  </>
-                ) : (
-                  <>
-                    <RotateCcw className="mr-1 h-3.5 w-3.5" />
-                    Retry Trial
-                  </>
-                )}
-              </Button>
-            )}
-            {daytonaSandboxUrl && (
-              <Button
-                asChild
-                variant="outline"
-                size="sm"
-                className="h-7 min-w-[132px] px-2 text-[10px] font-semibold tracking-wide uppercase"
-              >
-                <a
-                  href={daytonaSandboxUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  <ExternalLink className="mr-1 h-3.5 w-3.5" />
-                  Sandbox
-                </a>
-              </Button>
-            )}
-            {showDelete && (
-              <Button
-                onClick={() => {
-                  if (!canDelete) return;
-                  setDeleteError(null);
-                  setDeleteDialogOpen(true);
-                }}
-                disabled={!canDelete || deleting}
-                title={actionsReady ? undefined : "Loading latest trial state."}
-                variant="outline"
-                size="sm"
-                className="text-destructive hover:bg-destructive/10 hover:text-destructive h-7 min-w-[112px] px-2 text-[10px] font-semibold tracking-wide uppercase"
-              >
-                {deleting ? (
-                  <>
-                    <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-                    Deleting...
-                  </>
-                ) : (
-                  <>
-                    <Trash2 className="mr-1 h-3.5 w-3.5" />
-                    Delete
-                  </>
-                )}
-              </Button>
-            )}
-          </div>
+          {sandboxBackend && <SandboxBackendBadge backend={sandboxBackend} />}
         </div>
         {retryError && (
-          <p className="pt-1 text-right text-xs text-red-500">{retryError}</p>
+          <p role="alert" className="text-destructive text-xs">
+            {retryError}
+          </p>
         )}
       </DrawerHeader>
 
       <Tabs
-        value={effectiveTab}
-        onValueChange={handleTabChange}
+        value={view?.section === "overview" ? "summary" : view?.section ?? ""}
+        onValueChange={value => selectView(value === "summary" ? "overview" : value as DrawerSection)}
         className="flex flex-1 flex-col overflow-hidden"
       >
-        <div className="border-border border-b px-4 sm:px-6">
+        {view && <div className="border-border border-b px-4 sm:px-6">
           <TabsList className="h-10 gap-0 border-0 bg-transparent p-0 sm:h-12">
             <TabsTrigger
               value="summary"
               className="data-[state=active]:border-primary rounded-none px-3 text-xs data-[state=active]:border-b-2 data-[state=active]:bg-transparent sm:px-4 sm:text-sm"
             >
               <FileText className="mr-1 h-3.5 w-3.5 sm:mr-2 sm:h-4 sm:w-4" />
-              Summary
+              Overview
             </TabsTrigger>
-            {showLive && (
-              <TabsTrigger
-                value="live"
-                className="data-[state=active]:border-primary rounded-none px-3 text-xs data-[state=active]:border-b-2 data-[state=active]:bg-transparent sm:px-4 sm:text-sm"
-              >
-                <Radio className="mr-1 h-3.5 w-3.5 text-red-500 sm:mr-2 sm:h-4 sm:w-4" />
-                Live
-              </TabsTrigger>
-            )}
+            <TabsTrigger value="run" className="data-[state=active]:border-primary rounded-none px-3 text-xs data-[state=active]:border-b-2 data-[state=active]:bg-transparent sm:px-4 sm:text-sm">
+              <Play className="mr-1 size-4" />Run
+            </TabsTrigger>
             <TabsTrigger
               value="files"
               className="data-[state=active]:border-primary rounded-none px-3 text-xs data-[state=active]:border-b-2 data-[state=active]:bg-transparent sm:px-4 sm:text-sm"
@@ -1646,30 +1481,44 @@ export function TrialDetailPanel({
               <FolderOpen className="mr-1 h-3.5 w-3.5 sm:mr-2 sm:h-4 sm:w-4" />
               Files
             </TabsTrigger>
-            <TabsTrigger
-              value="trajectory"
-              className="data-[state=active]:border-primary rounded-none px-3 text-xs data-[state=active]:border-b-2 data-[state=active]:bg-transparent sm:px-4 sm:text-sm"
-            >
-              <Route className="mr-1 h-3.5 w-3.5 sm:mr-2 sm:h-4 sm:w-4" />
-              Trajectory
-            </TabsTrigger>
-            <TabsTrigger
-              value="artifacts"
-              className="data-[state=active]:border-primary rounded-none px-3 text-xs data-[state=active]:border-b-2 data-[state=active]:bg-transparent sm:px-4 sm:text-sm"
-            >
-              <Package className="mr-1 h-3.5 w-3.5 sm:mr-2 sm:h-4 sm:w-4" />
-              Artifacts
-            </TabsTrigger>
           </TabsList>
-        </div>
+        </div>}
 
-        <div className="flex-1 overflow-auto overscroll-contain">
+        {runView && <div className="border-border flex shrink-0 items-center gap-2 border-b px-4 py-1.5 text-xs" aria-label="Run view">
+          {(playback.available !== false || playback.preparation === "unchecked" || sceneVisible) && finished && <Button size="sm" variant={sceneVisible ? "secondary" : "ghost"} onClick={() => selectView("run", "scene")}>Scene and observations</Button>}
+          <Button size="sm" variant={runView === "trace" ? "secondary" : "ghost"} onClick={() => selectView("run", "trace")}>Full agent trace</Button>
+          {showLive && <Button size="sm" variant={runView === "live" ? "secondary" : "ghost"} onClick={() => selectView("run", "live")}>Live output</Button>}
+        </div>}
+        {finished && actionsReady && ["unchecked", "invalid"].includes(playback.preparation) && (
+          <div className="border-border flex shrink-0 flex-wrap items-center gap-2 border-b px-4 py-2 text-xs" role="status">
+            <span>{preparationError ? preparationError.message : playback.error?.message ?? "Playback has not been prepared for this run."}</span>
+            {!readOnly && loadTrialDetail && <Button size="sm" variant="outline" disabled={preparingPlayback}
+              onClick={() => { void preparePlayback(undefined, { throwOnError: false }); }}>
+              {preparingPlayback ? "Preparing playback…" : "Prepare playback"}
+            </Button>}
+          </div>
+        )}
+        <div className="relative min-h-0 flex-1">
+          {/* The scene stays mounted (paused, invisible) while other views of
+              this trial cover it, so returning reuses its viewer. */}
+          {sceneMounted && <div
+            className={cn("absolute inset-0", sceneVisible ? "z-10 bg-background" : "invisible pointer-events-none")}
+            aria-hidden={!sceneVisible}>
+            <RunPlayback key={`${trial.id}:${trial.attempts}`} playback={playback} active={sceneVisible}
+              observationId={location.observationId} agentTiming={trial.phase_timing?.agent_execution}
+              traceHref={traceHref} onOpenTrace={openTrace} />
+          </div>}
+        <div className="h-full overflow-auto overscroll-contain">
+          {!view && (trialDetailFailed ? trialDetailErrorContent : (
+            <p role="status" className="p-6 text-sm">Loading run views…</p>
+          ))}
           <ActiveTabContent
-            active={effectiveTab === "summary"}
+            active={view?.section === "overview"}
             value="summary"
             className="m-0 p-4 sm:p-6"
           >
             <div className="space-y-4 pb-4">
+              <RunOutcome playback={playback} />
               {showQueueSnapshot && (
                 <Card className="border-purple-500/30 bg-purple-500/5">
                   <CardHeader className="px-4 pt-2 pb-1">
@@ -1826,6 +1675,60 @@ export function TrialDetailPanel({
                 </Card>
               )}
 
+              {(trial.cost_usd != null ||
+                trial.input_tokens != null ||
+                trial.output_tokens != null ||
+                // A trial can be QA'd without the agent ever reporting a cost;
+                // keep the section so its QA sidecar isn't hidden.
+                hasDisplayableCostUsd(trial.qa_cost_usd) ||
+                hasDisplayableCostUsd(trial.verifier_cost_usd)) && (
+                <details className="border-border rounded-lg border px-4 py-2 text-xs">
+                  <summary className="cursor-pointer font-medium">Execution details</summary>
+                  <dl className="mt-2 grid grid-cols-[auto_1fr] items-baseline gap-x-4 gap-y-1.5">
+                    <dt className="text-muted-foreground">Cost</dt>
+                    <dd className="flex flex-wrap items-baseline gap-x-2 font-mono tabular-nums">
+                      {hasDisplayableCostUsd(trial.cost_usd) ? (
+                        <span>
+                          {trial.cost_is_estimated ? "~" : ""}
+                          {formatCostUsd(trial.cost_usd)}
+                        </span>
+                      ) : (
+                        <span>—</span>
+                      )}
+                      {hasDisplayableCostUsd(trial.cost_usd) &&
+                        taskCost.pricedCount > 1 &&
+                        hasDisplayableCostUsd(taskCost.costUsd) &&
+                        (() => {
+                          const marks = costEstimateMarks(
+                            taskCost.hasEstimated,
+                            taskCost.hasNative
+                          );
+                          return (
+                            <span className="text-muted-foreground">
+                              of {marks.prefix}
+                              {formatCostUsd(taskCost.costUsd)}
+                              {marks.suffix} task
+                            </span>
+                          );
+                        })()}
+                      <QaCostSuffix
+                        costUsd={trial.qa_cost_usd}
+                        title="QA/analysis spend for this trial. Not included in the cost figure."
+                      />
+                      <VerifierCostSuffix costUsd={trial.verifier_cost_usd} />
+                    </dd>
+                    {(trial.input_tokens != null || trial.output_tokens != null) && (
+                      <>
+                        <dt className="text-muted-foreground">Tokens</dt>
+                        <dd className="font-mono tabular-nums">
+                          {formatTokenCount((trial.input_tokens ?? 0) + (trial.output_tokens ?? 0))}
+                        </dd>
+                      </>
+                    )}
+                  </dl>
+                </details>
+              )}
+
               {/* Equivalent retry command — hidden from public viewers */}
               {!readOnly && showAnalysis && (
                 <div>
@@ -1844,8 +1747,8 @@ export function TrialDetailPanel({
           </ActiveTabContent>
 
           <ActiveTabContent
-            active={effectiveTab === "live" && showLive}
-            value="live"
+            active={runView === "live" && showLive}
+            value="run"
             className="m-0 h-full p-0"
           >
             <LiveTranscriptPanel
@@ -1856,63 +1759,38 @@ export function TrialDetailPanel({
             />
           </ActiveTabContent>
 
-          <ActiveTabContent
-            active={effectiveTab === "files"}
-            value="files"
-            className="m-0 h-full p-0"
-          >
-            {trialDetailFailed ? (
-              trialDetailErrorContent
-            ) : (
-              <TaskFilesPanel
-                isOpen={isOpen}
-                onClose={() => {}}
-                activePane="file"
-                taskId={null}
-                filesUrl={`${apiBaseUrl}/trials/${trial.id}/files`}
-                initialFilePath={filesTargetPath}
-                selectedLines={selectedLines}
-                onSelectLinesChange={setSelectedLines}
-                onSelectedFileChange={handleSelectedFileChange}
-                contentOnly
-              />
-            )}
+          <ActiveTabContent active={view?.section === "files"} value="files" className="m-0 h-full p-0">
+            {trialDetailFailed ? trialDetailErrorContent : <ArtifactsViewer
+              key={trial.id}
+              filesUrl={filesUrl}
+              artifactsOnly={location.fileFilter === "artifacts"}
+              onArtifactsOnlyChange={value => setLocation(current => ({ ...current, fileFilter: value ? "artifacts" : "all" }))}
+              trialId={trial.id}
+              successfulAnalysisTrial={trial.status === "success" && ["qa", "qa_eval", "audit", "summarize"].includes(trial.kind ?? "agent")}
+              filePath={location.filePath}
+              selectedLines={parseLineRange(location.lines)}
+              onSelectLinesChange={range => setLocation(current => ({ ...current, lines: range ? formatLineRange(range) : null }))}
+              onSelectedFileChange={handleSelectedFileChange}
+              playback={playback}
+              onOpenScene={() => selectView("run", "scene")}
+              traceHref={traceHref}
+              onOpenTrace={openTrace}
+            />}
           </ActiveTabContent>
 
           <ActiveTabContent
-            active={effectiveTab === "artifacts"}
-            value="artifacts"
-            className="m-0 h-full p-0"
-          >
-            {trialDetailFailed ? (
-              trialDetailErrorContent
-            ) : (
-              <ArtifactsViewer
-                filesUrl={`${apiBaseUrl}/trials/${trial.id}/files`}
-                trialId={trial.id}
-                successfulAnalysisTrial={
-                  trial.status === "success" &&
-                  ["qa", "qa_eval", "audit", "summarize"].includes(
-                    trial.kind ?? "agent"
-                  )
-                }
-                initialFilePath={artifactsTargetPath}
-                selectedLines={artifactsLines}
-                onSelectLinesChange={setArtifactsLines}
-                onSelectedFileChange={handleArtifactsFileChange}
-              />
-            )}
-          </ActiveTabContent>
-
-          <ActiveTabContent
-            active={effectiveTab === "trajectory"}
-            value="trajectory"
+            active={runView === "trace"}
+            value="run"
             className="m-0 h-full overflow-auto p-0"
           >
             {trialDetailFailed ? (
               trialDetailErrorContent
             ) : (
-              <TrajectoryViewer
+              trial.agent === "oracle" && trial.has_trajectory === false ? (
+                <p className="p-6 text-sm text-muted-foreground">Oracle runs have no agent trace.</p>
+              ) : <TrajectoryViewer
+                agentTiming={trial.phase_timing?.agent_execution}
+                agentRunning={trial.harbor_stage === "agent_running" && !trial.finished_at}
                 trialId={trial.id}
                 hasTrajectory={trial.has_trajectory}
                 apiBaseUrl={apiBaseUrl}
@@ -1920,6 +1798,7 @@ export function TrialDetailPanel({
               />
             )}
           </ActiveTabContent>
+        </div>
         </div>
       </Tabs>
     </>

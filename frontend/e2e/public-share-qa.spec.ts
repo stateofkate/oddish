@@ -141,6 +141,10 @@ async function mockShare(
         billed_has_native: false, billed_token_count: 0, billed_token_trial_count: 0,
         total_trials: 1,
       };
+    } else if (path === `${publicBase}/focus` &&
+      url.searchParams.get("task") === task.id &&
+      url.searchParams.get("trial") === trial.id) {
+      body = { task: { ...task, trials: undefined }, trial };
     } else if (path === `${publicBase}/trials/${trial.id}`) {
       body = trial;
     } else if (path === `${publicBase}/tasks/task-qa`) {
@@ -212,7 +216,7 @@ test("a share link hides QA when the share flag is off", async ({ page }) => {
 
   await page.goto(`/share/${token}?task=${task.id}&trial=${trial.id}`);
   await expect(
-    page.getByRole("tab", { name: "Summary", exact: true })
+    page.getByRole("tab", { name: "Overview", exact: true })
   ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Good success", exact: true })

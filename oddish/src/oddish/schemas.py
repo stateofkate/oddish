@@ -1186,6 +1186,24 @@ class ExperimentTrialAnalysis(BaseModel):
     finished_at: datetime | None = None
 
 
+class TrialPlayback(BaseModel):
+    """Playback discovery and index state stored at ``trials.result._playback``.
+
+    ``manifest_path`` keeps its original meaning for installed clients: a
+    string advertises the verifier manifest. ``index_status`` is omitted for
+    results recorded before indexing; see ``oddish.core.playback``.
+    """
+
+    manifest_path: str | None = None
+    # "ready", "absent" or "invalid". Stored JSON is not re-validated here, so
+    # one unexpected row cannot fail a whole experiment page.
+    index_status: str | None = None
+    index_path: str | None = None
+    index_revision: str | None = None
+    # invalid_manifest, missing_reference, unreadable_artifacts, index_write_failed
+    index_error: str | None = None
+
+
 class ExperimentTrialCell(BaseModel):
     id: str
     task_id: str
@@ -1210,6 +1228,7 @@ class ExperimentTrialCell(BaseModel):
     cost_is_estimated: bool | None = None
     is_billed: bool = False
     cost_exclusion_reason: str | None = None
+    playback: TrialPlayback | None = None
     has_trajectory: bool = False
     analysis: ExperimentTrialAnalysis = Field(default_factory=ExperimentTrialAnalysis)
     created_at: datetime
@@ -1401,6 +1420,7 @@ class TrialResponse(BaseModel):
     )
 
     # Trajectory
+    playback: TrialPlayback | None = None
     has_trajectory: bool = Field(
         False,
         description="Whether this trial has a readable ATIF trajectory JSON object",
@@ -2359,6 +2379,7 @@ class TaskOpenTrialRef(BaseModel):
     cost_usd: float | None = None
     cost_is_estimated: bool | None = None
     is_billed: bool = False
+    playback: TrialPlayback | None = None
     has_trajectory: bool = False
     created_at: datetime
     started_at: datetime | None = None

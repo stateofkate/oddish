@@ -24,6 +24,7 @@ from oddish.core.trial_io import (
 )
 from oddish.core.trial_live import read_trial_live_for_id
 from oddish.core.trial_control import cancel_trials_by_id
+from oddish.core.playback import rebuild_trial_playback
 from oddish.core.ingest.trial_imports import (
     complete_trial_import,
     initialize_trial_import,
@@ -59,7 +60,7 @@ from oddish.db import (
     get_read_session,
     get_session,
 )
-from oddish.schemas import TrialRetryRequest
+from oddish.schemas import TrialPlayback, TrialRetryRequest
 from oddish.schemas import (
     TrialImportCompleteRequest,
     TrialImportCompleteResponse,
@@ -203,6 +204,7 @@ async def get_trial_full(
         finished_at=detail.finished_at,
         analysis_status=detail.analysis_status,
         analysis_finished_at=detail.analysis_finished_at,
+        playback=detail.playback.model_dump() if detail.playback is not None else None,
     )
     response.headers.update(cache_headers(policy=identity.policy, etag=identity.etag))
     return detail
@@ -294,6 +296,15 @@ async def finalize_trial_import(
         trial_id=payload.trial_id,
         org_id=auth.org_id,
     )
+
+
+@router.post("/trials/{trial_id}/playback/rebuild", response_model=TrialPlayback)
+async def rebuild_playback(
+    trial_id: str,
+    auth: Annotated[AuthContext, Depends(require_auth)],
+) -> dict:
+    auth.require_scope(APIKeyScope.TASKS)
+    return await rebuild_trial_playback(trial_id, org_id=auth.org_id)
 
 
 @router.post("/trials/{trial_id}/retry")

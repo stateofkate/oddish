@@ -92,6 +92,10 @@ def _render_trial(trial: dict[str, Any]) -> None:
         f"[bold]Trajectory:[/bold] "
         f"{'yes' if trial.get('has_trajectory') else 'no'}"
     )
+    playback = trial.get("playback") or {}
+    console.print(f"Playback: {playback.get('index_status') or 'not prepared'}", markup=False)
+    if playback.get("index_error"):
+        console.print(f"Playback reason: {playback['index_error']}", markup=False)
 
     analysis = trial.get("analysis")
     if isinstance(analysis, dict) and analysis:

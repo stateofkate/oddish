@@ -313,6 +313,7 @@ test("public deep link resolves a trial outside the streamed results", async ({
   );
   await mockResults(page, token, [
     task({ id: "task-1", name: "First loaded task" }),
+    task({ id: "task-2", name: "Second loaded task" }),
   ]);
   await page.route(`**/api/public/experiments/${token}/focus?*`, (route) => {
     focusRequests += 1;
@@ -341,6 +342,8 @@ test("public deep link resolves a trial outside the streamed results", async ({
   });
 
   await expect.poll(() => focusRequests).toBe(1);
+  await expect(page.getByRole("button", { name: "Copy task name Task one hundred one" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Next task", exact: true })).toHaveCount(0);
   await expect(page).toHaveURL(/task=task-101/);
   await expect(page).not.toHaveURL(/trial=/);
   await expect(page.getByText("$12.34", { exact: true })).toBeVisible();
@@ -350,7 +353,7 @@ test("public deep link resolves a trial outside the streamed results", async ({
   });
 
   await expect.poll(() => focusRequests).toBe(2);
-  await expect(page.getByRole("tab", { name: "Summary" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Overview" })).toBeVisible();
   await expect(page).toHaveURL(/task=task-101&trial=task-101-1/);
 });
 
@@ -420,7 +423,7 @@ test("retryable focus errors preserve the streamed-trial deep-link fallback", as
   await page.evaluate(() =>
     (window as typeof window & { finishResults: () => void }).finishResults()
   );
-  await expect(page.getByRole("tab", { name: "Summary" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Overview" })).toBeVisible();
   await expect(page).toHaveURL(/task=task-1/);
   await expect(page).toHaveURL(/trial=task-1-2/);
 });
@@ -543,14 +546,14 @@ for (const hasSummary of [false, true]) {
     ).toBeVisible();
     await page.getByRole("button", { name: "Trial 1 Partial" }).click();
 
-    await expect(page.getByRole("tab", { name: "Summary" })).toHaveAttribute(
+    await expect(page.getByRole("tab", { name: "Overview" })).toHaveAttribute(
       "data-state",
       "active"
     );
     await page.waitForTimeout(500);
     expect(trajectoryRequests).toBe(0);
 
-    await page.getByRole("tab", { name: "Trajectory" }).click();
+    await page.getByRole("tab", { name: "Run" }).click();
     await expect.poll(() => trajectoryRequests).toBe(1);
     await expect(page.getByText("EXPENSIVE_STEP_BODY")).toHaveCount(0);
     await expect(page.getByText("Activity", { exact: true })).toHaveCount(0);

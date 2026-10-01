@@ -34,6 +34,7 @@ Update with `brew update` followed by `brew upgrade abundant-ai/tap/oddish`. New
 | Submit trials / retry work | `oddish run` |
 | Browse / inspect / stream live output | `oddish ls`, `oddish status`, `oddish logs` |
 | Download outputs | `oddish pull ID` |
+| Prepare playback from saved trial files | `oddish playback rebuild TRIAL_ID` |
 | Inspect recorded spending | `oddish costs` |
 | Stop work / remove data | `oddish cancel`, `oddish delete` |
 | Combine / collect / edit results | `oddish combine`, `oddish collect`, `oddish experiment` |

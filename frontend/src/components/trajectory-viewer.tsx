@@ -9,6 +9,7 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { AgentElapsedTime, type AgentTiming } from "@/components/agent-elapsed-time";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
@@ -659,6 +660,8 @@ function StepContent({
 // =============================================================================
 
 interface TrajectoryViewerProps {
+  agentTiming?: AgentTiming | null;
+  agentRunning?: boolean;
   trialId: string;
   /**
    * Whether the backend recorded an ATIF trajectory for this trial
@@ -676,6 +679,8 @@ interface TrajectoryViewerProps {
 }
 
 export function TrajectoryViewer({
+  agentTiming,
+  agentRunning,
   trialId,
   hasTrajectory,
   apiBaseUrl = "/api",
@@ -955,7 +960,7 @@ export function TrajectoryViewer({
       />
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="flex items-center justify-between text-sm font-medium">
+          <CardTitle className="flex flex-wrap items-center justify-between gap-2 text-sm font-medium">
             <span className="flex items-center gap-2">
               <Route className="h-4 w-4" />
               Trajectory
@@ -969,6 +974,7 @@ export function TrajectoryViewer({
                   <> · ${trajectory.final_metrics.total_cost_usd.toFixed(4)}</>
                 )}
               </span>
+              <AgentElapsedTime timing={agentTiming} running={agentRunning} />
               <Button
                 type="button"
                 variant="outline"

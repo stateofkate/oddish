@@ -1056,7 +1056,7 @@ def _supports_auto_restricted_agent_network(
     task_path: Path,
     environment_config: HarborEnvironmentConfig,
 ) -> bool:
-    """Whether the existing single-container phase bridge applies."""
+    """Whether Harbor enforces the agent phase for this task shape."""
     if environment_config.import_path is not None:
         return False
     if environment_config.type not in (
@@ -1073,9 +1073,15 @@ def _supports_auto_restricted_agent_network(
         return _task_has_dynamic_restricted_agent_phase(task_path)
 
     environment_dir = task_path / "environment"
-    if (environment_dir / _HARBOR_COMPOSE_FILENAME).exists():
+    # Docker routes Compose services through Harbor's filtered namespace. The
+    # Modal monitor executes these tasks as Docker inside its worker VM.
+    if (environment_dir / _HARBOR_COMPOSE_FILENAME).exists() and (
+        environment_config.type != EnvironmentType.DOCKER
+    ):
         return False
-    if environment_config.extra_docker_compose:
+    if environment_config.extra_docker_compose and (
+        environment_config.type != EnvironmentType.DOCKER
+    ):
         return False
     if kube_chart_present(environment_dir, environment_config.kwargs):
         return False
@@ -1159,7 +1165,7 @@ def _inject_restricted_agent_model_hosts(
     agent_config: HarborAgentConfig,
     runtime_transport_env: Mapping[str, str] | None = None,
 ) -> None:
-    """Preserve the existing single-container model-host injection."""
+    """Grant model/runtime hosts only during Harbor's restricted agent phase."""
     if not _supports_auto_restricted_agent_network(
         task_path=task_path,
         environment_config=environment_config,

@@ -17,6 +17,7 @@ from oddish.cli.delivery import delivery_app
 from oddish.cli.experiment import experiment_app
 from oddish.cli.link import link_app
 from oddish.cli.logs import logs
+from oddish.cli.playback import playback_app
 from oddish.cli.ls import ls
 from oddish.cli.publish import publish, unpublish
 from oddish.cli.qa import qa_app
@@ -78,6 +79,7 @@ app.add_typer(delivery_app, name="delivery")
 app.command(name="qa-issues")(qa_issues)
 app.add_typer(experiment_app, name="experiment")
 app.add_typer(link_app, name="link")
+app.add_typer(playback_app, name="playback")
 app.command()(pull)
 app.command()(publish)
 app.command()(unpublish)
