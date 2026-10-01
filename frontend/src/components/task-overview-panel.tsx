@@ -683,7 +683,6 @@ export function TaskOverviewPanel({
             error={executionReviewError}
           />
           {canVote &&
-          !qaActive &&
           verdictReportId &&
           (verdictReview === "accepted" || verdictReview === "rejected") ? (
             <FeedbackControl

@@ -128,8 +128,14 @@ async def validate_feedback_report(
                 detail="report feedback must reference its producing trial",
             )
     elif data.target == "qa_trajectory":
-        payload = (report.harbor_config or {}).get("analysis_payload", {})
-        if subject.id not in payload.get("trial_ids", []):
+        # The trial's stored analysis names its grader; older QA runs may not
+        # carry a well-formed analysis_payload.trial_ids list.
+        analysis = subject.analysis if isinstance(subject.analysis, dict) else {}
+        payload = (report.harbor_config or {}).get("analysis_payload")
+        trial_ids = payload.get("trial_ids") if isinstance(payload, dict) else None
+        if analysis.get("_graded_by") != report.id and (
+            not isinstance(trial_ids, list) or subject.id not in trial_ids
+        ):
             raise HTTPException(
                 status_code=422, detail="report did not analyze this trial"
             )

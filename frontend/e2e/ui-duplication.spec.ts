@@ -305,3 +305,67 @@ for (const mode of ["task", "trial"]) {
     });
   }
 }
+
+test("a newer report fetched by the drawer replaces the page verdict and keeps its full text", async ({
+  page,
+}) => {
+  const fixes = Array.from({ length: 9 }, (_, i) => `Fix ${i + 1}.`);
+  let rerun = false;
+  await page.route("**/api/tasks/task-a/open**", (route) => {
+    const open = openFor(tasks[0], 7);
+    open.task.verdict_status = "success";
+    // The compact page response caps recommendations at eight.
+    open.task.verdict = rerun
+      ? {
+          is_good: false,
+          confidence: "high",
+          reasoning: "The verifier is broken.",
+          recommendations: fixes.slice(0, 8),
+          _graded_by: "task-a-new-qa",
+        }
+      : {
+          is_good: true,
+          confidence: "high",
+          reasoning: "The recorded runs support acceptance.",
+          recommendations: [],
+          _graded_by: "task-a-old-qa",
+        };
+    open.selected_version!.must_fix_count = 0;
+    open.selected_version!.pre_trial_must_fix_count = 0;
+    return route.fulfill({ json: open });
+  });
+  await page.route("**/api/tasks/task-a/panel**", async (route) => {
+    const panel = await (await route.fetch()).json();
+    // Another reviewer reran QA after the page loaded.
+    rerun = true;
+    panel.qa_active = false;
+    panel.task.verdict_status = "success";
+    panel.task.verdict = {
+      is_good: false,
+      confidence: "high",
+      reasoning: "The verifier is broken.",
+      recommendations: fixes,
+      _graded_by: "task-a-new-qa",
+    };
+    panel.version.pre_trial_findings = [];
+    panel.version.retained_findings = [];
+    await route.fulfill({ json: panel });
+  });
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await page.goto("/tasks/task-a");
+  await expect(
+    page.getByText("Verdict accepted", { exact: true })
+  ).toHaveCount(1);
+  await page.getByRole("button", { name: /^task-a-trial / }).click();
+  const drawer = page.locator('[data-slot="resizable-drawer"]');
+  await expect(
+    page.getByText("Verdict accepted", { exact: true })
+  ).toHaveCount(0);
+  await expect(
+    drawer.getByText("Verdict rejected", { exact: true })
+  ).toBeVisible();
+  await expect(drawer.getByText("Fix 9.", { exact: true })).toBeVisible();
+  await expect(
+    drawer.getByRole("link", { name: "View QA run", exact: true })
+  ).toHaveAttribute("href", "/tasks/task-a?trial=task-a-new-qa");
+});

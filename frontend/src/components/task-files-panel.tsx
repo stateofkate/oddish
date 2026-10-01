@@ -156,7 +156,11 @@ interface TaskFilesPanelProps {
   onClose: () => void;
   taskId: string | null;
   task?: Task | null;
-  /** Complete verdict shared with a host that also renders it, such as the task page. */
+  /**
+   * Verdict shared with a host that also renders it, such as the task page.
+   * The drawer shows its own full report when both name the same QA run, and
+   * calls onRetryComplete to refresh the host when they differ.
+   */
   verdictTask?: Task;
   orderedTasks?: Task[] | null;
   taskIndex?: number | null;
@@ -923,7 +927,29 @@ export function TaskFilesPanel({
   const previewIdentity = unstable_serialize(previewRequestKey);
   const loadingFullFile = loadingFullFiles.has(previewIdentity);
 
-  const panelTask = verdictTask ?? panel?.task ?? task;
+  const panelVerdict = panel?.task.verdict ?? null;
+  const panelReportId = panelVerdict?._graded_by ?? null;
+  const sharedReportId = verdictTask?.verdict?._graded_by ?? null;
+  // Without a run id the two verdicts cannot be matched, so the host's wins.
+  const sharesPanelReport =
+    panelReportId != null && panelReportId === sharedReportId;
+  const panelTask = useMemo(
+    () =>
+      verdictTask
+        ? sharesPanelReport
+          ? { ...verdictTask, verdict: panelVerdict }
+          : verdictTask
+        : (panel?.task ?? task),
+    [verdictTask, sharesPanelReport, panelVerdict, panel?.task, task]
+  );
+  // The host's compact verdict is not refreshed once the task is finished, so
+  // a different QA run here (rerun by another reviewer or the CLI) means one
+  // side is stale. Refreshing the host refetches both.
+  const hostReportStale =
+    verdictTask != null && panel != null && panelReportId !== sharedReportId;
+  useEffect(() => {
+    if (hostReportStale) onRetryComplete?.();
+  }, [hostReportStale, panelReportId, onRetryComplete]);
   // An experiment pane shows the version its trials ran; the panel's task
   // fields describe the default, so they carry the shown version along.
   const verdictSource =

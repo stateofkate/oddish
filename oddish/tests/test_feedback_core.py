@@ -269,3 +269,47 @@ async def test_report_feedback_rejects_unrelated_producing_run(mismatch):
             422 if mismatch in {"kind", "evidence"} else 404
         )
         await session.rollback()
+
+
+@pytest.mark.parametrize(
+    "harbor_config",
+    [None, {}, {"analysis_payload": None}, {"analysis_payload": {"trial_ids": None}}],
+)
+async def test_trajectory_vote_accepts_grader_named_by_trial_analysis(harbor_config):
+    if not URL:
+        pytest.skip("ODDISH_DATABASE_URL not set")
+    from oddish.core.feedback import create_task_feedback_core
+    from oddish.db import TrialModel, get_session, init_db
+
+    await init_db()
+    async with get_session() as session:
+        experiment, subject = await _make_trial(session, run=uuid.uuid4().hex[:8])
+        report = TrialModel(
+            id=f"{subject.id}-qa",
+            name="qa",
+            kind="qa",
+            task_id=subject.task_id,
+            experiment_id=experiment.id,
+            agent="codex",
+            provider="openai",
+            queue_key="openai/gpt-5",
+            harbor_config=harbor_config,
+        )
+        session.add(report)
+        subject.analysis = {"classification": "GOOD_FAILURE", "_graded_by": report.id}
+        await session.flush()
+        row = await create_task_feedback_core(
+            session,
+            task_id=subject.task_id,
+            org_id=None,
+            user_id="reviewer-1",
+            data=FeedbackCreate(
+                target="qa_trajectory",
+                target_key="GOOD_FAILURE",
+                vote="agree",
+                trial_id=subject.id,
+                report_trial_id=report.id,
+            ),
+        )
+        assert row.report_trial_id == report.id
+        await session.rollback()

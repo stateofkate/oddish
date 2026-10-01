@@ -92,7 +92,7 @@ test("legacy findings render in priority order with their recorded badges", () =
   const html = renderToStaticMarkup(
     React.createElement(FindingList, { items })
   );
-  const rows = [...html.matchAll(/<summary\b[^>]*>(.*?)<\/summary>/g)].map(
+  const rows = [...html.matchAll(/<header\b[^>]*>(.*?)<\/header>/g)].map(
     (match) => match[1].replace(/<[^>]*>/g, "")
   );
   assert.equal(rows.length, 3);
