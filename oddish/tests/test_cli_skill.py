@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from importlib import resources
 import re
+import subprocess
+import sys
 
 import typer
 from typer.testing import CliRunner
@@ -55,6 +57,13 @@ def test_skill_install_writes_skill_md_under_named_dir(tmp_path):
     assert (dest / "references" / "qa-contract.md").is_file()
     assert (dest / "references" / "cli-contract.md").is_file()
     assert (dest / "references" / "known-contract-traps.md").is_file()
+    assert (dest / "references" / "golden-review.md").is_file()
+    helper = dest / "scripts" / "golden_review.py"
+    # An installed helper must run independently of the repository environment.
+    result = subprocess.run([sys.executable, "-I", str(helper), "--help"],
+                            capture_output=True, text=True, cwd=tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert "collect" in result.stdout and "export" in result.stdout
 
 
 def test_skill_install_detects_existing_skills_dir(tmp_path, monkeypatch):

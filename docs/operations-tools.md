@@ -74,6 +74,35 @@ transaction. Reruns of this tool repair stale counters without replacing tasks.
 
 ## QA evals: goldens and prompt versions
 
+To prepare independently reviewed labels, install the packaged Oddish skill with
+`oddish skill --install --dir <skills-directory>` and follow its
+[golden-review workflow](../oddish/src/oddish/assets/skills/oddish/references/golden-review.md).
+It collects a trial's exact-version task source and recorded agent/grading
+evidence, excluding existing QA judgments from the initial packet. A coding agent
+proposes labels in local `review.json`; a person checks the citations and approves,
+corrects, or leaves each case unresolved. `render` regenerates `review.md` after
+edits. Repeating `collect` preserves saved decisions and adds only new trials.
+
+The installed `scripts/golden_review.py` helper requires Python 3.10+, an Oddish
+CLI supporting `status --versions` and `qa goldens`, the deployment API URL, and
+`ODDISH_API_KEY`. `collect TRIAL --api URL --out DIR` performs read-only evidence
+collection. `export DIR/review.json --out DIR/approved.csv --verify-remote`
+validates approved records, local evidence fingerprints, and the current remote
+trial/version before writing the existing import CSV format. Use a fresh CSV
+filename on each export. Collection and remote verification reject copies naming
+a different original trial because the importer may label that original instead;
+review the original directly. This includes copies whose originals are absent or
+inaccessible. Missing evidence blocks approval; insufficient evidence
+must remain unresolved. These local approval records do not authenticate the
+reviewer. The reference documents evidence limitations and exact import steps.
+
+Preview the CSV with `oddish qa goldens import FILE --api URL --source BATCH
+--review-all --dry-run`; once upload is authorized, omit `--dry-run`. Verify each
+exported trial with `qa goldens list --trial ID --api URL --json`, including
+pre-existing goldens that retain another source batch. Import success does not
+prove the expected label is correct. The existing API cannot atomically reject a
+task-content change between the helper's remote check and the import.
+
 The QA Evals page (`/admin?tab=qa-evals`, for org admins) scores `/qa-evals`
 replays of QA prompt versions against golden cases: human labels stored in
 `qa_golden_cases`, at most one per trial. Only counted goldens score runs:
@@ -100,7 +129,7 @@ or `all`).
 | `oddish qa evals versions [--stage S]`, `diff SHA [--base SHA] [--stage S]` | Prompt versions newest first; a unified diff against `--base` or the previous version with text. SHA may be any unique prefix of a version with recorded text. |
 | `oddish qa evals start (--prompt FILE \| --version SHA) [--trial ID…] [--rerun RUN [--filter GROUP]] [--model M] [--name N] [--stage S] [--yes]` | Replay every counted golden's trial with one prompt, or only picked trials (a subset run, left out of the charts). Asks first, with a cost estimate from past runs. |
 | `oddish qa goldens experiments [--member me\|all\|WHO] [--search TEXT] [--limit N]` | Experiments to label from: yours by default, everyone's, or one member's by email or GitHub handle. |
-| `oddish qa goldens trials (EXPERIMENT \| --review waiting\|stale) [--queue failed\|passed\|labeled\|all]` | The labeling queue: finished solver trials, failed first, with production QA's answer and each one's golden. |
+| `oddish qa goldens trials (EXPERIMENT \| --review waiting\|stale) [--queue failed\|passed\|labeled\|all]` | The labeling queue: finished agent trials, failed first, with production QA's answer and each one's golden. |
 | `oddish qa goldens label TRIAL CLASSIFICATION [--note TEXT]` | Label a trial; the label counts at once. The same label again confirms it. |
 | `oddish qa goldens list [--stage S] [--source S] [--waiting] [--trial ID…]`, `review ID… \| --all-waiting [--source S]`, `retire ID…` | List, review (count, and re-pin the task's content) and retire goldens. `--waiting` and `--all-waiting` take the goldens waiting for review, not stale ones. |
 | `oddish qa goldens import FILE [--source S] [--where COL=VAL…] [--review-where COL=VAL…] [--review-all] [--dry-run]` | Add unreviewed goldens from a CSV/TSV (`source_trial_id` or `trial_id`, and `expected_classification` or `gold_class`) or a `gdm_source_audit_answer_key_v1` JSON answer key (pre-trial). Rows matching an existing golden (a copied trial's is found under its original) are only reviewed when chosen and waiting, so reruns are safe; rows disagreeing with one are refused (exit 1). |

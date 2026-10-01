@@ -1,6 +1,6 @@
 ---
 name: oddish
-description: Run, inspect, compare, retry, and diagnose Harbor evaluation tasks through the Oddish CLI. Use for Oddish task versions, experiments, agent trials, nop/oracle baseline gates, task-level QA verdicts, trajectory summaries, logs, artifacts, and preflight checks. Do not use for a plain local Harbor run that will not be submitted to Oddish.
+description: Run, inspect, compare, retry, and diagnose Harbor evaluation tasks through the Oddish CLI, or prepare human-reviewed golden QA labels from trial evidence. Use for Oddish task versions, experiments, agent trials, nop/oracle baseline gates, task-level QA verdicts, trajectory summaries, logs, artifacts, and preflight checks. Do not use for a plain local Harbor run that will not be submitted to Oddish.
 ---
 
 # Oddish evaluations
@@ -143,6 +143,9 @@ not authorize a later mutation.
 
 ## Load the contract you need
 
+- Read [references/golden-review.md](references/golden-review.md) to audit trials
+  independently, prepare expected labels, resume human review, or export approved
+  cases for QA Evals. An agent proposal never constitutes human approval.
 - Read [references/domain-contract.md](references/domain-contract.md) before
   comparing versions, counting trials, interpreting statuses, using baselines,
   or retrying work.
