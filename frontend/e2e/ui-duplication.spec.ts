@@ -41,20 +41,33 @@ test("single group statistics only collapse when their trial scope matches", asy
   }
 });
 
-test("drawer keeps one verdict count and generation control, restoring the page control on close", async ({
+test("page keeps its verdict while the drawer shows its own verdict and control", async ({
   page,
 }) => {
   await page.goto("/tasks/task-a?version=7&drawer=task&taskPane=overview");
   await expect(
     page.getByRole("heading", { name: "Findings", exact: true })
   ).toBeVisible();
+  await expect(page.getByText(/^(Verdict rejected: )?1 Must fix$/)).toHaveCount(
+    2
+  );
   await expect(
-    page.getByText(/^(Verdict rejected: )?1 Must fix$/)
+    page.getByRole("button", { name: /Generate QA verdict for v7/i })
+  ).toHaveCount(2);
+  const drawer = page.locator('[data-slot="resizable-drawer"]');
+  await expect(
+    drawer.getByText(/^(Verdict rejected: )?1 Must fix$/)
   ).toHaveCount(1);
+  await expect(
+    drawer.getByRole("button", { name: /Generate QA verdict for v7/i })
+  ).toHaveCount(1);
+  await drawer.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(page.getByText(/^(Verdict rejected: )?1 Must fix$/)).toHaveCount(
+    1
+  );
   await expect(
     page.getByRole("button", { name: /Generate QA verdict for v7/i })
   ).toHaveCount(1);
-  await page.getByRole("button", { name: "Close", exact: true }).click();
   await expect(
     page.getByRole("button", {
       name: "Generate QA verdict for v7",
@@ -143,4 +156,152 @@ for (const id of ["unreviewed", "review-failed"]) {
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(action).toBeVisible();
   });
+}
+
+test("opening a trial drawer preserves acceptance before and after the panel response", async ({
+  page,
+}) => {
+  const reasoning = "The recorded runs support acceptance.";
+  await page.route("**/api/tasks/task-a/open**", (route) => {
+    const open = openFor(tasks[0], 7);
+    open.task.verdict = {
+      is_good: true,
+      recommendations: [],
+      confidence: "high",
+      reasoning,
+      _graded_by: "task-a-published-qa",
+    };
+    open.selected_version!.must_fix_count = 0;
+    open.selected_version!.pre_trial_must_fix_count = 0;
+    return route.fulfill({ json: open });
+  });
+  let releasePanel!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    releasePanel = resolve;
+  });
+  await page.route("**/api/tasks/task-a/panel**", async (route) => {
+    const panel = await (await route.fetch()).json();
+    panel.qa_active = true;
+    panel.can_run_qa = false;
+    panel.task.verdict_status = "queued";
+    panel.task.verdict = { ...panel.task.verdict, _graded_by: "task-a-other-qa" };
+    panel.version.pre_trial_findings = [];
+    panel.version.retained_findings = [];
+    await gate;
+    await route.fulfill({ json: panel });
+  });
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await page.goto("/tasks/task-a");
+  const accepted = page.getByText("Verdict accepted", { exact: true });
+  const explanation = page.getByText(reasoning, { exact: true });
+  await expect(accepted).toHaveCount(1);
+  await expect(explanation).toHaveCount(1);
+  await page.getByRole("button", { name: /^task-a-trial / }).click();
+  const drawer = page.locator('[data-slot="resizable-drawer"]');
+  const panelResponse = page.waitForResponse((response) =>
+    response.url().includes("/api/tasks/task-a/panel")
+  );
+  try {
+    await expect(drawer).toBeVisible();
+    await expect(accepted).toHaveCount(2);
+    await expect(explanation).toHaveCount(2);
+    await expect(
+      drawer.getByRole("link", { name: "View QA run", exact: true })
+    ).toHaveAttribute("href", "/tasks/task-a?trial=task-a-published-qa");
+  } finally {
+    releasePanel();
+  }
+  await panelResponse;
+  await expect(
+    drawer.getByRole("button", {
+      name: "Generate QA verdict for v7",
+      exact: true,
+    })
+  ).toBeDisabled();
+  await expect(accepted).toHaveCount(2);
+  await expect(explanation).toHaveCount(2);
+  await expect(
+    drawer.getByRole("link", { name: "View QA run", exact: true })
+  ).toHaveAttribute("href", "/tasks/task-a?trial=task-a-published-qa");
+  await expect(page.getByText("Verdict queued", { exact: true })).toHaveCount(
+    0
+  );
+  await drawer.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(drawer).toHaveCount(0);
+  await expect(accepted).toHaveCount(1);
+  await expect(explanation).toHaveCount(1);
+});
+
+for (const mode of ["task", "trial"]) {
+  for (const review of ["verdict", "audit"]) {
+    test(`queuing ${review} from the ${mode} pane refreshes the shared page verdict`, async ({
+      page,
+    }) => {
+      let queued = false;
+      await page.route("**/api/tasks/task-a/open**", (route) => {
+        const open = openFor(tasks[0], 7);
+        open.task.verdict_status = queued
+          ? review === "verdict"
+            ? "queued"
+            : null
+          : "success";
+        open.task.verdict = queued
+          ? null
+          : {
+              is_good: true,
+              confidence: "high",
+              recommendations: [],
+              reasoning: "The recorded runs support acceptance.",
+            };
+        open.selected_version!.must_fix_count = 0;
+        open.selected_version!.pre_trial_must_fix_count = 0;
+        return route.fulfill({ json: open });
+      });
+      await page.route("**/api/tasks/task-a/panel**", async (route) => {
+        const panel = await (await route.fetch()).json();
+        panel.qa_active = queued;
+        if (queued && review === "audit")
+          panel.version.pre_trial_status = "queued";
+        panel.can_run_qa = !queued;
+        panel.version.pre_trial_findings = [];
+        panel.version.retained_findings = [];
+        await route.fulfill({ json: panel });
+      });
+      await page.route(
+        `**/api/tasks/task-a/qa/${review === "verdict" ? "retry" : "pre-trial"}`,
+        (route) => {
+          queued = true;
+          return route.fulfill({ json: { status: "queued" } });
+        }
+      );
+      await page.setViewportSize({ width: 1600, height: 900 });
+      await page.goto(
+        mode === "task"
+          ? "/tasks/task-a?drawer=task&taskPane=overview"
+          : "/tasks/task-a?trial=task-a-trial&taskPane=overview"
+      );
+      const drawer = page.locator('[data-slot="resizable-drawer"]');
+      await expect(
+        page.getByText("Verdict accepted", { exact: true })
+      ).toHaveCount(2);
+      await drawer
+        .getByRole("button", {
+          name:
+            review === "verdict"
+              ? "Generate QA verdict for v7"
+              : "Run pre-trial audit v7",
+          exact: true,
+        })
+        .click();
+      await expect(
+        page.getByText(
+          review === "verdict" ? "Verdict queued" : "No verdict yet",
+          { exact: true }
+        )
+      ).toHaveCount(2);
+      await expect(
+        page.getByText("Verdict accepted", { exact: true })
+      ).toHaveCount(0);
+    });
+  }
 }

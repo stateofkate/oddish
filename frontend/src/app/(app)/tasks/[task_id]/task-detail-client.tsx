@@ -58,7 +58,6 @@ import type {
 } from "@/lib/types";
 import { useTaskOpenReader } from "@/lib/use-task-open-reader";
 import { markOpenIntent } from "@/lib/open-intent";
-import { taskReviewStatus } from "@/lib/review";
 import { useOpenLatencySpan } from "@/lib/use-open-latency-span";
 import { preloadTrial, useTrial } from "@/lib/use-trial";
 import {
@@ -1161,14 +1160,7 @@ export function TaskDetailClient({
           }
         />
 
-        {!isBrowseSnapshot &&
-        !(
-          drawer &&
-          activeTaskPane === "overview" &&
-          (drawer.mode === "task" || drawerShowTask) &&
-          taskReviewStatus(task) !== "queued" &&
-          !isRunningJudge
-        ) ? (
+        {!isBrowseSnapshot ? (
           <TaskVerdictBadge
             task={task}
             variant="summary"
@@ -1447,6 +1439,8 @@ export function TaskDetailClient({
                 // Scopes the overview's trial aggregation; this pane renders
                 // no header, so none of the task-driven header UI appears.
                 task={task}
+                verdictTask={task}
+                onRetryComplete={revalidateReaderResources}
                 staticChecksTaskId={task.id}
                 onOpenTrial={handleOpenTrialFromOverview}
                 filesUrl={`/api/tasks/${task.id}/files`}
@@ -1468,6 +1462,7 @@ export function TaskDetailClient({
                 onActivePaneChange={selectTaskPane}
                 taskId={task.id}
                 task={task}
+                verdictTask={task}
                 loadFilesLazily
                 taskVersion={selectedVersion?.version}
                 onOpenTrial={handleOpenTrialFromOverview}

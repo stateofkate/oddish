@@ -430,17 +430,18 @@ test.describe("real components with local fixture API", () => {
   test("an older-version experiment shows the verdict kept for its version", async ({
     page,
   }) => {
-    // The reader returns v4's own verdict, not the task's newest (v7's).
+    // Experiment rows carry a summary; the selected-version panel carries
+    // the complete verdict and its QA provenance.
     await page.route(/\/api\/tasks\/task-a\/panel(?:\?|$)/, async (route) => {
       const panel = await (await route.fetch()).json();
+      panel.task.review_version_matches = true;
       panel.task.verdict = {
-        verdict: "accept",
         is_good: true,
         confidence: "high",
         reasoning: "v4's baselines and agent runs support the task.",
+        recommendations: ["Keep the v4 regression checks."],
+        _graded_by: "task-a-v4-qa",
       };
-      panel.task.verdict_status = "success";
-      panel.task.review_version_matches = true;
       panel.version.pre_trial_findings = [];
       panel.version.retained_findings = [];
       await route.fulfill({ json: panel });
@@ -456,6 +457,12 @@ test.describe("real components with local fixture API", () => {
       row.getByText("Verdict accepted", { exact: true })
     ).toBeVisible();
     const drawer = page.locator("[data-slot=resizable-drawer]");
+    await expect(
+      drawer.getByText("Keep the v4 regression checks.", { exact: true })
+    ).toBeVisible();
+    await expect(
+      drawer.getByRole("link", { name: "View QA run", exact: true })
+    ).toHaveAttribute("href", "/tasks/task-a?trial=task-a-v4-qa");
     await expect(
       drawer.getByText("Verdict accepted", { exact: true })
     ).toBeVisible();
@@ -1560,10 +1567,14 @@ test("overview links the audit and QA runs stored outside the experiment", async
   page,
 }) => {
   test.skip(process.env.E2E_REVIEW_FIXTURES !== "1");
+  await page.route(/\/api\/tasks\/task-a\/open(?:\?|$)/, async (route) => {
+    const open = await (await route.fetch()).json();
+    open.task.verdict = { ...open.task.verdict, _graded_by: "task-a-qa" };
+    await route.fulfill({ json: open });
+  });
   await page.route(/\/api\/tasks\/task-a\/panel(?:\?|$)/, async (route) => {
     const data = await (await route.fetch()).json();
     data.version.pre_trial_trial_id = "task-a-audit";
-    data.task.verdict = { ...data.task.verdict, _graded_by: "task-a-qa" };
     await route.fulfill({ json: data });
   });
   await page.goto("/tasks/task-a?version=7&drawer=task&taskPane=overview");

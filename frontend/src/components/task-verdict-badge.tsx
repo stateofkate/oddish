@@ -28,11 +28,10 @@ type VerdictPresentation = {
 function presentVerdict(
   task: Task,
   iconSizeClass: string,
-  qaActive: boolean,
   mustFixCount = task.must_fix_count ?? 0
 ): VerdictPresentation {
   const verdict = task.verdict ?? null;
-  const review = qaActive ? "queued" : taskReviewStatus(task);
+  const review = taskReviewStatus(task);
   const pending = review === "queued";
   const failed = review === "failed";
   const isGood =
@@ -107,7 +106,6 @@ export function TaskVerdictBadge({
   onRunJudge,
   onCancelJudge,
   isRunning,
-  qaActive = false,
   isCancelling,
   error,
   action,
@@ -120,7 +118,6 @@ export function TaskVerdictBadge({
   onRunJudge?: () => void;
   onCancelJudge?: () => void;
   isRunning?: boolean;
-  qaActive?: boolean;
   isCancelling?: boolean;
   error?: string | null;
   action?: ReactNode;
@@ -129,14 +126,13 @@ export function TaskVerdictBadge({
 }) {
   const hasAny =
     mustFixCount > 0 ||
-    qaActive ||
     Boolean(task.run_analysis) ||
     Boolean(task.verdict_status) ||
     Boolean(task.verdict);
   if (!hasAny && !onRunJudge && !action) return null;
 
   const iconSize = variant === "card" ? "h-5 w-5 mt-0.5" : "h-4 w-4";
-  const p = presentVerdict(task, iconSize, qaActive, mustFixCount);
+  const p = presentVerdict(task, iconSize, mustFixCount);
   const shownDetail =
     mustFixCount > 0 && (variant === "summary" || p.isGood === true)
       ? null

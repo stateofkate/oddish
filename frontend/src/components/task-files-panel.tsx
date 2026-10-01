@@ -156,6 +156,8 @@ interface TaskFilesPanelProps {
   onClose: () => void;
   taskId: string | null;
   task?: Task | null;
+  /** Complete verdict shared with a host that also renders it, such as the task page. */
+  verdictTask?: Task;
   orderedTasks?: Task[] | null;
   taskIndex?: number | null;
   onNavigate?: (task: Task, taskIndex: number) => void;
@@ -465,6 +467,7 @@ export function TaskFilesPanel({
   onClose,
   taskId,
   task: taskSnapshot,
+  verdictTask,
   orderedTasks,
   taskIndex,
   onNavigate,
@@ -920,7 +923,7 @@ export function TaskFilesPanel({
   const previewIdentity = unstable_serialize(previewRequestKey);
   const loadingFullFile = loadingFullFiles.has(previewIdentity);
 
-  const panelTask = panel?.task ?? task;
+  const panelTask = verdictTask ?? panel?.task ?? task;
   // An experiment pane shows the version its trials ran; the panel's task
   // fields describe the default, so they carry the shown version along.
   const verdictSource =
@@ -1189,6 +1192,7 @@ export function TaskFilesPanel({
           data.detail || data.error || "Failed to queue pre-trial audit"
         );
       }
+      onRetryComplete?.([effectiveChecksTaskId]);
       await mutateChecks();
     } catch (e) {
       setChecksQueueError(e instanceof Error ? e.message : String(e));
@@ -1201,6 +1205,7 @@ export function TaskFilesPanel({
     panel,
     checksRerunning,
     mutateChecks,
+    onRetryComplete,
     readOnly,
   ]);
 

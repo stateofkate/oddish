@@ -2263,8 +2263,9 @@ class TaskOpenVersionRef(BaseModel):
 
 
 class TaskOpenVerdict(BaseModel):
-    """Presentation-only verdict fields needed by the task page."""
+    """Compact verdict presentation and its originating QA trial."""
 
+    graded_by: str | None = Field(default=None, alias="_graded_by")
     is_good: bool | None = None
     confidence: str | None = None
     primary_issue: str | None = None

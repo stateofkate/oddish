@@ -55,7 +55,10 @@ export function FixtureExperiment() {
           // Without v4's own verdict, the task's is v7's rejection, which
           // says nothing about these v4 trials.
           verdict: reviewedV4
-            ? { is_good: true, confidence: "high" }
+            ? {
+                is_good: true,
+                confidence: "high",
+              }
             : {
                 is_good: false,
                 confidence: "low",

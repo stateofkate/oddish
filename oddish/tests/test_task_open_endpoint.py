@@ -61,6 +61,7 @@ def _identity(
     status="running",
 ):
     verdict = {
+        "_graded_by": "qa-published-v2",
         "is_good": False,
         "confidence": "high",
         "primary_issue": "Verifier accepts an empty result",
@@ -279,6 +280,8 @@ def test_task_open_is_org_scoped_exact_compact_and_bounded():
     assert response.task.run_analysis is True
     assert response.task.verdict_status == "failed"
     assert response.task.verdict is not None
+    verdict_payload = response.model_dump(mode="json", by_alias=True)["task"]["verdict"]
+    assert verdict_payload["_graded_by"] == "qa-published-v2"
     assert response.task.verdict.is_good is False
     assert response.task.verdict.primary_issue == "Verifier accepts an empty result"
     assert response.task.verdict_error == "judge timed out"
@@ -327,6 +330,23 @@ def test_task_open_is_org_scoped_exact_compact_and_bounded():
         '"trial_classifications"',
     ):
         assert excluded not in payload
+
+
+@pytest.mark.parametrize("version", [1, 2])
+@pytest.mark.parametrize("qa_trial_id", [None, "qa-for-selected-version"])
+def test_task_open_keeps_verdict_provenance_with_selected_version(version, qa_trial_id):
+    identity = _identity(selected_version_id=f"task-1-v{version}", selected_version=version)
+    identity["verdict"]["_graded_by"] = qa_trial_id
+    _, response = _open(
+        identity,
+        _aggregate([], [], active_qa=_active_qa()),
+        version_id=f"task-1-v{version}",
+    )
+    payload = response.model_dump(mode="json", by_alias=True)
+    assert payload["task"]["verdict"]["_graded_by"] == qa_trial_id
+    assert "graded_by" not in payload["task"]["verdict"]
+    assert payload["selected_version"]["version"] == version
+    assert payload["active_qa_trial"]["id"] != qa_trial_id
 
 
 def test_task_open_returns_active_qa_outside_the_twenty_row_preview():

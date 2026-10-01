@@ -966,7 +966,8 @@ experiments, and exact agent/model summaries use the requested version. Its
 experiment list is derived from that version's live, non-superseded,
 non-combine trial population, matching `/detail`. Pre-trial audit metadata stays
 on `/detail` and is not serialized with the bounded version summary. The
-response also carries compact QA verdict presentation/control fields and one
+response also carries compact QA verdict presentation/control fields, including
+`verdict._graded_by` (the QA trial that produced the selected verdict), and one
 `active_qa_trial` lightweight ref for the task's live, non-superseded QA run.
 That ref is task-scoped rather than selected-version-scoped. Every lightweight
 trial ref carries `kind` and `has_trajectory`, so a drawer can choose its

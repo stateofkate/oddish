@@ -678,7 +678,6 @@ export function TaskOverviewPanel({
           <TaskVerdictBadge
             task={verdictTask}
             variant="inline"
-            qaActive={qaActive}
             mustFixCount={mustFixCount}
             action={readOnly ? undefined : executionReviewAction}
             error={executionReviewError}

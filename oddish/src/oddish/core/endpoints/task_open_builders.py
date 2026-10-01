@@ -61,6 +61,7 @@ def compact_verdict(value: Any) -> TaskOpenVerdict | None:
         ]
     is_good = value.get("is_good")
     return TaskOpenVerdict(
+        _graded_by=bounded_text(value.get("_graded_by"), 160),
         is_good=is_good if isinstance(is_good, bool) else None,
         confidence=bounded_text(value.get("confidence"), 32),
         primary_issue=bounded_text(value.get("primary_issue"), _VERDICT_TEXT_LIMIT),

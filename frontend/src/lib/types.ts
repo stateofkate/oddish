@@ -237,7 +237,7 @@ export interface TaskVerdict {
   success_count?: number;
   harness_error_count?: number;
   /** QA trial that produced this verdict. */
-  _graded_by?: string;
+  _graded_by?: string | null;
 }
 
 export interface Task {
@@ -574,6 +574,8 @@ export interface TaskOpenVersionRef {
 }
 
 export interface TaskOpenVerdict {
+  /** QA trial that produced this selected-version verdict. */
+  _graded_by?: string | null;
   is_good: boolean | null;
   confidence?: string | null;
   primary_issue?: string | null;

@@ -118,7 +118,6 @@ const badge: {
   present?: (
     task: Task,
     iconSize: string,
-    active: boolean,
     count?: number
   ) => { title: string; isGood: boolean | null };
 } = {};
@@ -167,7 +166,7 @@ for (const [label, is_good, expected] of [
       verdict: { verdict: label, is_good, confidence: null },
     };
     assert.equal(review.taskReviewStatus(reviewed), expected);
-    const presented = badge.present!(reviewed, "", false);
+    const presented = badge.present!(reviewed, "");
     assert.equal(presented.title, LABELS[expected]);
     assert.equal(presented.isGood, expected === "accepted");
     for (const [override, state] of [
@@ -176,7 +175,7 @@ for (const [label, is_good, expected] of [
       [{ verdict_status: "queued" }, "queued"],
       [{ verdict_status: "running" }, "queued"],
     ] as const) {
-      const inactive = badge.present!({ ...reviewed, ...override }, "", false);
+      const inactive = badge.present!({ ...reviewed, ...override }, "");
       assert.equal(inactive.title, LABELS[state]);
       assert.equal(inactive.isGood, null);
       assert.equal(review.taskReviewStatus({ ...reviewed, ...override }), state);
@@ -220,7 +219,7 @@ test("a task with no verdict of its own reads No verdict yet, whatever the cause
   ] as Partial<Task>[]) {
     const unreviewed = { ...task, ...override };
     assert.equal(review.taskReviewStatus(unreviewed), "no_verdict");
-    assert.equal(badge.present!(unreviewed, "", false).title, "No verdict yet");
+    assert.equal(badge.present!(unreviewed, "").title, "No verdict yet");
     const html = renderToStaticMarkup(
       React.createElement(exports.Chip, { task: unreviewed, ungradedSettled: 0 })
     );
@@ -264,8 +263,7 @@ test("QA verdict failure retains its cause and remains distinct from rejection",
   const reason = "Evidence could not be read.";
   const presented = badge.present!(
     { ...task, verdict_status: "failed", verdict_error: reason },
-    "",
-    false
+    ""
   );
   assert.equal(presented.title, "Verdict failed");
   assert.equal(presented.detail, reason);
@@ -277,7 +275,7 @@ test("an insufficient-evidence error displays insufficient trials", () => {
     "Insufficient evidence: no eligible solver trials for the current task version.";
   const noEvidence = { ...task, verdict_status: "failed", verdict_error: reason };
   assert.equal(review.taskReviewStatus(noEvidence), "insufficient_trials");
-  const presented = badge.present!(noEvidence, "", false);
+  const presented = badge.present!(noEvidence, "");
   assert.equal(presented.title, "No verdict: insufficient trials");
   assert.equal(presented.detail, reason);
   assert.equal(presented.isGood, null);
@@ -632,7 +630,6 @@ test("selected version without findings does not reuse another version's count",
       verdict: { verdict: "reject", is_good: false, confidence: null },
     },
     "",
-    false,
     0
   );
   assert.equal(presented.title, LABELS.no_verdict);
@@ -759,4 +756,19 @@ test("the new version badge names both versions and links to the default", () =>
       ""
     );
   }
+});
+test("an ongoing source audit preserves the published verdict in both displays", () => {
+  const reviewed = {
+    ...task,
+    verdict: { verdict: "accept", is_good: true, confidence: null, reasoning: "Six runs support acceptance." },
+    trials: [{ id: "attack", kind: "audit", status: "running", analysis_status: "queued" } as Trial],
+  };
+  for (const variant of ["summary", "inline"] as const) {
+    const html = renderToStaticMarkup(React.createElement(badge.Component!, { task: reviewed, variant }));
+    assert.ok(html.includes("Verdict accepted"), html);
+    assert.ok(html.includes("Six runs support acceptance."), html);
+    assert.ok(!html.includes("Verdict queued"), html);
+  }
+  const qa = { ...reviewed, verdict_status: "queued" };
+  assert.equal(badge.present!(qa, "").title, "Verdict queued");
 });
