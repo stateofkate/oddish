@@ -64,12 +64,12 @@ jobs:
       # CPU tasks default to Modal; Numinous remains an explicit opt-in.
       ODDISH_NUMINOUS_ENABLED: "0"
       # oddish-mon (V1) executes trials from inside the sandbox. Production
-      # ramps by sample: 5 percent of eligible trials (by trial-id bucket) run
+      # ramps by sample: 20 percent of eligible trials (by trial-id bucket) run
       # on the monitor for their first attempt and fall back to the worker after
       # one failure; every other trial runs on the worker as before. Ramp by
-      # editing this line (10, 50, 100); restore the prior sample: "1";
+      # editing this line (50, 100); restore the prior sample: "5";
       # disable monitor routing: "0". At 100, retries also stay on the monitor.
-      ODDISH_MONITOR_EXECUTION_SAMPLE_PERCENT: "5"
+      ODDISH_MONITOR_EXECUTION_SAMPLE_PERCENT: "20"
       ODDISH_MONITOR_EXECUTION_FALLBACK_AFTER_ATTEMPTS: "1"
       # Route 40% of eligible new CPU submissions to Archil, otherwise Modal.
       # Request-hash groups keep a submission's trials together. GPU/TPU,
