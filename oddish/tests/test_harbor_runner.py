@@ -6019,6 +6019,7 @@ def test_grok_build_environment_hosts_span_install_and_model(
 
     assert "x.ai" in hosts  # install.sh + binary
     assert "storage.googleapis.com" in hosts  # install.sh GCS fallback
+    assert "deb.debian.org" in hosts  # apt-get install curl on slim images
     assert transport_host in hosts
     assert len(hosts) == len(set(hosts))
 

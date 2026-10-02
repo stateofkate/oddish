@@ -254,6 +254,11 @@ ANTIGRAVITY_RUNTIME_HOSTS: tuple[str, ...] = (
 GROK_BUILD_INSTALL_HOSTS: tuple[str, ...] = (
     "x.ai",  # install.sh, channel manifest, binary
     "storage.googleapis.com",  # grok-build-public-artifacts fallback
+    # ``install`` first runs ``apt-get install curl bash``; slim images
+    # without curl need their distro mirrors or the install exits 100.
+    "deb.debian.org",  # Debian packages + debian-security (trixie/bookworm)
+    "archive.ubuntu.com",  # Ubuntu packages
+    "security.ubuntu.com",  # Ubuntu security pocket
 )
 _AGENT_RUNTIME_HOSTS: dict[str, tuple[str, ...]] = {
     "tbh": _TBH_RUNTIME_HOSTS,
