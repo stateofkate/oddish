@@ -313,6 +313,7 @@ test("public deep link resolves a trial outside the streamed results", async ({
   );
   await mockResults(page, token, [
     task({ id: "task-1", name: "First loaded task" }),
+    task({ id: "task-2", name: "Second loaded task" }),
   ]);
   await page.route(`**/api/public/experiments/${token}/focus?*`, (route) => {
     focusRequests += 1;
@@ -341,6 +342,8 @@ test("public deep link resolves a trial outside the streamed results", async ({
   });
 
   await expect.poll(() => focusRequests).toBe(1);
+  await expect(page.getByRole("button", { name: "Copy task name Task one hundred one" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Next task", exact: true })).toHaveCount(0);
   await expect(page).toHaveURL(/task=task-101/);
   await expect(page).not.toHaveURL(/trial=/);
   await expect(page.getByText("$12.34", { exact: true })).toBeVisible();

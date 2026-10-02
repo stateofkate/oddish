@@ -380,6 +380,8 @@ High-level flow:
    tokens/cost onto the trial row (`UPDATE … WHERE finished_at IS NULL`, so
    inflight quota reservations only tighten), and appends transcript events to
    `trial_events` (PK `(trial_id, attempt, seq)`, capped at 5000 events).
+   Codex connection/retry errors, including completed error items, are emitted
+   as summary events even before the first assistant message or tool call.
    `GET /trials/{id}/live` serves them with an `(attempt, after_seq)` cursor to
    `oddish logs [--follow]` and the dashboard Live tab. Events are purged when
    the trial goes terminal (S3 stays the permanent record); a 24h TTL sweep in
@@ -1856,8 +1858,11 @@ Keep these routing rules in sync with `oddish/src/oddish/config.py` and
   server-side web tools. This does not widen a restricted environment baseline:
   legacy `allow_internet=false` still blocks agent installation unless its
   dependencies are already available or explicitly allowed. Archil applies the same host injection to Compose tasks because its VM
-  enforces egress. Other custom Compose tasks use the separate Daytona-only
-  restricted-network profile.
+  enforces egress. Docker Compose tasks, including those executed as Docker by
+  the Modal monitor, also receive agent-phase model/runtime hosts: Harbor routes
+  their services through its filtered network namespace. The separate verifier
+  retains its own network policy. Other custom Compose tasks use the separate
+  Daytona-only restricted-network profile.
 - Kubernetes task charts that enforce their own runtime egress boundary can opt
   into Oddish's model-route bridge with a chart-root
   `.oddish-agent-egress-hosts` marker containing exactly
@@ -2844,6 +2849,67 @@ attach response bodies, request payloads, credentials, or SQL parameter values.
 ---
 
 ## `frontend/` — Next.js Dashboard
+
+Robot playback. A task verifier may publish `verifier/artifacts/playback.json`
+(version 2 only: `start_time`, `observations [{id, time, image}]` and `actions`
+linking input and result observations). References are
+plain sibling file names. After artifacts reach storage, `settle_trial_attempt`
+prepares playback for both worker and hosted monitor completion, before opening
+the result transaction. CLI import completion uses the same
+`oddish.core.playback.index_stored_trial`: it reads
+every referenced object directly, attributes each observation to the tool call
+that returned it (matching ID, time and image name, then `source_call_id`;
+conflicts stay null), and writes `_oddish/playback-index/<revision>.json`; a
+rebuild never overwrites the index a published descriptor names.
+Tool results may be direct observation JSON or Codex code-mode text blocks
+containing an `exec_command` envelope; only its JSON `output` is unwrapped.
+Collected copies from Harbor's `artifacts/manifest.json` become image aliases only when
+their bytes match. `trials.result._playback` holds `index_status` (`ready`,
+`absent`, `invalid`), `index_path`, `index_revision` and a stable `index_error`;
+`TrialModel.playback` projects only that fragment into list responses. Index
+failures never change a score, task metrics cannot set the field, and a result
+for a replaced attempt is discarded.
+
+`POST /trials/{trial_id}/playback/rebuild` prepares a completed trial from its
+stored files. Hosted access requires TASKS scope and the trial's organization;
+the standalone server exposes the same core operation. It publishes `_playback`
+only if the attempt, storage prefix and replacement identity still match.
+`oddish playback rebuild TRIAL_ID --json` calls this endpoint; ordinary trial
+status displays preparation state. No agent is run and no score is changed.
+Missing index status means unchecked; `absent` is a completed negative check.
+The drawer offers no preparation button; the CLI repairs a trial. The detail ETag
+includes playback metadata. The index, recording, outcome and observation-image
+requests include the index revision in their URLs, so repaired playback replaces
+cached older bytes. An index download failure offers a read-only retry through
+the existing SWR request; it does not rebuild the stored index.
+
+Trial drawers keep Summary, Live (while running), Files, Trajectory and
+Artifacts for every trial. Only a descriptor whose `index_status` is `ready` or
+`invalid` adds a Scene tab and the goal/final-checks card on Summary, and only
+then does `useRunPlayback` fetch the index. Coding-agent trials (`absent` or no
+descriptor) must render exactly as before playback existed; #1999 replaced
+every drawer with Overview/Run tabs and was reverted for hiding Trajectory.
+Scene caption links push `?tab=trajectory#step-N`, which `TrajectoryViewer`
+scrolls to on mount.
+
+`RerunRenderer` (Rerun 0.38.1; recorder and viewer versions must match) creates
+a viewer each time the Scene tab opens, keyed by trial attempt and index
+revision, and unmounts it when another tab is chosen. `PlaybackResources`
+downloads the recording and decodes the first image while the viewer module
+loads. Seeks never recreate the viewer. One animation loop drives simulation time (0.25×–2×); `ObservationImages`
+keeps eight decoded frames and prefetches two; a seek commits time, image and
+caption together without relying on Rerun time-update callbacks, which can arrive
+out of order. A failed decode keeps the last frame with Frame
+unavailable. Recordings whose manifest sets `viewer_layout: "embedded_scene"`
+show the agent's JPGs beside the embedded scene-only layout under a fixed
+header that blocks layout editing; other recordings keep their own layout.
+Raw `.rrd` files in Files explicitly enable native top and time panels, even
+when their embedded layout hides them.
+
+The worker records `phase_timing.agent_execution` at agent start/end, and
+`/trials/{id}/live` returns it as `agent_timing`; `AgentElapsedTime` ticks
+locally. Browser fixtures come from `frontend/e2e/fixtures/generate-robot-recording.py`;
+`robot-playback-index.json` is the index the Python tests build from them.
 
 Delivery create/add requests accept up to 5,000 task IDs or names, matching the
 browser selection limit. Each request validates the entire set and inserts its

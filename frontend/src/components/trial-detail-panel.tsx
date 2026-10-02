@@ -43,6 +43,7 @@ import {
   ExternalLink,
   Route,
   Package,
+  Play,
   Trash2,
 } from "lucide-react";
 import { cn, encodeExperimentRouteParam, urlWithSearch } from "@/lib/utils";
@@ -113,6 +114,7 @@ import {
 } from "@/lib/use-trial";
 import { embeddedCtrfSummary } from "@/lib/verifier-results";
 import { fetcher } from "@/lib/api";
+import { useRunPlayback } from "@/lib/use-run-playback";
 
 const TaskFilesPanel = dynamic(
   () =>
@@ -131,6 +133,19 @@ const LiveTranscriptPanel = dynamic(
   {
     ssr: false,
     loading: () => <DrawerPanelLoading label="Loading live transcript..." />,
+  }
+);
+
+const RunOutcome = dynamic(
+  () => import("@/components/run-playback").then((mod) => mod.RunOutcome),
+  { ssr: false }
+);
+
+const RunPlayback = dynamic(
+  () => import("@/components/run-playback").then((mod) => mod.RunPlayback),
+  {
+    ssr: false,
+    loading: () => <DrawerPanelLoading label="Loading scene..." />,
   }
 );
 
@@ -839,6 +854,17 @@ export function TrialDetailPanel({
   const actionsReady = !loadTrialDetail || canonicalTrial !== null;
   const trial = canonicalTrial ?? selectedTrial;
   const verifierSummary = embeddedCtrfSummary(trial?.result);
+  // Only trials whose verifier published a robot playback manifest get the
+  // Scene tab. Coding-agent trials have no descriptor or an ``absent`` one,
+  // and failures before the manifest was read are ``invalid`` with no path.
+  const hasPlayback =
+    trial?.playback?.index_status === "ready" ||
+    (trial?.playback?.index_status === "invalid" &&
+      !!trial.playback.manifest_path);
+  const playback = useRunPlayback(
+    isOpen && hasPlayback && trial ? `${apiBaseUrl}/trials/${trial.id}/files` : null,
+    trial?.playback
+  );
 
   // QA votes require authenticated routes and an experiment anchor. Public
   // share drawers use a different apiBaseUrl, so they do not render controls.
@@ -857,7 +883,7 @@ export function TrialDetailPanel({
   }
 
   const validTabs = useMemo(
-    () => new Set(["summary", "live", "files", "trajectory", "artifacts"]),
+    () => new Set(["summary", "live", "scene", "files", "trajectory", "artifacts"]),
     []
   );
 
@@ -1223,7 +1249,21 @@ export function TrialDetailPanel({
     !readOnly &&
     (isWorkerOwnedTrialStatus(trial.status) || trial.status === "retrying");
   const effectiveTab =
-    activeTab === "live" && !showLive ? "summary" : activeTab;
+    (activeTab === "live" && !showLive) || (activeTab === "scene" && !hasPlayback)
+      ? "summary"
+      : activeTab;
+  // Scene captions link each agent observation to the trajectory step that
+  // returned it; TrajectoryViewer scrolls to the ``#step-N`` hash on mount.
+  const traceHref = (step: number, _observationId: string) => {
+    const params = new URLSearchParams(window.location.search);
+    params.set("trial", trial.id);
+    params.set("tab", "trajectory");
+    return `${urlWithSearch(params.toString())}#step-${step}`;
+  };
+  const openTrace = (step: number, observationId: string) => {
+    window.history.pushState(window.history.state, "", traceHref(step, observationId));
+    handleTabChange("trajectory");
+  };
   const trialDetailErrorContent = (
     <div className="p-4 sm:p-6">
       <Alert variant="destructive">
@@ -1639,6 +1679,15 @@ export function TrialDetailPanel({
                 Live
               </TabsTrigger>
             )}
+            {hasPlayback && (
+              <TabsTrigger
+                value="scene"
+                className="data-[state=active]:border-primary rounded-none px-3 text-xs data-[state=active]:border-b-2 data-[state=active]:bg-transparent sm:px-4 sm:text-sm"
+              >
+                <Play className="mr-1 h-3.5 w-3.5 sm:mr-2 sm:h-4 sm:w-4" />
+                Scene
+              </TabsTrigger>
+            )}
             <TabsTrigger
               value="files"
               className="data-[state=active]:border-primary rounded-none px-3 text-xs data-[state=active]:border-b-2 data-[state=active]:bg-transparent sm:px-4 sm:text-sm"
@@ -1670,6 +1719,7 @@ export function TrialDetailPanel({
             className="m-0 p-4 sm:p-6"
           >
             <div className="space-y-4 pb-4">
+              {hasPlayback && <RunOutcome playback={playback} />}
               {showQueueSnapshot && (
                 <Card className="border-purple-500/30 bg-purple-500/5">
                   <CardHeader className="px-4 pt-2 pb-1">
@@ -1905,6 +1955,22 @@ export function TrialDetailPanel({
           </ActiveTabContent>
 
           <ActiveTabContent
+            active={effectiveTab === "scene"}
+            value="scene"
+            className="m-0 h-full p-0"
+          >
+            <RunPlayback
+              key={`${trial.id}:${trial.attempts}`}
+              playback={playback}
+              active
+              observationId={null}
+              agentTiming={trial.phase_timing?.agent_execution}
+              traceHref={traceHref}
+              onOpenTrace={openTrace}
+            />
+          </ActiveTabContent>
+
+          <ActiveTabContent
             active={effectiveTab === "trajectory"}
             value="trajectory"
             className="m-0 h-full overflow-auto p-0"
@@ -1917,6 +1983,8 @@ export function TrialDetailPanel({
                 hasTrajectory={trial.has_trajectory}
                 apiBaseUrl={apiBaseUrl}
                 canRegenerateSummary={!readOnly && showAnalysis}
+                agentTiming={trial.phase_timing?.agent_execution}
+                agentRunning={isActiveTrialStatus(trial.status)}
               />
             )}
           </ActiveTabContent>

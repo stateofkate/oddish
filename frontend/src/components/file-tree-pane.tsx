@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useEffectEvent, useRef } from "react";
 import {
   FileTree,
   useFileTree,
@@ -59,13 +59,14 @@ export function FileTreePane({
 
   // Directory rows are selectable (clicking toggles expansion) but must not
   // steal the preview, so only file selections report.
-  const selected = useFileTreeSelection(model);
+  const selected = useFileTreeSelection(model).at(-1);
+  const reportSelection = useEffectEvent(onSelectPath);
   useEffect(() => {
-    const path = selected.at(-1);
+    const path = selected;
     if (path == null) return;
     if (model.getItem(path)?.isDirectory() !== false) return;
-    onSelectPath(path);
-  }, [model, onSelectPath, selected]);
+    reportSelection(path);
+  }, [model, selected]);
 
   // Highlight `selectedPath`'s row — but only when the OPEN FILE changes
   // (or first appears in a refreshed listing), never as an echo of the
@@ -75,10 +76,21 @@ export function FileTreePane({
   // the user just collapsed. `paths` stays a dependency so a deep-linked
   // path that only exists in a later listing gets selected when it arrives.
   useEffect(() => {
-    if (selectedPath == null) return;
+    if (selectedPath == null) {
+      for (const path of model.getSelectedPaths()) model.getItem(path)?.deselect();
+      appliedSelectionRef.current = null;
+      return;
+    }
     if (appliedSelectionRef.current === selectedPath) return;
     const item = model.getItem(selectedPath);
-    if (item == null || item.isDirectory()) return;
+    if (item == null) {
+      // A manifest can open an image outside the loaded listing. Clear the
+      // old highlight so clicking that row can select it again.
+      for (const path of model.getSelectedPaths()) model.getItem(path)?.deselect();
+      appliedSelectionRef.current = selectedPath;
+      return;
+    }
+    if (item.isDirectory()) return;
     appliedSelectionRef.current = selectedPath;
     item.select();
     model.scrollToPath(selectedPath, { offset: "nearest" });

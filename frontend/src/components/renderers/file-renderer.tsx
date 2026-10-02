@@ -18,6 +18,11 @@ const MarkdownRenderer = dynamic(
   { ssr: false, loading: () => <LoadingStub label="Rendering markdown..." /> }
 );
 
+const RerunRenderer = dynamic(
+  () => import("./rerun-renderer").then((m) => m.RerunRenderer),
+  { ssr: false, loading: () => <LoadingStub label="Loading robot viewer..." /> }
+);
+
 const NotebookRenderer = dynamic(
   () => import("./notebook-renderer").then((m) => m.NotebookRenderer),
   { ssr: false, loading: () => <LoadingStub label="Rendering notebook..." /> }
@@ -64,6 +69,7 @@ function LoadingStub({ label }: { label: string }) {
 }
 
 type FileRendererKind =
+  | "rrd"
   | "image"
   | "video"
   | "audio"
@@ -84,6 +90,7 @@ type FileRendererKind =
 
 /** Kinds that render straight from a URL — no text content, no Raw mode. */
 const URL_BASED_KINDS = new Set<FileRendererKind>([
+  "rrd",
   "image",
   "video",
   "audio",
@@ -126,6 +133,7 @@ const BINARY_EXTS = new Set([
 
 /** Types that need ArrayBuffer or URL — we should not fetch them as text. */
 const BINARY_RENDERER_EXTS = new Set<string>([
+  "rrd",
   ...IMAGE_EXTS,
   ...VIDEO_EXTS,
   ...AUDIO_EXTS,
@@ -139,6 +147,8 @@ const BINARY_RENDERER_EXTS = new Set<string>([
 function getFileRendererKind(fileName: string): FileRendererKind {
   const lower = fileName.toLowerCase();
   const ext = lower.split(".").pop() ?? "";
+
+  if (ext === "rrd") return "rrd";
 
   if (IMAGE_EXTS.has(ext)) return "image";
   if (VIDEO_EXTS.has(ext)) return "video";
@@ -174,6 +184,7 @@ export function isBinaryRendererFile(fileName: string): boolean {
 
 interface FileRendererProps {
   fileName: string;
+  fitImage?: boolean;
   /** URL for media/binary fetches (images, video, audio, pdf, xlsx, docx). */
   url?: string | null;
   /** Text content already fetched by the caller (used for text-based types). */
@@ -203,6 +214,7 @@ interface FileRendererProps {
  */
 export function FileRenderer({
   fileName,
+  fitImage,
   url,
   content,
   fileSize,
@@ -226,9 +238,12 @@ export function FileRenderer({
   }
 
   switch (resolvedKind) {
+    case "rrd":
+      if (!url) return <MissingUrl fileName={fileName} />;
+      return <RerunRenderer key={url} url={url} fileName={fileName} />;
     case "image":
       if (!url) return <MissingUrl fileName={fileName} />;
-      return <ImageRenderer url={url} fileName={fileName} />;
+      return <ImageRenderer key={url} url={url} fileName={fileName} fit={fitImage} />;
     case "video":
       if (!url) return <MissingUrl fileName={fileName} />;
       return <VideoRenderer url={url} fileName={fileName} />;

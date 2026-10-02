@@ -18,7 +18,7 @@ class _Session:
         self.trial = trial
         self.events = events
 
-    async def get(self, model, row_id):
+    async def get(self, model, row_id, **kwargs):
         assert model is TrialModel
         assert row_id == self.trial.id
         return self.trial
@@ -87,6 +87,8 @@ def _install_completion_fakes(
         org_id="org-1",
         origin=TrialOrigin.IMPORTED,
         trial_s3_key=prefix,
+        attempts=1,
+        result={"existing_metric": 1},
     )
     session = _Session(trial, events)
     storage = _Storage(
@@ -110,8 +112,17 @@ def _install_completion_fakes(
             ),
         )
 
+    async def index_stored_trial(indexed_trial, _storage):
+        assert indexed_trial is trial
+        events.append("index")
+        return {"manifest_path": None, "index_status": "absent"}
+
     async def maybe_start_qa_stage(_session, settled_trial_id):
         assert settled_trial_id == trial_id
+        assert _session.trial.result == {
+            "existing_metric": 1,
+            "_playback": {"manifest_path": None, "index_status": "absent"},
+        }
         events.append("finalize")
         if finalize_error is not None:
             raise finalize_error
@@ -123,6 +134,7 @@ def _install_completion_fakes(
     monkeypatch.setattr(trial_imports, "get_session", _session_context(session))
     monkeypatch.setattr(trial_imports, "get_storage_client", lambda: storage)
     monkeypatch.setattr(trial_imports, "resolve_trial_artifact_layout", resolve_layout)
+    monkeypatch.setattr(trial_imports, "index_stored_trial", index_stored_trial)
     monkeypatch.setattr(trial_imports, "run_with_deadlock_retry", run_once)
     monkeypatch.setattr(queue_module, "maybe_start_qa_stage", maybe_start_qa_stage)
     return trial_id, prefix, events
@@ -172,6 +184,7 @@ async def test_complete_trial_import_deletes_staging_after_finalization(monkeypa
         "check_archive",
         "extract",
         "validate",
+        "index",
         "finalize",
         "commit",
         "delete_archive",
@@ -209,7 +222,7 @@ async def test_complete_trial_import_keeps_staging_when_finalization_fails(
     with pytest.raises(RuntimeError, match="database unavailable"):
         await trial_imports.complete_trial_import(trial_id=trial_id, org_id="org-1")
 
-    assert events == ["check_archive", "extract", "validate", "finalize"]
+    assert events == ["check_archive", "extract", "validate", "index", "finalize"]
 
 
 @pytest.mark.asyncio
@@ -232,6 +245,7 @@ async def test_complete_trial_import_replays_after_staging_cleanup(monkeypatch):
         "check_archive",
         "list_extracted",
         "validate",
+        "index",
         "finalize",
         "commit",
         "delete_archive",
@@ -251,3 +265,37 @@ async def test_complete_trial_import_rejects_missing_archive_and_prefix(monkeypa
     assert exc.value.status_code == 400
     assert exc.value.detail == "Uploaded trial archive not found in S3"
     assert events == ["check_archive", "list_extracted"]
+
+
+@pytest.mark.asyncio
+async def test_import_indexes_playback_from_uploaded_files(monkeypatch):
+    prefix = StorageClient._trial_prefix("task-1-7")
+    trial_id, _, _ = _install_completion_fakes(
+        monkeypatch, extracted_keys=[prefix + "verifier/artifacts/playback.json"]
+    )
+    await trial_imports.complete_trial_import(trial_id=trial_id, org_id="org-1")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["unreadable_artifacts", "index_write_failed"])
+async def test_retried_import_keeps_ready_playback_on_storage_failure(
+    monkeypatch, code
+):
+    from oddish.core.playback import invalid_descriptor, ready_descriptor
+
+    trial_id, _, _ = _install_completion_fakes(monkeypatch)
+    async with trial_imports.get_session() as session:
+        trial = session.trial
+    ready = ready_descriptor("verifier/artifacts/playback.json", "revision-1")
+    trial.result = {"existing_metric": 1, "_playback": ready}
+
+    async def failed_index(*args):
+        return invalid_descriptor("verifier/artifacts/playback.json", code)
+
+    async def finalize(*args):
+        pass
+
+    monkeypatch.setattr(trial_imports, "index_stored_trial", failed_index)
+    monkeypatch.setattr(queue_module, "maybe_start_qa_stage", finalize)
+    await trial_imports.complete_trial_import(trial_id=trial_id, org_id="org-1")
+    assert trial.result == {"existing_metric": 1, "_playback": ready}

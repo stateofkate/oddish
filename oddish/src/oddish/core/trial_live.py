@@ -55,6 +55,7 @@ async def read_trial_live(
             "output_tokens": trial.output_tokens,
             "cost_usd": trial.cost_usd,
         },
+        "agent_timing": (trial.phase_timing or {}).get("agent_execution"),
         "harbor_stage": trial.harbor_stage,
         "done": trial.finished_at is not None,
     }

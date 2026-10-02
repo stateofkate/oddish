@@ -17,6 +17,14 @@ Current app surface:
 - `/share/[token]` read-only public experiment view
 - `/datasets` and `/datasets/[token]` public dataset listing and detail pages
 
+## Robot playback tests
+
+```bash
+REVIEW_TEST_PORT=3211 pnpm exec playwright test -c playwright.review.config.ts robot-recording.spec.ts
+```
+
+The port defaults to 3207; the runner refuses to reuse another worktree's server.
+
 ## Quick Start
 
 ### 1. Install dependencies

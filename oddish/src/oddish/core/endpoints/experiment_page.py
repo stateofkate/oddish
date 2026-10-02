@@ -151,6 +151,7 @@ def build_experiment_trial_cell(
             if exclusions
             else None
         ),
+        playback=row.get("playback"),
         has_trajectory=bool(row["has_trajectory"]),
         analysis=ExperimentTrialAnalysis(
             status=row["analysis_status"],

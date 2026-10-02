@@ -56,6 +56,11 @@ from oddish.db import (
     utcnow,
 )
 from oddish.core.llm_key_fingerprint import trial_llm_key_hash
+from oddish.core.playback import (
+    UploadedTrial,
+    index_stored_trial,
+    invalid_descriptor,
+)
 from oddish.core.task_browse_summary import refresh_task_browse_summaries
 from oddish.db.storage import get_storage_client, resolve_task_directory
 from oddish.model_pricing import is_native_cost_trusted, settle_cost_usd
@@ -662,6 +667,7 @@ async def _store_trial_results(
     worker_job_id: str | None = None,
     trial_attempt: int,
     judge_costs: dict | None = None,
+    playback: dict | None = None,
 ) -> tuple[bool, bool, dict | None]:
     """Return terminal state, hook ownership, and a post-commit event payload."""
     async with _trial_session(trial_id, allow_missing=True, with_for_update=True) as (
@@ -810,7 +816,9 @@ async def _store_trial_results(
             trial.total_tool_calls = outcome.total_tool_calls
             trial.tool_counts = outcome.tool_counts
 
-            trial.phase_timing = outcome.phase_timing
+            trial.phase_timing = {
+                **(trial.phase_timing or {}), **(outcome.phase_timing or {})
+            } or None
             # Verifier-reported benchmark metrics (the metrics.json contract),
             # compact CTRF test counts, plus a harbor_exception marker when a
             # phase raised quietly.
@@ -825,6 +833,10 @@ async def _store_trial_results(
                 session_id=outcome.session_id,
                 retry_after_seconds=outcome.retry_after_seconds,
             )
+            # Indexed after upload; the attempt check above discards an index
+            # built for an attempt that no longer owns this row.
+            if playback is not None and not artifact_upload_error:
+                trial.result = {**(trial.result or {}), "_playback": playback}
             if outcome.expected_boundary_kill:
                 trial.result = {
                     **(trial.result or {}),
@@ -1240,6 +1252,26 @@ async def handle_harbor_event(
                         hook_event.environment_external_id,
                         resources,
                     )
+
+            # Publish the agent's wall-clock boundaries while it is running.
+            # Final settlement replaces these with Harbor's recorded phase timing.
+            if event == TrialEvent.AGENT_START:
+                timing = dict(trial.phase_timing or {})
+                phase = timing.get("agent_execution") or {}
+                if not phase.get("started_at") or phase.get("finished_at"):
+                    timing["agent_execution"] = {"started_at": observed_at.isoformat()}
+                    trial.phase_timing = timing
+            elif event in (TrialEvent.AGENT_END, TrialEvent.VERIFICATION_START, TrialEvent.END, TrialEvent.CANCEL):
+                timing = dict(trial.phase_timing or {})
+                phase = timing.get("agent_execution") or {}
+                if phase.get("started_at") and not phase.get("finished_at"):
+                    start = datetime.fromisoformat(phase["started_at"])
+                    timing["agent_execution"] = {
+                        **phase,
+                        "finished_at": observed_at.isoformat(),
+                        "duration_sec": max(0, (observed_at - start).total_seconds()),
+                    }
+                    trial.phase_timing = timing
 
             if event == TrialEvent.START:
                 trial.harbor_stage = "trial_started"
@@ -1859,6 +1891,30 @@ async def mirror_to_sauron(prepared_trial: PreparedTrialRun, job_dir: Path) -> N
         console.print(f"[yellow]Sauron mirror failed (non-fatal): {e}[/yellow]")
 
 
+async def _index_uploaded_playback(
+    trial_id: str,
+    trial_s3_key: str,
+    outcome: HarborOutcome | None,
+    prepared_trial: PreparedTrialRun,
+) -> dict | None:
+    """Index the uploaded playback evidence with the import/rebuild builder.
+
+    Indexing failures are recorded in the descriptor, never raised.
+    """
+    uploaded = UploadedTrial(
+        id=trial_id,
+        trial_s3_key=trial_s3_key,
+        model=prepared_trial.trial_model,
+        has_trajectory=bool(outcome and outcome.has_trajectory),
+    )
+    try:
+        return await index_stored_trial(uploaded, get_storage_client())
+    except Exception:
+        # Settlement must still record the score and files.
+        logger.exception("Playback indexing failed for trial %s", trial_id)
+        return invalid_descriptor(None, "unreadable_artifacts")
+
+
 async def settle_trial_attempt(
     *,
     trial_id: str,
@@ -1870,6 +1926,13 @@ async def settle_trial_attempt(
     artifact_upload_error: str | None = None,
 ) -> bool:
     """Persist one attempt result and run its terminal lifecycle exactly once."""
+    # Both worker execution and hosted monitor settlement enter here after
+    # uploading. Prepare playback outside the result transaction.
+    playback = None
+    if trial_s3_key is not None and artifact_upload_error is None:
+        playback = await _index_uploaded_playback(
+            trial_id, trial_s3_key, execution.outcome, prepared_trial
+        )
     judge_costs = extract_judge_costs(
         execution.outcome.job_dir if execution.outcome else None,
         execution.outcome.job_result_path if execution.outcome else None,
@@ -1886,6 +1949,7 @@ async def settle_trial_attempt(
             worker_job_id=worker_job_id,
             trial_attempt=prepared_trial.trial_attempt,
             judge_costs=judge_costs,
+            playback=playback,
         )
     )
     if finished_event is not None:

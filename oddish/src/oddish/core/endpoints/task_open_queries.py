@@ -188,7 +188,7 @@ AGGREGATE_SQL = text(f"""
         tr.provider, tr.model, {_EFFORT_SQL} AS reasoning_effort, tr.kind, lower(tr.status::text) AS status,
         tr.reward, NULL::text AS error_kind, tr.cost_usd,
         tr.input_tokens, tr.output_tokens, tr.cache_tokens,
-        tr.cache_write_tokens, tr.billed_user_id, tr.has_trajectory, tr.created_at,
+        tr.cache_write_tokens, tr.billed_user_id, tr.has_trajectory, tr.result -> '_playback' AS playback, tr.created_at,
         tr.started_at, tr.finished_at
       FROM trials tr
       WHERE tr.task_id = :task_id AND tr.kind = 'qa'
@@ -304,7 +304,7 @@ PREVIEW_SQL = text(f"""
            ELSE 'error' END AS error_kind,
       tr.cost_usd, tr.input_tokens, tr.output_tokens,
       tr.cache_tokens, tr.cache_write_tokens, tr.billed_user_id,
-      tr.has_trajectory, tr.created_at, tr.started_at, tr.finished_at
+      tr.has_trajectory, tr.result -> '_playback' AS playback, tr.created_at, tr.started_at, tr.finished_at
     FROM trials tr
     WHERE tr.task_id = :task_id AND tr.task_version_id = :version_id
       AND tr.kind != 'qa_eval'

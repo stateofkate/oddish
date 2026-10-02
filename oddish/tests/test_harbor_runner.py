@@ -1517,7 +1517,6 @@ def test_restricted_cursor_does_not_allow_underlying_model_provider(tmp_path):
         (EnvironmentType.DAYTONA, "no-network", "no-network", False),
         (EnvironmentType.DAYTONA, "public", "no-network", True),
         (EnvironmentType.MODAL, "public", "no-network", True),
-        (EnvironmentType.DOCKER, "public", "no-network", True),
     ],
 )
 def test_inject_restricted_agent_model_hosts_skips_unsupported_shapes(
@@ -1553,6 +1552,38 @@ def test_inject_restricted_agent_model_hosts_skips_unsupported_shapes(
 
     assert host_calls == 0
     assert agent_config.extra_allowed_hosts == []
+
+
+@pytest.mark.parametrize("overlay", [False, True])
+def test_docker_compose_grants_model_host_only_in_agent_phase(tmp_path, overlay):
+    from harbor.models.task.config import NetworkMode, VerifierEnvironmentMode
+    from harbor.trial.network_policy import resolve_trial_network_plan
+
+    task_path = _write_network_policy_task(tmp_path, compose=not overlay)
+    with (task_path / "task.toml").open("a") as config:
+        config.write('\n[verifier]\nnetwork_mode = "no-network"\n'
+                     '\n[verifier.environment]\nnetwork_mode = "no-network"\n')
+    task_config = harbor_runner.HarborTaskConfig.model_validate_toml(
+        (task_path / "task.toml").read_text()
+    )
+    env = HarborEnvironmentConfig(type=EnvironmentType.DOCKER)
+    if overlay:
+        compose = task_path / "environment" / "overlay.yaml"
+        compose.write_text("services: {}\n")
+        env.extra_docker_compose = [compose]
+    agent = HarborAgentConfig(name="codex", model_name="openai/gpt-6-luna")
+    harbor_runner._apply_restricted_agent_network_defaults(
+        task_path=task_path, environment_config=env, agent_config=agent,
+    )
+    plan = resolve_trial_network_plan(
+        task_config, agent, env, None, verifier_mode=VerifierEnvironmentMode.SEPARATE,
+    )
+    assert plan.agent_env_baseline.network_mode == NetworkMode.PUBLIC
+    assert plan.agent_phase.network_mode == NetworkMode.ALLOWLIST
+    assert set(plan.agent_phase.allowed_hosts) == {"api.openai.com", "ab.chatgpt.com"}
+    assert plan.verifier_env_baseline.network_mode == NetworkMode.NO_NETWORK
+    assert plan.verifier_phase.network_mode == NetworkMode.NO_NETWORK
+    assert plan.verifier_phase.allowed_hosts == []
 
 
 def test_daytona_compose_restriction_classifier_is_shape_scoped(tmp_path):
@@ -2099,7 +2130,7 @@ def test_store_trial_results_persists_total_steps(monkeypatch):
         output_tokens=None,
         total_steps=None,
         cost_usd=None,
-        phase_timing=None,
+        phase_timing={"agent_execution": {"duration_sec": 65}},
         has_trajectory=False,
         current_worker_id="worker-1",
         current_queue_slot=0,
@@ -2147,6 +2178,13 @@ def test_store_trial_results_persists_total_steps(monkeypatch):
         cost_usd=0.12,
         has_trajectory=True,
     )
+    indexed = {
+        "manifest_path": "verifier/artifacts/playback.json",
+        "index_status": "ready",
+        "index_path": "_oddish/playback-index/" + "f" * 64 + ".json",
+        "index_revision": "f" * 64,
+        "index_error": None,
+    }
 
     stored = asyncio.run(
         trial_handler._store_trial_results(
@@ -2155,6 +2193,7 @@ def test_store_trial_results_persists_total_steps(monkeypatch):
             trial_s3_key="tasks/task-1/trials/trial-1/",
             execution_error=None,
             trial_attempt=trial.attempts,
+            playback=indexed,
         )
     )
 
@@ -2163,7 +2202,9 @@ def test_store_trial_results_persists_total_steps(monkeypatch):
     assert trial.cache_tokens == 25
     assert trial.output_tokens == 50
     assert trial.total_steps == 7
+    assert trial.phase_timing == {"agent_execution": {"duration_sec": 65}}
     assert trial.cost_usd == 0.12
+    assert trial.result["_playback"] == indexed
     assert trial.has_trajectory is True
     assert stored[:2] == (True, True)
 

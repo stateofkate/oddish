@@ -8,6 +8,7 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
+import { AgentElapsedTime, type AgentTiming } from "@/components/agent-elapsed-time";
 import { Badge } from "@/components/ui/badge";
 import {
   StepHeader,
@@ -39,6 +40,7 @@ interface LiveUsage {
 }
 
 interface LiveResponse {
+  agent_timing?: AgentTiming | null;
   attempt: number;
   events: LiveEvent[];
   next_seq: number;
@@ -529,6 +531,8 @@ export function LiveTranscriptPanel({
           {done ? "Ended" : "Live"}
         </span>
         {stage && <HarborStageBadge stage={stage} />}
+        <span className="text-muted-foreground">{numbered.filter(item => item.num > 0).length} steps</span>
+        <AgentElapsedTime timing={last?.agent_timing} running={!done && stage === "agent_running"} />
         {usage?.cost_usd != null && (
           <span className="font-mono font-semibold tabular-nums">
             ~{formatCostUsd(usage.cost_usd)}

@@ -1,0 +1,86 @@
+{
+  "version": 2,
+  "title": "Robot pick-and-place",
+  "producer": "verifier",
+  "goal": "Place the red block inside the tray. Leave the blue and yellow blocks within 15 mm of their starting positions.",
+  "recording": "recording.rrd",
+  "outcome": "outcome.json",
+  "timeline": "simulation",
+  "duration_seconds": 2.7,
+  "checks": [
+    {
+      "key": "inside_tray",
+      "label": "Inside tray"
+    },
+    {
+      "key": "on_tray_base",
+      "label": "Supported by tray"
+    },
+    {
+      "key": "settled",
+      "label": "Settled"
+    },
+    {
+      "key": "released",
+      "label": "Released from gripper"
+    },
+    {
+      "key": "other_blocks_untouched",
+      "label": "Other blocks unmoved (\u226415 mm)"
+    },
+    {
+      "key": "episode_finished",
+      "label": "Episode finished"
+    }
+  ],
+  "start_time": 0.3,
+  "observations": [
+    {
+      "id": "o0",
+      "time": 0.3,
+      "image": "o0.jpg"
+    },
+    {
+      "id": "o1",
+      "time": 1.1,
+      "image": "o1.jpg"
+    },
+    {
+      "id": "o2",
+      "time": 1.9000000000000001,
+      "image": "o2.jpg"
+    },
+    {
+      "id": "o3",
+      "time": 2.7,
+      "image": "o3.jpg"
+    }
+  ],
+  "actions": [
+    {
+      "id": "a1",
+      "time": 0.3,
+      "end_time": 1.1,
+      "label": "Move down; open",
+      "observation_id": "o0",
+      "result_observation_id": "o1"
+    },
+    {
+      "id": "a2",
+      "time": 1.1,
+      "end_time": 1.9000000000000001,
+      "label": "Close gripper",
+      "observation_id": "o1",
+      "result_observation_id": "o2"
+    },
+    {
+      "id": "a3",
+      "time": 1.9000000000000001,
+      "end_time": 2.7,
+      "label": "Move up; close",
+      "observation_id": "o2",
+      "result_observation_id": "o3"
+    }
+  ],
+  "viewer_layout": "embedded_scene"
+}
