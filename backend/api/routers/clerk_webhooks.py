@@ -13,7 +13,6 @@ from auth.provisioning import (
     sync_clerk_org,
     get_or_create_user_in_org,
     _apply_github_id,
-    _apply_user_display_name,
     _github_account_from_clerk_payload,
     _mark_github_id_checked,
     _seed_attribution_cache_from_github,
@@ -116,8 +115,6 @@ async def _sync_github_id_from_user_event(
     )
     for user in result.scalars().all():
         try:
-            if "first_name" in data or "last_name" in data:
-                _apply_user_display_name(user, identity.display_name)
             if identity.username and identity.username != user.github_username:
                 user.github_username = identity.username
             await _apply_github_id(session, user, identity.github_id)

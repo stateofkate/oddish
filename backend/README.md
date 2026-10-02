@@ -94,22 +94,6 @@ claim SQL, cleanup step, or dispatcher branch.
 
 The backend accepts auth from `Authorization`, `X-Clerk-Authorization`, or `X-Authorization`.
 
-`GET /auth/identity` lets another service use Oddish sign-in without sharing its
-database. It returns the verified org/user IDs, org slug, auth method, user role,
-key ID, key creator role, and scope. The normal org approval check runs on every
-request. Internal analysis keys cannot use this route. Responses are not cached
-and contain no credentials. The caller must still enforce scope and ownership.
-
-`POST /auth/actors/resolve` supplies safe names for up to 500 saved actor IDs in
-one request. It requires READ access and resolves only actors in the caller's
-org. It returns user names or GitHub handles and a generic label for API keys;
-missing or deleted actors have a null name. It never returns emails or keys.
-
-Login fills a missing user name from its existing Clerk profile read. A null
-name is not yet checked; an empty name means Clerk returned no name and avoids
-another read just for that field. Signed user events can fill it later. These
-updates retain nonblank saved names and never use an email as a display name.
-
 ### API keys (programmatic access)
 
 ```bash

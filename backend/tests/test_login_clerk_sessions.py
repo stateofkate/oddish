@@ -98,7 +98,6 @@ async def test_http_has_no_session_and_writes_use_new_session(
 @pytest.mark.asyncio
 async def test_known_identity_keeps_one_session_and_updates_claims(login, monkeypatch):
     state, org, user = login
-    user.name = "Saved profile"
     user.github_id_checked_at = datetime.now(timezone.utc)
     user.github_username = "octocat"
     monkeypatch.setattr(prov, "get_org_from_clerk_id", AsyncMock(return_value=org))

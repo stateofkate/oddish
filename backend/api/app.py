@@ -314,7 +314,6 @@ def create_app() -> FastAPI:
         feedback,
         github_linkage,
         github_webhooks,
-        identity,
         imports,
         load,
         monitor,
@@ -338,7 +337,6 @@ def create_app() -> FastAPI:
     api.include_router(notifications.router)
     api.include_router(ui_layouts.router)
     api.include_router(api_keys.router)
-    api.include_router(identity.router)
     api.include_router(byok.router)
     api.include_router(monitor.router)
     api.include_router(clerk_webhooks.router)
