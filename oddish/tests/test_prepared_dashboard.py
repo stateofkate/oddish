@@ -10,7 +10,10 @@ import pytest_asyncio
 from sqlalchemy import select, text, update
 
 from oddish.core.dashboard import load_dashboard_experiments
-from oddish.core.experiment_summaries import refresh_experiment_summaries
+from oddish.core.experiment_summaries import (
+    fold_dirty_summary_markers,
+    refresh_experiment_summaries,
+)
 from oddish.db import (
     ExperimentModel,
     TaskModel,
@@ -31,6 +34,12 @@ async def page(session, org):
         experiments_query=None,
         experiments_status="all",
     )
+
+
+async def fold():
+    """Run the maintainer's first step: writers only append markers."""
+    async with get_session() as session:
+        return await fold_dirty_summary_markers(session)
 
 
 @pytest_asyncio.fixture
@@ -57,6 +66,7 @@ async def experiment():
         )
         session.add(trial)
         await session.commit()
+        await fold()
         yield org, exp.id, trial.id
     async with get_session() as session:
         await session.execute(
@@ -90,6 +100,7 @@ async def test_prepared_read_and_durable_invalidation(experiment):
             .values(status=TrialStatus.SUCCESS, reward=1)
         )
         await session.commit()
+    await fold()
     async with get_session() as session:
         marker = await session.get(ExperimentSummaryModel, eid)
         assert marker.revision > marker.built_revision
@@ -147,6 +158,7 @@ async def test_change_during_build_remains_pending(experiment, monkeypatch):
 
     monkeypatch.setattr(dashboard, "rebuild_dashboard_experiments", concurrent_change)
     await asyncio.wait_for(refresh_experiment_summaries(), timeout=10)
+    await fold()
     async with get_session() as session:
         marker = await session.get(ExperimentSummaryModel, eid)
         assert marker.revision > marker.built_revision
@@ -177,6 +189,7 @@ async def test_collection_membership_dirties_both_experiments(experiment):
             .values(status=TrialStatus.SUCCESS)
         )
         await session.commit()
+    await fold()
     async with get_session() as session:
         markers = (
             await session.scalars(
@@ -344,13 +357,23 @@ async def test_many_mutations_in_one_transaction_coalesce_to_one_revision(experi
                 .where(TrialModel.id == tid)
                 .values(status=TrialStatus.SUCCESS)
             )
+        markers = await session.scalar(
+            text(
+                "SELECT count(*) FROM experiment_summary_dirty "
+                "WHERE txid = txid_current() AND experiment_id = :eid"
+            ),
+            {"eid": eid},
+        )
+        assert markers == 1
+        await session.commit()
+    assert await fold() >= 1
+    async with get_session() as session:
         after = await session.scalar(
             select(ExperimentSummaryModel.revision).where(
                 ExperimentSummaryModel.experiment_id == eid
             )
         )
         assert after == before + 1
-        await session.commit()
 
 
 @pytest.mark.asyncio
@@ -474,6 +497,67 @@ async def test_publication_and_retry_skip_writer_locks(
 
 
 @pytest.mark.asyncio
+async def test_writers_dirtying_experiments_in_opposite_orders_do_not_deadlock(
+    experiment,
+):
+    # A task belongs to its experiment and the experiment's QA shadow, and
+    # different write paths reach the two in different orders. Dirtying a
+    # summary must not lock anything another writer can be waiting on.
+    org, eid, tid = experiment
+    async with get_session() as session:
+        task_id = await session.scalar(
+            select(TrialModel.task_id).where(TrialModel.id == tid)
+        )
+        other = ExperimentModel(name="opposite-order", org_id=org)
+        session.add(other)
+        await session.flush()
+        other_id = other.id
+        trial_ids = {}
+        for name, experiment_id in [
+            ("a-first", eid),
+            ("b-second", eid),
+            ("b-first", other_id),
+            ("a-second", other_id),
+        ]:
+            trial_ids[name] = f"{org}-{name}"
+            session.add(
+                TrialModel(
+                    id=trial_ids[name],
+                    name=trial_ids[name],
+                    task_id=task_id,
+                    experiment_id=experiment_id,
+                    org_id=org,
+                    agent="codex",
+                    provider="openai",
+                    model="gpt-5.5",
+                    queue_key="test",
+                    status=TrialStatus.RUNNING,
+                )
+            )
+        await session.commit()
+
+    def finish(trial_id):
+        return (
+            update(TrialModel)
+            .where(TrialModel.id == trial_id)
+            .values(status=TrialStatus.SUCCESS)
+        )
+
+    async with get_session() as a, get_session() as b:
+        await a.execute(finish(trial_ids["a-first"]))
+        await b.execute(finish(trial_ids["b-first"]))
+        await asyncio.wait_for(
+            asyncio.gather(
+                a.execute(finish(trial_ids["a-second"])),
+                b.execute(finish(trial_ids["b-second"])),
+            ),
+            timeout=5,
+        )
+        await a.commit()
+        await b.commit()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("upgrade_existing_trigger", [False, True])
 async def test_status_only_completion_invalidates_pending_qa(
     experiment, upgrade_existing_trigger
@@ -535,6 +619,7 @@ async def test_status_only_completion_invalidates_pending_qa(
             .where(TaskModel.id == task_id)
             .values(status=TaskStatus.COMPLETED)
         )
+    await fold()
     async with get_session() as session:
         marker = await session.get(ExperimentSummaryModel, eid)
         assert marker.revision == before + 1

@@ -10,11 +10,17 @@ search predicates retain their existing eligibility rules and can query trials.
 Cancellation and delivery decisions continue to read authoritative domain rows.
 
 Database triggers on experiments, tasks, versions, trials, and both membership
-tables increment the affected experiment's revision in the same transaction.
-`last_dirty_txid` coalesces all changes to one experiment in one PostgreSQL
-transaction into one revision increment; a bulk import does not rewrite its
-summary marker for every trial. Heartbeat/token-only updates are excluded.
-The pending marker survives worker restarts. The maintainer groups up to 32
+tables append a row to `experiment_summary_dirty` in the same transaction. Its
+key is the writer's transaction id and the experiment id, so all changes to one
+experiment in one PostgreSQL transaction leave one marker, and a bulk import
+does not write one per trial. Writers never lock `experiment_summaries`: a task
+belongs to its experiment and the experiment's QA shadow, and write paths reach
+the two in different orders, so writer-held summary locks deadlocked. Each
+maintenance pass first folds committed markers into `experiment_summaries.revision`,
+locking summary rows with `FOR UPDATE SKIP LOCKED`; markers of skipped rows stay
+for the next pass. Heartbeat/token-only updates are excluded. Pending markers
+survive worker restarts, and the health sample counts unfolded markers as
+pending work. The maintainer groups up to 32
 candidates by organization and reuses the same aggregate calculation. A
 PostgreSQL advisory lock permits only one maintainer, including across hosted
 and standalone processes. It holds no summary-row lock while calculating.

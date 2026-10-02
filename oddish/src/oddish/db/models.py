@@ -498,6 +498,23 @@ class ExperimentSummaryModel(Base):
     )
 
 
+class ExperimentSummaryDirtyModel(Base):
+    """One writer transaction's invalidation of one experiment's summary.
+
+    Writers only append these, so dirtying never waits on another writer. The
+    summary maintainer folds them into ``ExperimentSummaryModel.revision``.
+    """
+
+    __tablename__ = "experiment_summary_dirty"
+    txid: Mapped[int] = mapped_column(
+        BigInteger, primary_key=True, server_default=text("txid_current()")
+    )
+    experiment_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+
+
 class ExperimentModel(TimestampedMixin, Base):
     """Experiment database model (grouping for tasks)."""
 

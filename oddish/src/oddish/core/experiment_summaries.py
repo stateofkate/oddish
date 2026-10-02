@@ -11,17 +11,72 @@ from datetime import timedelta
 from sqlalchemy import select, text, update
 
 from oddish.db import ExperimentModel, get_session, utcnow
-from oddish.db.models import ExperimentSummaryModel
+from oddish.db.models import ExperimentSummaryDirtyModel, ExperimentSummaryModel
 
 logger = logging.getLogger(__name__)
+
+# Lock only summary rows no other session holds, in a fixed order, and drain
+# just those rows' markers. Markers committed after the DELETE's snapshot, or
+# belonging to a skipped row, stay for the next pass.
+_FOLD_MARKERS = text("""
+    WITH locked AS (
+        SELECT s.experiment_id FROM experiment_summaries s
+        WHERE s.experiment_id IN (SELECT experiment_id FROM experiment_summary_dirty)
+        ORDER BY s.experiment_id
+        FOR UPDATE OF s SKIP LOCKED
+    ), drained AS (
+        DELETE FROM experiment_summary_dirty d USING locked l
+        WHERE d.experiment_id = l.experiment_id
+        RETURNING d.experiment_id, d.created_at
+    ), folded AS (
+        SELECT experiment_id, min(created_at) AS dirty_since
+        FROM drained GROUP BY experiment_id
+    )
+    UPDATE experiment_summaries s SET
+        revision = s.revision + 1,
+        dirty_since = CASE WHEN s.revision = s.built_revision
+            THEN f.dirty_since ELSE s.dirty_since END
+    FROM folded f
+    WHERE s.experiment_id = f.experiment_id
+""")
+
+
+async def fold_dirty_summary_markers(session) -> int:
+    """Turn writer-appended markers into pending summary revisions.
+
+    Writers never touch ``experiment_summaries``: the trigger function appends
+    one ``experiment_summary_dirty`` row per experiment per transaction. Only
+    the maintainer runs this, so it never waits on a writer; summary rows held
+    by another session are skipped and keep their markers.
+    """
+    # DO NOTHING takes no lock on an existing row. New rows start pending.
+    await session.execute(
+        text("""
+            INSERT INTO experiment_summaries (experiment_id)
+            SELECT DISTINCT d.experiment_id FROM experiment_summary_dirty d
+            JOIN experiments e ON e.id = d.experiment_id
+            ON CONFLICT (experiment_id) DO NOTHING
+        """)
+    )
+    folded = await session.execute(_FOLD_MARKERS)
+    # A marker's transaction also committed its experiment, so a missing
+    # experiment was deleted afterwards and has no summary to rebuild.
+    await session.execute(
+        text("""
+            DELETE FROM experiment_summary_dirty d
+            WHERE NOT EXISTS (SELECT 1 FROM experiments e WHERE e.id = d.experiment_id)
+        """)
+    )
+    return int(folded.rowcount or 0)
 
 
 async def refresh_experiment_summaries(*, batch_size: int = 32) -> int:
     """One database-wide maintainer; writers never wait for a rebuild lock.
 
     The advisory lock serializes maintainers without locking dirty-marker rows.
-    A concurrent mutation increments revision; publication only acknowledges the
-    captured revision, leaving the newer work pending. A killed worker rolls back
+    Each pass first folds committed writer markers into revisions. A concurrent
+    mutation leaves a new marker; publication only acknowledges the captured
+    revision, leaving the newer work pending. A killed worker rolls back
     its publication and the next scheduled invocation retries. Daily rotation
     recomputes even clean summaries, repairing missed dependencies automatically.
     """
@@ -39,6 +94,10 @@ async def refresh_experiment_summaries(*, batch_size: int = 32) -> int:
             text("SELECT pg_try_advisory_xact_lock(716490241)")
         ):
             return 0
+        # Commit the fold before calculating: its row locks must not outlive it.
+        async with get_session() as fold_session:
+            await fold_session.execute(text("SET LOCAL statement_timeout = '20s'"))
+            await fold_dirty_summary_markers(fold_session)
         await session.execute(text("SET LOCAL statement_timeout = '20s'"))
         now = utcnow()
         summary = ExperimentSummaryModel
@@ -171,22 +230,29 @@ async def run_experiment_summary_maintenance() -> None:
 
 
 async def prepared_read_health() -> dict[str, int | float]:
-    """Independent scheduled health sampling also detects a stopped maintainer."""
-    from sqlalchemy import func
+    """Independent scheduled health sampling also detects a stopped maintainer.
+
+    Pending work is a summary revision not yet built or a marker not yet folded.
+    """
+    from sqlalchemy import func, union_all
     from oddish.db import get_read_session
 
+    summary = ExperimentSummaryModel
+    marker = ExperimentSummaryDirtyModel
+    pending = union_all(
+        select(summary.experiment_id, summary.dirty_since.label("since"))
+        .join(ExperimentModel, ExperimentModel.id == summary.experiment_id)
+        .where(summary.revision > summary.built_revision),
+        select(marker.experiment_id, marker.created_at.label("since")).join(
+            ExperimentModel, ExperimentModel.id == marker.experiment_id
+        ),
+    ).subquery()
     async with get_read_session() as session:
         summary_count, oldest = (
             await session.execute(
-                select(func.count(), func.min(ExperimentSummaryModel.dirty_since))
-                .select_from(ExperimentSummaryModel)
-                .join(
-                    ExperimentModel,
-                    ExperimentModel.id == ExperimentSummaryModel.experiment_id,
-                )
-                .where(
-                    ExperimentSummaryModel.revision
-                    > ExperimentSummaryModel.built_revision
+                select(
+                    func.count(func.distinct(pending.c.experiment_id)),
+                    func.min(pending.c.since),
                 )
             )
         ).one()

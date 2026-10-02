@@ -1107,8 +1107,11 @@ token fields are the billed-user subset used by the frontend's New spend tile.
 
 The web dashboard reads `experiment_summaries`; background maintenance calls
 `rebuild_dashboard_experiments` for the authoritative aggregate rules. Core
-migration `prepared_reads_001` installs transactionally coalesced revision markers
-on task/trial/version/experiment membership changes. Publication acknowledges the
+migration `prepared_reads_001` installs triggers on task/trial/version/experiment
+membership changes; since `summary_dirty_log_001` they append one
+`experiment_summary_dirty` marker per experiment per transaction and never lock
+`experiment_summaries`. The maintainer folds markers into revisions with
+`FOR UPDATE SKIP LOCKED` before each pass. Publication acknowledges the
 captured revision only. Publication and retry scheduling acquire summary locks
 with `FOR UPDATE SKIP LOCKED` after calculation; skipped rows stay pending.
 `prepared_status_001` upgrades existing task triggers to watch execution status
