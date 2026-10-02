@@ -91,6 +91,21 @@ def _reject_nonfinite(name: str):
     raise ValueError(f"non-finite JSON constant in metrics: {name}")
 
 
+def _replace_nul(value: Any) -> Any:
+    """Replace U+0000, which PostgreSQL text and JSONB cannot store.
+
+    Verifiers for binary-output tasks embed program output in metrics strings;
+    one NUL failed the whole trial save. U+FFFD keeps the rest readable.
+    """
+    if isinstance(value, str):
+        return value.replace("\x00", "\ufffd")
+    if isinstance(value, list):
+        return [_replace_nul(item) for item in value]
+    if isinstance(value, dict):
+        return {_replace_nul(key): _replace_nul(item) for key, item in value.items()}
+    return value
+
+
 def extract_verifier_metrics(path: Path) -> dict[str, Any] | None:
     """The first ``verifier/metrics.json`` under a Harbor output tree, or None.
 
@@ -114,7 +129,7 @@ def extract_verifier_metrics(path: Path) -> dict[str, Any] | None:
         except (OSError, ValueError):
             continue
         if isinstance(payload, dict):
-            return cast(dict[str, Any], payload)
+            return cast(dict[str, Any], _replace_nul(payload))
     return None
 
 

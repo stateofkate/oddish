@@ -129,6 +129,28 @@ def test_nonfinite_metrics_rejected(tmp_path):
     assert extract_verifier_metrics(tmp_path) is None
 
 
+def test_nul_characters_replaced_in_metrics(tmp_path):
+    # A compression task's verifier embeds binary program output; PostgreSQL
+    # rejects U+0000 in JSONB, which failed the trial save in production.
+    _write_metrics(
+        tmp_path,
+        json.dumps(
+            {
+                "passed": 3,
+                "by_case": [{"expected_stdout": "blz\x1a\x00\x00\x01"}],
+                "key\x00": "ok",
+            }
+        ),
+    )
+    metrics = extract_verifier_metrics(tmp_path)
+    assert metrics == {
+        "passed": 3,
+        "by_case": [{"expected_stdout": "blz\x1a\ufffd\ufffd\x01"}],
+        "key\ufffd": "ok",
+    }
+    assert "\\u0000" not in json.dumps(metrics)
+
+
 def _write_ctrf(job_dir, payload: object) -> Path:
     verifier_dir = job_dir / "trial__abc123" / "verifier"
     verifier_dir.mkdir(parents=True)
