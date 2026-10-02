@@ -1108,6 +1108,37 @@ def test_mini_swe_fold_accumulates_usage_from_snapshot():
     assert totals.model == "anthropic/claude-opus-4-8"
 
 
+def test_mini_swe_fold_emits_saved_reasoning_before_message_and_tools():
+    fold = MiniSweUsageFold()
+    message = mini_assistant("I will inspect the config.", command="cat config.json")
+    message["reasoning_content"] = "I need to check each rule before changing it."
+    snapshot = mini_trajectory([message])
+    assert fold.feed_line(snapshot) == [
+        {
+            "kind": "message",
+            "payload": {"text": "I need to check each rule before changing it."},
+        },
+        {"kind": "message", "payload": {"text": "I will inspect the config."}},
+        {
+            "kind": "tool_use",
+            "payload": {
+                "input": json.dumps({"command": "cat config.json"}),
+                "name": "bash",
+            },
+        },
+    ]
+    assert fold.feed_line(snapshot) == []
+
+
+def test_mini_swe_fold_does_not_repeat_reasoning_equal_to_message():
+    fold = MiniSweUsageFold()
+    message = mini_assistant("Saved text.")
+    message["thinking_blocks"] = [{"type": "thinking", "thinking": "Saved text."}]
+    assert fold.feed_line(mini_trajectory([message])) == [
+        {"kind": "message", "payload": {"text": "Saved text."}}
+    ]
+
+
 def test_mini_swe_fold_replays_transcript_after_valid_snapshot_shrink():
     fold = MiniSweUsageFold()
     first = fold.feed_line(

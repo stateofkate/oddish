@@ -15,6 +15,46 @@ async function openAllSteps(page: Page) {
   return panel;
 }
 
+test("agent reasoning is visible while tool details stay closed", async ({ page }) => {
+  await page.goto("/trajectory");
+  const panel = page.getByTestId("trajectory-panel");
+  const reasoning = panel.getByText(
+    "Confirm the exact rule and its tests before writing a change.",
+    { exact: true }
+  );
+  await expect(reasoning).toBeVisible();
+  await expect(panel.getByText(
+    "The public function can keep the same inputs and return type.",
+    { exact: true }
+  )).toBeVisible();
+  await expect(panel.getByText(
+    "The change belongs inside the existing rule check.",
+    { exact: true }
+  )).toBeVisible();
+  await expect(panel.getByText(
+    "The response format needs a valid JSON string.",
+    { exact: true }
+  )).toBeVisible();
+  const repeated = panel.getByText(
+    "The test must cover a disabled rule that would otherwise match.",
+    { exact: true }
+  );
+  await expect(repeated).toHaveCount(1);
+  await expect(panel.getByText("Raw step JSON", { exact: true })).toHaveCount(0);
+  await expect(panel.getByText("On branch main", { exact: false })).toHaveCount(0);
+  await expect(panel.getByText("Agent", { exact: true })).toHaveCount(0);
+  await expect(panel.getByText("example-model", { exact: true })).toHaveCount(0);
+  await expect(panel.getByText("user", { exact: true })).toHaveCount(2);
+
+  await panel.getByRole("button", { name: /^#3\b/ }).click();
+  await expect(reasoning).toHaveCount(1);
+  await expect(reasoning).toBeVisible();
+  await expect(panel.getByText("On branch main", { exact: false })).toBeVisible();
+  await expect(panel.getByText("Raw step JSON", { exact: true })).toHaveCount(1);
+  await panel.getByRole("button", { name: /^#14\b/ }).click();
+  await expect(repeated).toHaveCount(1);
+});
+
 test("tool calls show each command once, with unwrapped results", async ({
   page,
 }) => {

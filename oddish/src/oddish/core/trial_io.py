@@ -35,6 +35,7 @@ from oddish.workers.agents.claude_code import (
 from oddish.workers.agents.grok_build_trajectory import (
     convert_grok_build_json_text_to_trajectory,
 )
+from oddish.workers.agents.mini_swe_trajectory import restore_mini_swe_reasoning
 
 _CACHE_TTL_SECONDS = 120.0
 _CACHE_MAX_ENTRIES = 128
@@ -632,7 +633,11 @@ async def _read_step_trajectories(
                 continue
             content = await storage.download_text(key)
             if content:
-                named.append((match.group(1), _json.loads(content)))
+                trajectory = _json.loads(content)
+                trajectory = await _restore_mini_swe_reasoning_from_s3(
+                    storage, trajectory, key
+                )
+                named.append((match.group(1), trajectory))
         if named:
             return _merge_step_trajectories(named)
     except (_json.JSONDecodeError, TypeError, ValueError):
@@ -677,6 +682,36 @@ async def _read_step_trajectories_exact(
         return None
 
 
+def _needs_mini_swe_reasoning(trajectory: dict) -> bool:
+    agent = trajectory.get("agent")
+    if not isinstance(agent, dict) or agent.get("name") != "mini-swe-agent":
+        return False
+    extra = agent.get("extra")
+    return not isinstance(extra, dict) or extra.get("oddish_reasoning_version") != 1
+
+
+async def _restore_mini_swe_reasoning_from_s3(
+    storage: StorageClient, trajectory: dict, trajectory_key: str
+) -> dict:
+    """Add saved reasoning from the same agent directory as the selected ATIF."""
+    if not isinstance(trajectory, dict) or not _needs_mini_swe_reasoning(trajectory):
+        return trajectory
+    raw_key = trajectory_key.removesuffix("trajectory.json") + (
+        "mini-swe-agent.trajectory.json"
+    )
+    try:
+        content = await storage.download_text(raw_key)
+    except ClientError as exc:
+        if not is_missing_object(exc):
+            raise
+        return trajectory
+    try:
+        raw = _json.loads(content) if content else None
+    except (TypeError, ValueError):
+        return trajectory
+    return restore_mini_swe_reasoning(trajectory, raw)
+
+
 async def _read_trial_trajectory_from_s3(
     trial: TrialModel,
     storage: StorageClient,
@@ -697,7 +732,9 @@ async def _read_trial_trajectory_from_s3(
                 if content:
                     parsed = _json.loads(content)
                     if isinstance(parsed, dict):
-                        return parsed
+                        return await _restore_mini_swe_reasoning_from_s3(
+                            storage, parsed, trajectory_key
+                        )
             except (_json.JSONDecodeError, TypeError, ValueError):
                 pass
 
@@ -739,12 +776,15 @@ async def _read_trial_trajectory_from_s3(
     for trajectory_key in _legacy_trajectory_candidate_keys(
         trial, layout.attempt_prefix
     ):
+        parsed = None
         with suppress(*_ARTIFACT_FALLBACK_ERRORS):
             content = await storage.download_text(trajectory_key)
             if content:
                 parsed = _json.loads(content)
-                if isinstance(parsed, dict):
-                    return parsed
+        if isinstance(parsed, dict):
+            return await _restore_mini_swe_reasoning_from_s3(
+                storage, parsed, trajectory_key
+            )
 
     for grok_key in _legacy_grok_build_candidate_keys(trial, layout.attempt_prefix):
         with suppress(*_ARTIFACT_FALLBACK_ERRORS):
@@ -773,17 +813,27 @@ async def _read_trial_trajectory_from_s3(
                     if parsed:
                         return parsed
 
+    selected_trajectory = None
     try:
         files = (
             list(layout.listed_keys)
             if layout.listed_keys is not None
             else sorted(await storage.list_keys(layout.attempt_prefix))
         )
-        step_keys = [f for f in files if _STEP_TRAJECTORY_KEY_RE.search(f)]
-        if step_keys:
-            merged = await _read_step_trajectories(storage, step_keys)
-            if merged is not None:
-                return merged
+    except _ARTIFACT_FALLBACK_ERRORS as e:
+        logger.debug(
+            "No trajectory listing in S3 for %s at %s: %s",
+            trial.id,
+            layout.attempt_prefix,
+            e,
+        )
+        return None
+    step_keys = [f for f in files if _STEP_TRAJECTORY_KEY_RE.search(f)]
+    if step_keys:
+        merged = await _read_step_trajectories(storage, step_keys)
+        if merged is not None:
+            return merged
+    try:
         grok_build_keys: list[str] = []
         for f in files:
             if f.endswith(
@@ -793,10 +843,11 @@ async def _read_trial_trajectory_from_s3(
                 if content:
                     parsed = _json.loads(content)
                     if isinstance(parsed, dict):
-                        return parsed
+                        selected_trajectory = (parsed, f)
+                        break
             if f.endswith("/agent/grok-build.json"):
                 grok_build_keys.append(f)
-        for f in grok_build_keys:
+        for f in grok_build_keys if selected_trajectory is None else []:
             content = await storage.download_text(f)
             if content:
                 parsed = _convert_grok_build_text_to_trajectory(
@@ -811,6 +862,11 @@ async def _read_trial_trajectory_from_s3(
             trial.id,
             layout.attempt_prefix,
             e,
+        )
+    if selected_trajectory is not None:
+        parsed, trajectory_key = selected_trajectory
+        return await _restore_mini_swe_reasoning_from_s3(
+            storage, parsed, trajectory_key
         )
     return None
 
@@ -854,6 +910,15 @@ def _read_local_trial_trajectory(trial: TrialModel) -> dict | None:
         local_parsed: dict = _json.loads(
             trajectory_path_resolved.read_text(errors="replace")
         )
+        if isinstance(local_parsed, dict) and _needs_mini_swe_reasoning(local_parsed):
+            raw_path = trajectory_path_resolved.with_name(
+                "mini-swe-agent.trajectory.json"
+            )
+            try:
+                raw = _json.loads(raw_path.read_text(errors="replace"))
+            except (OSError, TypeError, ValueError):
+                return local_parsed
+            return restore_mini_swe_reasoning(local_parsed, raw)
         return local_parsed
     except (OSError, TypeError, ValueError):
         return None

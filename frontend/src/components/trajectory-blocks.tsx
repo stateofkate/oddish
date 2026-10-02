@@ -23,12 +23,14 @@ export function StepHeader({
   model,
   preview,
   badges,
+  hideAgentIdentity = false,
 }: {
   index: number | string;
   source: string;
   model?: string | null;
   preview?: string | null;
   badges?: ReactNode;
+  hideAgentIdentity?: boolean;
 }) {
   const label = source === "agent" ? "Agent" : source;
   return (
@@ -37,15 +39,17 @@ export function StepHeader({
         <span className="text-muted-foreground font-mono text-xs">
           #{index}
         </span>
-        <span
-          className={cn(
-            "text-xs font-medium capitalize",
-            SOURCE_COLORS[source] || "text-gray-500"
-          )}
-        >
-          {label}
-        </span>
-        {model && (
+        {!(hideAgentIdentity && source === "agent") && (
+          <span
+            className={cn(
+              "text-xs font-medium capitalize",
+              SOURCE_COLORS[source] || "text-gray-500"
+            )}
+          >
+            {label}
+          </span>
+        )}
+        {model && !(hideAgentIdentity && source === "agent") && (
           <span
             className="text-muted-foreground truncate text-xs"
             title={model}

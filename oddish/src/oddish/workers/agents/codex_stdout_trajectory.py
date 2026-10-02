@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import shlex
+from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -13,6 +15,8 @@ from harbor.models.trajectories.step import Step
 from harbor.models.trajectories.tool_call import ToolCall
 from harbor.models.trajectories.trajectory import Trajectory
 from harbor.utils.trajectory_utils import format_trajectory_json
+
+from oddish.analyze.trajectory_tool_calls import COMMAND_ARGUMENT_KEYS, tool_name
 
 CODEX_STDOUT_TRAJECTORY_OUTPUT_LIMIT = 20_000
 
@@ -142,13 +146,95 @@ def _session_file_id(path: Path) -> str | None:
     return None
 
 
-def read_trajectory_step_count(trajectory_path: Path) -> int:
+def _read_trajectory_steps(trajectory_path: Path) -> list[dict[str, Any]]:
     try:
         data = json.loads(trajectory_path.read_text(encoding="utf-8"))
     except Exception:
-        return 0
+        return []
+    if not isinstance(data, dict):
+        return []
     steps = data.get("steps")
-    return len(steps) if isinstance(steps, list) else 0
+    return (
+        [step for step in steps if isinstance(step, dict)]
+        if isinstance(steps, list)
+        else []
+    )
+
+
+def read_trajectory_step_count(trajectory_path: Path) -> int:
+    return len(_read_trajectory_steps(trajectory_path))
+
+
+def _shell_command_text(command: Any) -> Any:
+    if isinstance(command, str):
+        try:
+            parts = shlex.split(command)
+        except ValueError:
+            return command
+    elif isinstance(command, list) and all(isinstance(part, str) for part in command):
+        parts = command
+    else:
+        return command
+    if (
+        len(parts) == 3
+        and parts[0] in {"bash", "/bin/bash", "sh", "/bin/sh"}
+        and parts[1] in {"-c", "-lc"}
+    ):
+        return parts[2]
+    return shlex.join(parts) if isinstance(command, list) else command
+
+
+def _tool_signatures(steps: list[dict[str, Any]]) -> Counter[str]:
+    signatures: Counter[str] = Counter()
+    seen: set[tuple[str, str]] = set()
+    for step in steps:
+        for call in step.get("tool_calls") or []:
+            if not isinstance(call, dict):
+                continue
+            name = tool_name(call)
+            arguments = call.get("arguments")
+            if name in {"shell", "shell_command", "exec_command", "local_shell"}:
+                name = "shell"
+                if isinstance(arguments, dict):
+                    arguments = dict(arguments)
+                    for key in COMMAND_ARGUMENT_KEYS:
+                        if key in arguments:
+                            arguments["command"] = _shell_command_text(
+                                arguments.pop(key)
+                            )
+                            break
+            signature = json.dumps([name, arguments], sort_keys=True)
+            call_id = call.get("tool_call_id")
+            if isinstance(call_id, str) and call_id:
+                identity = (call_id, signature)
+                if identity in seen:
+                    continue
+                seen.add(identity)
+            signatures[signature] += 1
+    return signatures
+
+
+def _preserves_saved_details(
+    existing_steps: list[dict[str, Any]], replacement_steps: list[dict[str, Any]]
+) -> bool:
+    # Stdout has separate start/end rows and reasoning summaries. More rows
+    # must not replace saved reasoning or tools that stdout does not include.
+    replacement_reasoning = " ".join(
+        " ".join(step["reasoning_content"].split())
+        for step in replacement_steps
+        if isinstance(step.get("reasoning_content"), str)
+    )
+    offset = 0
+    for step in existing_steps:
+        reasoning = step.get("reasoning_content")
+        if not isinstance(reasoning, str) or not reasoning.strip():
+            continue
+        reasoning = " ".join(reasoning.split())
+        position = replacement_reasoning.find(reasoning, offset)
+        if position < 0:
+            return False
+        offset = position + len(reasoning)
+    return not (_tool_signatures(existing_steps) - _tool_signatures(replacement_steps))
 
 
 def convert_codex_stdout_jsonl_to_trajectory(
@@ -440,11 +526,15 @@ def write_trajectory_if_richer(
     if not trajectory:
         return None
 
-    if len(trajectory.steps) <= read_trajectory_step_count(existing_trajectory_path):
+    existing_steps = _read_trajectory_steps(existing_trajectory_path)
+    if len(trajectory.steps) <= len(existing_steps):
+        return None
+    serialized = trajectory.to_json_dict()
+    if not _preserves_saved_details(existing_steps, serialized["steps"]):
         return None
 
     existing_trajectory_path.write_text(
-        format_trajectory_json(trajectory.to_json_dict()),
+        format_trajectory_json(serialized),
         encoding="utf-8",
     )
     return trajectory

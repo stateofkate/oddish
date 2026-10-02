@@ -11,6 +11,7 @@ from typing import Any, Protocol, cast
 from oddish.config import settings
 from oddish.model_pricing import estimate_cost_usd
 from oddish.transcript_safety import sanitize_transcript_text, sanitize_transcript_value
+from oddish.workers.agents.mini_swe_trajectory import extract_mini_swe_reasoning
 from oddish.workers.harbor.redaction import redact_exact_bytes, redact_exact_value
 from oddish.workers.console import console
 
@@ -796,6 +797,9 @@ class MiniSweUsageFold:
         content = _tool_result_text(message.get("content"))
         if role == "assistant":
             rendered: list[dict[str, Any]] = []
+            reasoning = extract_mini_swe_reasoning(message)
+            if reasoning and reasoning != content:
+                rendered.append(_event("message", "text", reasoning))
             if content:
                 rendered.append(_event("message", "text", content))
             rendered.extend(_render_mini_tool_calls(message))

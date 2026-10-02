@@ -2,11 +2,12 @@
 
 Detail: kept by the browser but revalidated on every use once execution and
 analysis are terminal (task-level QA can rewrite the analysis in place).
-Trajectory: immutable once recorded, so cacheable for a day.
+Trajectory: stable within a reader version, so cacheable for a day.
 """
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -70,6 +71,18 @@ def test_etag_changes_with_attempt_and_analysis_time():
     assert matches_if_none_match("*", a)
     assert not matches_if_none_match(None, a)
     assert not matches_if_none_match('W/"other"', a)
+
+
+def test_etag_reader_version_preserves_default_and_changes_representation():
+    fields = dict(trial_id="t1", attempts=1, finished_at=FINISHED)
+    default = trial_etag(**fields)
+    assert default == 'W/"4704234a8fcb64600d5c"'
+    assert default == trial_etag(**fields, representation_version=None)
+    restored = trial_etag(**fields, representation_version="trajectory-reasoning-v1")
+    assert restored != default
+    assert restored != trial_etag(
+        **fields, representation_version="trajectory-reasoning-v2"
+    )
 
 
 def _identity(**overrides) -> TrialCacheIdentity:
@@ -233,7 +246,12 @@ def _trajectory_trial(**overrides):
 async def test_finished_trajectory_is_cacheable_and_answers_304_before_reading():
     trial = _trajectory_trial()
     auth = SimpleNamespace(require_scope=Mock())
-    etag = trial_etag(trial_id="t1", attempts=1, finished_at=FINISHED)
+    etag = trial_etag(
+        trial_id="t1",
+        attempts=1,
+        finished_at=FINISHED,
+        representation_version="trajectory-reasoning-v1",
+    )
     with (
         patch(
             "api.routers.trials._get_authorized_trial",
@@ -260,12 +278,45 @@ async def test_finished_trajectory_is_cacheable_and_answers_304_before_reading()
 
 
 @pytest.mark.asyncio
+async def test_old_trajectory_validator_returns_restored_reasoning():
+    """The old body must not hide source reasoning restored by the reader."""
+    trial = _trajectory_trial()
+    auth = SimpleNamespace(require_scope=Mock())
+    stale_etag = trial_etag(trial_id="t1", attempts=1, finished_at=FINISHED)
+    restored = {"steps": [{"reasoning_content": "The source recorded this reasoning."}]}
+    with (
+        patch(
+            "api.routers.trials._get_authorized_trial",
+            new=AsyncMock(return_value=trial),
+        ),
+        patch(
+            "api.routers.trials.read_trial_trajectory",
+            new=AsyncMock(return_value=restored),
+        ) as read,
+    ):
+        result = await get_trial_trajectory(
+            _request({"If-None-Match": stale_etag}), "t1", auth
+        )
+
+    assert result.status_code == 200
+    assert json.loads(result.body) == restored
+    assert result.headers["etag"] != stale_etag
+    assert result.headers["cache-control"] == IMMUTABLE_CACHE_CONTROL
+    read.assert_awaited_once_with(trial)
+
+
+@pytest.mark.asyncio
 async def test_running_trajectory_is_no_store_and_ignores_if_none_match():
     trial = _trajectory_trial(
         status=TrialStatus.RUNNING, finished_at=None, has_trajectory=False
     )
     auth = SimpleNamespace(require_scope=Mock())
-    etag = trial_etag(trial_id="t1", attempts=1, finished_at=None)
+    etag = trial_etag(
+        trial_id="t1",
+        attempts=1,
+        finished_at=None,
+        representation_version="trajectory-reasoning-v1",
+    )
     with (
         patch(
             "api.routers.trials._get_authorized_trial",
@@ -310,7 +361,12 @@ async def test_finished_trial_with_missing_trajectory_is_not_cached_or_304d():
 async def test_row_without_recorded_trajectory_never_answers_304():
     """The validator alone is not proof a body exists; the row must say so."""
     auth = SimpleNamespace(require_scope=Mock())
-    etag = trial_etag(trial_id="t1", attempts=1, finished_at=FINISHED)
+    etag = trial_etag(
+        trial_id="t1",
+        attempts=1,
+        finished_at=FINISHED,
+        representation_version="trajectory-reasoning-v1",
+    )
     with (
         patch(
             "api.routers.trials._get_authorized_trial",

@@ -48,6 +48,7 @@ import {
   contentText,
   stepRejection,
   stepTitle,
+  stepText,
   stepView,
 } from "@/lib/trajectory-view";
 import {
@@ -61,6 +62,11 @@ import { useOpenLatencySpan } from "@/lib/use-open-latency-span";
 import { useTrajectorySummary } from "@/lib/use-trajectory-summary";
 
 import { formatMs } from "@/lib/utils";
+
+function fetchTrajectory(url: string): Promise<Trajectory | null> {
+  // Recheck the reader version even when the browser holds a fresh body.
+  return fetcher<Trajectory | null>(url, { cache: "no-cache" });
+}
 
 function formatStepDuration(
   prevTimestamp: string | null,
@@ -537,7 +543,10 @@ function StepTrigger({
   const stepDuration =
     durationMs != null && step.timestamp ? formatMs(durationMs) : null;
   const sinceStart = formatStepDuration(startTimestamp, step.timestamp);
-  const title = stepTitle(step)?.slice(0, 200) || null;
+  const title =
+    stepText(step) && !step.tool_calls?.length
+      ? "Details"
+      : stepTitle(step)?.slice(0, 200) || null;
   const rejected = stepRejection(step) !== null;
 
   return (
@@ -545,6 +554,7 @@ function StepTrigger({
       index={step.step_id}
       source={step.source}
       model={step.model_name}
+      hideAgentIdentity
       preview={title}
       badges={
         stepDuration || sinceStart || rejected ? (
@@ -594,6 +604,13 @@ function StepContent({
   apiBaseUrl: string;
 }) {
   const view = useMemo(() => stepView(step), [step]);
+  const text = stepText(step);
+  const message =
+    text && text.trim() === contentText(step.message).trim()
+      ? Array.isArray(step.message)
+        ? step.message.filter((part) => part.type !== "text")
+        : null
+      : step.message;
   const renderImage = (source: ImageSource) => (
     <ContentRenderer
       content={[{ type: "image", source }]}
@@ -613,15 +630,15 @@ function StepContent({
         </div>
       )}
 
-      {view.showMessage && step.message && (
+      {view.showMessage && message && (
         <ContentRenderer
-          content={step.message}
+          content={message}
           trialId={trialId}
           apiBaseUrl={apiBaseUrl}
         />
       )}
 
-      {step.reasoning_content && (
+      {step.source !== "agent" && step.reasoning_content && (
         <div className="border-l-2 border-blue-500/40 pl-3">
           <h5 className="text-muted-foreground mb-1 text-xs font-medium">
             Reasoning
@@ -693,7 +710,7 @@ export function TrajectoryViewer({
     error,
   } = useSWR<Trajectory | null>(
     shouldFetch ? `${apiBaseUrl}/trials/${trialId}/trajectory` : null,
-    fetcher,
+    fetchTrajectory,
     {
       revalidateOnFocus: false,
     }
@@ -1103,6 +1120,11 @@ export function TrajectoryViewer({
                           }
                         />
                       </AccordionTrigger>
+                      {stepText(step) && (
+                        <div className="min-w-0 pb-4 text-sm [content-visibility:auto] [contain-intrinsic-size:auto_80px]">
+                          <MessageText text={stepText(step)!} />
+                        </div>
+                      )}
                       <AccordionContent>
                         {expandedStepKeys.has(`step-${idx}`) ? (
                           <StepContent

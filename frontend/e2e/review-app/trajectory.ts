@@ -74,7 +74,7 @@ export const trajectory: Trajectory = {
     step(3, {
       message: "I'll look at the repository state first.",
       reasoning_content:
-        "The rule engine lives in `src/rules.py`; check the test layout before editing.",
+        "The rule engine lives in `src/rules.py`; check the test layout before editing.\n\nConfirm the exact rule and its tests before writing a change.",
       tool_calls: [
         {
           tool_call_id: "status",
@@ -107,6 +107,7 @@ export const trajectory: Trajectory = {
     step(4, {
       message:
         '{\n  "commands": [{"keystrokes": "python3 -c "\nprint(1)""}]\n}',
+      reasoning_content: "The response format needs a valid JSON string.",
       observation: {
         results: [{ source_call_id: null, content: parseDiagnostic }],
       },
@@ -223,6 +224,20 @@ export const trajectory: Trajectory = {
     step(11, {
       message:
         "Disabled rules now return early, and `tests/test_rules.py` covers it. All tests pass.",
+    }),
+    step(12, {
+      message: "Reasoning",
+      reasoning_content:
+        "A disabled rule should stop before matching.\n\nThe public function can keep the same inputs and return type.",
+    }),
+    step(13, {
+      message:
+        "I will keep the function signature as it is.\n\nThe change belongs inside the existing rule check.",
+    }),
+    step(14, {
+      message: "The test must cover a disabled rule that would otherwise match.",
+      reasoning_content:
+        "The test must cover a disabled rule that would otherwise match.",
     }),
   ],
 };

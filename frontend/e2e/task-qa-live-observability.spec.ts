@@ -329,8 +329,10 @@ test.describe("task QA live observability", () => {
       "data-state",
       "active"
     );
-    const gradedStep = page.getByRole("button", { name: /^#15 Agent/ });
-    await expect(gradedStep).toBeVisible();
+    const gradedStepButton = page.getByRole("button", { name: /^#15\b/ });
+    await expect(gradedStepButton).toBeVisible();
+    await expect(gradedStepButton).toHaveAttribute("aria-expanded", "true");
+    const gradedStep = gradedStepButton.locator("..").locator("..");
     await expect(
       gradedStep.getByText("graded this trial", { exact: true })
     ).toBeVisible();

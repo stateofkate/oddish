@@ -524,8 +524,15 @@ test.describe("critical task and trial subtree", () => {
                 model_name: "gpt-5",
                 message: "Short collapsed preview",
                 reasoning_content: "DEFERRED_TRAJECTORY_STEP_BODY",
-                tool_calls: null,
-                observation: null,
+                tool_calls: [{
+                  tool_call_id: "deferred-output",
+                  function_name: "shell",
+                  arguments: { command: "printf completed" },
+                }],
+                observation: { results: [{
+                  source_call_id: "deferred-output",
+                  content: "DEFERRED_TRAJECTORY_TOOL_OUTPUT",
+                }] },
                 metrics: null,
               },
             ],
@@ -686,11 +693,15 @@ test.describe("critical task and trial subtree", () => {
     await page.getByRole("tab", { name: "Trajectory" }).click();
     await trajectoryRequest;
     expect(requestCount(requests, trajectoryPattern)).toBeGreaterThan(0);
-    await expect(page.getByText("DEFERRED_TRAJECTORY_STEP_BODY")).toHaveCount(
-      0
-    );
-    await page.getByRole("button", { name: /^#1/ }).click();
     await expect(page.getByText("DEFERRED_TRAJECTORY_STEP_BODY")).toBeVisible();
+    await expect(page.getByText("DEFERRED_TRAJECTORY_TOOL_OUTPUT")).toHaveCount(0);
+    await expect(page.getByText("Raw step JSON", { exact: true })).toHaveCount(0);
+    const stepButton = page.getByRole("button", { name: /^#1/ });
+    await expect(stepButton).not.toContainText("Agent");
+    await expect(stepButton).not.toContainText("gpt-5");
+    await stepButton.click();
+    await expect(page.getByText("DEFERRED_TRAJECTORY_STEP_BODY")).toHaveCount(1);
+    await expect(page.getByText("DEFERRED_TRAJECTORY_TOOL_OUTPUT")).toBeVisible();
 
     const summaryPost = page.waitForRequest(
       (request) =>

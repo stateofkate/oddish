@@ -527,9 +527,16 @@ for (const hasSummary of [false, true]) {
                 source: "agent",
                 model_name: "masked-model",
                 message: "Short collapsed preview",
-                reasoning_content: "EXPENSIVE_STEP_BODY",
-                tool_calls: null,
-                observation: null,
+                reasoning_content: "PUBLIC_AGENT_REASONING",
+                tool_calls: [{
+                  tool_call_id: "deferred-output",
+                  function_name: "shell",
+                  arguments: { command: "printf completed" },
+                }],
+                observation: { results: [{
+                  source_call_id: "deferred-output",
+                  content: "DEFERRED_PUBLIC_TRAJECTORY_OUTPUT",
+                }] },
                 metrics: null,
               },
             ],
@@ -555,7 +562,9 @@ for (const hasSummary of [false, true]) {
 
     await page.getByRole("tab", { name: "Trajectory" }).click();
     await expect.poll(() => trajectoryRequests).toBe(1);
-    await expect(page.getByText("EXPENSIVE_STEP_BODY")).toHaveCount(0);
+    await expect(page.getByText("PUBLIC_AGENT_REASONING")).toBeVisible();
+    await expect(page.getByText("DEFERRED_PUBLIC_TRAJECTORY_OUTPUT")).toHaveCount(0);
+    await expect(page.getByText("Raw step JSON", { exact: true })).toHaveCount(0);
     await expect(page.getByText("Activity", { exact: true })).toHaveCount(0);
     await expect(
       page.getByText(
@@ -573,8 +582,12 @@ for (const hasSummary of [false, true]) {
         page.getByText("Summary service unavailable", { exact: true })
       ).toBeVisible();
     }
-    await page.getByRole("button", { name: /^#1/ }).click();
-    await expect(page.getByText("EXPENSIVE_STEP_BODY")).toBeVisible();
+    const stepButton = page.getByRole("button", { name: /^#1/ });
+    await expect(stepButton).not.toContainText("Agent");
+    await expect(stepButton).not.toContainText("masked-model");
+    await stepButton.click();
+    await expect(page.getByText("PUBLIC_AGENT_REASONING")).toHaveCount(1);
+    await expect(page.getByText("DEFERRED_PUBLIC_TRAJECTORY_OUTPUT")).toBeVisible();
   });
 }
 

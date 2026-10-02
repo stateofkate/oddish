@@ -3,9 +3,10 @@
 ``/trials/{trial_id}`` and ``/trials/{trial_id}/trajectory`` are fetched
 every time a trial drawer opens. Two different guarantees apply:
 
-* A finished trial's **trajectory** never changes (a retry is a new row), so
-  once the row records one and storage returns it, the browser may keep it
-  for a day without asking.
+* A finished trial's **trajectory** is stable within a reader version (a
+  retry is a new row). A reader that restores omitted source data must use
+  a new representation version in its ETag. Once the row records a trajectory
+  and storage returns it, the browser may keep it for a day without asking.
 
 * A finished trial's **detail** is mostly stable but not immutable: a
   task-level QA run rewrites the per-trial analysis in place, on trials that
@@ -87,8 +88,12 @@ def trial_etag(
     finished_at: datetime | None,
     analysis_finished_at: datetime | None = None,
     playback: dict | None = None,
+    representation_version: str | None = None,
 ) -> str:
-    """Weak validator over the fields that change when the payload does."""
+    """Weak validator over row state and an optional reader version.
+
+    Omitting the version preserves existing detail validators.
+    """
     raw = "|".join(
         (trial_id, str(attempts), _iso(finished_at), _iso(analysis_finished_at))
     )
@@ -96,6 +101,8 @@ def trial_etag(
         raw += "|" + json.dumps(
             {k: v for k, v in playback.items() if v is not None}, sort_keys=True
         )
+    if representation_version is not None:
+        raw += f"|{representation_version}"
     return f'W/"{sha1(raw.encode()).hexdigest()[:20]}"'
 
 

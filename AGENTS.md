@@ -446,10 +446,12 @@ loads. Trial controls prefetch that resource on pointer or keyboard intent, and
 the drawer owns its SWR cache entry and passes the authoritative trial to the QA
 card, so one trial must never produce parallel detail requests. Drawers open on
 Summary and fetch trajectory and summary resources independently only after
-explicit user or URL intent. Collapsed trajectory steps must not mount their
-message,
-reasoning, tool, or observation bodies; those potentially large bodies mount
-only while the step is expanded. Trajectory summaries are written onto
+explicit user or URL intent. Agent steps show their full reasoning in the main
+view. When reasoning is absent, they show the agent message. Step headers omit
+the agent and model names that the trial already shows. Tool calls, output, raw
+JSON, images, and user or system messages mount only while the step details are
+expanded. The visible agent text is not repeated in those details. Trajectory
+summaries are written onto
 `trials.trajectory_summary` by the task's QA trial import or by a
 `summarize`-kind trial's import; the read path never generates. The public
 summary route stays a plain column read. The authenticated routes split reads
@@ -2376,7 +2378,25 @@ one result artifact by filename suffix within that authoritative attempt prefix.
 
 The normal ATIF reader downloads the attempt manifest and selected
 `agent/trajectory.json` without preliminary existence checks: two GETs on
-a cache miss. `is_missing_object` in `db/storage.py` owns missing-object
+a cache miss. Older mini-swe-agent trajectories also read the saved
+`agent/mini-swe-agent.trajectory.json` from that same directory to restore plain
+reasoning. The reader matches every assistant message and tool call before it
+adds text. It keeps the saved step IDs, messages, tools, observations, and metrics.
+Missing or malformed source logs leave the saved steps as they are. This also
+applies to local files and each step of a multi-step trial.
+
+`OddishMiniSweAgent` keeps plain `reasoning_content` and `thinking_blocks` from
+the model response after Harbor builds the ATIF file. The live transcript reads
+the same fields. The agent's `extra.oddish_reasoning_version = 1` marks captures
+that have passed this check, so their reads still need only two GETs. Empty or
+encrypted thinking blocks contain no plain text to restore. The reader does not
+change stored files. Hosted trajectory ETags include the response version so
+an old cache tag cannot hide restored text when a client checks for changes.
+Codex's stdout fallback must keep saved reasoning and tool calls before it can
+replace a trajectory with more steps. Separate command start and end rows do
+not make a trace more complete.
+
+`is_missing_object` in `db/storage.py` owns missing-object
 classification for both readers and storage diagnostics: a known missing code,
 or HTTP 404 with an absent/empty code, activates missing-file behavior. Explicit
 non-404 statuses and bucket, permission, and service errors propagate. Finished

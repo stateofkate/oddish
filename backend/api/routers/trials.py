@@ -497,9 +497,10 @@ async def get_trial_trajectory(
 ) -> Response:
     """Get ATIF trajectory.json for a trial (step-by-step agent actions).
 
-    A finished trial's trajectory is immutable (a retry is a new row), so it
+    A finished trial's trajectory is stable within a reader version, so it
     is cacheable for a day and answers ``If-None-Match`` with ``304`` before
-    touching S3. Unfinished trials stay ``no-store``, and so does a ``null``
+    touching S3. The version changes when the reader restores source data.
+    Unfinished trials stay ``no-store``, and so does a ``null``
     body: a transient storage miss must not be pinned for a day, and a
     ``304`` is only trusted when the row itself records a trajectory.
     """
@@ -509,7 +510,10 @@ async def get_trial_trajectory(
         status=trial.status, finished_at=trial.finished_at
     ) and bool(trial.has_trajectory)
     etag = trial_etag(
-        trial_id=trial.id, attempts=trial.attempts, finished_at=trial.finished_at
+        trial_id=trial.id,
+        attempts=trial.attempts,
+        finished_at=trial.finished_at,
+        representation_version="trajectory-reasoning-v1",
     )
     if final and matches_if_none_match(request.headers.get("if-none-match"), etag):
         return Response(

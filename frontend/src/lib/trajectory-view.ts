@@ -279,9 +279,36 @@ export function stepRejection(
   return null;
 }
 
+function messageText(step: TrajectoryStep): string | null {
+  const message = contentText(step.message);
+  if (!message.trim()) return null;
+  if (step.source !== "agent") return message;
+  if (message.trim() === "Reasoning") return null;
+  const calls = step.tool_calls ?? [];
+  const only = calls.length === 1 ? calls[0] : null;
+  if (only && Object.hasOwn(COMMAND_FIELDS, only.function_name)) {
+    const command = commandText(
+      typeof only.arguments === "string"
+        ? only.arguments
+        : only.arguments[COMMAND_FIELDS[only.function_name]]
+    );
+    if (command && message.trim() === `Executed command: ${command}`)
+      return null;
+  }
+  return message;
+}
+
+/** Full agent prose shown outside the step's command and output details. */
+export function stepText(step: TrajectoryStep): string | null {
+  if (step.source !== "agent") return null;
+  if (step.reasoning_content?.trim()) return step.reasoning_content;
+  if (stepRejection(step)) return null;
+  return messageText(step);
+}
+
 export interface StepView {
   rejection: ReturnType<typeof stepRejection>;
-  /** False when the message only repeats the one command shown below it. */
+  /** Keep distinct message text and images in details; omit text shown inline. */
   showMessage: boolean;
   tools: ToolView[];
   /** Outputs whose `source_call_id` matches no call in this step. */
@@ -309,11 +336,16 @@ export function stepView(step: TrajectoryStep): StepView {
     : results
         .filter((result) => !ids.has(result.source_call_id ?? ""))
         .flatMap((result) => outputViews(result.content).outputs);
-  const only = tools.length === 1 ? tools[0].input : null;
-  const echo = only?.language === "bash" && `Executed command: ${only.code}`;
+  const message = messageText(step);
+  const primary = stepText(step);
+  const hasImages =
+    Array.isArray(step.message) &&
+    step.message.some((part) => part.type === "image");
   return {
     rejection,
-    showMessage: !rejection && contentText(step.message).trim() !== echo,
+    showMessage:
+      !rejection &&
+      (hasImages || (message != null && message.trim() !== primary?.trim())),
     tools,
     unlinked,
   };

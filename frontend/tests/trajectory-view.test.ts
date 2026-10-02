@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   outputViews,
+  stepText,
   stepTitle,
   stepView,
   taggedContext,
@@ -247,6 +248,142 @@ test("headers name commands first, then prose", () => {
     "Think first"
   );
   assert.equal(stepTitle(step({})), null);
+});
+
+test("full reasoning is the primary text and a distinct message stays in details", () => {
+  const reasoning =
+    "I need to check the first rule before changing the result.\n\n" +
+    "The rule controls the shared route. ".repeat(12) +
+    "This final check must remain visible.";
+  const saved = step({
+    message: "I will check the rule.",
+    reasoning_content: reasoning,
+  });
+  assert.equal(stepText(saved), reasoning);
+  assert.ok(stepText(saved)!.length > 200);
+  assert.equal(stepView(saved).showMessage, true);
+});
+
+test("assistant messages are the fallback and do not repeat in details", () => {
+  const saved = step({ message: "The test passed.\nThe rule now works." });
+  assert.equal(stepText(saved), saved.message);
+  assert.equal(stepView(saved).showMessage, false);
+  assert.equal(
+    stepText(step({ message: "The test passed.", reasoning_content: " \n " })),
+    "The test passed."
+  );
+});
+
+test("a message that repeats reasoning appears only once", () => {
+  const saved = step({
+    message: "  Check the rule.\n",
+    reasoning_content: "Check the rule.",
+  });
+  assert.equal(stepText(saved), "Check the rule.");
+  assert.equal(stepView(saved).showMessage, false);
+});
+
+test("context and synthetic reasoning markers are not primary agent prose", () => {
+  for (const source of ["system", "user"] as const) {
+    const saved = step({
+      source,
+      message: "Read the task.",
+      reasoning_content: "Saved text.",
+    });
+    assert.equal(stepText(saved), null);
+    assert.equal(stepView(saved).showMessage, true);
+    assert.equal(
+      stepView(step({ source, message: "Reasoning" })).showMessage,
+      true
+    );
+  }
+  const marker = step({
+    message: "Reasoning",
+    reasoning_content: "Choose the next check.",
+  });
+  assert.equal(stepText(marker), "Choose the next check.");
+  assert.equal(stepView(marker).showMessage, false);
+  assert.equal(stepText(step({ message: "Reasoning" })), null);
+  assert.equal(stepText(step({ message: " \n " })), null);
+});
+
+test("only a single known shell command's exact echo is excluded", () => {
+  const call = {
+    tool_call_id: "a",
+    function_name: "shell",
+    arguments: { command: "ls" },
+  };
+  const echo = step({ message: "Executed command: ls", tool_calls: [call] });
+  assert.equal(stepText(echo), null);
+  assert.equal(stepView(echo).showMessage, false);
+  assert.equal(
+    stepText(step({ ...echo, reasoning_content: "Find the config file." })),
+    "Find the config file."
+  );
+  assert.equal(
+    stepText(
+      step({ ...echo, message: "Executed command: ls\nThe config exists." })
+    ),
+    "Executed command: ls\nThe config exists."
+  );
+  assert.equal(
+    stepText(
+      step({ ...echo, tool_calls: [{ ...call, function_name: "custom" }] })
+    ),
+    "Executed command: ls"
+  );
+  assert.equal(
+    stepText(
+      step({ ...echo, tool_calls: [call, { ...call, tool_call_id: "b" }] })
+    ),
+    "Executed command: ls"
+  );
+});
+
+test("a rejected parsing response keeps reasoning and leaves invalid text in details", () => {
+  const saved = step({
+    message: '{"commands": [',
+    reasoning_content: "Try this command.",
+    observation: {
+      results: [
+        {
+          source_call_id: null,
+          content: "Previous response had parsing errors:\nERROR: Invalid JSON",
+        },
+      ],
+    },
+  });
+  assert.equal(stepText(saved), "Try this command.");
+  assert.equal(stepText(step({ ...saved, reasoning_content: null })), null);
+  assert.equal(stepView(saved).showMessage, false);
+  assert.equal(stepView(saved).rejection?.reason, "Invalid JSON");
+});
+
+test("image parts remain in details when message text is primary", () => {
+  const saved = step({
+    message: [
+      { type: "text", text: "The screen shows the saved result." },
+      {
+        type: "image",
+        source: { media_type: "image/png", path: "result.png" },
+      },
+    ],
+  });
+  assert.equal(stepText(saved), "The screen shows the saved result.");
+  assert.equal(stepView(saved).showMessage, true);
+  assert.equal(
+    stepText(
+      step({
+        message: [
+          {
+            type: "image",
+            source: { media_type: "image/png", path: "result.png" },
+          },
+        ],
+      })
+    ),
+    null
+  );
 });
 
 test("whole-message context tags become labeled sections", () => {

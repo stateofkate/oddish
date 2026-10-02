@@ -17,6 +17,7 @@ from oddish.config import (
     meta_bare_model_id,
     settings,
 )
+from oddish.workers.agents.mini_swe_trajectory import restore_mini_swe_reasoning
 from oddish.workers.agents.network import normalize_domain_or_url
 
 
@@ -136,6 +137,23 @@ class OddishMiniSweAgent(MiniSweAgent):
             # Defer Harbor's one-key check until exec_as_agent resolves the chain.
             return _AWS_CHAIN_GUARD
         return value
+
+    def populate_context_post_run(self, context) -> None:
+        super().populate_context_post_run(context)
+        trajectory_path = self.logs_dir / "trajectory.json"
+        raw_path = self.logs_dir / "mini-swe-agent.trajectory.json"
+        if not trajectory_path.is_file() or not raw_path.is_file():
+            return
+        try:
+            trajectory = json.loads(trajectory_path.read_text())
+            raw = json.loads(raw_path.read_text())
+            if not isinstance(trajectory, dict) or not isinstance(raw, dict):
+                return
+            restored = restore_mini_swe_reasoning(trajectory, raw)
+            if restored is not trajectory:
+                trajectory_path.write_text(json.dumps(restored, indent=2))
+        except Exception:
+            self.logger.exception("Could not restore saved mini-swe reasoning")
 
     def _oddish_config_yaml(self, task: str | None) -> str:
         return "model:\n  model_kwargs:\n" + _SKIP_MCP_HANDLER_YAML
