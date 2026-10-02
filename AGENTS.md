@@ -2159,6 +2159,30 @@ There are exactly two org roles: `admin` (manage users/settings) and `member`
 
 Auth flow: read token → if `ok_` prefix validate API key → otherwise validate Clerk JWT and resolve org/user → return `AuthContext`.
 
+`GET /auth/identity` exposes that verified identity to separate services such as
+Quay. It returns the auth method, internal org/user IDs, org slug, user role,
+API-key ID and mint-time creator role, and key scope. It uses `require_auth`, so
+current org approval and bound-analysis-key limits still apply. Responses use
+`Cache-Control: no-store`; no key, email, token, or ORM object is returned.
+Consumers must enforce the returned scope and must not treat an identity check
+as an unlimited session. Existing auth and API contracts are unchanged.
+
+`POST /auth/actors/resolve` accepts up to 500 actor IDs for task attribution.
+It uses the same approval and READ checks, then resolves exact user IDs and
+`key:<id>` actors inside the caller's org with two bounded queries. It returns
+only `{id, display_name, kind}`: a name, else a GitHub handle, or the generic
+`API key` label. Inactive users may still own saved work; normal soft-delete
+filters remain. Missing, deleted, internal-key, and other-org actors return a
+null display name. No email, credential, key name, or Clerk lookup is exposed.
+Responses use `Cache-Control: no-store`.
+
+Clerk login saves a missing display name from the same user-profile read used
+for GitHub identity. It fetches that profile once when `users.name` is null,
+even when the GitHub check is current. An empty string means Clerk had no name;
+it does not trigger another read just for a name. Signed `user.created` and
+`user.updated` events can fill that blank later. Both paths retain a nonblank
+saved name and do not use an email address as a public label.
+
 Short-lived internal READ keys may set `api_keys.bound_analysis_trial_id`. The
 binding stores only the requesting analysis trial id; every request derives its
 allowlist from that Trial row. QA and QA-eval keys may GET only Trial resources

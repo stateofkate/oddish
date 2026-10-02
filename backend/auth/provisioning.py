@@ -59,9 +59,17 @@ class ClerkGithubIdentity:
     username: str | None
     email: str | None
     github_id: str | None
+    display_name: str | None = None
 
 
 def _github_account_from_clerk_payload(data: dict) -> ClerkGithubIdentity:
+    parts = [data.get("first_name"), data.get("last_name")]
+    display_name = (
+        " ".join(
+            part.strip() for part in parts if isinstance(part, str) and part.strip()
+        )[:255]
+        or None
+    )
     external_accounts = data.get("external_accounts") or []
     for account in external_accounts:
         if account.get("provider") != "oauth_github":
@@ -74,8 +82,16 @@ def _github_account_from_clerk_payload(data: dict) -> ClerkGithubIdentity:
                 or account.get("primary_email_address")
             ),
             github_id=account.get("provider_user_id") or None,
+            display_name=display_name,
         )
-    return ClerkGithubIdentity(None, None, None)
+    return ClerkGithubIdentity(None, None, None, display_name=display_name)
+
+
+def _apply_user_display_name(user: UserModel, display_name: str | None) -> None:
+    if not (user.name or "").strip():
+        # Null has not been checked. Empty means Clerk had no name, so login
+        # need not fetch it again. A later signed user event can fill it.
+        user.name = display_name or ""
 
 
 async def _fetch_clerk_user_payload(clerk_user_id: str) -> dict | None:
@@ -294,6 +310,7 @@ async def _apply_user_github_identity(
 ) -> None:
     if identity is None:
         return
+    _apply_user_display_name(user, identity.display_name)
     if identity.username and not user.github_username:
         user.github_username = identity.username
     await _apply_github_id(session, user, identity.github_id)
@@ -540,7 +557,10 @@ async def get_or_create_user_from_clerk(
             else None
         )
         needs_identity = (
-            user is None or not user.clerk_user_id or _needs_github_identity_fetch(user)
+            user is None
+            or user.name is None
+            or not user.clerk_user_id
+            or _needs_github_identity_fetch(user)
         )
         if org is not None and user is not None and not needs_identity:
             _update_user_from_clerk(user, clerk_user_id, email, org_role)
@@ -606,6 +626,8 @@ async def get_or_create_user_from_clerk(
             )
             if user is None or not user.is_active or user.deleted_at is not None:
                 return None
+        if identity is not None:
+            _apply_user_display_name(user, identity.display_name)
         current_github = (
             user.github_id,
             user.github_username,
