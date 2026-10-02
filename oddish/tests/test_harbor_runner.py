@@ -2901,6 +2901,40 @@ def test_public_meta_config_persists_no_key_material(monkeypatch, agent):
         assert persisted[name] == _PUBLIC_META_KEY_TEMPLATE
 
 
+@pytest.mark.parametrize("agent", ["muse-code", "tbh", "mini-swe-agent"])
+def test_build_agent_config_binds_the_second_public_meta_key(monkeypatch, agent):
+    monkeypatch.setattr(harbor_runner.settings, "openai_provider", "openai")
+    monkeypatch.setattr(harbor_runner.settings, "meta_public_api_key", None)
+    monkeypatch.setattr(harbor_runner.settings, "meta_public_2_api_key", None)
+    monkeypatch.setenv("META_API_KEY", "internal-key")
+    monkeypatch.setenv("META_PUBLIC_API_KEY", "public-key")
+    monkeypatch.setenv("META_PUBLIC_2_API_KEY", "public-2-key")
+
+    agent_config = harbor_runner._build_agent_config(
+        agent=agent, model="meta-public-2/muse-spark-1.3", raw_harbor_config={}
+    )
+
+    assert agent_config.model_name == "meta-public-2/muse-spark-1.3"
+    resolved = harbor_runner.resolve_env_vars(agent_config.env)
+    assert agent_config.env["META_API_KEY"] == "${META_PUBLIC_2_API_KEY}"
+    assert resolved["META_API_KEY"] == "public-2-key"
+    assert "META_PUBLIC_API_KEY" not in agent_config.env
+    assert {"internal-key", "public-key"}.isdisjoint(resolved.values())
+
+
+def test_second_public_meta_route_requires_its_own_key(monkeypatch):
+    monkeypatch.setattr(harbor_runner.settings, "meta_public_2_api_key", None)
+    monkeypatch.delenv("META_PUBLIC_2_API_KEY", raising=False)
+    monkeypatch.setenv("META_PUBLIC_API_KEY", "public-key")
+
+    with pytest.raises(ValueError, match="META_PUBLIC_2_API_KEY"):
+        harbor_runner._build_agent_config(
+            agent="muse-code",
+            model="meta-public-2/muse-spark-1.3",
+            raw_harbor_config={},
+        )
+
+
 def test_public_meta_key_can_come_from_settings_alone(monkeypatch):
     # A self-hosted .env reaches Settings but never os.environ.
     monkeypatch.setattr(harbor_runner.settings, "meta_public_api_key", "settings-key")

@@ -767,16 +767,35 @@ def to_meta_model_id(model: str | None) -> str | None:
 
 
 # Public Meta models: the same Meta hosts and harnesses as ``meta/``, authorised
-# with a separate public key (META_PUBLIC_API_KEY) instead of the internal one.
+# with a separate public key instead of the internal one. Each route is its own
+# provider (and so its own queue key and concurrency limit) with its own key;
+# ``meta-public-2/`` exists only to run the same models on a second key for more
+# provider concurrency.
 META_PUBLIC_PROVIDER = "meta-public"
+META_PUBLIC_2_PROVIDER = "meta-public-2"
+META_PUBLIC_API_KEY_ENVS: dict[str, str] = {
+    META_PUBLIC_PROVIDER: "META_PUBLIC_API_KEY",
+    META_PUBLIC_2_PROVIDER: "META_PUBLIC_2_API_KEY",
+}
+
+
+def meta_public_provider(model: str | None) -> str | None:
+    """The public Meta route ``model`` selects (``meta-public``/``meta-public-2``)."""
+    if not model:
+        return None
+    provider_prefix, _ = split_provider_model_name(model.strip().lower())
+    return provider_prefix if provider_prefix in META_PUBLIC_API_KEY_ENVS else None
 
 
 def is_meta_public_model(model: str | None) -> bool:
-    """Return True for the separate public-key Meta route."""
-    if not model:
-        return False
-    provider_prefix, _ = split_provider_model_name(model.strip().lower())
-    return provider_prefix == META_PUBLIC_PROVIDER
+    """Return True for a separate public-key Meta route."""
+    return meta_public_provider(model) is not None
+
+
+def meta_public_api_key_env(model: str | None) -> str | None:
+    """The env var holding the key for ``model``'s public Meta route."""
+    provider = meta_public_provider(model)
+    return META_PUBLIC_API_KEY_ENVS[provider] if provider else None
 
 
 def meta_public_bare_model_id(model: str) -> str:
@@ -789,11 +808,12 @@ def meta_public_bare_model_id(model: str) -> str:
 
 
 def to_meta_public_model_id(model: str | None) -> str | None:
-    """Canonicalize a public Meta model reference to ``meta-public/<bare-id>``."""
-    if not is_meta_public_model(model):
+    """Canonicalize a public Meta model reference to ``<route>/<bare-id>``."""
+    provider = meta_public_provider(model)
+    if provider is None:
         return model
     assert model is not None
-    return f"{META_PUBLIC_PROVIDER}/{meta_public_bare_model_id(model)}"
+    return f"{provider}/{meta_public_bare_model_id(model)}"
 
 
 def meta_harness_model_id(model: str | None) -> str | None:
@@ -809,17 +829,20 @@ def meta_harness_model_id(model: str | None) -> str | None:
     return f"{META_PROVIDER}/{meta_public_bare_model_id(model)}"
 
 
-def resolve_meta_public_api_key(settings_obj: Any) -> str | None:
-    """The public Meta key: Settings first (a self-hosted ``.env``), then the env.
+def resolve_meta_public_api_key(
+    settings_obj: Any, provider: str = META_PUBLIC_PROVIDER
+) -> str | None:
+    """A public Meta route's key: Settings first (a self-hosted ``.env``), then the env.
 
     The one resolver for the agent binding, the job-scoped bundle and the key
     fingerprint, so the three can never disagree. Blank values do not count. In
     a monitor sandbox the entrypoint exports the scoped env before Settings
     loads, so both sources hold the public key there.
     """
+    env_name = META_PUBLIC_API_KEY_ENVS[provider]
     for candidate in (
-        getattr(settings_obj, "meta_public_api_key", None),
-        os.environ.get("META_PUBLIC_API_KEY"),
+        getattr(settings_obj, env_name.lower(), None),
+        os.environ.get(env_name),
     ):
         value = (candidate or "").strip()
         if value:
@@ -1436,8 +1459,10 @@ _MODEL_PROVIDER_ALIASES: dict[str, str] = {
     "xai-public": XAI_PUBLIC_PROVIDER,
     # Meta OpenAI-compatible relay for mini-swe-agent evals.
     "meta": META_PROVIDER,
-    # Public Meta models on the separate public key (META_PUBLIC_API_KEY).
+    # Public Meta models on the separate public keys (META_PUBLIC_API_KEY,
+    # META_PUBLIC_2_API_KEY).
     "meta-public": META_PUBLIC_PROVIDER,
+    "meta-public-2": META_PUBLIC_2_PROVIDER,
     # Geometric's own OpenAI-compatible endpoint (GLM-5.3) for mini-swe-agent.
     "geometric": GEOMETRIC_PROVIDER,
     "gm": GEOMETRIC_PROVIDER,
@@ -2127,6 +2152,9 @@ class Settings(BaseSettings):
     vertex_ai_api_key: SecretStr | None = Field(default=None, alias="VERTEX_AI_API_KEY")
     meta_api_key: str | None = Field(default=None, alias="META_API_KEY")
     meta_public_api_key: str | None = Field(default=None, alias="META_PUBLIC_API_KEY")
+    meta_public_2_api_key: str | None = Field(
+        default=None, alias="META_PUBLIC_2_API_KEY"
+    )
     meta_base_url: str = Field(default=META_DEFAULT_BASE_URL, alias="META_BASE_URL")
     meta_eval_name: str | None = Field(default=None, alias="ODDISH_META_EVAL_NAME")
     meta_session_id: str | None = Field(default=None, alias="ODDISH_META_SESSION_ID")

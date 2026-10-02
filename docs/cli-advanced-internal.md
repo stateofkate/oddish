@@ -82,7 +82,8 @@ call the same Meta endpoints, and the public route works with muse-code, tbh and
 mini-swe-agent wherever `meta/` does. On a `meta-public/` trial, Oddish sets
 `META_API_KEY` and `META_PUBLIC_API_KEY` (and `MSWEA_API_KEY` and
 `OPENAI_API_KEY` for mini-swe-agent) to the public key, replacing any `--ae`
-value for those names.
+value for those names. `meta-public-2/<model-id>` is the same public route on a
+second key, `META_PUBLIC_2_API_KEY`, with its own queue and concurrency limit.
 
 Re-submitting the same sweep is declarative for each task version and
 experiment: queued, running, and successful trials continue to satisfy the

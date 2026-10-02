@@ -13,6 +13,7 @@ _ODDISH_PROVIDER_ENV_KEYS = {
     "cursor": "CURSOR_API_KEY",
     "meta": "META_API_KEY",
     "meta-public": "META_PUBLIC_API_KEY",
+    "meta-public-2": "META_PUBLIC_2_API_KEY",
     "geometric": "GEOMETRIC_API_KEY",
     "hunyuan": "HUNYUAN_API_KEY",
     "zai": "ZAI_API_KEY",
@@ -75,10 +76,10 @@ def platform_key_hash_for_provider(provider: str | None) -> str | None:
             )
         elif provider == "meta":
             raw = settings.meta_api_key or os.environ.get("META_API_KEY")
-        elif provider == "meta-public":
+        elif provider in ("meta-public", "meta-public-2"):
             from oddish.config import resolve_meta_public_api_key
 
-            raw = resolve_meta_public_api_key(settings)
+            raw = resolve_meta_public_api_key(settings, provider)
         elif provider == "geometric":
             raw = settings.geometric_api_key or os.environ.get("GEOMETRIC_API_KEY")
         elif provider == "hunyuan":

@@ -1888,7 +1888,8 @@ Keep these routing rules in sync with `oddish/src/oddish/config.py` and
 - Provider secrets are referenced by env var name (`AWS_BEARER_TOKEN_BEDROCK`,
   `ANTHROPIC_HDO_API_KEY`, `ZAI_API_KEY`, `MINIMAX_API_KEY`, `MOONSHOT_API_KEY`,
   `FIREWORKS_API_KEY`, `XAI_API_KEY`, `XAI_PUBLIC_API_KEY`, `META_API_KEY`,
-  `META_PUBLIC_API_KEY`, `VERTEX_AI_CREDENTIALS_JSON`, `VERTEX_AI_API_KEY`) and
+  `META_PUBLIC_API_KEY`, `META_PUBLIC_2_API_KEY`, `VERTEX_AI_CREDENTIALS_JSON`,
+  `VERTEX_AI_API_KEY`) and
   must not be persisted on trial rows. The Vertex service-account JSON never
   enters an agent env at all: only the sandbox file path does, and Harbor's env
   serializer would redact a literal under a CREDENTIAL-named key anyway. The
@@ -1906,9 +1907,12 @@ Keep these routing rules in sync with `oddish/src/oddish/config.py` and
   The prefixes are distinct provider and queue identities; public-key
   fingerprinting and job-scoped credentials follow that identity. Do not mix
   public and private keys in `XAI_API_KEYS`.
-- Meta has two routes on the same hosts. `meta/<id>` uses `META_API_KEY`
+- Meta has three routes on the same hosts. `meta/<id>` uses `META_API_KEY`
   (internal models); `meta-public/<id>` uses `META_PUBLIC_API_KEY` (public
-  models). The prefixes are distinct provider and queue identities, and the
+  models). `meta-public-2/<id>` is the public route on a second key,
+  `META_PUBLIC_2_API_KEY`, for more provider concurrency; `META_PUBLIC_API_KEY_ENVS`
+  in `config.py` maps each public prefix to its key, and everything below
+  applies to it with its own key name. The prefixes are distinct provider and queue identities, and the
   agent config keeps `meta-public/<id>` through Oddish routing so the key,
   host, transport and credential-fold tables all see the public route. For
   public trials `resolve_meta_public_api_key` (Settings, then the process env;

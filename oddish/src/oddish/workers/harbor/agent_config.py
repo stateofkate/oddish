@@ -25,6 +25,8 @@ from oddish.config import (
     is_hunyuan_model,
     is_meta_model,
     is_meta_public_model,
+    meta_public_provider,
+    META_PUBLIC_API_KEY_ENVS,
     is_minimax_model,
     is_moonshot_model,
     is_vertex_ai_claude_model,
@@ -577,12 +579,12 @@ def _apply_meta_mini_swe_agent(agent_config: AgentConfig) -> None:
 
 
 # The names the Meta harnesses authenticate with. muse-code and tbh read
-# META_API_KEY (tbh during setup, for ``tbh auth set``). The public-key name is
-# set too, so a submitted value cannot sit unused next to the platform key.
+# META_API_KEY (tbh during setup, for ``tbh auth set``). The route's public-key
+# name is set too, so a submitted value cannot sit unused next to the platform key.
 # mini-swe-agent reads MSWEA_API_KEY and, through LiteLLM's ``openai/``
 # provider, OPENAI_API_KEY, so only it receives those two: no other harness
 # sends the Meta key to OpenAI.
-_META_API_KEY_NAMES = ("META_API_KEY", "META_PUBLIC_API_KEY")
+_META_API_KEY_NAMES = ("META_API_KEY",)
 _META_MINI_SWE_KEY_NAMES = ("MSWEA_API_KEY", "OPENAI_API_KEY")
 
 
@@ -593,21 +595,19 @@ def _apply_meta_public_route(agent_config: AgentConfig) -> None:
     ``META_API_KEY`` is the internal key, Harbor prefers the agent env over
     the process env, and the mini-swe-agent defaults template its two names to
     ``${META_API_KEY}``. When the process env holds the resolved key, the names
-    get the ``${META_PUBLIC_API_KEY}`` template, which keeps the key out of
+    get the route's ``${META_PUBLIC_API_KEY}``-style template, which keeps the key out of
     Harbor's stored configs and payloads; a key from a self-hosted ``.env``
     reaches Settings only, so it is bound as the value itself.
     """
-    if not is_meta_public_model(agent_config.model_name):
+    provider = meta_public_provider(agent_config.model_name)
+    if provider is None:
         return
-    public_key = resolve_meta_public_api_key(settings)
+    key_env = META_PUBLIC_API_KEY_ENVS[provider]
+    public_key = resolve_meta_public_api_key(settings, provider)
     if not public_key:
-        raise ValueError("meta-public model requires META_PUBLIC_API_KEY on the worker")
-    bound = (
-        "${META_PUBLIC_API_KEY}"
-        if os.environ.get("META_PUBLIC_API_KEY") == public_key
-        else public_key
-    )
-    names = _META_API_KEY_NAMES
+        raise ValueError(f"{provider} model requires {key_env} on the worker")
+    bound = f"${{{key_env}}}" if os.environ.get(key_env) == public_key else public_key
+    names = (*_META_API_KEY_NAMES, key_env)
     if _is_mini_swe_agent(agent_config):
         names += _META_MINI_SWE_KEY_NAMES
     env = dict(agent_config.env or {})

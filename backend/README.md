@@ -458,6 +458,9 @@ Public Meta model trials use `meta-public/<model-id>` and read the separate
 that key to the harness as `META_API_KEY` (and `MSWEA_API_KEY` /
 `OPENAI_API_KEY` for mini-swe-agent) only inside the trial; it never falls back to
 the internal `META_API_KEY`. Both routes call the same Meta endpoints.
+`meta-public-2/<model-id>` is the same public route on a second key,
+`META_PUBLIC_2_API_KEY` in `oddish-prod`, with its own queue key and concurrency
+limit.
 
 ### Cycling workers after a secret change
 

@@ -469,6 +469,7 @@ def _model_transport_base_url_keys(model_name: str | None) -> tuple[str, ...]:
         "azure_openai": _OPENAI_BASE_URL_KEYS,
         "meta": ("META_BASE_URL", *_OPENAI_BASE_URL_KEYS),
         "meta-public": ("META_BASE_URL", *_OPENAI_BASE_URL_KEYS),
+        "meta-public-2": ("META_BASE_URL", *_OPENAI_BASE_URL_KEYS),
         "geometric": ("GEOMETRIC_BASE_URL", *_OPENAI_BASE_URL_KEYS),
         "hunyuan": ("HUNYUAN_BASE_URL", *_OPENAI_BASE_URL_KEYS),
         "openrouter": ("OPENROUTER_BASE_URL",),

@@ -375,6 +375,23 @@ def test_meta_harness_model_id_maps_only_the_public_route():
     assert meta_harness_model_id(None) is None
 
 
+def test_meta_public_2_is_its_own_provider_and_queue(monkeypatch):
+    settings = _settings(monkeypatch, clear_openai_env=False)
+    model = "meta-public-2/muse-spark-1.3"
+
+    assert normalize_model_id(" Meta-Public-2 / Muse Spark 1.3 ") == model
+    for agent in ("muse-code", "tbh", "mini-swe-agent"):
+        assert settings.normalize_trial_model(agent, model) == model
+        assert settings.get_provider_for_trial(agent, model) == "meta-public-2"
+        assert settings.get_queue_key_for_trial(agent, model) == model
+    assert settings.normalize_queue_key(model) != "meta-public/muse-spark-1.3"
+    assert infer_model_provider_prefix(model) == "meta-public-2"
+    assert is_meta_public_model(model)
+    assert not is_meta_model(model)
+    assert to_meta_public_model_id("META-PUBLIC-2/muse-spark-1.3") == model
+    assert meta_harness_model_id(model) == "meta/muse-spark-1.3"
+
+
 def test_meta_public_api_key_is_a_settings_field(monkeypatch):
     monkeypatch.setenv("META_PUBLIC_API_KEY", "public-key")
     settings = _settings(monkeypatch, clear_openai_env=False)

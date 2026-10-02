@@ -842,6 +842,8 @@ MODEL_CONCURRENCY_OVERRIDES = os.environ.get(
     '"minimax/minimax-m3": 256, '
     '"global.anthropic.claude-sonnet-4-6": 256, '
     '"global.anthropic.claude-sonnet-5": 256, '
+    '"meta-public/muse-spark-1.3": 256, '
+    '"meta-public-2/muse-spark-1.3": 256, '
     '"openai/gpt-5.4-mini": 256, '
     '"zai/glm-5.2": 256}',
 )

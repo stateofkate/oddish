@@ -318,6 +318,7 @@ _PROVIDER_RUNTIME_SECRET_KEYS: dict[str, tuple[str, ...]] = {
     # the internal META_API_KEY and any OpenAI-family key never enter its
     # runtime transport env.
     "meta-public": ("META_PUBLIC_API_KEY",),
+    "meta-public-2": ("META_PUBLIC_2_API_KEY",),
     "geometric": ("GEOMETRIC_API_KEY", "OPENAI_API_KEY"),
     "hunyuan": ("HUNYUAN_API_KEY", "OPENAI_API_KEY"),
     "fireworks": ("FIREWORKS_API_KEY",),

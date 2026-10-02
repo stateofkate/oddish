@@ -118,6 +118,7 @@ _LITELLM_PREFIX_CANDIDATES: tuple[str, ...] = (
 _PROVIDER_ALIASES: dict[str, str] = {
     "xai-public": "xai",
     "meta-public": "meta",
+    "meta-public-2": "meta",
     "fireworks": "fireworks_ai",
     "fw": "fireworks_ai",
     "moonshotai": "moonshot",

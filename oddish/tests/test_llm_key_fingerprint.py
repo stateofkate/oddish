@@ -42,6 +42,20 @@ def test_public_meta_hash_uses_separate_platform_key(monkeypatch):
     assert platform_key_hash_for_provider("meta") == hash_llm_key("meta-internal")
 
 
+def test_public_meta_2_hash_uses_its_own_platform_key(monkeypatch):
+    from oddish.config import settings
+
+    monkeypatch.setattr(settings, "meta_public_api_key", None)
+    monkeypatch.setattr(settings, "meta_public_2_api_key", None)
+    monkeypatch.setenv("META_PUBLIC_API_KEY", "meta-public-key")
+    monkeypatch.setenv("META_PUBLIC_2_API_KEY", "meta-public-2-key")
+
+    assert provider_key_var("meta-public-2") == "META_PUBLIC_2_API_KEY"
+    assert platform_key_hash_for_provider("meta-public-2") == hash_llm_key(
+        "meta-public-2-key"
+    )
+
+
 def test_bedrock_hash_uses_bearer_token_not_storage_key(monkeypatch):
     monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "bedrock-token")
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "storage-key")

@@ -37,6 +37,7 @@ def _fake_settings(**keys) -> types.SimpleNamespace:
         gemini_api_key=None,
         meta_api_key=None,
         meta_public_api_key=None,
+        meta_public_2_api_key=None,
         geometric_api_key=None,
     )
     base.update(keys)
@@ -72,6 +73,8 @@ def _provider_of(model: str) -> str:
         return "openai"
     if "gemini" in m:
         return "gemini"
+    if m.startswith("meta-public-2/"):
+        return "meta-public-2"
     if m.startswith("meta-public/"):
         return "meta-public"
     if m.startswith("meta/"):
@@ -221,6 +224,22 @@ def test_scoped_model_env_public_meta_without_key_is_empty(monkeypatch) -> None:
         agent="muse-code", model="meta-public/muse-spark-1.3", settings=settings
     )
     assert env == {}
+
+
+def test_scoped_model_env_public_meta_2_carries_only_its_own_key() -> None:
+    settings = _fake_settings(
+        meta_api_key="meta-internal",
+        meta_public_api_key="meta-public-key",
+        meta_public_2_api_key="meta-public-2-key",
+    )
+    env = job_tokens.scoped_model_env(
+        agent="muse-code", model="meta-public-2/muse-spark-1.3", settings=settings
+    )
+    assert env == {
+        "META_PUBLIC_2_API_KEY": "meta-public-2-key",
+        "META_API_KEY": "meta-public-2-key",
+        "MSWEA_API_KEY": "meta-public-2-key",
+    }
 
 
 def test_scoped_model_env_geometric_only_carries_geometric_key() -> None:

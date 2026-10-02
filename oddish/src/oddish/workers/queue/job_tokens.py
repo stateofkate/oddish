@@ -248,15 +248,20 @@ def scoped_model_env(
     if provider == "meta":
         key = getattr(settings, "meta_api_key", None)
         return {"META_API_KEY": key, "MSWEA_API_KEY": key} if key else {}
-    if provider == "meta-public":
-        # Only the public key, under the names the Meta harnesses read; the
-        # sandbox this env builds holds no internal Meta key at all. The shared
-        # resolver keeps this in step with the agent binding and the fingerprint.
-        from oddish.config import resolve_meta_public_api_key
+    if provider in ("meta-public", "meta-public-2"):
+        # Only the route's public key, under the names the Meta harnesses read;
+        # the sandbox this env builds holds no internal Meta key at all. The
+        # shared resolver keeps this in step with the agent binding and the
+        # fingerprint.
+        from oddish.config import META_PUBLIC_API_KEY_ENVS, resolve_meta_public_api_key
 
-        key = resolve_meta_public_api_key(settings)
+        key = resolve_meta_public_api_key(settings, provider)
         return (
-            {"META_PUBLIC_API_KEY": key, "META_API_KEY": key, "MSWEA_API_KEY": key}
+            {
+                META_PUBLIC_API_KEY_ENVS[provider]: key,
+                "META_API_KEY": key,
+                "MSWEA_API_KEY": key,
+            }
             if key
             else {}
         )
