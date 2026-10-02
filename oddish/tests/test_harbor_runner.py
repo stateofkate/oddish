@@ -2573,7 +2573,9 @@ async def test_post_trial_hooks_run_for_completed_trial(monkeypatch):
 
     await trial_handler._run_post_trial_hooks("trial-1")
 
-    assert calls == ["gate", "qa"]
+    # The baseline gate resolves after the job outcome is recorded
+    # (resolve_baseline_gate_after_outcome), not from the post-trial hooks.
+    assert calls == ["qa"]
 
 
 @pytest.mark.asyncio

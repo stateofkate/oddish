@@ -46,6 +46,9 @@ from oddish.queue import (  # noqa: E402
 )
 from oddish.schemas import TaskSubmission, TrialSpec  # noqa: E402
 from oddish.workers.queue import cleanup  # noqa: E402
+from oddish.workers.queue.worker_job_single_job import (  # noqa: E402
+    resolve_baseline_gate_after_outcome,
+)
 
 _RUN = uuid.uuid4().hex[:8]
 _LLM_AGENT = "claude-code"
@@ -303,6 +306,102 @@ async def test_active_baseline_job_overrides_transient_failed_trial(
     async with get_session() as session:
         assert await maybe_gate_llm_trials(session, nop_id) is True
     assert (await _job_status_by_agent(task_id))[_LLM_AGENT] == WorkerJobStatus.QUEUED
+
+
+@pytest.mark.asyncio
+async def test_last_baseline_releases_gate_after_its_job_outcome(
+    monkeypatch, cleanup_task_ids
+):
+    """The last baseline to finish releases its scope's gated LLM trials.
+
+    The trial handler settles the oracle's trial row while its own worker_jobs
+    row is still RUNNING; the gate must resolve once that row is terminal,
+    without waiting for the cleanup sweep.
+    """
+    monkeypatch.setattr(settings, "gate_llm_on_baselines", True)
+    task_id = f"gate-last-baseline-{_RUN}"
+    cleanup_task_ids.append(task_id)
+    async with get_session() as session:
+        await create_task(session, _mixed_submission("last-baseline"), task_id=task_id)
+
+    async with get_session() as session:
+        rows = (
+            await session.execute(
+                select(TrialModel.id, TrialModel.agent).where(
+                    TrialModel.task_id == task_id,
+                    TrialModel.queue_key == "nop_oracle",
+                )
+            )
+        ).all()
+        baseline_ids = {agent: trial_id for trial_id, agent in rows}
+        for agent, reward in (("nop", 0.0), ("oracle", 1.0)):
+            await session.execute(
+                update(TrialModel)
+                .where(TrialModel.id == baseline_ids[agent])
+                .values(status=TrialStatus.SUCCESS, reward=reward, finished_at=utcnow())
+            )
+        await session.execute(
+            update(WorkerJobModel)
+            .where(WorkerJobModel.subject_id == baseline_ids["nop"])
+            .values(status=WorkerJobStatus.SUCCESS)
+        )
+        await session.execute(
+            update(WorkerJobModel)
+            .where(WorkerJobModel.subject_id == baseline_ids["oracle"])
+            .values(status=WorkerJobStatus.RUNNING)
+        )
+    oracle_id = baseline_ids["oracle"]
+
+    # Post-trial hook timing: the oracle's own job is still RUNNING.
+    async with get_session() as session:
+        assert await maybe_gate_llm_trials(session, oracle_id) is False
+    assert (await _job_status_by_agent(task_id))[_LLM_AGENT] == WorkerJobStatus.BLOCKED
+
+    # record_outcome writes the job SUCCESS; the gate resolves right after.
+    async with get_session() as session:
+        await session.execute(
+            update(WorkerJobModel)
+            .where(WorkerJobModel.subject_id == oracle_id)
+            .values(status=WorkerJobStatus.SUCCESS)
+        )
+    await resolve_baseline_gate_after_outcome(
+        kind=WorkerJobKind.TRIAL,
+        queue_key="nop_oracle",
+        subject_table="trials",
+        subject_id=oracle_id,
+        persisted_status=WorkerJobStatus.SUCCESS,
+    )
+    assert (await _job_status_by_agent(task_id))[_LLM_AGENT] == WorkerJobStatus.QUEUED
+
+
+@pytest.mark.parametrize(
+    ("queue_key", "persisted_status"),
+    [
+        (_LLM_MODEL, WorkerJobStatus.SUCCESS),
+        ("nop_oracle", WorkerJobStatus.RETRYING),
+        ("nop_oracle", None),
+    ],
+)
+@pytest.mark.asyncio
+async def test_gate_resolution_skips_non_baseline_or_live_jobs(
+    monkeypatch, queue_key: str, persisted_status: WorkerJobStatus | None
+):
+    calls: list[str] = []
+
+    async def record_gate(_session, trial_id: str) -> bool:
+        calls.append(trial_id)
+        return False
+
+    monkeypatch.setattr("oddish.queue.maybe_gate_llm_trials", record_gate)
+
+    await resolve_baseline_gate_after_outcome(
+        kind=WorkerJobKind.TRIAL,
+        queue_key=queue_key,
+        subject_table="trials",
+        subject_id="trial-1",
+        persisted_status=persisted_status,
+    )
+    assert calls == []
 
 
 @pytest.mark.asyncio

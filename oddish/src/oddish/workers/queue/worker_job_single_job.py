@@ -28,13 +28,13 @@ from typing import Any
 
 import asyncpg
 
-from oddish.config import settings
+from oddish.config import NOP_ORACLE_QUEUE_KEY, settings
 from oddish.costs.recorder import (
     WorkerBillingSpec,
     close_worker_span,
     open_worker_span,
 )
-from oddish.db import WorkerJobKind, WorkerJobStatus, connect_with_retry
+from oddish.db import WorkerJobKind, WorkerJobStatus, connect_with_retry, get_session
 from oddish.observability import (
     TRACE_CONTEXT_PAYLOAD_KEY,
     ThunderHandoffOutcome,
@@ -1200,6 +1200,43 @@ async def record_outcome(
         await connection.close()
 
 
+async def resolve_baseline_gate_after_outcome(
+    *,
+    kind: WorkerJobKind | None,
+    queue_key: str | None,
+    subject_table: str | None,
+    subject_id: str | None,
+    persisted_status: WorkerJobStatus | None,
+) -> None:
+    """Release or cancel gated LLM trials once a baseline's job is terminal.
+
+    The gate treats a baseline whose worker_jobs row is still active as
+    pending, so it can only resolve after ``record_outcome`` has written this
+    job SUCCESS/FAILED. The trial handler's post-trial hooks run before that
+    write, while this job is still RUNNING, which left the last baseline of a
+    scope unable to release its own gated trials.
+    """
+    if (
+        kind != WorkerJobKind.TRIAL
+        or queue_key != NOP_ORACLE_QUEUE_KEY
+        or subject_table != "trials"
+        or not subject_id
+        or persisted_status not in (WorkerJobStatus.SUCCESS, WorkerJobStatus.FAILED)
+    ):
+        return
+    from oddish.queue import maybe_gate_llm_trials, maybe_start_qa_stage
+
+    try:
+        async with get_session() as session:
+            if await maybe_gate_llm_trials(session, subject_id):
+                # A FAULTY gate cancels the scope's LLM trials, which can make
+                # the task "all trials done" for the first time.
+                await maybe_start_qa_stage(session, subject_id)
+    except Exception:  # noqa: BLE001 — the job is already settled; the
+        # cleanup sweep re-drives unresolved gates.
+        logger.exception("baseline gate resolution failed for trial %s", subject_id)
+
+
 async def _record_reroute_or_fallback(
     connection: asyncpg.Connection,
     *,
@@ -1602,6 +1639,13 @@ async def run_single_worker_job(
         )
         attempt_duration_seconds = time.monotonic() - attempt_started_monotonic
         outcome_recorded = bool(persisted_status)
+        await resolve_baseline_gate_after_outcome(
+            kind=job.kind,
+            queue_key=job.queue_key,
+            subject_table=job.subject_table,
+            subject_id=job.subject_id,
+            persisted_status=persisted_status,
+        )
         if outcome.handoff is not None and outcome_recorded and handoff is not None:
             handoff.job_id = job.id
         if isinstance(persisted_status, WorkerJobStatus):

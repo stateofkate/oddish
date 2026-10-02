@@ -956,7 +956,7 @@ async def _store_trial_results(
 
 async def _run_post_trial_hooks(trial_id: str) -> None:
     from oddish.core.verdict_state import reset_verdict
-    from oddish.queue import maybe_gate_llm_trials, maybe_start_qa_stage
+    from oddish.queue import maybe_start_qa_stage
     from oddish.workers.analysis_trials import handle_analysis_trial_settled
 
     trial_kind = "agent"
@@ -1024,7 +1024,9 @@ async def _run_post_trial_hooks(trial_id: str) -> None:
                             # artifacts; discard it so the re-enqueued QA
                             # republishes from the current attempt.
                             reset_verdict(task)
-                await maybe_gate_llm_trials(session, trial_id)
+                # The baseline gate resolves after the job outcome is recorded
+                # (resolve_baseline_gate_after_outcome): here this trial's own
+                # worker_jobs row is still RUNNING, so the gate would wait on it.
                 if await maybe_start_qa_stage(session, trial_id):
                     console.print(
                         f"[blue]Task {trial.task_id} transitioned to next stage[/blue]"

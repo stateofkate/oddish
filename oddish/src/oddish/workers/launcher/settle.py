@@ -43,7 +43,11 @@ from oddish.workers.queue.trial_handler import (
     settle_trial_attempt,
 )
 from oddish.workers.queue.trial_steps import artifact_subprefix, load_trial_context
-from oddish.workers.queue.worker_job_single_job import ClaimedWorkerJob, record_outcome
+from oddish.workers.queue.worker_job_single_job import (
+    ClaimedWorkerJob,
+    record_outcome,
+    resolve_baseline_gate_after_outcome,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -282,6 +286,13 @@ async def settle_monitor_result(worker_job_id: str, *, attempt: int) -> SettleOu
         f"job_status={getattr(persisted, 'value', persisted)} "
         f"had_archive={bool(result.get('archive_key'))} "
         f"upload_error={upload_error is not None}"
+    )
+    await resolve_baseline_gate_after_outcome(
+        kind=claimed.kind,
+        queue_key=claimed.queue_key,
+        subject_table=claimed.subject_table,
+        subject_id=claimed.subject_id,
+        persisted_status=persisted,
     )
     # The monitor has reported and exited; make sure its sandbox is gone too.
     if sandbox_provider and sandbox_id:
