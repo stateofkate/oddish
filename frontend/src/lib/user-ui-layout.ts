@@ -1,6 +1,7 @@
 export type TrialDrawerLayout = {
   version: 1;
-  preferredWidthPx: number | null;
+  /** Share of the window width, so the drawer fits every screen the account uses. */
+  preferredWidthFraction: number | null;
   maximized: boolean;
   taskPanePercent: number;
   showTask: boolean;
@@ -9,7 +10,7 @@ export type TrialDrawerLayout = {
 
 export const DEFAULT_TRIAL_DRAWER_LAYOUT: TrialDrawerLayout = {
   version: 1,
-  preferredWidthPx: null,
+  preferredWidthFraction: null,
   maximized: false,
   taskPanePercent: 42,
   showTask: true,
@@ -19,13 +20,15 @@ export const DEFAULT_TRIAL_DRAWER_LAYOUT: TrialDrawerLayout = {
 export function parseTrialDrawerLayout(value: unknown): TrialDrawerLayout {
   if (!value || typeof value !== "object") throw new Error("Invalid layout");
   const layout = value as Record<string, unknown>;
+  // Absent on layouts saved as pixel widths, which no longer apply.
+  const preferredWidthFraction = layout.preferredWidthFraction ?? null;
   if (
     layout.version !== 1 ||
-    (layout.preferredWidthPx !== null &&
-      (typeof layout.preferredWidthPx !== "number" ||
-        !Number.isFinite(layout.preferredWidthPx) ||
-        layout.preferredWidthPx < 420 ||
-        layout.preferredWidthPx > 16384)) ||
+    (preferredWidthFraction !== null &&
+      (typeof preferredWidthFraction !== "number" ||
+        !Number.isFinite(preferredWidthFraction) ||
+        preferredWidthFraction <= 0 ||
+        preferredWidthFraction > 1)) ||
     typeof layout.taskPanePercent !== "number" ||
     !Number.isFinite(layout.taskPanePercent) ||
     typeof layout.maximized !== "boolean" ||
@@ -36,7 +39,7 @@ export function parseTrialDrawerLayout(value: unknown): TrialDrawerLayout {
     throw new Error("Invalid layout");
   return {
     version: 1,
-    preferredWidthPx: layout.preferredWidthPx,
+    preferredWidthFraction,
     maximized: layout.maximized,
     taskPanePercent: Math.max(15, Math.min(85, layout.taskPanePercent)),
     showTask: layout.showTask,

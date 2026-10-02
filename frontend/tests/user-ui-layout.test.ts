@@ -26,13 +26,13 @@ test("a slow read preserves gestures and the other saved fields", async () => {
     return json({});
   });
   const stop = store.start();
-  store.update({ preferredWidthPx: 950 });
+  store.update({ preferredWidthFraction: 0.5 });
   read.resolve(
-    json({ ...defaults, preferredWidthPx: 1200, taskPanePercent: 65 })
+    json({ ...defaults, preferredWidthFraction: 0.6, taskPanePercent: 65 })
   );
   await setImmediate();
   assert.deepEqual(writes, [
-    { ...defaults, preferredWidthPx: 950, taskPanePercent: 65 },
+    { ...defaults, preferredWidthFraction: 0.5, taskPanePercent: 65 },
   ]);
   stop();
 });
@@ -42,21 +42,21 @@ test("queued saves are ordered and an old response cannot revert a newer drag", 
   const widths: unknown[] = [];
   const store = new UserUiLayoutStore(async (_url, init) => {
     if (init?.method !== "PUT") return json(defaults);
-    widths.push(JSON.parse(String(init.body)).preferredWidthPx);
+    widths.push(JSON.parse(String(init.body)).preferredWidthFraction);
     return widths.length === 1 ? firstSave.promise : json({});
   });
   const stop = store.start();
   await setImmediate();
-  store.update({ preferredWidthPx: 900 });
+  store.update({ preferredWidthFraction: 0.45 });
   const saving = store.flush();
-  store.update({ preferredWidthPx: 1300 });
+  store.update({ preferredWidthFraction: 0.65 });
   await store.flush();
-  assert.deepEqual(widths, [900]);
-  firstSave.resolve(json({ ...defaults, preferredWidthPx: 900 }));
+  assert.deepEqual(widths, [0.45]);
+  firstSave.resolve(json({ ...defaults, preferredWidthFraction: 0.45 }));
   await saving;
   await setImmediate();
-  assert.deepEqual(widths, [900, 1300]);
-  assert.equal(store.getSnapshot().layout.preferredWidthPx, 1300);
+  assert.deepEqual(widths, [0.45, 0.65]);
+  assert.equal(store.getSnapshot().layout.preferredWidthFraction, 0.65);
   stop();
 });
 
@@ -92,17 +92,17 @@ test("switching accounts discards pending work and ignores the old read", async 
     return oldRead.promise;
   });
   const stopOld = old.start();
-  old.update({ preferredWidthPx: 1000 });
+  old.update({ preferredWidthFraction: 0.55 });
   stopOld();
   const next = new UserUiLayoutStore(async () =>
-    json({ ...defaults, preferredWidthPx: 700 })
+    json({ ...defaults, preferredWidthFraction: 0.4 })
   );
   const stopNext = next.start();
-  oldRead.resolve(json({ ...defaults, preferredWidthPx: 1400 }));
+  oldRead.resolve(json({ ...defaults, preferredWidthFraction: 0.7 }));
   await setImmediate();
   await old.flush();
   assert.equal(oldWrites, 0);
-  assert.equal(next.getSnapshot().layout.preferredWidthPx, 700);
+  assert.equal(next.getSnapshot().layout.preferredWidthFraction, 0.4);
   stopNext();
 });
 
@@ -129,11 +129,23 @@ test("public layouts work in memory and malformed server values are rejected", (
   for (const value of [
     null,
     { ...defaults, version: 2 },
-    { ...defaults, preferredWidthPx: NaN },
+    { ...defaults, preferredWidthFraction: NaN },
+    { ...defaults, preferredWidthFraction: 0 },
+    { ...defaults, preferredWidthFraction: 1.5 },
     { ...defaults, showTask: false, showTrial: false },
   ]) {
     assert.throws(() => parseTrialDrawerLayout(value));
   }
+  // Pixel widths saved by the old format were measured on another screen.
+  const pixelLayout: Record<string, unknown> = {
+    ...defaults,
+    preferredWidthPx: 2400,
+  };
+  delete pixelLayout.preferredWidthFraction;
+  assert.deepEqual(
+    parseTrialDrawerLayout(pixelLayout),
+    defaults
+  );
   assert.equal(
     parseTrialDrawerLayout({ ...defaults, taskPanePercent: 0 }).taskPanePercent,
     15

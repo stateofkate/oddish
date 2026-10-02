@@ -1,6 +1,7 @@
 """Exercise preference HTTP routes against a disposable local PostgreSQL schema."""
 
 import importlib.util
+import json
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -96,7 +97,7 @@ async def test_roundtrip_replacement_and_account_isolation(preference_api):
         assert await conn.scalar(text("SELECT count(*) FROM user_ui_layouts")) == 0
     saved = {
         **defaults,
-        "preferredWidthPx": 1250,
+        "preferredWidthFraction": 0.6,
         "taskPanePercent": 63,
         "maximized": True,
         "showTrial": False,
@@ -106,11 +107,11 @@ async def test_roundtrip_replacement_and_account_isolation(preference_api):
         auth.user_id = user_id
         assert (await client.get(PATH)).json() == defaults
         assert (
-            await client.put(PATH, json={**defaults, "preferredWidthPx": 800})
+            await client.put(PATH, json={**defaults, "preferredWidthFraction": 0.4})
         ).status_code == 200
     auth.user_id = "alice-org-a"
     assert (await client.get(PATH)).json() == saved
-    saved["preferredWidthPx"] = 1000
+    saved["preferredWidthFraction"] = 0.5
     assert (await client.put(PATH, json=saved)).status_code == 200
     assert (await client.get(PATH)).json() == saved
     async with engine.connect() as conn:
@@ -132,8 +133,8 @@ async def test_rejects_keys_anonymous_invalid_layouts_and_unknown_layout_keys(
     auth.user_id = "alice-org-a"
     for patch in (
         {"version": 2},
-        {"preferredWidthPx": 200},
-        {"preferredWidthPx": 20000},
+        {"preferredWidthFraction": 0},
+        {"preferredWidthFraction": 1.5},
         {"taskPanePercent": 0},
         {"taskPanePercent": 100},
         {"showTask": False, "showTrial": False},
@@ -145,3 +146,28 @@ async def test_rejects_keys_anonymous_invalid_layouts_and_unknown_layout_keys(
     assert (
         await client.get(PATH)
     ).json() == ui_layouts.TrialDrawerLayout().model_dump()
+
+
+@pytest.mark.asyncio
+async def test_pixel_widths_saved_before_fractions_fall_back_to_the_default(
+    preference_api,
+):
+    client, _, engine = preference_api
+    defaults = ui_layouts.TrialDrawerLayout().model_dump()
+    legacy = {
+        **{k: v for k, v in defaults.items() if k != "preferredWidthFraction"},
+        "preferredWidthPx": 2400,
+        "taskPanePercent": 60,
+    }
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO user_ui_layouts (user_id, layout_key, value) "
+                "VALUES ('alice-org-a', 'experiment.trial-drawer', CAST(:v AS JSONB))"
+            ),
+            {"v": json.dumps(legacy)},
+        )
+    assert (await client.get(PATH)).json() == {**defaults, "taskPanePercent": 60}
+    # A browser still running the pixel-width bundle can keep saving.
+    assert (await client.put(PATH, json=legacy)).status_code == 200
+    assert (await client.get(PATH)).json() == {**defaults, "taskPanePercent": 60}

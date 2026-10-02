@@ -11,7 +11,7 @@ for (const target of ["taskFile=tests%2Ftest.sh", "taskPane=file"]) {
       releaseRead = resolve;
     });
     let readStarted = false;
-    let saved = { ...defaults, preferredWidthPx: 1234, showTask: false };
+    let saved = { ...defaults, preferredWidthFraction: 0.75, showTask: false };
     const writes: (typeof defaults)[] = [];
     await page.route(
       "**/api/users/me/ui-layouts/experiment.trial-drawer",
@@ -41,7 +41,7 @@ for (const target of ["taskFile=tests%2Ftest.sh", "taskPane=file"]) {
       .poll(() =>
         drawer.evaluate((element) => element.getBoundingClientRect().width)
       )
-      .toBe(1234);
+      .toBe(1200);
     await expect(hideTask).toBeVisible();
     await expect(page.locator('[data-panel-id="task-pane"]')).toBeVisible();
     if (target.startsWith("taskFile")) {
@@ -94,7 +94,7 @@ test("drawer gestures survive reload, account switches and a smaller screen", as
   await page.setViewportSize({ width: 1600, height: 1000 });
   let account = "alice-a";
   const saved = new Map<string, typeof defaults>([
-    [account, { ...defaults, preferredWidthPx: 1200, taskPanePercent: 60 }],
+    [account, { ...defaults, preferredWidthFraction: 0.75, taskPanePercent: 60 }],
   ]);
   const writes: (typeof defaults)[] = [];
   await page.route(
@@ -124,7 +124,9 @@ test("drawer gestures survive reload, account switches and a smaller screen", as
   await page.mouse.down();
   await page.mouse.move(edgeBounds!.x + 101, edgeBounds!.y + 294, { steps: 8 });
   await page.mouse.up();
-  await expect.poll(() => saved.get(account)?.preferredWidthPx).toBe(1100);
+  await expect
+    .poll(() => saved.get(account)?.preferredWidthFraction)
+    .toBe(1100 / 1600);
 
   const divider = page.locator("[data-panel-resize-handle-id]");
   await divider.hover();
@@ -191,22 +193,23 @@ test("drawer gestures survive reload, account switches and a smaller screen", as
 
   account = "bob-a";
   await page.getByRole("button", { name: "Bob A" }).click();
-  await expect.poll(width).toBe(1500);
+  await expect.poll(width).toBe(1360);
   await expect(page.getByTestId("save-status")).toHaveText("ready");
   account = "alice-b";
   await page.getByRole("button", { name: "Alice B" }).click();
-  await expect.poll(width).toBe(1500);
+  await expect.poll(width).toBe(1360);
   await expect(page.getByTestId("save-status")).toHaveText("ready");
   account = "alice-a";
   await page.getByRole("button", { name: "Alice A" }).click();
   await expect.poll(width).toBe(1100);
 
   const beforeResize = writes.length;
+  // A smaller screen keeps the same share of the window, not the pixels.
   await page.setViewportSize({ width: 800, height: 900 });
-  await expect.poll(width).toBe(800);
+  await expect.poll(width).toBe(550);
   await page.waitForTimeout(600);
   expect(writes).toHaveLength(beforeResize);
-  expect(saved.get(account)!.preferredWidthPx).toBe(1100);
+  expect(saved.get(account)!.preferredWidthFraction).toBe(1100 / 1600);
   await page.setViewportSize({ width: 1600, height: 1000 });
   await expect.poll(width).toBe(1100);
 });
@@ -216,7 +219,7 @@ test("save failure leaves the drawer usable and Retry persists the latest choice
 }) => {
   await page.setViewportSize({ width: 1600, height: 1000 });
   let fail = true;
-  let saved = { ...defaults, preferredWidthPx: 1200 };
+  let saved = { ...defaults, preferredWidthFraction: 0.75 };
   await page.route(
     "**/api/users/me/ui-layouts/experiment.trial-drawer",
     async (route) => {

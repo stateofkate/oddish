@@ -2471,9 +2471,8 @@ export function TaskFilesPanel({
     <ResizableDrawer
       open={isOpen}
       onOpenChange={(open) => !open && onClose()}
-      defaultWidth={650}
+      defaultWidth={0.45}
       minWidth={400}
-      maxWidth={1200}
     >
       {content}
     </ResizableDrawer>

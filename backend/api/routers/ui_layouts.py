@@ -19,12 +19,22 @@ class TrialDrawerLayout(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     version: Literal[1] = 1
+    # Share of the window, so one account's width fits every screen it opens on.
     # Unset width uses the existing single-pane / two-pane defaults.
-    preferredWidthPx: float | None = Field(default=None, ge=420, le=16384)
+    preferredWidthFraction: float | None = Field(default=None, gt=0, le=1)
     maximized: bool = False
     taskPanePercent: float = Field(default=42, ge=15, le=85)
     showTask: bool = True
     showTrial: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def drop_pixel_width(cls, value: object) -> object:
+        # Rows saved before widths were fractions hold a pixel width measured on
+        # some other screen; it cannot be converted, so the default width applies.
+        if isinstance(value, dict) and "preferredWidthPx" in value:
+            return {k: v for k, v in value.items() if k != "preferredWidthPx"}
+        return value
 
     @model_validator(mode="after")
     def visible_pane(self) -> "TrialDrawerLayout":

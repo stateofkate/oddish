@@ -2056,9 +2056,8 @@ export function TrialDetailPanel({
       <ResizableDrawer
         open={isOpen}
         onOpenChange={(open) => !open && onClose()}
-        defaultWidth={700}
+        defaultWidth={0.5}
         minWidth={420}
-        maxWidth={900}
       >
         {content}
       </ResizableDrawer>

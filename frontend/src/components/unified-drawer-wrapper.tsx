@@ -32,10 +32,10 @@ interface UnifiedDrawerWrapperProps {
   onShowTaskChange?: (next: boolean) => void;
   onShowTrialChange?: (next: boolean) => void;
   sideBySideLeft?: React.ReactNode;
+  /** Shares of the window width (0–1) used until the account drags the edge. */
   defaultWidth?: number;
   sideBySideWidth?: number;
   minWidth?: number;
-  maxWidth?: number;
 }
 
 export function UnifiedDrawerWrapper({
@@ -55,17 +55,16 @@ export function UnifiedDrawerWrapper({
   onShowTaskChange,
   onShowTrialChange,
   sideBySideLeft,
-  defaultWidth = 1080,
-  sideBySideWidth = 1500,
+  defaultWidth = 0.6,
+  sideBySideWidth = 0.85,
   minWidth = 420,
-  maxWidth = 1800,
 }: UnifiedDrawerWrapperProps) {
   const hasLeft = Boolean(sideBySideLeft);
   const sideBySideActive = mode === "trial" && showTask && showTrial && hasLeft;
   const taskOnlyActive = mode === "trial" && showTask && hasLeft && !showTrial;
 
   const width =
-    layout.preferredWidthPx ??
+    layout.preferredWidthFraction ??
     (sideBySideActive ? sideBySideWidth : defaultWidth);
 
   const trialsToggle = onShowTrialChange ? (
@@ -220,9 +219,10 @@ export function UnifiedDrawerWrapper({
       onOpenChange={onOpenChange}
       defaultWidth={defaultWidth}
       minWidth={minWidth}
-      maxWidth={maxWidth}
       width={width}
-      onWidthChange={(preferredWidthPx) => onLayoutChange({ preferredWidthPx })}
+      onWidthChange={(preferredWidthFraction) =>
+        onLayoutChange({ preferredWidthFraction })
+      }
       maximized={layout.maximized}
       onMaximizedChange={(maximized) => onLayoutChange({ maximized })}
       onResizeEnd={onLayoutCommit}
