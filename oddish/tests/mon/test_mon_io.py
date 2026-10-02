@@ -39,11 +39,28 @@ def _env(**extra):
 
 
 def test_secrets_are_read_once_and_removed_from_the_environment():
-    environ = _env(**{env.AGENT_ENV_VAR: json.dumps({"ANTHROPIC_API_KEY": "sk-x"})})
+    environ = _env(
+        **{
+            env.AGENT_ENV_VAR: json.dumps({"ANTHROPIC_API_KEY": "sk-x"}),
+            env.DRIVER_ENV_VAR: json.dumps({"ANTHROPIC_HDO_API_KEY": "driver-secret"}),
+            env.TASK_ENV_VAR: json.dumps({"ANTHROPIC_API_KEY": "judge-secret"}),
+        }
+    )
     loaded = env.load(environ)
     assert loaded.token == "job-1.2.secret-token"
     assert loaded.agent_env == {"ANTHROPIC_API_KEY": "sk-x"}
-    assert env.TOKEN_VAR not in environ and env.AGENT_ENV_VAR not in environ
+    assert all(
+        name not in environ
+        for name in (
+            env.TOKEN_VAR,
+            env.AGENT_ENV_VAR,
+            env.DRIVER_ENV_VAR,
+            env.TASK_ENV_VAR,
+        )
+    )
+    assert loaded.driver_env == {"ANTHROPIC_HDO_API_KEY": "driver-secret"}
+    assert loaded.task_env == {"ANTHROPIC_API_KEY": "judge-secret"}
+    assert "driver-secret" not in repr(loaded) and "judge-secret" not in repr(loaded)
     assert "secret-token" not in repr(loaded) and "sk-x" not in repr(loaded)
 
 
@@ -455,7 +472,7 @@ async def test_the_control_plane_ending_the_attempt_exits_stopped_in_every_phase
 
     phases, calls = stage_monitor(driver_error=driver_error, refuse=refuse)
     # The entrypoint posts no failed start for it.
-    assert await runner.run() == EXIT_STOPPED
+    assert await runner.run(runner.env.load()) == EXIT_STOPPED
     assert phases[-1] == "stopped"
     assert [route for route, _ in calls].count("result") == (refuse[0] == "result")
 
@@ -475,7 +492,7 @@ async def test_the_posted_retryable_follows_the_workers_rule(stage_monitor, retr
         else QuotaPauseControlError("paused")
     )
     _, calls = stage_monitor(driver_error=error)
-    assert await runner.run() == EXIT_ACCEPTED
+    assert await runner.run(runner.env.load()) == EXIT_ACCEPTED
     (body,) = [body for route, body in calls if route == "result"]
     assert body["retryable"] is retryable
     assert body["execution_error"].startswith(type(error).__name__)
@@ -698,7 +715,10 @@ async def test_a_verdict_on_a_lifecycle_post_stops_the_driver_and_stays_recorded
         hook_events=(TrialEvent.START, TrialEvent.ENVIRONMENT_START),
     )
     # Without the stop the driver runs forever: fail instead of hanging.
-    assert await asyncio.wait_for(runner.run(), timeout=10) == EXIT_STOPPED
+    assert (
+        await asyncio.wait_for(runner.run(runner.env.load()), timeout=10)
+        == EXIT_STOPPED
+    )
     # The second hook still ran and wrote its stage; the verdict stays.
     assert status.read_status(status.STATUS_PATH)["phase"] == "stopped"
 

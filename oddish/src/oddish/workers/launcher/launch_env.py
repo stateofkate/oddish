@@ -9,8 +9,15 @@ import os
 from collections.abc import Mapping
 
 from oddish.config import settings
-from oddish.mon.contract import AGENT_ENV_VAR, API_URL_VAR, REGISTRY_AUTH_VAR, TOKEN_VAR
-from oddish.workers.queue import byok, job_tokens
+from oddish.mon.contract import (
+    AGENT_ENV_VAR,
+    API_URL_VAR,
+    DRIVER_ENV_VAR,
+    TASK_ENV_VAR,
+    REGISTRY_AUTH_VAR,
+    TOKEN_VAR,
+)
+from oddish.workers.queue import job_tokens
 from oddish.workers.queue.trial_steps import PreparedTrialRun
 
 
@@ -32,39 +39,27 @@ def build_sandbox_env(
     """
     if ambient is None:
         ambient = os.environ
-    # The sandbox has no ambient secrets, so the platform key for this
-    # provider is passed in; a user key wins over it.
+    provider = job_tokens.provider_env(
+        agent=prepared.trial_agent,
+        model=prepared.trial_model,
+        settings=settings,
+        byok_env=byok_env,
+        raw_harbor_config=prepared.trial_harbor_config,
+        ambient=ambient,
+    )
     agent_env = {
-        **job_tokens.scoped_model_env(
-            agent=prepared.trial_agent,
-            model=prepared.trial_model,
-            settings=settings,
-            byok_env=byok_env,
-            raw_harbor_config=prepared.trial_harbor_config,
-            # The launcher runs in the worker, whose environment holds the
-            # names some agents authenticate with and no settings field
-            # carries (grok-build's xAI keys, single-llm's AWS chain on
-            # Bedrock). Select those by name for the sandbox, which has no
-            # ambient environment of its own.
-            ambient=ambient,
-        ),
-        # Harness credentials read from the host by agent, not provider
-        # (cursor-cli's CURSOR_API_KEY).
+        **provider.agent_env,
         **job_tokens.agent_ambient_env(prepared.trial_agent, ambient),
-        **(byok.merge_byok_env(byok_env, None) or {}),
     }
+    driver_env = {**provider.driver_env, **agent_env}
+    if ambient.get("ODDISH_RELEASE"):
+        driver_env["ODDISH_RELEASE"] = ambient["ODDISH_RELEASE"]
     return {
         API_URL_VAR: api_url,
         TOKEN_VAR: credential,
+        DRIVER_ENV_VAR: json.dumps(driver_env),
         AGENT_ENV_VAR: json.dumps(agent_env),
-        # Judge keys the task's env blocks interpolate (verifier, environment,
-        # solution, step verifiers). They go into the monitor's process env,
-        # the same place the agent's model keys land (mon/runner.py updates
-        # os.environ with them) and where Harbor resolves ``${VAR}``. Harbor's
-        # agent adapters forward only the provider keys they know by name, so
-        # a judge key reaches the agent container only when the agent's own
-        # provider is that judge's provider, as on the worker path.
-        **judge_env,
+        TASK_ENV_VAR: json.dumps(dict(judge_env)),
         **(
             {REGISTRY_AUTH_VAR: json.dumps([c.to_dict() for c in registry_credentials])}
             if registry_credentials

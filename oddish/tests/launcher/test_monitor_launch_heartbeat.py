@@ -139,7 +139,7 @@ class _Launch:
         monkeypatch.setattr(ml, "begin_judge_costs_if_enabled", _none)
         monkeypatch.setattr(ml, "capture_sandbox_resources", lambda *a: None)
         monkeypatch.setattr(ml, "capture_verifier_resources", lambda *a: None)
-        monkeypatch.setattr(ml.verifier_secrets, "judge_env_for_task", lambda *a: {})
+        monkeypatch.setattr(ml.verifier_secrets, "task_env_for_task", lambda *a, **k: {})
         monkeypatch.setattr(
             ml.monitor_token, "mint_monitor_credential", lambda *a: _val("tok")
         )

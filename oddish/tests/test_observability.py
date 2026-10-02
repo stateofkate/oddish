@@ -76,6 +76,10 @@ def test_trial_execution_finished_emits_structured_logfire_record(monkeypatch) -
         attempts=3,
         environment_setup_seconds=42.5,
         total_seconds=47.0,
+        worker_job_id="job-1",
+        model="anthropic/test",
+        exception_type="AuthenticationError",
+        provider_error_code="401",
     )
 
     assert calls == [
@@ -84,6 +88,10 @@ def test_trial_execution_finished_emits_structured_logfire_record(monkeypatch) -
             {
                 "event": "trial_execution_finished",
                 "trial_id": "trial-1",
+                "worker_job_id": "job-1",
+                "model": "anthropic/test",
+                "exception_type": "AuthenticationError",
+                "provider_error_code": "401",
                 "kind": "agent",
                 "environment": "archil",
                 "status": "failed",

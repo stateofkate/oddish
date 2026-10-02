@@ -1255,7 +1255,7 @@ def test_both_azure_provider_spellings_fold_ambient_credentials(monkeypatch):
 def test_scoped_token_routes_dropped_for_nonconsuming_agent():
     """Job-scoped token injection must not kill a self-fronting agent's trial.
 
-    job_tokens.scoped_model_env writes the model provider's full route env
+    job_tokens.provider_env writes the model provider's full route env
     (OPENAI_BASE_URL + the Azure aliases for OpenAI-family) into
     agent_config.env -- a channel the worker-transport filter never sees. For an
     agent that fronts its own transport (cursor on an openai/ model) those
@@ -3000,11 +3000,11 @@ def test_public_meta_binding_bundle_and_fingerprint_agree(monkeypatch):
     monkeypatch.setenv("META_PUBLIC_API_KEY", "env-key")
     monkeypatch.setenv("META_API_KEY", "internal-key")
 
-    bundle = job_tokens.scoped_model_env(
+    bundle = job_tokens.provider_env(
         agent="mini-swe-agent",
         model="meta-public/muse-spark-1.3",
         settings=harbor_runner.settings,
-    )
+    ).agent_env
     agent_config = harbor_runner._build_agent_config(
         agent="mini-swe-agent",
         model="meta-public/muse-spark-1.3",

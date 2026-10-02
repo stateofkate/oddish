@@ -58,10 +58,11 @@ def main(argv: list[str] | None = None) -> int:
         try:
             # Settings reads os.environ once, when the runner's imports first
             # load oddish.config: unpack the model credentials before that.
-            os.environ.update(env.load(dict(os.environ)).agent_env)
+            monitor_env = env.load()
+            os.environ.update(monitor_env.driver_env)
             from oddish.mon.runner import run
 
-            return asyncio.run(run())
+            return asyncio.run(run(monitor_env))
         except Exception:  # noqa: BLE001 - the traceback must reach the log file
             # Python prints an unhandled traceback to stderr, which is not in
             # the monitor log the startup-failure report tails. Log it through

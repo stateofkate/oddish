@@ -1520,7 +1520,7 @@ def _infer_provider_prefix(
     Adding a rung ABOVE the ``allow_bare_heuristics`` gate changes both callers,
     and ``_get_provider_from_model`` decides whether Azure credentials are minted
     (``_trial_uses_openai_provider``) and which provider key a job-scoped token
-    carries (``job_tokens.scoped_model_env``) -- so a rung meant only for host
+    carries (``job_tokens.provider_env``) -- so a rung meant only for host
     inference must go BELOW the gate.
     """
     from litellm.litellm_core_utils.get_llm_provider_logic import get_llm_provider

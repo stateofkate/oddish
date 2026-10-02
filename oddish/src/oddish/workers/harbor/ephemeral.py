@@ -318,8 +318,23 @@ def _build_payload(
     environment: EnvironmentType | None = None,
     raw_harbor_config: dict[str, Any],
     extra_agent_env: dict[str, str] | None = None,
+    task_host_env: dict[str, str] | None = None,
     environment_build_timeout_multiplier: float | None = None,
 ) -> dict[str, Any]:
+    from oddish.workers.queue.judge_keys import task_env_for_task
+
+    sources = dict(os.environ) if task_host_env is None else task_host_env
+    # The child validates a missing task file. Only declared phase sources go
+    # into its private payload, never unrelated inherited model credentials.
+    task_sources = (
+        task_env_for_task(
+            task_path,
+            sources,
+            verifier_env=(raw_harbor_config.get("verifier") or {}).get("env"),
+        )
+        if (task_path / "task.toml").is_file()
+        else {}
+    )
     if environment_config is None:
         environment_config = EnvironmentConfig.model_validate(
             raw_harbor_config.get("environment") or {}
@@ -477,6 +492,7 @@ def _build_payload(
         ),
         "retry": raw_harbor_config.get("retry"),
         "runtime_env": {**anthropic_env, **runtime_env},
+        "task_host_env": task_sources,
         "extra_agent_env": child_extra_env,
         "vertex_ai": vertex_ai_payload,
     }
@@ -579,6 +595,7 @@ async def run_ephemeral_harbor_trial(
     trial_id: str | None = None,
     harbor_config: dict[str, Any] | None = None,
     extra_agent_env: dict[str, str] | None = None,
+    task_host_env: dict[str, str] | None = None,
     environment_build_timeout_multiplier: float | None = None,
 ) -> HarborOutcome:
     """Run one trial in an override Harbor child process.
@@ -655,6 +672,7 @@ async def run_ephemeral_harbor_trial(
                 environment_config=environment_config,
                 raw_harbor_config=raw,
                 extra_agent_env=extra_agent_env,
+                task_host_env=task_host_env,
                 environment_build_timeout_multiplier=environment_build_timeout_multiplier,
             )
         except Exception as exc:  # noqa: BLE001 - any build failure is a trial error

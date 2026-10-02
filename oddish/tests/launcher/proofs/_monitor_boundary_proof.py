@@ -206,6 +206,10 @@ async def _main() -> int:
     # model key reaches the sandbox, and settlement can close costs and
     # release the lease from the row alone.
     job = await _seed(capacity_provider="ec2", capacity_slot=0)
+    async with get_session() as session:
+        trial = await session.get(TrialModel, job.subject_id)
+        trial.agent = "claude-code"
+        trial.model = "anthropic/claude-sonnet-5-5"
 
     async def _users_key(**_):
         return SimpleNamespace(env={"ANTHROPIC_API_KEY": "sk-user-owned"})

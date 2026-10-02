@@ -147,7 +147,11 @@ def _stub_launch(
         ml.monitor_token, "mint_monitor_credential", lambda *a: _val("tok")
     )
     monkeypatch.setattr(ml.monitor_token, "revoke_monitor_credential", _revoke)
-    monkeypatch.setattr(job_tokens, "scoped_model_env", lambda **k: {})
+    monkeypatch.setattr(
+        job_tokens,
+        "provider_env",
+        lambda **k: job_tokens.ProviderEnv(driver_env={}, agent_env={}),
+    )
     monkeypatch.setattr(byok, "merge_byok_env", lambda *a: {})
     monkeypatch.setattr(ml.monitor_image_cache, "resolve", resolve or _resolve)
     monkeypatch.setattr(ml, "warm_source_for_trial", _noop)

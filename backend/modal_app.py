@@ -878,6 +878,7 @@ _THUNDER_PUBLIC_ENV_NAMES = {
 }
 
 ENV_VARS = {
+    "ODDISH_RELEASE": os.environ.get("ODDISH_RELEASE", ""),
     "ODDISH_MODAL_WORKER_CPU": str(WORKER_CPU),
     "ODDISH_MODAL_WORKER_MEMORY_MB": str(WORKER_MEMORY_MB),
     "ODDISH_MODAL_WORKER_NONPREEMPTIBLE": str(WORKER_NONPREEMPTIBLE).lower(),
@@ -1022,6 +1023,7 @@ runtime_secrets.append(
         {
             name: ENV_VARS[name]
             for name in (
+                "ODDISH_RELEASE",
                 "ODDISH_HARBOR_ENVIRONMENT",
                 "ODDISH_ARCHIL_TRAFFIC_PERCENT",
                 "ODDISH_MODAL_WORKER_CPU",

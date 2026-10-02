@@ -10,7 +10,7 @@ from pathlib import Path
 from harbor.agents.installed.claude_code import ClaudeCode
 
 from oddish.config import settings
-from oddish.workers.queue.job_tokens import scoped_model_env
+from oddish.workers.queue.job_tokens import provider_env
 
 
 class ProxiedClaudeCode(ClaudeCode):
@@ -53,9 +53,9 @@ class ProxiedClaudeCode(ClaudeCode):
         token = secrets.token_urlsafe(32)
         model = self.proxy_model
         env = (
-            scoped_model_env(
+            provider_env(
                 agent="claude-code", model=model, settings=settings, ambient=os.environ
-            )
+            ).driver_env
             | self.extra_env
         )
         if model.startswith("openai/") and settings.get_openai_provider() == "azure":

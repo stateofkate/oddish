@@ -683,11 +683,19 @@ def record_trial_execution_finished(
     attempts: int,
     environment_setup_seconds: float | None,
     total_seconds: float | None,
+    worker_job_id: str | None = None,
+    model: str | None = None,
+    exception_type: str | None = None,
+    provider_error_code: str | None = None,
 ) -> None:
     """Emit one structured event after a trial settlement commits."""
     attributes = {
         "event": "trial_execution_finished",
         "trial_id": trial_id,
+        "worker_job_id": worker_job_id,
+        "model": model,
+        "exception_type": exception_type,
+        "provider_error_code": provider_error_code,
         "kind": kind,
         "environment": environment,
         "status": status,

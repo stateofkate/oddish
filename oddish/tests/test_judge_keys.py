@@ -41,17 +41,19 @@ def test_only_referenced_names_are_forwarded_not_the_whole_allowlist():
 def test_non_allowlisted_host_var_is_never_resolved():
     # A task cannot pull an arbitrary platform secret by naming it.
     blocks = [{"AWS_SECRET_ACCESS_KEY": "${AWS_SECRET_ACCESS_KEY}"}]
-    assert vs.referenced_judge_env(blocks, AVAILABLE) == {}
+    with pytest.raises(ValueError, match="AWS_SECRET_ACCESS_KEY"):
+        vs.referenced_judge_env(blocks, AVAILABLE)
 
 
 def test_unconfigured_platform_key_is_skipped():
     blocks = [{"GEMINI_API_KEY": "${GEMINI_API_KEY}"}]
-    assert vs.referenced_judge_env(blocks, {"GEMINI_API_KEY": None}) == {}
+    with pytest.raises(ValueError, match="GEMINI_API_KEY"):
+        vs.referenced_judge_env(blocks, {"GEMINI_API_KEY": None})
 
 
 def test_available_judge_keys_read_settings_by_attribute():
     settings = SimpleNamespace(gemini_api_key="gem-2")
-    assert vs.available_judge_keys(settings) == {
+    assert {k: v for k, v in vs.available_judge_keys(settings).items() if v} == {
         "GEMINI_API_KEY": "gem-2",
         "GOOGLE_GENERATIVE_AI_API_KEY": "gem-2",
         "GOOGLE_API_KEY": "gem-2",
@@ -81,9 +83,43 @@ def test_available_judge_keys_read_settings_by_attribute():
 def test_judge_env_for_task_reads_real_task_toml(tmp_path: Path, toml, expected):
     (tmp_path / "task.toml").write_text(toml)
     settings = SimpleNamespace(gemini_api_key="gem-1")
-    assert vs.judge_env_for_task(tmp_path, settings) == expected
+    assert vs.task_env_for_task(tmp_path, vs.available_judge_keys(settings)) == expected
 
 
-def test_unreadable_task_config_forwards_nothing(tmp_path: Path):
+def test_unreadable_task_config_fails_before_launch(tmp_path: Path):
     settings = SimpleNamespace(gemini_api_key="gem-1")
-    assert vs.judge_env_for_task(tmp_path, settings) == {}
+    with pytest.raises(FileNotFoundError):
+        vs.task_env_for_task(tmp_path, vs.available_judge_keys(settings))
+
+
+@pytest.mark.parametrize("phase", ["environment", "verifier", "solution"])
+def test_missing_required_key_names_phase_before_launch(tmp_path, phase):
+    (tmp_path / "task.toml").write_text(
+        f'[{phase}.env]\nKEY = "${{ANTHROPIC_API_KEY}}"\n'
+    )
+    with pytest.raises(ValueError, match=f"{phase}.*ANTHROPIC_API_KEY"):
+        vs.task_env_for_task(tmp_path, vs.available_judge_keys(SimpleNamespace()))
+
+
+def test_defaults_and_literals_do_not_require_platform_keys(tmp_path):
+    (tmp_path / "task.toml").write_text(
+        '[verifier.env]\nKEY = "${ANTHROPIC_API_KEY:-fallback}"\nLITERAL = "literal"\n'
+    )
+    assert (
+        vs.task_env_for_task(tmp_path, vs.available_judge_keys(SimpleNamespace())) == {}
+    )
+
+
+@pytest.mark.parametrize(
+    "name,attribute",
+    [
+        ("ANTHROPIC_API_KEY", "anthropic_api_key"),
+        ("OPENAI_API_KEY", "openai_api_key"),
+        ("AZURE_OPENAI_API_KEY", "azure_openai_api_key"),
+    ],
+)
+def test_non_google_judge_uses_platform_settings(tmp_path, name, attribute):
+    (tmp_path / "task.toml").write_text(f'[verifier.env]\nKEY = "${{{name}}}"\n')
+    assert vs.task_env_for_task(
+        tmp_path, vs.available_judge_keys(SimpleNamespace(**{attribute: "judge-key"}))
+    ) == {name: "judge-key"}

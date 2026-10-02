@@ -137,6 +137,7 @@ _SEQUENCE_WRAPPERS = {"list", "tuple", "set", "frozenset", "sorted", "reversed"}
 class _ModelMeta:
     name: str
     columns: frozenset[str]
+    computed_columns: dict[str, tuple[str, ...]]
     primary_key: frozenset[str]
     # relationship name -> (related model class name, is_collection)
     relationships: dict[str, tuple[str, bool]]
@@ -172,9 +173,15 @@ def introspect_models(model_names: set[str]) -> dict[str, _ModelMeta]:
             raise SystemExit(
                 f"load_only_guard: {name!r} is not a SQLAlchemy mapped model ({exc})."
             ) from exc
+        computed = {
+            key: descriptor.info["load_only_columns"]
+            for key, descriptor in insp.all_orm_descriptors.items()
+            if "load_only_columns" in descriptor.info
+        }
         metas[name] = _ModelMeta(
             name=name,
-            columns=frozenset(c.key for c in column_attrs),
+            columns=frozenset(c.key for c in column_attrs) | computed.keys(),
+            computed_columns=computed,
             primary_key=frozenset(c.name for c in insp.primary_key),
             relationships={
                 rel.key: (rel.mapper.class_.__name__, bool(rel.uselist))
@@ -386,7 +393,11 @@ class _ReadCollector:
                 read = self._getattr_read(node)
                 if read is not None:
                     reads.add(read)
-        return reads
+        return {
+            (model, dependency)
+            for model, column in reads
+            for dependency in self.metas[model].computed_columns.get(column, (column,))
+        }
 
     def _getattr_read(self, node: ast.Call) -> tuple[str, str] | None:
         """Detect ``getattr(model_expr, "column")`` reads (string-literal attr)."""

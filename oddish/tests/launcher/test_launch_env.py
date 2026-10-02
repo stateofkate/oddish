@@ -10,9 +10,16 @@ from unittest.mock import patch
 
 import pytest
 
-from oddish.mon.env import AGENT_ENV_VAR, API_URL_VAR, REGISTRY_AUTH_VAR, TOKEN_VAR
+from oddish.mon.env import (
+    AGENT_ENV_VAR,
+    API_URL_VAR,
+    REGISTRY_AUTH_VAR,
+    DRIVER_ENV_VAR,
+    TASK_ENV_VAR,
+    TOKEN_VAR,
+)
 from oddish.workers.launcher import launch_env
-from oddish.workers.queue import byok, job_tokens
+from oddish.workers.queue import job_tokens
 
 PREPARED = SimpleNamespace(
     trial_agent="claude-code",
@@ -29,19 +36,18 @@ def scoped(monkeypatch):
 
     def _scoped(**kwargs):
         calls["scoped"] = kwargs
-        return {"ANTHROPIC_API_KEY": "platform", "SHARED": "scoped"}
+        env = {
+            "ANTHROPIC_API_KEY": "user" if kwargs["byok_env"] else "platform",
+            "SHARED": "user" if kwargs["byok_env"] else "scoped",
+        }
+        return job_tokens.ProviderEnv(driver_env=dict(env), agent_env=env)
 
     def _ambient(agent, ambient):
         calls["ambient"] = (agent, dict(ambient))
         return {"CURSOR_API_KEY": ambient.get("CURSOR_API_KEY", "")}
 
-    def _merge(byok_env, _other):
-        calls["merge"] = byok_env
-        return {"SHARED": "user"} if byok_env else {}
-
-    monkeypatch.setattr(job_tokens, "scoped_model_env", _scoped)
+    monkeypatch.setattr(job_tokens, "provider_env", _scoped)
     monkeypatch.setattr(job_tokens, "agent_ambient_env", _ambient)
-    monkeypatch.setattr(byok, "merge_byok_env", _merge)
     return calls
 
 
@@ -57,12 +63,13 @@ def test_the_env_carries_the_handle_the_agent_keys_and_the_judge_keys(scoped):
 
     assert env[API_URL_VAR] == "https://api.test"
     assert env[TOKEN_VAR] == "job-1.1.secret"
-    assert env["OPENAI_API_KEY"] == "judge"
+    assert json.loads(env[DRIVER_ENV_VAR])["ANTHROPIC_API_KEY"] == "user"
+    assert json.loads(env[TASK_ENV_VAR])["OPENAI_API_KEY"] == "judge"
     assert REGISTRY_AUTH_VAR not in env
     # The user's key wins over the platform key; the harness key comes from
     # the launcher's own environment, selected by agent.
     assert json.loads(env[AGENT_ENV_VAR]) == {
-        "ANTHROPIC_API_KEY": "platform",
+        "ANTHROPIC_API_KEY": "user",
         "SHARED": "user",
         "CURSOR_API_KEY": "cursor",
     }
@@ -97,7 +104,6 @@ def test_registry_logins_are_serialised_only_when_given(scoped):
         "SHARED": "scoped",
         "CURSOR_API_KEY": "",
     }
-    assert scoped["merge"] is None
 
 
 def test_without_an_ambient_env_the_process_env_is_used(scoped, monkeypatch):
@@ -159,11 +165,12 @@ def test_hdo_key_survives_sandbox_agent_configuration(monkeypatch):
         judge_env={},
         ambient={},
     )
-    forwarded = monitor_env.load(sandbox_env).agent_env
+    loaded = monitor_env.load(sandbox_env)
+    forwarded = loaded.agent_env
 
     # A fresh sandbox has only the forwarded credentials. Rebuild Settings
     # there, just as the monitor does before configuring the agent.
-    with patch.dict(os.environ, forwarded, clear=True):
+    with patch.dict(os.environ, loaded.driver_env, clear=True):
         monkeypatch.setattr(agent_config, "settings", Settings(_env_file=None))
         config = agent_config._build_agent_config(
             agent="claude-code",

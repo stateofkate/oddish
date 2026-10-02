@@ -42,6 +42,8 @@ async def test_playback_projection_keeps_unknown_absent_and_present_distinct(
         provider="local",
         queue_key="oracle",
         status=TrialStatus.SUCCESS,
+        input_tokens=5_714_326_425,
+        output_tokens=42,
         result={
             "large_metric": "x" * 100_000,
             **({"_playback": playback} if playback is not None else {}),
@@ -62,6 +64,7 @@ async def test_playback_projection_keeps_unknown_absent_and_present_distinct(
         trial, "robot", analysis=None, error_message=None
     )
     assert response.model_dump()["playback"] == expected
+    assert response.input_tokens == 5_714_326_425
 
     row = (await session.execute(
         _experiment_trial_projection(TrialModel).where(TrialModel.id == identity)
@@ -69,3 +72,4 @@ async def test_playback_projection_keeps_unknown_absent_and_present_distinct(
     assert "result" not in row
     cell = build_experiment_trial_cell(row, exclusions=None)
     assert cell.model_dump()["playback"] == expected
+    assert cell.input_tokens == 5_714_326_425

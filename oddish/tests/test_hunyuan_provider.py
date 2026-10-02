@@ -130,16 +130,17 @@ def test_unsupported_hunyuan_submission_is_rejected(model, agent):
     assert exc.value.status_code == 400
 
 
-def test_scoped_model_env_hunyuan_only_carries_hunyuan_key() -> None:
+def test_provider_env_hunyuan_only_carries_hunyuan_key() -> None:
     fake = types.SimpleNamespace(
         anthropic_api_key="sk-ant",
         openai_api_key="sk-oai",
         hunyuan_api_key="hy-key",
+        hunyuan_base_url="https://hunyuan.test/v1",
     )
     fake.get_provider_for_trial = lambda agent, model: "hunyuan"
-    env = job_tokens.scoped_model_env(
+    env = job_tokens.provider_env(
         agent="mini-swe-agent", model=MODEL, settings=fake
-    )
+    ).agent_env
     assert env == {
         "HUNYUAN_API_KEY": "hy-key",
         "MSWEA_API_KEY": "hy-key",

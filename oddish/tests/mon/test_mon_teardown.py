@@ -207,7 +207,7 @@ async def test_run_drives_the_trial_without_the_grace_period(
     monkeypatch.setattr(runner, "drive_with_watchers", drive)
     monkeypatch.setattr(runner, "report_until_accepted", report)
 
-    assert await runner.run() == EXIT_ACCEPTED
+    assert await runner.run(runner.env.load()) == EXIT_ACCEPTED
 
     assert daemon.take()[-1] == ("down", "--timeout", "0", *_DELETE[1:])
     assert client.closed

@@ -23,6 +23,8 @@ from pydantic import BaseModel, Field
 # once and removes the secret ones from the process environment.
 API_URL_VAR = "ODDISH_MON_API_URL"
 TOKEN_VAR = "ODDISH_MON_TOKEN"
+DRIVER_ENV_VAR = "ODDISH_MON_DRIVER_ENV"  # JSON object: driver startup inputs
+TASK_ENV_VAR = "ODDISH_MON_TASK_ENV"  # JSON object: task declaration sources
 AGENT_ENV_VAR = "ODDISH_MON_AGENT_ENV"  # JSON object: env for the agent only
 REGISTRY_AUTH_VAR = "ODDISH_MON_REGISTRY_AUTH"  # JSON list: the run's registry login
 # A snapshot boot's code bundle, for scripts/mon-boot.sh: in the environment,

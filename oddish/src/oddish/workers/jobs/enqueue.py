@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from typing import Any
+from uuid import uuid4
 
 from sqlalchemy import text
 
@@ -19,7 +20,6 @@ from oddish.db import (
     WorkerJobKind,
     WorkerJobModel,
     WorkerJobStatus,
-    generate_id,
     utcnow,
 )
 from oddish.observability import (
@@ -91,7 +91,6 @@ async def enqueue_worker_job(
     payload = _validated_payload(request, validate)
 
     row = WorkerJobModel(
-        id=generate_id(),
         kind=request.kind,
         status=request.status,
         queue_key=request.queue_key,
@@ -201,7 +200,7 @@ async def bulk_enqueue_worker_jobs(
     if not requests:
         return []
 
-    ids = [generate_id() for _ in requests]
+    ids = [uuid4().hex for _ in requests]
     params = {
         "id": ids,
         "kind": [r.kind.value for r in requests],

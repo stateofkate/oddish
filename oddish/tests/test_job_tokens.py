@@ -39,6 +39,11 @@ def _fake_settings(**keys) -> types.SimpleNamespace:
         meta_public_api_key=None,
         meta_public_2_api_key=None,
         geometric_api_key=None,
+        geometric_base_url="https://geometric.test/v1",
+        geometric_anthropic_base_url=None,
+        meta_base_url="https://meta.test/v1",
+        openai_provider="openai",
+        azure_openai_deployments={},
     )
     base.update(keys)
     ns = types.SimpleNamespace(**base)
@@ -84,36 +89,36 @@ def _provider_of(model: str) -> str:
     return "anthropic"
 
 
-def test_scoped_model_env_anthropic_excludes_other_providers() -> None:
+def test_provider_env_anthropic_excludes_other_providers() -> None:
     settings = _fake_settings(
         anthropic_api_key="sk-ant", openai_api_key="sk-oai", gemini_api_key="g"
     )
-    env = job_tokens.scoped_model_env(
+    env = job_tokens.provider_env(
         agent="claude-code", model="anthropic/claude-sonnet-4-5", settings=settings
-    )
+    ).agent_env
     assert env.get("ANTHROPIC_API_KEY") == "sk-ant"
     # Least privilege: no OpenAI / Gemini keys leak into a Claude job's bundle.
     assert "OPENAI_API_KEY" not in env
     assert "GEMINI_API_KEY" not in env
 
 
-def test_scoped_model_env_gemini_publishes_both_google_key_names() -> None:
+def test_provider_env_gemini_publishes_both_google_key_names() -> None:
     # One platform Google key, two names: gemini-cli reads GEMINI_API_KEY, while
     # opencode (AI SDK google provider) reads GOOGLE_GENERATIVE_AI_API_KEY.
     # Harbor's opencode agent forwards only vars it finds set, so omitting the
     # AI SDK name leaves the agent unauthenticated and it exits before the first
     # model call.
     settings = _fake_settings(gemini_api_key="g-key", anthropic_api_key="sk-ant")
-    env = job_tokens.scoped_model_env(
+    env = job_tokens.provider_env(
         agent="opencode", model="google/gemini-3.7-flash", settings=settings
-    )
+    ).agent_env
     assert env.get("GEMINI_API_KEY") == "g-key"
     assert env.get("GOOGLE_GENERATIVE_AI_API_KEY") == "g-key"
     # Least privilege still holds: no other provider's key rides along.
     assert "ANTHROPIC_API_KEY" not in env
 
 
-def test_scoped_model_env_antigravity_mints_gemini_keys() -> None:
+def test_provider_env_antigravity_mints_gemini_keys() -> None:
     # Verifies key-minting behavior for provider "gemini": both GEMINI_API_KEY
     # and GOOGLE_GENERATIVE_AI_API_KEY are exported (least-privilege).
     # Provider resolution is stubbed per this file's convention; real resolution
@@ -124,9 +129,9 @@ def test_scoped_model_env_antigravity_mints_gemini_keys() -> None:
     settings.get_provider_for_trial = lambda agent, model: (
         "gemini" if agent == "antigravity-cli" else _provider_of(model)
     )
-    env = job_tokens.scoped_model_env(
+    env = job_tokens.provider_env(
         agent="antigravity-cli", model=None, settings=settings
-    )
+    ).agent_env
     assert env.get("GEMINI_API_KEY") == "g-key"
     assert env.get("GOOGLE_GENERATIVE_AI_API_KEY") == "g-key"
     assert "ANTHROPIC_API_KEY" not in env
@@ -143,63 +148,62 @@ def test_build_agent_provider_map_includes_antigravity_cli() -> None:
     assert agent_map.get("antigravity-cli") == "gemini"
 
 
-def test_scoped_model_env_anthropic_hdo_uses_hdo_key_not_platform() -> None:
+def test_provider_env_anthropic_hdo_uses_hdo_key_not_platform() -> None:
     settings = _fake_settings(
         anthropic_api_key="sk-platform",
         anthropic_hdo_api_key="sk-hdo",
         openai_api_key="sk-oai",
     )
-    env = job_tokens.scoped_model_env(
+    env = job_tokens.provider_env(
         agent="claude-code",
         model="anthropic-hdo/claude-sonnet-4-5",
         settings=settings,
-    )
+    ).agent_env
     assert env == {
         "ANTHROPIC_API_KEY": "sk-hdo",
-        "ANTHROPIC_HDO_API_KEY": "sk-hdo",
     }
 
 
-def test_scoped_model_env_openai_only_carries_openai() -> None:
+def test_provider_env_openai_only_carries_openai() -> None:
     settings = _fake_settings(anthropic_api_key="sk-ant", openai_api_key="sk-oai")
-    env = job_tokens.scoped_model_env(
+    env = job_tokens.provider_env(
         agent="codex", model="openai/gpt-4o", settings=settings
-    )
+    ).agent_env
     assert env.get("OPENAI_API_KEY") == "sk-oai"
     assert "ANTHROPIC_API_KEY" not in env
 
 
-def test_scoped_model_env_litellm_bedrock_uses_aws_route() -> None:
+def test_provider_env_litellm_bedrock_uses_aws_route() -> None:
     # A Bedrock-classified LiteLLM trial uses AWS, not an Anthropic key.
     settings = _fake_settings(anthropic_api_key="sk-ant")
     settings.get_provider_for_trial = lambda agent, model: "bedrock"
-    env = job_tokens.scoped_model_env(
+    env = job_tokens.provider_env(
         agent="mini-swe-agent",
         model="global.anthropic.claude-opus-4-8",
         settings=settings,
-    )
+    ).agent_env
     assert env == {"CLAUDE_CODE_USE_BEDROCK": "1"}
 
 
-def test_scoped_model_env_meta_only_carries_meta_key() -> None:
+def test_provider_env_meta_only_carries_meta_key() -> None:
     settings = _fake_settings(
         anthropic_api_key="sk-ant",
         openai_api_key="sk-oai",
         meta_api_key="meta-key",
     )
-    env = job_tokens.scoped_model_env(
+    env = job_tokens.provider_env(
         agent="mini-swe-agent", model="meta/llama-eval-model", settings=settings
-    )
+    ).agent_env
     assert env == {"META_API_KEY": "meta-key", "MSWEA_API_KEY": "meta-key"}
 
 
-def test_scoped_model_env_public_meta_carries_only_the_public_key() -> None:
+def test_provider_env_public_meta_carries_only_the_public_key() -> None:
     settings = _fake_settings(
         meta_api_key="meta-internal", meta_public_api_key="meta-public-key"
     )
-    env = job_tokens.scoped_model_env(
+    env = job_tokens.provider_env(
         agent="muse-code", model="meta-public/muse-spark-1.3", settings=settings
-    )
+    ).agent_env
     assert env == {
         "META_PUBLIC_API_KEY": "meta-public-key",
         "META_API_KEY": "meta-public-key",
@@ -207,34 +211,34 @@ def test_scoped_model_env_public_meta_carries_only_the_public_key() -> None:
     }
 
 
-def test_scoped_model_env_internal_meta_never_carries_the_public_key() -> None:
+def test_provider_env_internal_meta_never_carries_the_public_key() -> None:
     settings = _fake_settings(
         meta_api_key="meta-internal", meta_public_api_key="meta-public-key"
     )
-    env = job_tokens.scoped_model_env(
+    env = job_tokens.provider_env(
         agent="muse-code", model="meta/goofy_glacier135", settings=settings
-    )
+    ).agent_env
     assert env == {"META_API_KEY": "meta-internal", "MSWEA_API_KEY": "meta-internal"}
 
 
-def test_scoped_model_env_public_meta_without_key_is_empty(monkeypatch) -> None:
+def test_provider_env_public_meta_without_key_is_empty(monkeypatch) -> None:
     monkeypatch.delenv("META_PUBLIC_API_KEY", raising=False)
     settings = _fake_settings(meta_api_key="meta-internal")
-    env = job_tokens.scoped_model_env(
+    env = job_tokens.provider_env(
         agent="muse-code", model="meta-public/muse-spark-1.3", settings=settings
-    )
+    ).agent_env
     assert env == {}
 
 
-def test_scoped_model_env_public_meta_2_carries_only_its_own_key() -> None:
+def test_provider_env_public_meta_2_carries_only_its_own_key() -> None:
     settings = _fake_settings(
         meta_api_key="meta-internal",
         meta_public_api_key="meta-public-key",
         meta_public_2_api_key="meta-public-2-key",
     )
-    env = job_tokens.scoped_model_env(
+    env = job_tokens.provider_env(
         agent="muse-code", model="meta-public-2/muse-spark-1.3", settings=settings
-    )
+    ).agent_env
     assert env == {
         "META_PUBLIC_2_API_KEY": "meta-public-2-key",
         "META_API_KEY": "meta-public-2-key",
@@ -242,15 +246,15 @@ def test_scoped_model_env_public_meta_2_carries_only_its_own_key() -> None:
     }
 
 
-def test_scoped_model_env_geometric_only_carries_geometric_key() -> None:
+def test_provider_env_geometric_only_carries_geometric_key() -> None:
     settings = _fake_settings(
         anthropic_api_key="sk-ant",
         openai_api_key="sk-oai",
         geometric_api_key="geo-key",
     )
-    env = job_tokens.scoped_model_env(
+    env = job_tokens.provider_env(
         agent="mini-swe-agent", model="geometric/glm-5.3", settings=settings
-    )
+    ).agent_env
     assert env == {
         "GEOMETRIC_API_KEY": "geo-key",
         "MSWEA_API_KEY": "geo-key",
@@ -258,58 +262,58 @@ def test_scoped_model_env_geometric_only_carries_geometric_key() -> None:
     }
 
 
-def test_scoped_model_env_public_xai_excludes_private_keys(monkeypatch) -> None:
+def test_provider_env_public_xai_excludes_private_keys(monkeypatch) -> None:
     monkeypatch.setenv("XAI_API_KEY", "private-key")
     monkeypatch.setenv("XAI_PUBLIC_API_KEY", "public-key")
 
-    env = job_tokens.scoped_model_env(
+    env = job_tokens.provider_env(
         agent="grok-build",
         model="xai-public/grok-4.7",
         settings=_fake_settings(),
-    )
+    ).agent_env
 
     assert env == {"XAI_PUBLIC_API_KEY": "public-key"}
 
 
-def test_scoped_model_env_claude_code_bedrock_uses_routing_flag(monkeypatch) -> None:
+def test_provider_env_claude_code_bedrock_uses_routing_flag(monkeypatch) -> None:
     # With Bedrock routing left in place, claude-code invokes Bedrock directly
     # and keeps the routing-flag behavior.
     settings = _fake_settings(anthropic_api_key="sk-ant")
     _force_direct(monkeypatch, settings, enabled=False, ambient_key="sk-ant")
     settings.get_provider_for_trial = lambda agent, model: "bedrock"
-    env = job_tokens.scoped_model_env(
+    env = job_tokens.provider_env(
         agent="claude-code",
         model="global.anthropic.claude-opus-4-8",
         settings=settings,
-    )
+    ).agent_env
     assert env == {"CLAUDE_CODE_USE_BEDROCK": "1"}
 
 
-def test_scoped_model_env_explicit_anthropic_scopes_anthropic_key(
+def test_provider_env_explicit_anthropic_scopes_anthropic_key(
     monkeypatch,
 ) -> None:
     # The canonical Anthropic route scopes the matching API key.
     settings = _fake_settings(anthropic_api_key="sk-ant")
     _force_direct(monkeypatch, settings, enabled=True, ambient_key="sk-ant")
     settings.get_provider_for_trial = lambda agent, model: "anthropic"
-    env = job_tokens.scoped_model_env(
+    env = job_tokens.provider_env(
         agent="claude-code",
         model="anthropic/claude-opus-5",
         settings=settings,
-    )
+    ).agent_env
     assert env == {"ANTHROPIC_API_KEY": "sk-ant"}
 
 
-def test_scoped_model_env_scopes_anthropic_key_with_flag_off(monkeypatch) -> None:
+def test_provider_env_scopes_anthropic_key_with_flag_off(monkeypatch) -> None:
     # An explicit Anthropic model stays direct when the bare-ID flag is off.
     settings = _fake_settings(anthropic_api_key="sk-ant")
     _force_direct(monkeypatch, settings, enabled=False, ambient_key="sk-ant")
     settings.get_provider_for_trial = lambda agent, model: "anthropic"
-    env = job_tokens.scoped_model_env(
+    env = job_tokens.provider_env(
         agent="claude-code",
         model="anthropic/claude-opus-5",
         settings=settings,
-    )
+    ).agent_env
     assert env == {"ANTHROPIC_API_KEY": "sk-ant"}
 
 
@@ -327,34 +331,34 @@ def test_build_bundle_keeps_bedrock(monkeypatch) -> None:
     assert bundle.model_env == {"CLAUDE_CODE_USE_BEDROCK": "1"}
 
 
-def test_scoped_model_env_keeps_bedrock_when_no_ambient_anthropic_key(
+def test_provider_env_keeps_bedrock_when_no_ambient_anthropic_key(
     monkeypatch,
 ) -> None:
     """A native Bedrock id keeps its bundle route even without ambient keys."""
     settings = _fake_settings(anthropic_api_key="sk-ant")
     _force_direct(monkeypatch, settings, enabled=True, ambient_key=None)
     settings.get_provider_for_trial = lambda agent, model: "bedrock"
-    env = job_tokens.scoped_model_env(
+    env = job_tokens.provider_env(
         agent="claude-code",
         model="global.anthropic.claude-opus-5",
         settings=settings,
-    )
+    ).agent_env
     assert env == {"CLAUDE_CODE_USE_BEDROCK": "1"}
 
 
-def test_scoped_model_env_bedrock_ignores_byok_anthropic_key(
+def test_provider_env_bedrock_ignores_byok_anthropic_key(
     monkeypatch,
 ) -> None:
     """A Bedrock bundle cannot be changed by an Anthropic BYOK overlay."""
     settings = _fake_settings(anthropic_api_key=None)
     _force_direct(monkeypatch, settings, enabled=True, ambient_key=None)
     settings.get_provider_for_trial = lambda agent, model: "bedrock"
-    env = job_tokens.scoped_model_env(
+    env = job_tokens.provider_env(
         agent="claude-code",
         model="global.anthropic.claude-opus-5",
         settings=settings,
         byok_env={"ANTHROPIC_API_KEY": "sk-user"},
-    )
+    ).agent_env
     assert env == {"CLAUDE_CODE_USE_BEDROCK": "1"}
 
 
@@ -401,30 +405,30 @@ def test_surfaced_anthropic_env_matches_the_runner_cases(monkeypatch) -> None:
     )
 
 
-def test_scoped_model_env_single_llm_keeps_bedrock_under_force_direct(
+def test_provider_env_single_llm_keeps_bedrock_under_force_direct(
     monkeypatch,
 ) -> None:
     # A native Bedrock id still invokes Bedrock on SingleLLMAgent.
     settings = _fake_settings(anthropic_api_key="sk-ant")
     _force_direct(monkeypatch, settings, enabled=True, ambient_key="sk-ant")
     settings.get_provider_for_trial = lambda agent, model: "bedrock"
-    env = job_tokens.scoped_model_env(
+    env = job_tokens.provider_env(
         agent="single-llm",
         model="global.anthropic.claude-opus-5",
         settings=settings,
-    )
+    ).agent_env
     assert env == {"CLAUDE_CODE_USE_BEDROCK": "1"}
 
 
-def test_scoped_model_env_single_llm_keeps_the_bedrock_route() -> None:
+def test_provider_env_single_llm_keeps_the_bedrock_route() -> None:
     settings = _fake_settings(anthropic_api_key="sk-ant")
     settings.get_provider_for_trial = lambda agent, model: "bedrock"
 
-    env = job_tokens.scoped_model_env(
+    env = job_tokens.provider_env(
         agent="single-llm",
         model="global.anthropic.claude-sonnet-4-6",
         settings=settings,
-    )
+    ).agent_env
 
     assert env == {"CLAUDE_CODE_USE_BEDROCK": "1"}
 

@@ -48,7 +48,7 @@ jobs:
           git cat-file -e "${base}^{commit}" 2>/dev/null \
             || git fetch --no-tags origin "$base"
           changed="$(git diff --name-only "$base" HEAD)"
-          if grep -qE '^(oddish|backend)/alembic/|^oddish/tests/test_probe_removal_migration\.py$|^\.github/workflows/migration-upgrade-check\.yml$' <<<"$changed"; then
+          if grep -qE '^(oddish|backend)/alembic/|^oddish/tests/(test_probe_removal_migration|test_exact_token_counts)\.py$|^oddish/src/oddish/(db/models|workers/harbor/live_tail_db|workers/queue/trial_handler|compare_token_costs|core/backfill_token_counts|core/cost_basis|core/task_browse_metrics|core/endpoints/task_open_queries|costs/verifier_cost)\.py$|^\.github/workflows/migration-upgrade-check\.yml$' <<<"$changed"; then
             echo "run=true" >> "$GITHUB_OUTPUT"
             echo "Migration files or upgrade workflow changed — running upgrade."
           else
@@ -101,6 +101,11 @@ jobs:
         if: steps.changes.outputs.run == 'true'
         working-directory: oddish
         run: ODDISH_TEST_DATABASE_URL="$ODDISH_DATABASE_URL" uv run pytest tests/test_probe_removal_migration.py -q
+
+      - name: Test exact token counts with old workers and concurrent repairs
+        if: steps.changes.outputs.run == 'true'
+        working-directory: oddish
+        run: ODDISH_TEST_DATABASE_URL="$ODDISH_DATABASE_URL" uv run pytest tests/test_exact_token_counts.py -q
 
       - name: Sync backend dependencies
         if: steps.changes.outputs.run == 'true'

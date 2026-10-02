@@ -162,6 +162,7 @@ async def drive_with_watchers(
             org_id=spec.org_id,
             billed_user_id=spec.billed_user_id,
             extra_agent_env=monitor_env.agent_env or None,
+            task_host_env=monitor_env.task_env,
             quota_seams=task.driver_seams.quota,
         )
     )
@@ -248,15 +249,9 @@ async def report_until_accepted(
     write_status(trial_id=spec.trial_id, phase=MonitorPhase.DONE)
 
 
-async def run() -> int:
+async def run(monitor_env: env.MonitorEnv) -> int:
     """Drive one attempt: EXIT_ACCEPTED, or EXIT_STOPPED when the control plane
     ends it in any phase. Anything else raises (EXIT_FAILED in ``__main__``)."""
-    monitor_env = env.load()
-    # Model credentials live in the process environment, as they do in the
-    # worker today, because the driver reads them from there. The token does not.
-    os.environ.update(monitor_env.agent_env)
-    _move_vertex_ai_settings(monitor_env.agent_env)
-    _drop_settings_names(monitor_env.agent_env)
     client = MonitorClient(monitor_env)
     trial_id = ""
     try:
@@ -274,39 +269,6 @@ async def run() -> int:
         return EXIT_STOPPED
     finally:
         await client.aclose()
-
-
-def _drop_settings_names(agent_env: dict[str, str]) -> None:
-    """Sealed ``ODDISH_*`` names are worker settings for this process (the
-    entrypoint put them in os.environ before settings was built); the agent
-    never saw them on the worker, so they stay out of its env."""
-    for name in [name for name in agent_env if name.startswith("ODDISH_")]:
-        del agent_env[name]
-
-
-def _move_vertex_ai_settings(agent_env: dict[str, str]) -> None:
-    """Hand the sealed Vertex names to the driver's Settings, not the agent.
-
-    Settings is read at import, before the sealed env is applied, and the
-    driver resolves a vertex_ai/ trial from it (vertex_ai_config), as on the
-    worker. There the names are the driver's alone and the agent gets the key
-    file's path, so they leave the agent env. Only such a trial has them.
-    """
-    names = [name for name in agent_env if name.startswith("VERTEX_AI_")]
-    if not names:
-        return
-    from oddish.config import Settings, settings
-
-    fresh = Settings()
-    for field in (
-        "vertex_ai_project_id",
-        "vertex_ai_location",
-        "vertex_ai_credentials_json",
-        "vertex_ai_api_key",
-    ):
-        setattr(settings, field, getattr(fresh, field))
-    for name in names:
-        del agent_env[name]
 
 
 def _attach_monitor_log(outcome) -> Path | None:

@@ -424,7 +424,7 @@ def _drop_nonconsumed_agent_transport_routes(
 ) -> None:
     """Drop WORKER-MINTED transport routes the effective agent never consumes.
 
-    Job-scoped credential injection (``job_tokens.scoped_model_env``) writes the
+    Job-scoped credential injection (``job_tokens.provider_env``) writes the
     model provider's full route env -- for OpenAI-family that includes
     ``OPENAI_BASE_URL`` and the Azure aliases -- into ``agent_config.env``, a
     channel the worker-transport filter above never sees. An agent that fronts
@@ -1936,6 +1936,7 @@ async def run_harbor_trial_async(
     org_id: str | None = None,
     billed_user_id: str | None = None,
     extra_agent_env: dict[str, str] | None = None,
+    task_host_env: dict[str, str] | None = None,
     sandbox_launch: SandboxLaunchContext | None = None,
     fallback_from_environment: str | None = None,
     quota_seams: QuotaSeams | None = None,
@@ -1972,27 +1973,45 @@ async def run_harbor_trial_async(
         if environment == EnvironmentType.EC2
         else contextlib.nullcontext()
     )
+    from harbor.utils.env import task_environment
+
+    from oddish.workers.queue.judge_keys import available_judge_keys
+
     with credential_scope:
-        return await _run_harbor_trial_async_impl(
-            task_path=task_path,
-            agent=agent,
-            jobs_dir=jobs_dir,
-            model=model,
-            environment=environment,
-            hook_callback=hook_callback,
-            trial_id=trial_id,
-            worker_job_id=worker_job_id,
-            harbor_config=harbor_config,
-            org_id=org_id,
-            billed_user_id=billed_user_id,
-            extra_agent_env=extra_agent_env,
-            sandbox_launch=sandbox_launch,
-            fallback_from_environment=fallback_from_environment,
-            quota_seams=quota_seams,
-            raw=raw,
-            hc=hc,
-            backend=backend,
+        task_sources = (
+            task_host_env
+            if task_host_env is not None
+            else {
+                **os.environ,
+                **{
+                    name: value
+                    for name, value in available_judge_keys(settings).items()
+                    if value
+                },
+            }
         )
+        with task_environment(task_sources):
+            return await _run_harbor_trial_async_impl(
+                task_path=task_path,
+                agent=agent,
+                jobs_dir=jobs_dir,
+                model=model,
+                environment=environment,
+                hook_callback=hook_callback,
+                trial_id=trial_id,
+                worker_job_id=worker_job_id,
+                harbor_config=harbor_config,
+                org_id=org_id,
+                billed_user_id=billed_user_id,
+                extra_agent_env=extra_agent_env,
+                task_host_env=task_sources,
+                sandbox_launch=sandbox_launch,
+                fallback_from_environment=fallback_from_environment,
+                quota_seams=quota_seams,
+                raw=raw,
+                hc=hc,
+                backend=backend,
+            )
 
 
 def _harness_agent_config(agent_config: HarborAgentConfig) -> HarborAgentConfig:
@@ -2028,6 +2047,7 @@ async def _run_harbor_trial_async_impl(
     org_id: str | None,
     billed_user_id: str | None,
     extra_agent_env: dict[str, str] | None,
+    task_host_env: dict[str, str] | None,
     raw: dict[str, Any],
     hc: HarborConfig,
     backend: Any,
@@ -2179,6 +2199,7 @@ async def _run_harbor_trial_async_impl(
                 environment_config=resolved_environment_config,
                 harbor_config=harbor_config,
                 extra_agent_env=extra_agent_env,
+                task_host_env=task_host_env,
                 environment_build_timeout_multiplier=env_build_multiplier,
             )
         finally:

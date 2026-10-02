@@ -406,7 +406,13 @@ async def _task_facts(job: ClaimedWorkerJob, prepared, provider: str):
             ),
             # Only the judge keys this task's env blocks interpolate; empty for
             # a task that references none, so its sandbox stays secret-free.
-            verifier_secrets.judge_env_for_task(task_path, settings),
+            verifier_secrets.task_env_for_task(
+                task_path,
+                verifier_secrets.available_judge_keys(settings),
+                verifier_env=(
+                    (prepared.trial_harbor_config or {}).get("verifier") or {}
+                ).get("env"),
+            ),
         )
     finally:
         if temp_dir is not None:

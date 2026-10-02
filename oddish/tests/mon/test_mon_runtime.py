@@ -321,6 +321,7 @@ def test_run_unpacks_the_model_credentials_before_settings_is_built(tmp_path):
             env.API_URL_VAR: "https://api.example",
             env.TOKEN_VAR: "job-1.2.secret",
             env.AGENT_ENV_VAR: json.dumps({"ANTHROPIC_API_KEY": "sk-synthetic"}),
+            env.DRIVER_ENV_VAR: json.dumps({"ANTHROPIC_API_KEY": "sk-synthetic"}),
             "ODDISH_MON_LOG_PATH": str(tmp_path / "oddish-mon.log"),
         }
     )
@@ -515,63 +516,6 @@ def test_a_log_copy_that_fails_is_a_warning_not_a_failed_start(
     ]
     assert len(warnings) == 2 and all(r.levelno == logging.WARNING for r in warnings)
     assert "No space left" in warnings[0].message
-
-
-def test_sealed_vertex_settings_reach_the_driver_not_the_agent(monkeypatch, tmp_path):
-    """Settings is read at import, before run() applies the sealed env. A
-    vertex_ai/ trial's driver resolves its plan from Settings, so the monitor
-    moves those names there; the worker's own code then writes the key file,
-    and the agent keeps only the coordinates, as on the worker."""
-    from oddish.config import settings
-    from oddish.mon import runner
-    from oddish.workers.harbor import vertex_ai
-
-    # The sandbox's Settings as read at import: no Vertex configuration.
-    for field, value in (
-        ("vertex_ai_project_id", None),
-        ("vertex_ai_location", "global"),
-        ("vertex_ai_credentials_json", None),
-        ("vertex_ai_api_key", None),
-    ):
-        monkeypatch.setattr(settings, field, value)
-    monkeypatch.delenv("VERTEX_AI_API_KEY", raising=False)
-    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS_JSON", raising=False)
-    monkeypatch.setattr(vertex_ai.tempfile, "gettempdir", lambda: str(tmp_path))
-    monkeypatch.setattr(vertex_ai, "_WORKER_CREDENTIAL_FILES", {})
-    key_json = '{"type": "service_account"}'
-    sealed = {
-        "VERTEXAI_LOCATION": "us-east5",
-        "VERTEX_AI_CREDENTIALS_JSON": key_json,
-        "VERTEX_AI_PROJECT_ID": "oddish-vertex",
-        "VERTEX_AI_LOCATION": "us-east5",
-    }
-    for name, value in sealed.items():  # run()'s os.environ.update
-        monkeypatch.setenv(name, value)
-
-    # Another provider's sealed env leaves Settings and the env alone.
-    other = {"ANTHROPIC_API_KEY": "ant"}
-    runner._move_vertex_ai_settings(other)
-    assert settings.vertex_ai_credentials_json is None
-    assert other == {"ANTHROPIC_API_KEY": "ant"}
-
-    runner._move_vertex_ai_settings(sealed)
-    assert sealed == {"VERTEXAI_LOCATION": "us-east5"}
-    plan = vertex_ai.plan_for_model("vertex_ai/claude-sonnet-5")
-    assert plan.config.location == "us-east5" and plan.upload_hook is not None
-    assert plan.worker_path.read_text() == key_json
-    assert plan.process_env["GOOGLE_APPLICATION_CREDENTIALS"] == str(plan.worker_path)
-
-
-def test_sealed_oddish_settings_names_stay_out_of_the_agent_env():
-    from oddish.mon import runner
-
-    agent_env = {
-        "ODDISH_OPENAI_PROVIDER": "azure",
-        "ODDISH_AZURE_OPENAI_DEPLOYMENTS": "{}",
-        "AZURE_OPENAI_API_KEY": "az",
-    }
-    runner._drop_settings_names(agent_env)
-    assert agent_env == {"AZURE_OPENAI_API_KEY": "az"}
 
 
 @pytest.mark.asyncio

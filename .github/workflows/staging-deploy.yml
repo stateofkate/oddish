@@ -28,6 +28,7 @@ jobs:
       NEON_ROLE_NAME: ${{ vars.NEON_ROLE_NAME || 'neondb_owner' }}
       MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
       MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+      ODDISH_RELEASE: ${{ github.sha }}
       MODAL_ENVIRONMENT: staging
       MODAL_APP_NAME: oddish-staging
       MODAL_SECRET_ENVIRONMENT: main

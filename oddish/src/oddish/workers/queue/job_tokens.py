@@ -28,7 +28,7 @@ import hashlib
 import json
 import os
 import secrets
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Mapping
 
@@ -126,7 +126,15 @@ def bedrock_sandbox_env(ambient: Mapping[str, str]) -> dict[str, str]:
     return env
 
 
-def scoped_model_env(
+@dataclass(frozen=True)
+class ProviderEnv:
+    """Separate driver startup inputs from the agent's execution environment."""
+
+    driver_env: dict[str, str] = field(repr=False)
+    agent_env: dict[str, str] = field(repr=False)
+
+
+def provider_env(
     *,
     agent: str,
     model: str | None,
@@ -134,178 +142,117 @@ def scoped_model_env(
     byok_env: Mapping[str, str] | None = None,
     ambient: Mapping[str, str] | None = None,
     raw_harbor_config: Mapping[str, Any] | None = None,
-) -> dict[str, str]:
-    """Least-privilege model env for the job's provider only.
+) -> ProviderEnv:
+    """Resolve one effective route before crossing the process boundary.
 
-    Resolves the provider via ``settings.get_provider_for_trial`` and returns
-    just that provider's key env — never the full blanket key set. Unknown
-    providers return ``{}`` so the caller's dual-read falls back to the blanket
-    secret rather than shipping an empty credential.
-
-    ``ambient`` is the caller's own environment. The monitor launcher passes it
-    (it runs in the worker) for agents that authenticate from ambient names with
-    no settings field, so the sandbox, which has no ambient environment, gets
-    the same names the worker path found in place. The worker path never passes
-    it and is unchanged.
-
-    ``raw_harbor_config`` is the trial's stored Harbor config: a row that
-    carries no model still names one in its ``agent_config``, and the bundle
-    must follow that effective model the way the runner does. Keyed on the
-    bare row model, such a trial would get its agent's default bundle (the
-    Bedrock flag, the Gemini key), which the runner applies last, over the
-    provider profile it built for the stored model.
+    HDO selects a separate platform account and wins over a user key. For
+    direct Anthropic trials the already selected user key wins. Driver-only
+    settings never enter the agent override mapping.
     """
-    if raw_harbor_config:
-        from oddish.workers.harbor.agent_config import _trial_requested_model
+    from oddish.workers.harbor.agent_config import _trial_requested_model
 
-        agent, model = _trial_requested_model(
-            agent=agent, model=model, raw_harbor_config=dict(raw_harbor_config)
-        )
+    agent, model = _trial_requested_model(
+        agent=agent, model=model, raw_harbor_config=dict(raw_harbor_config or {})
+    )
+    ambient = os.environ if ambient is None else ambient
     provider = (settings.get_provider_for_trial(agent, model) or "").lower()
-
+    driver: dict[str, str] = {}
+    env: dict[str, str] = {}
     if provider in _OPENAI_FAMILY:
         env = {k: v for k, v in settings.get_openai_agent_env(model=model).items() if v}
-        if ambient is not None:
-            # The monitor sandbox has no worker Settings, and its driver
-            # re-resolves this route from two of them (runner, agent_config).
-            # Seal those under the names Settings reads, so it resolves the
-            # provider and deployment the worker did.
-            openai_provider = getattr(settings, "openai_provider", None)
-            deployments = getattr(settings, "azure_openai_deployments", None)
-            if openai_provider:
-                env["ODDISH_OPENAI_PROVIDER"] = openai_provider
-            if deployments:
-                env["ODDISH_AZURE_OPENAI_DEPLOYMENTS"] = json.dumps(deployments)
-        return env
-    if provider in ("anthropic", "claude"):
-        key = getattr(settings, "anthropic_api_key", None)
-        return {"ANTHROPIC_API_KEY": key} if key else {}
-    if provider == "anthropic-hdo":
-        # Claude Code reads ANTHROPIC_API_KEY; Oddish re-resolves the HDO
-        # source key when configuring the agent inside a monitor sandbox.
-        key = getattr(settings, "anthropic_hdo_api_key", None)
-        return {
-            "ANTHROPIC_API_KEY": key,
-            "ANTHROPIC_HDO_API_KEY": key,
-        } if key else {}
-    if provider == "bedrock":
-        # Bedrock keeps its selected transport for every agent. The monitor
-        # sandbox has no worker ambient environment, so copy only the AWS
-        # credential-chain names it needs; the existing worker path passes no
-        # ``ambient`` mapping and continues using its own credential chain.
-        return {
-            "CLAUDE_CODE_USE_BEDROCK": "1",
-            **bedrock_sandbox_env(ambient or {}),
+        driver = {
+            "ODDISH_OPENAI_PROVIDER": settings.openai_provider,
+            "ODDISH_AZURE_OPENAI_DEPLOYMENTS": json.dumps(
+                settings.azure_openai_deployments
+            ),
         }
-    if provider == "gemini":
-        key = getattr(settings, "gemini_api_key", None)
-        # Publish the one platform Google key under BOTH names the agents read.
-        # gemini-cli reads GEMINI_API_KEY; opencode is built on the AI SDK, whose
-        # google provider reads GOOGLE_GENERATIVE_AI_API_KEY -- and Harbor's
-        # opencode agent only forwards a var it finds in os.environ, so a bundle
-        # carrying just GEMINI_API_KEY leaves opencode with no credential and it
-        # exits before the first model call ("agent not started", 0 tokens).
-        # Same value, two names: no second Modal secret, no new key to rotate.
-        return (
+    elif provider in ("anthropic", "claude", "anthropic-hdo"):
+        key = (
+            settings.anthropic_hdo_api_key
+            if provider == "anthropic-hdo"
+            else (byok_env or {}).get("ANTHROPIC_API_KEY") or settings.anthropic_api_key
+        )
+        env = {"ANTHROPIC_API_KEY": key} if key else {}
+        if provider == "anthropic-hdo" and key:
+            driver["ANTHROPIC_HDO_API_KEY"] = key
+    elif provider == "bedrock":
+        env = {"CLAUDE_CODE_USE_BEDROCK": "1", **bedrock_sandbox_env(ambient)}
+    elif provider == "gemini":
+        key = settings.gemini_api_key
+        env = (
             {"GEMINI_API_KEY": key, "GOOGLE_GENERATIVE_AI_API_KEY": key} if key else {}
         )
-    if provider == "vertex_ai":
-        # Google Vertex AI: non-secret coordinates only. The credential rides
-        # the worker's sandbox upload (service-account file) or the runner's
-        # ambient express-mode key, never the bundle.
-        resolve = getattr(settings, "vertex_ai_config", None)
-        if resolve is None:
-            return {}
-        try:
-            config = resolve()
-        except Exception:
-            return {}
+    elif provider == "vertex_ai":
+        config = settings.vertex_ai_config()
         env = {
             "VERTEXAI_LOCATION": config.location,
             "GOOGLE_CLOUD_LOCATION": config.location,
         }
         if config.project_id:
-            env["VERTEXAI_PROJECT"] = config.project_id
-            env["GOOGLE_CLOUD_PROJECT"] = config.project_id
-        if ambient is not None:
-            # The monitor sandbox has no worker Settings. Seal the names its
-            # driver resolves this same config from (vertex_ai_config), so it
-            # writes and uploads the same key file, or makes the same key
-            # ambient, exactly as the worker's driver does.
             env.update(
-                {
-                    name: value
-                    for name, value in (
-                        ("VERTEX_AI_CREDENTIALS_JSON", config.credentials_json),
-                        ("VERTEX_AI_API_KEY", config.api_key),
-                        ("VERTEX_AI_PROJECT_ID", config.project_id),
-                        ("VERTEX_AI_LOCATION", config.location),
-                    )
-                    if value
-                }
+                VERTEXAI_PROJECT=config.project_id,
+                GOOGLE_CLOUD_PROJECT=config.project_id,
             )
-        return env
-    if provider == "meta":
-        key = getattr(settings, "meta_api_key", None)
-        return {"META_API_KEY": key, "MSWEA_API_KEY": key} if key else {}
-    if provider in ("meta-public", "meta-public-2"):
-        # Only the route's public key, under the names the Meta harnesses read;
-        # the sandbox this env builds holds no internal Meta key at all. The
-        # shared resolver keeps this in step with the agent binding and the
-        # fingerprint.
+        driver = {
+            name: value
+            for name, value in (
+                ("VERTEX_AI_CREDENTIALS_JSON", config.credentials_json),
+                ("VERTEX_AI_API_KEY", config.api_key),
+                ("VERTEX_AI_PROJECT_ID", config.project_id),
+                ("VERTEX_AI_LOCATION", config.location),
+            )
+            if value
+        }
+    elif provider in ("meta", "meta-public", "meta-public-2"):
         from oddish.config import META_PUBLIC_API_KEY_ENVS, resolve_meta_public_api_key
 
-        key = resolve_meta_public_api_key(settings, provider)
-        return (
-            {
-                META_PUBLIC_API_KEY_ENVS[provider]: key,
-                "META_API_KEY": key,
-                "MSWEA_API_KEY": key,
-            }
+        public_env = META_PUBLIC_API_KEY_ENVS.get(provider)
+        key = (
+            resolve_meta_public_api_key(settings, provider)
+            if public_env
+            else settings.meta_api_key
+        )
+        env = {"META_API_KEY": key, "MSWEA_API_KEY": key} if key else {}
+        if public_env and key:
+            env[public_env] = key
+        driver["META_BASE_URL"] = settings.meta_base_url
+        for name, attribute in (
+            ("ODDISH_META_EVAL_NAME", "meta_eval_name"),
+            ("ODDISH_META_SESSION_ID", "meta_session_id"),
+        ):
+            if value := getattr(settings, attribute, None):
+                driver[name] = value
+    elif provider in ("geometric", "hunyuan"):
+        key = getattr(settings, f"{provider}_api_key")
+        name = provider.upper()
+        env = (
+            {f"{name}_API_KEY": key, "MSWEA_API_KEY": key, "OPENAI_API_KEY": key}
             if key
             else {}
         )
-    if provider == "geometric":
-        # mini-swe-agent authenticates from OPENAI_API_KEY (the litellm
-        # ``openai/`` provider), so publish the one Geometric key under the
-        # names the harness and the env shape both read.
-        key = getattr(settings, "geometric_api_key", None)
-        return (
-            {"GEOMETRIC_API_KEY": key, "MSWEA_API_KEY": key, "OPENAI_API_KEY": key}
-            if key
+        driver[f"{name}_BASE_URL"] = getattr(settings, f"{provider}_base_url")
+        if provider == "geometric" and settings.geometric_anthropic_base_url:
+            driver["GEOMETRIC_ANTHROPIC_BASE_URL"] = (
+                settings.geometric_anthropic_base_url
+            )
+    elif provider == "xai-public":
+        env = (
+            {"XAI_PUBLIC_API_KEY": ambient["XAI_PUBLIC_API_KEY"]}
+            if ambient.get("XAI_PUBLIC_API_KEY")
             else {}
         )
-    if provider == "hunyuan":
-        # Same shape as Geometric: litellm's ``openai/`` provider reads
-        # OPENAI_API_KEY.
-        key = getattr(settings, "hunyuan_api_key", None)
-        return (
-            {"HUNYUAN_API_KEY": key, "MSWEA_API_KEY": key, "OPENAI_API_KEY": key}
-            if key
-            else {}
-        )
-    if provider == "xai-public":
-        key = os.environ.get("XAI_PUBLIC_API_KEY")
-        return {"XAI_PUBLIC_API_KEY": key} if key else {}
-    if provider == "xai":
-        # grok-build has no settings field: on the worker it read XAI_API_KEY,
-        # or the XAI_API_KEYS pool, from the ambient environment
-        # (workers/agents/grok_build.py). Select those two names from the
-        # caller's environment for the monitor sandbox, which has none.
-        return {
-            name: value
-            for name in _XAI_AUTH_ENV
-            if (value := (ambient or {}).get(name))
-        }
-    if provider in _AMBIENT_PROVIDER_KEYS:
-        # Same as xai: select this provider's own name(s) from the caller's
-        # environment for the monitor sandbox, which has none.
-        return {
-            name: value
+    elif provider == "xai":
+        env = {name: ambient[name] for name in _XAI_AUTH_ENV if ambient.get(name)}
+    elif provider in _AMBIENT_PROVIDER_KEYS:
+        env = {
+            name: ambient[name]
             for name in _AMBIENT_PROVIDER_KEYS[provider]
-            if (value := (ambient or {}).get(name))
+            if ambient.get(name)
         }
-    return {}
+        endpoint = f"{provider.upper()}_BASE_URL"
+        if ambient.get(endpoint):
+            driver[endpoint] = ambient[endpoint]
+    return ProviderEnv(driver_env={**env, **driver}, agent_env=env)
 
 
 def agent_ambient_env(
@@ -360,13 +307,13 @@ def build_bundle(
     """
     _, token_hash = mint_token()
     bundle = JobCredentialBundle(
-        model_env=scoped_model_env(
+        model_env=provider_env(
             agent=agent,
             model=model,
             settings=settings,
             byok_env=byok_env,
             raw_harbor_config=raw_harbor_config,
-        ),
+        ).agent_env,
         s3_write_prefix=s3_write_prefix_for(trial_id),
         expires_at=now + timedelta(seconds=ttl_seconds),
     )

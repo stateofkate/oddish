@@ -390,6 +390,23 @@ disable it. `drain_on_pause_hosts` adds hostname globs for custom model gateways
 known model base URLs are discovered automatically. The Archil runtime handles
 HTTP/HTTPS on ports 80/443 and matches the whole hostname, not URL paths.
 
+### Deploying exact token storage
+
+Before starting this release's API or workers, run `uv run alembic upgrade head`
+from `oddish/` against your configured database. Migration `tokens_exact_001`
+adds nullable 64-bit token columns and compatibility triggers; existing 32-bit
+columns remain available to older processes. Restart API processes and replace
+worker launch images, then allow already running workers to finish. New code
+reads exact values when present and otherwise reads the old values using 64-bit
+arithmetic. This read path remains safe while old workers finish.
+
+After old writers retire, follow the [token repair procedure](docs/operations-tools.md#exact-token-count-repair)
+to fill historical counts. Repairs are separate, bounded commands, not deployment
+steps. Roll back application code while keeping these columns and triggers if
+needed; this migration intentionally rejects schema downgrade because narrowing
+would lose large counts. Workers predating #1993's cap can still fail on old
+integer binds, so the compatibility baseline is the release containing that cap.
+
 ### Report feedback migration
 
 Apply the core `feedback_reports_001` migration with `cd oddish && uv run alembic

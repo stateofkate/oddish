@@ -353,7 +353,7 @@ async def test_run_returns_accepted_and_closes_the_client(monkeypatch, make_spec
     client = _Client(attempt=make_spec())
     _wire_run(monkeypatch, client)
 
-    assert await runner.run() == EXIT_ACCEPTED
+    assert await runner.run(runner.env.load()) == EXIT_ACCEPTED
     assert client.closed is True
     assert phases == []  # the phases themselves wrote starting/reporting/done
 
@@ -381,7 +381,7 @@ async def test_run_maps_every_control_plane_verdict_to_stopped(
         report=verdict if phase == "report" else None,
     )
 
-    assert await runner.run() == EXIT_STOPPED
+    assert await runner.run(runner.env.load()) == EXIT_STOPPED
     # Before check-in the trial is unknown; after it the status names it.
     assert phases == [("" if phase == "attempt" else "trial-1", "stopped")]
     assert client.closed is True
@@ -394,7 +394,7 @@ async def test_run_lets_anything_else_raise_for_the_entrypoint(monkeypatch, make
     _wire_run(monkeypatch, client, drive=OSError("disk full"))
 
     with pytest.raises(OSError, match="disk full"):
-        await runner.run()
+        await runner.run(runner.env.load())
 
     assert phases == []  # no terminal phase: the entrypoint reports a failed start
     assert client.closed is True

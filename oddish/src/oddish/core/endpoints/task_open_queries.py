@@ -187,8 +187,11 @@ AGGREGATE_SQL = text(f"""
       SELECT tr.id, tr.name, tr.experiment_id, tr.task_version_id, tr.agent,
         tr.provider, tr.model, {_EFFORT_SQL} AS reasoning_effort, tr.kind, lower(tr.status::text) AS status,
         tr.reward, NULL::text AS error_kind, tr.cost_usd,
-        tr.input_tokens, tr.output_tokens, tr.cache_tokens,
-        tr.cache_write_tokens, tr.billed_user_id, tr.has_trajectory, tr.result -> '_playback' AS playback, tr.created_at,
+        COALESCE(tr.input_tokens_exact, tr.input_tokens::bigint) AS input_tokens,
+        COALESCE(tr.output_tokens_exact, tr.output_tokens::bigint) AS output_tokens,
+        COALESCE(tr.cache_tokens_exact, tr.cache_tokens::bigint) AS cache_tokens,
+        COALESCE(tr.cache_write_tokens_exact, tr.cache_write_tokens::bigint) AS cache_write_tokens,
+        tr.billed_user_id, tr.has_trajectory, tr.result -> '_playback' AS playback, tr.created_at,
         tr.started_at, tr.finished_at
       FROM trials tr
       WHERE tr.task_id = :task_id AND tr.kind = 'qa'
@@ -222,11 +225,15 @@ AGGREGATE_SQL = text(f"""
       SELECT tr.task_version_id, tr.billed_user_id,
         tr.agent, tr.provider, tr.model, {_EFFORT_SQL} AS reasoning_effort, tr.status, tr.reward,
         tr.experiment_id, tr.created_at, tr.started_at, tr.finished_at,
-        tr.cost_usd, tr.input_tokens, tr.output_tokens,
-        tr.cache_tokens, tr.cache_write_tokens,
+        tr.cost_usd,
+        COALESCE(tr.input_tokens_exact, tr.input_tokens::bigint) AS input_tokens,
+        COALESCE(tr.output_tokens_exact, tr.output_tokens::bigint) AS output_tokens,
+        COALESCE(tr.cache_tokens_exact, tr.cache_tokens::bigint) AS cache_tokens,
+        COALESCE(tr.cache_write_tokens_exact, tr.cache_write_tokens::bigint) AS cache_write_tokens,
         (tr.cost_usd IS NULL AND
-         (COALESCE(tr.input_tokens, 0) > 0 OR COALESCE(tr.output_tokens, 0) > 0
-          OR COALESCE(tr.cache_write_tokens, 0) > 0)) AS has_estimatable_tokens
+         (COALESCE(tr.input_tokens_exact, tr.input_tokens::bigint, 0) > 0
+          OR COALESCE(tr.output_tokens_exact, tr.output_tokens::bigint, 0) > 0
+          OR COALESCE(tr.cache_write_tokens_exact, tr.cache_write_tokens::bigint, 0) > 0)) AS has_estimatable_tokens
       FROM trials tr
       WHERE tr.task_id = :task_id AND tr.deleted_at IS NULL
         AND tr.kind = 'agent'
@@ -302,8 +309,12 @@ PREVIEW_SQL = text(f"""
            WHEN tr.error_message LIKE '%AgentTimeoutError%'
              OR tr.error_message LIKE '%Agent execution timed out%' THEN 'timeout'
            ELSE 'error' END AS error_kind,
-      tr.cost_usd, tr.input_tokens, tr.output_tokens,
-      tr.cache_tokens, tr.cache_write_tokens, tr.billed_user_id,
+      tr.cost_usd,
+      COALESCE(tr.input_tokens_exact, tr.input_tokens::bigint) AS input_tokens,
+      COALESCE(tr.output_tokens_exact, tr.output_tokens::bigint) AS output_tokens,
+      COALESCE(tr.cache_tokens_exact, tr.cache_tokens::bigint) AS cache_tokens,
+      COALESCE(tr.cache_write_tokens_exact, tr.cache_write_tokens::bigint) AS cache_write_tokens,
+      tr.billed_user_id,
       tr.has_trajectory, tr.result -> '_playback' AS playback, tr.created_at, tr.started_at, tr.finished_at
     FROM trials tr
     WHERE tr.task_id = :task_id AND tr.task_version_id = :version_id

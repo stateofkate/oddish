@@ -315,7 +315,10 @@ def main(argv: list[str]) -> int:
     outcome_path = Path(payload["outcome_path"])
     start = time.time()
     try:
-        outcome = asyncio.run(_run(payload))
+        from harbor.utils.env import task_environment
+
+        with task_environment(payload["task_host_env"]):
+            outcome = asyncio.run(_run(payload))
     except BaseException as exc:
         outcome = {
             "job_dir": payload.get("jobs_dir"),

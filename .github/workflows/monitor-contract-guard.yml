@@ -1,10 +1,10 @@
 name: Monitor Contract Guard
 
 # A trial's monitor keeps the code it started with for up to 12 hours while the
-# API it reports to is redeployed, so every /monitor request and reply format
-# may only grow (oddish/src/oddish/mon/contract.py). This job runs the contract
+# API it reports to is redeployed, so /monitor requests and replies must remain
+# compatible with older readers (oddish/src/oddish/mon/contract.py). This job runs the contract
 # guard (backend/tests/test_monitor_contract.py, against the recorded snapshot),
-# the /monitor route tests, and the monitor and launcher unit tests. No other
+# the /monitor route tests, and execution credential regression tests. No other
 # workflow runs them. The real-Postgres proofs in oddish/tests/launcher are
 # underscore-prefixed files that pytest does not collect.
 
@@ -18,17 +18,21 @@ on:
     paths:
       - "oddish/src/oddish/mon/**"
       - "oddish/src/oddish/workers/launcher/**"
-      - "oddish/src/oddish/workers/harbor/outcome.py"
-      - "oddish/src/oddish/workers/harbor/live_tail.py"
-      - "oddish/src/oddish/workers/queue/cleanup.py"
-      - "oddish/src/oddish/workers/queue/pending_teardowns.py"
-      - "oddish/src/oddish/workers/queue/worker_job_single_job.py"
+      - "oddish/src/oddish/workers/harbor/**"
+      - "oddish/src/oddish/workers/agents/**"
+      - "oddish/src/oddish/workers/queue/**"
+      - "oddish/src/oddish/config.py"
       - "oddish/src/oddish/schemas.py"
       - "oddish/src/oddish/harbor-pin.toml"
       - "oddish/scripts/mon-entrypoint.sh"
       - "oddish/scripts/mon-boot.sh"
       - "oddish/tests/mon/**"
       - "oddish/tests/launcher/**"
+      - "oddish/tests/test_provider_startup.py"
+      - "oddish/tests/test_verifier_credentials.py"
+      - "oddish/tests/test_job_tokens.py"
+      - "oddish/tests/test_judge_keys.py"
+      - "oddish/tests/test_scoped_model_env_ambient.py"
       - "oddish/pyproject.toml"
       - "oddish/uv.lock"
       - "backend/api/routers/monitor.py"
@@ -46,17 +50,21 @@ on:
     paths:
       - "oddish/src/oddish/mon/**"
       - "oddish/src/oddish/workers/launcher/**"
-      - "oddish/src/oddish/workers/harbor/outcome.py"
-      - "oddish/src/oddish/workers/harbor/live_tail.py"
-      - "oddish/src/oddish/workers/queue/cleanup.py"
-      - "oddish/src/oddish/workers/queue/pending_teardowns.py"
-      - "oddish/src/oddish/workers/queue/worker_job_single_job.py"
+      - "oddish/src/oddish/workers/harbor/**"
+      - "oddish/src/oddish/workers/agents/**"
+      - "oddish/src/oddish/workers/queue/**"
+      - "oddish/src/oddish/config.py"
       - "oddish/src/oddish/schemas.py"
       - "oddish/src/oddish/harbor-pin.toml"
       - "oddish/scripts/mon-entrypoint.sh"
       - "oddish/scripts/mon-boot.sh"
       - "oddish/tests/mon/**"
       - "oddish/tests/launcher/**"
+      - "oddish/tests/test_provider_startup.py"
+      - "oddish/tests/test_verifier_credentials.py"
+      - "oddish/tests/test_job_tokens.py"
+      - "oddish/tests/test_judge_keys.py"
+      - "oddish/tests/test_scoped_model_env_ambient.py"
       - "oddish/pyproject.toml"
       - "oddish/uv.lock"
       - "backend/api/routers/monitor.py"
@@ -116,8 +124,12 @@ jobs:
           UV_PROJECT_ENVIRONMENT: /opt/venvs/oddish
         run: uv sync --frozen --extra worker
 
-      - name: Run the monitor and launcher unit tests
+      - name: Run monitor, launcher and credential regression tests
         working-directory: oddish
         env:
           UV_PROJECT_ENVIRONMENT: /opt/venvs/oddish
-        run: uv run pytest tests/mon tests/launcher -q
+        run: >-
+          uv run pytest tests/mon tests/launcher
+          tests/test_provider_startup.py tests/test_verifier_credentials.py
+          tests/test_job_tokens.py tests/test_judge_keys.py
+          tests/test_scoped_model_env_ambient.py -q

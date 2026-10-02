@@ -11,6 +11,7 @@ from oddish.workers.queue import trial_handler
 def _trial(**overrides):
     values = {
         "id": "trial-1",
+        "model": "anthropic/claude-test",
         "environment": "archil",
         "status": TrialStatus.SUCCESS,
         "harbor_stage": "completed",
@@ -29,12 +30,18 @@ def test_finished_event_uses_stored_environment_and_attempt_count() -> None:
             "agent_setup": {"duration_sec": 3},
         },
         duration_sec=60.0,
+        exception_type=None,
+        provider_error_code=None,
     )
 
     attributes = trial_handler._trial_execution_finished_attributes(_trial(), outcome)
 
     assert attributes == {
         "trial_id": "trial-1",
+        "worker_job_id": None,
+        "model": "anthropic/claude-test",
+        "exception_type": None,
+        "provider_error_code": None,
         "kind": "agent",
         "environment": "archil",
         "status": "success",

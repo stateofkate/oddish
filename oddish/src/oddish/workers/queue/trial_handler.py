@@ -639,10 +639,17 @@ def _phase_duration(outcome: HarborOutcome | None, phase: str) -> float | None:
 
 
 def _trial_execution_finished_attributes(
-    trial: TrialModel, outcome: HarborOutcome | None
+    trial: TrialModel,
+    outcome: HarborOutcome | None,
+    *,
+    worker_job_id: str | None = None,
 ) -> dict:
     return {
         "trial_id": trial.id,
+        "worker_job_id": worker_job_id,
+        "model": trial.model,
+        "exception_type": outcome.exception_type if outcome else None,
+        "provider_error_code": outcome.provider_error_code if outcome else None,
         "kind": trial.kind or "agent",
         "environment": (
             getattr(trial, "environment", None) or settings.harbor_environment
@@ -728,7 +735,9 @@ async def _store_trial_results(
                 session, [getattr(trial, "task_version_id", None)]
             )
             if trial.status in (TrialStatus.SUCCESS, TrialStatus.FAILED):
-                event = _trial_execution_finished_attributes(trial, outcome)
+                event = _trial_execution_finished_attributes(
+                    trial, outcome, worker_job_id=worker_job_id
+                )
             else:
                 event = None
             return trial.finished_at is not None, False, event
@@ -950,7 +959,13 @@ async def _store_trial_results(
             session, [getattr(trial, "task_version_id", None)]
         )
         terminal = trial.status in (TrialStatus.SUCCESS, TrialStatus.FAILED)
-        event = _trial_execution_finished_attributes(trial, outcome) if terminal else None
+        event = (
+            _trial_execution_finished_attributes(
+                trial, outcome, worker_job_id=worker_job_id
+            )
+            if terminal
+            else None
+        )
         return terminal, terminal, event
 
 

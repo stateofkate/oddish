@@ -89,6 +89,13 @@ _TRIAL_PAGE_COLUMNS = tuple(
     column
     for column in SLIM_TRIAL_RESPONSE_COLUMNS
     if column not in (TrialModel.analysis, TrialModel.error_message)
+    and not column.key.endswith(("_tokens_exact", "_tokens_legacy"))
+) + (
+    # Row projections resolve token counts in SQL; ORM loads need both columns.
+    TrialModel.input_tokens.label("input_tokens"),
+    TrialModel.cache_tokens.label("cache_tokens"),
+    TrialModel.cache_write_tokens.label("cache_write_tokens"),
+    TrialModel.output_tokens.label("output_tokens"),
 )
 
 

@@ -133,7 +133,7 @@ def test_ai_studio_route_is_untouched_and_distinct(service_account, monkeypatch)
     nothing for an AI Studio trial.
     """
     from oddish.workers.harbor import model_hosts
-    from oddish.workers.queue.job_tokens import scoped_model_env
+    from oddish.workers.queue.job_tokens import provider_env
 
     monkeypatch.setattr(settings, "gemini_api_key", "studio-key")
     for studio in ("gemini/gemini-3.8-flash", "google/gemini-3.8-flash"):
@@ -152,9 +152,9 @@ def test_ai_studio_route_is_untouched_and_distinct(service_account, monkeypatch)
         assert model_hosts.outbound_hosts_for_model(studio, agent_env=built.env) == [
             "generativelanguage.googleapis.com"
         ]
-    assert scoped_model_env(
+    assert provider_env(
         agent="gemini-cli", model="gemini/gemini-3.8-flash", settings=settings
-    ) == {
+    ).agent_env == {
         "GEMINI_API_KEY": "studio-key",
         "GOOGLE_GENERATIVE_AI_API_KEY": "studio-key",
     }
@@ -1068,7 +1068,7 @@ def test_job_scoped_bundle_follows_the_stored_vertex_model(
     applied last, over the Vertex profile's blanks. The bundle must follow the
     same effective model the runner and the ephemeral parent resolve.
     """
-    from oddish.workers.queue.job_tokens import scoped_model_env
+    from oddish.workers.queue.job_tokens import provider_env
 
     monkeypatch.setattr(settings, "gemini_api_key", "studio-key")
     for agent, model, stale_key in (
@@ -1076,9 +1076,9 @@ def test_job_scoped_bundle_follows_the_stored_vertex_model(
         ("gemini-cli", "vertex_ai/gemini-3.8-flash", "GEMINI_API_KEY"),
     ):
         raw = {"agent_config": {"name": agent, "model_name": model}}
-        bundle = scoped_model_env(
+        bundle = provider_env(
             agent=agent, model=None, settings=settings, raw_harbor_config=raw
-        )
+        ).agent_env
         assert stale_key not in bundle, agent
         assert bundle["VERTEXAI_PROJECT"] == "oddish-vertex"
         assert bundle["GOOGLE_CLOUD_LOCATION"] == "global"
@@ -1091,18 +1091,21 @@ def test_job_scoped_bundle_follows_the_stored_vertex_model(
         assert built.env["ODDISH_VERTEX_AI_MODE"] == "service_account"
         assert built.env["VERTEXAI_PROJECT"] == "oddish-vertex"
     # A row that names its model behaves exactly the same.
-    assert scoped_model_env(
-        agent="claude-code", model="vertex_ai/claude-sonnet-5", settings=settings
-    ) == scoped_model_env(
-        agent="claude-code",
-        model=None,
-        settings=settings,
-        raw_harbor_config={
-            "agent_config": {
-                "name": "claude-code",
-                "model_name": "vertex_ai/claude-sonnet-5",
-            }
-        },
+    assert (
+        provider_env(
+            agent="claude-code", model="vertex_ai/claude-sonnet-5", settings=settings
+        ).agent_env
+        == provider_env(
+            agent="claude-code",
+            model=None,
+            settings=settings,
+            raw_harbor_config={
+                "agent_config": {
+                    "name": "claude-code",
+                    "model_name": "vertex_ai/claude-sonnet-5",
+                }
+            },
+        ).agent_env
     )
 
 
@@ -1132,11 +1135,11 @@ def test_express_mode_allowlists_only_the_global_endpoint(express, monkeypatch):
 
 
 def test_job_scoped_bundle_carries_coordinates_only(service_account):
-    from oddish.workers.queue.job_tokens import scoped_model_env
+    from oddish.workers.queue.job_tokens import provider_env
 
-    env = scoped_model_env(
+    env = provider_env(
         agent="gemini-cli", model="vertex_ai/gemini-3.8-flash", settings=settings
-    )
+    ).agent_env
     assert env == {
         "VERTEXAI_LOCATION": "global",
         "GOOGLE_CLOUD_LOCATION": "global",

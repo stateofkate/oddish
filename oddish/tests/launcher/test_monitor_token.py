@@ -32,17 +32,18 @@ def _job(raw: str, **overrides):
     return SimpleNamespace(**values)
 
 
-def test_credential_round_trips_and_authorizes_the_owning_attempt():
+@pytest.mark.parametrize("job_id", ["1234abcd", "1234abcd" * 4])
+def test_credential_round_trips_and_authorizes_the_owning_attempt(job_id):
     raw, _ = mint_token()
-    credential = monitor_token.format_credential("job-1", 2, raw)
+    credential = monitor_token.format_credential(job_id, 2, raw)
     job_id, attempt, parsed = monitor_token.parse_credential(credential)
-    assert (job_id, attempt, parsed) == ("job-1", 2, raw)
+    assert (job_id, attempt, parsed) == (job_id, 2, raw)
 
     owner = monitor_token.check_credential(
-        _job(raw), attempt=attempt, raw_token=parsed, now=utcnow()
+        _job(raw, id=job_id), attempt=attempt, raw_token=parsed, now=utcnow()
     )
     assert owner == monitor_token.MonitorAttempt(
-        "job-1", 2, "worker-1", trial_id="trial-1", org_id="org-1", queue_slot=4
+        job_id, 2, "worker-1", trial_id="trial-1", org_id="org-1", queue_slot=4
     )
 
 
@@ -121,3 +122,42 @@ async def test_revoke_is_scoped_to_the_attempt_it_names(monkeypatch):
         )
     )
     assert "worker_jobs.attempts = 1" in where
+
+
+@pytest.mark.asyncio
+async def test_minted_credential_covers_the_full_attempt_lifetime(monkeypatch):
+    """A running attempt must not lose API authorization before the 12-hour limit."""
+    from datetime import datetime, timezone
+
+    issued_at = datetime(2026, 9, 29, 12, tzinfo=timezone.utc)
+    written = {}
+
+    class Session:
+        async def execute(self, statement):
+            written.update(statement.compile().params)
+            return SimpleNamespace(rowcount=1)
+
+    @asynccontextmanager
+    async def session():
+        yield Session()
+
+    monkeypatch.setattr(monitor_token, "utcnow", lambda: issued_at)
+    monkeypatch.setattr(monitor_token, "get_session", session)
+    credential = await monitor_token.mint_monitor_credential("job-1", 2)
+    job_id, attempt, raw = monitor_token.parse_credential(credential)
+    job = _job(raw, monitor_token_expires_at=written["monitor_token_expires_at"])
+    assert job.monitor_token_hash == written["monitor_token_hash"]
+    assert job.monitor_token_expires_at == issued_at + timedelta(hours=12)
+    for elapsed in (
+        timedelta(),
+        timedelta(hours=6),
+        timedelta(hours=12) - timedelta(microseconds=1),
+    ):
+        owner = monitor_token.check_credential(
+            job, attempt=attempt, raw_token=raw, now=issued_at + elapsed
+        )
+        assert owner.worker_job_id == job_id
+    with pytest.raises(MonitorUnauthorized, match="Expired"):
+        monitor_token.check_credential(
+            job, attempt=attempt, raw_token=raw, now=issued_at + timedelta(hours=12)
+        )

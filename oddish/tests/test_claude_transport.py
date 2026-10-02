@@ -20,7 +20,7 @@ from oddish.workers.harbor.ephemeral import _build_payload
 from oddish.workers.harbor._entry import _build_job_config
 from oddish.workers.harbor.model_hosts import outbound_hosts_for_model
 from oddish.workers.queue.byok import uses_direct_anthropic
-from oddish.workers.queue.job_tokens import scoped_model_env
+from oddish.workers.queue.job_tokens import provider_env
 from oddish.workers.queue.model_gateway import is_gateway_trial
 
 
@@ -270,12 +270,12 @@ def test_litellm_bedrock_keeps_provider_and_scopes_no_anthropic_key(monkeypatch,
         agent="mini-swe-agent", model=BEDROCK, raw_harbor_config={}
     )
     assert routed.model_name == f"bedrock/{BEDROCK_ID}"
-    bundle = scoped_model_env(
+    bundle = provider_env(
         agent="mini-swe-agent",
         model=BEDROCK,
         settings=settings,
         byok_env={"ANTHROPIC_API_KEY": "user-ant"},
-    )
+    ).agent_env
     assert "ANTHROPIC_API_KEY" not in bundle
 
 

@@ -10,6 +10,8 @@ from uuid import uuid4
 
 from sqlalchemy import (
     and_,
+    cast,
+    func,
     BigInteger,
     Boolean,
     CheckConstraint,
@@ -38,7 +40,7 @@ from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.ext.hybrid import hybrid_property
 
 from sqlalchemy.ext.asyncio import AsyncAttrs  # type: ignore[attr-defined]
-from sqlalchemy.orm import Mapped, column_property, relationship
+from sqlalchemy.orm import Mapped, attributes, column_property, relationship
 from sqlalchemy.orm import DeclarativeBase, mapped_column  # type: ignore[attr-defined]
 
 from oddish.reasoning_effort import (
@@ -60,9 +62,9 @@ class CappedTokenCount(TypeDecorator):
 
     Long cache-heavy runs report more than 2^31 input tokens (cache reads are
     counted), and one out-of-range value makes Postgres reject the whole final
-    trial UPDATE, losing the reward and artifact pointer. Widening the columns
-    rewrites ``trials`` under ACCESS EXCLUSIVE, so until that happens the count
-    is capped; the exact figures remain in the uploaded Harbor artifacts.
+    trial UPDATE, losing the reward and artifact pointer. Retained legacy
+    columns stay capped during rolling upgrades; new writers store full counts
+    in the nullable BIGINT columns and triggers maintain the legacy values.
     """
 
     impl = Integer
@@ -72,6 +74,44 @@ class CappedTokenCount(TypeDecorator):
         if value is None:
             return None
         return min(int(value), INT32_MAX)
+
+
+def exact_token_count(name: str) -> hybrid_property:
+    """Read exact usage when available; write only the new column.
+
+    The migration's triggers mirror new writes into capped legacy columns and
+    invalidate exact usage when an older worker explicitly writes a legacy field.
+    Casting the fallback here makes every SQL reader use 64-bit arithmetic.
+    """
+
+    def get(instance):
+        exact = getattr(instance, f"{name}_exact")
+        return exact if exact is not None else getattr(instance, f"{name}_legacy")
+
+    def set_value(instance, value):
+        setattr(instance, f"{name}_exact", value)
+        attributes.set_committed_value(
+            instance,
+            f"{name}_legacy",
+            None if value is None else min(value, INT32_MAX),
+        )
+        if attributes.instance_state(instance).persistent:
+            attributes.flag_modified(instance, f"{name}_exact")
+
+    def expression(cls):
+        return func.coalesce(
+            getattr(cls, f"{name}_exact"),
+            cast(getattr(cls, f"{name}_legacy"), BigInteger),
+        ).label(name)
+
+    def update_expression(cls, value):
+        return [(getattr(cls, f"{name}_exact"), value)]
+
+    prop = hybrid_property(
+        get, set_value, expr=expression, update_expr=update_expression
+    )
+    prop.info["load_only_columns"] = (f"{name}_exact", f"{name}_legacy")
+    return prop
 
 
 class Base(AsyncAttrs, DeclarativeBase):
@@ -1155,12 +1195,26 @@ class TrialModel(TimestampedMixin, Base):
     playback: Mapped[dict | None] = column_property(result["_playback"])
 
     # Token usage, steps & cost (extracted from Harbor's AgentContext / trajectory)
-    input_tokens: Mapped[int | None] = mapped_column(CappedTokenCount, nullable=True)
-    cache_tokens: Mapped[int | None] = mapped_column(CappedTokenCount, nullable=True)
-    cache_write_tokens: Mapped[int | None] = mapped_column(
-        CappedTokenCount, nullable=True
+    input_tokens_legacy: Mapped[int | None] = mapped_column(
+        "input_tokens", CappedTokenCount, nullable=True
     )
-    output_tokens: Mapped[int | None] = mapped_column(CappedTokenCount, nullable=True)
+    input_tokens_exact: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    input_tokens = exact_token_count("input_tokens")
+    cache_tokens_legacy: Mapped[int | None] = mapped_column(
+        "cache_tokens", CappedTokenCount, nullable=True
+    )
+    cache_tokens_exact: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    cache_tokens = exact_token_count("cache_tokens")
+    cache_write_tokens_legacy: Mapped[int | None] = mapped_column(
+        "cache_write_tokens", CappedTokenCount, nullable=True
+    )
+    cache_write_tokens_exact: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    cache_write_tokens = exact_token_count("cache_write_tokens")
+    output_tokens_legacy: Mapped[int | None] = mapped_column(
+        "output_tokens", CappedTokenCount, nullable=True
+    )
+    output_tokens_exact: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    output_tokens = exact_token_count("output_tokens")
     total_steps: Mapped[int | None] = mapped_column(Integer, nullable=True)
     trajectory_duration_seconds: Mapped[float | None] = mapped_column(
         Float, nullable=True
@@ -1399,14 +1453,26 @@ class AnalysisCostModel(TimestampedMixin, Base):
     billed_user_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     task_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     model: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    input_tokens: Mapped[int | None] = mapped_column(CappedTokenCount, nullable=True)
-    output_tokens: Mapped[int | None] = mapped_column(CappedTokenCount, nullable=True)
-    cache_read_tokens: Mapped[int | None] = mapped_column(
-        CappedTokenCount, nullable=True
+    input_tokens_legacy: Mapped[int | None] = mapped_column(
+        "input_tokens", CappedTokenCount, nullable=True
     )
-    cache_write_tokens: Mapped[int | None] = mapped_column(
-        CappedTokenCount, nullable=True
+    input_tokens_exact: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    input_tokens = exact_token_count("input_tokens")
+    output_tokens_legacy: Mapped[int | None] = mapped_column(
+        "output_tokens", CappedTokenCount, nullable=True
     )
+    output_tokens_exact: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    output_tokens = exact_token_count("output_tokens")
+    cache_read_tokens_legacy: Mapped[int | None] = mapped_column(
+        "cache_read_tokens", CappedTokenCount, nullable=True
+    )
+    cache_read_tokens_exact: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    cache_read_tokens = exact_token_count("cache_read_tokens")
+    cache_write_tokens_legacy: Mapped[int | None] = mapped_column(
+        "cache_write_tokens", CappedTokenCount, nullable=True
+    )
+    cache_write_tokens_exact: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    cache_write_tokens = exact_token_count("cache_write_tokens")
     cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     # "native" = harness-reported (CLI total_cost_usd); "estimated" = priced
     # via model_pricing. "pending" is an unpriced verifier-judge attempt
@@ -1473,14 +1539,26 @@ class VerifierCostModel(TimestampedMixin, Base):
     route: Mapped[str] = mapped_column(String(16), nullable=False)
     # Hash of the CUA key, never a copy of ``trials.llm_key_hash``.
     llm_key_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    input_tokens: Mapped[int | None] = mapped_column(CappedTokenCount, nullable=True)
-    output_tokens: Mapped[int | None] = mapped_column(CappedTokenCount, nullable=True)
-    cache_read_tokens: Mapped[int | None] = mapped_column(
-        CappedTokenCount, nullable=True
+    input_tokens_legacy: Mapped[int | None] = mapped_column(
+        "input_tokens", CappedTokenCount, nullable=True
     )
-    cache_write_tokens: Mapped[int | None] = mapped_column(
-        CappedTokenCount, nullable=True
+    input_tokens_exact: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    input_tokens = exact_token_count("input_tokens")
+    output_tokens_legacy: Mapped[int | None] = mapped_column(
+        "output_tokens", CappedTokenCount, nullable=True
     )
+    output_tokens_exact: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    output_tokens = exact_token_count("output_tokens")
+    cache_read_tokens_legacy: Mapped[int | None] = mapped_column(
+        "cache_read_tokens", CappedTokenCount, nullable=True
+    )
+    cache_read_tokens_exact: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    cache_read_tokens = exact_token_count("cache_read_tokens")
+    cache_write_tokens_legacy: Mapped[int | None] = mapped_column(
+        "cache_write_tokens", CappedTokenCount, nullable=True
+    )
+    cache_write_tokens_exact: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    cache_write_tokens = exact_token_count("cache_write_tokens")
     cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     # ``native`` | ``estimated`` | ``backfill``
     cost_source: Mapped[str] = mapped_column(String(16), nullable=False)
@@ -1914,7 +1992,9 @@ class WorkerJobModel(TimestampedMixin, Base):
 
     __tablename__ = "worker_jobs"
 
-    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=generate_id)
+    id: Mapped[str] = mapped_column(
+        String(64), primary_key=True, default=lambda: uuid4().hex
+    )
 
     kind: Mapped[WorkerJobKind] = mapped_column(
         SQLEnum(

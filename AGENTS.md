@@ -33,6 +33,9 @@ table, and the compatibility rule) live in `CONTRIBUTING.md`. In short:
   readers first; see "Installed clients are always behind the server" under
   Repo-wide Gotchas.
 
+Changes to execution, credentials or `/monitor` messages must follow
+[Preventing execution regressions](#preventing-execution-regressions).
+
 ## Pruning files and operational knowledge
 
 Before deleting a file, identify who or what uses it. Application modules,
@@ -1708,20 +1711,26 @@ Keep these routing rules in sync with `oddish/src/oddish/config.py` and
   Enforce credential selectors after BYOK, job-token, and child-payload merges.
   Anthropic BYOK cannot redirect or fund Bedrock work; Bedrock retains its AWS
   credential chain and blanks Anthropic selectors in the agent environment.
-  Keep the host `ANTHROPIC_API_KEY` intact in both the normal runner and
-  ephemeral child: Harbor resolves task `[verifier.env]` templates from that
-  process after agent execution. A task receives the key only when it declares
-  it; the Bedrock agent still receives an empty Anthropic key. Missing
-  credentials fail on the selected route. The Oddish Mini SWE adapter forwards the full AWS
+  Capture task declaration sources before applying agent overrides. Harbor's
+  runtime-only `task_environment` scope resolves environment, solution, verifier
+  and step-verifier declarations independently of the agent's HDO/BYOK account;
+  it also supplies task credential values to artifact scrubbing. Custom Harbor
+  revisions must expose this scope. The child payload carries only referenced
+  task sources in its existing private, temporary file, never persisted configs.
+  The launcher validates required supported task sources before sandbox creation;
+  literals and `${VAR:-default}` retain their meaning. The Bedrock agent still
+  receives an empty Anthropic key. Missing credentials fail on the selected route. The Oddish Mini SWE adapter forwards the full AWS
   environment and supports Bedrock bearer credentials; Harbor's single-key
   guard alone is insufficient. Pin complete Bedrock ARNs in the final agent
   environment because Harbor otherwise splits their resource path as a provider
   prefix. Restricted-network hosts follow the AWS/SDK/ARN region and validate
   region syntax before building domains. Direct Anthropic child trials support
   BYOK with the same funding attribution as the normal runner.
-  HDO credential bundles carry the selected key as both `ANTHROPIC_API_KEY`
-  (read by the agent) and `ANTHROPIC_HDO_API_KEY` (read by Oddish when rebuilding
-  agent configuration inside a monitor sandbox).
+  HDO (the separate Anthropic account selected by `anthropic-hdo/`) carries
+  `ANTHROPIC_API_KEY` in `agent_env`, the agent execution overrides, and also
+  `ANTHROPIC_HDO_API_KEY` in `driver_env`, the runner's startup settings. Both
+  names hold the selected HDO key. Forwarding only the agent alias lets fresh
+  Settings rebuild an empty HDO key and replace the valid agent credential.
   `anthropic-hdo/` retains its separate key and opt-in
   gateway behavior; explicit ordinary Anthropic/Bedrock routes bypass the QA
   gateway's mixed provider pool. See DOCS.md for the drain-before-deploy and
@@ -3509,3 +3518,128 @@ still exposes their execution counts. No request or response fields changed.
 ## Customer documentation
 
 The website lives in the separate `abundant-ai/abundant-docs` repository. It imports only approved `docs/customer/` pages and assets. Update these source guides alongside customer-visible changes or explain why no update is needed. Docs importing and publishing must never be required by Oddish CI or merge rules. Internal operations notes stay outside `docs/customer/`.
+
+
+## Execution startup and release identity
+
+New `worker_jobs.id` values use 32-character UUID hex strings; legacy short IDs
+and parent references remain valid in the existing 64-character columns. Task
+IDs retain their existing generator and naming convention. Single enqueue uses
+the model default; bulk enqueue keeps its atomic insert and unique constraint.
+
+The launcher's provider resolver returns `driver_env` and `agent_env`. It selects
+from the effective stored model after user-key resolution, keeps HDO's separate
+account precedence, and includes endpoint/deployment/Vertex inputs in driver
+startup. The monitor removes serialized credential mappings and its token from
+its environment, applies driver inputs before Settings imports, and passes the
+one decoded object to execution. Task sources travel in a separate mapping.
+
+Deploy workflows set `ODDISH_RELEASE` to the checked-out commit. Modal pins it
+in both image settings and its final runtime secret; monitors inherit that
+identity. The existing post-commit `trial_execution_finished` event adds model,
+worker job ID, exception type and provider error code, without raw error text.
+
+
+## Preventing execution regressions
+
+A trial is one task execution. Its monitor is the runner inside the sandbox;
+its control plane is the API that authorizes the attempt and accepts its result.
+A running monitor keeps its original code for up to 12 hours while the API may
+be deployed again. Execution changes must preserve that running attempt as well
+as new attempts launched from fresh or cached sandbox images.
+
+- Before changing a provider, credential, startup setting or execution path,
+  trace its producer and every reader through worker, child process, launcher,
+  monitor, agent and task verification. Preserve the effective stored model,
+  selected funding account, endpoint and deployment mapping. Resolve startup
+  settings explicitly before imports; never depend on secrets inherited by the
+  worker being present in a fresh sandbox. Agent and verifier accounts remain
+  separate, including HDO and bring-your-own-key trials.
+- Reproduce the previous failure with synthetic credentials through the real
+  launcher serializer, monitor decoder and fresh Settings/agent configuration.
+  Start a new Python process when import order matters. Assert the selected
+  credential and endpoint, not just that an environment dictionary is nonempty.
+  Prove the test fails when the necessary handoff is removed. Keep that test
+  in continuous integration (CI); a local-only regression test is insufficient.
+- For attempts spanning a deployment, preserve `/monitor` requests, responses
+  and status meanings accepted by older code for the full supported lifetime.
+  Optional request fields may be added; added response fields are safe only
+  when the older reader tolerates them. Do not replace the recorded contract
+  merely to silence a breaking-change failure. Test cached-image code/lock
+  matching, transient API outages, result retries and stale-attempt cleanup.
+- Check lifetimes independently for the control-plane token, sandbox, capacity
+  lease and model-provider credentials. A 12-hour monitor token does not extend
+  an expiring AWS or other provider credential. For temporary credentials,
+  preserve expiry information and test validity through the permitted task
+  duration or renewal before expiry, without changing the selected account.
+  Use an injected clock to test the last valid instant and expiration; do not
+  sleep for hours. Identify provider renewal and live-duration coverage gaps.
+- Before declaring an execution change verified, run the checks below using
+  the worktree's frozen dependencies. Record results and unchanged-base
+  comparisons for failures. Keep secrets out of persisted configs and logs;
+  retain model, attempt, exception type and release identity for diagnosis.
+  Report local simulations separately from live cloud/model verification.
+
+The HDO failure is covered by
+`oddish/tests/launcher/test_launch_env.py::test_hdo_key_survives_sandbox_agent_configuration`:
+it reconstructs fresh Settings and requires the final agent key to equal the
+selected HDO key. `oddish/tests/test_provider_startup.py` checks real monitor
+import order, endpoints and account settings in fresh processes;
+`oddish/tests/test_verifier_credentials.py` checks agent/verifier separation in
+worker and child execution, including platform keys loaded only by Settings.
+
+From `oddish/`, run:
+
+```bash
+uv run pytest tests/mon tests/launcher tests/test_provider_startup.py tests/test_verifier_credentials.py tests/test_job_tokens.py tests/test_judge_keys.py tests/test_scoped_model_env_ambient.py -q
+```
+
+From `backend/`, run:
+
+```bash
+uv run pytest tests/test_monitor_contract.py tests/test_monitor_endpoints.py -q
+```
+
+`.github/workflows/monitor-contract-guard.yml` runs both commands when execution
+code, provider settings, dependency pins or the named tests change. Its recorded
+contract check rejects incompatible API changes; the monitor tests exercise
+outages and result reporting, and the token tests cover the full 12-hour
+control-plane authorization window. These tests do not claim a live 12-hour
+model run or automatic renewal of every provider's credentials.
+
+## Exact token counts during rolling upgrades
+
+Migration `tokens_exact_001` adds nullable `BIGINT` `*_tokens_exact` columns to
+`trials`, `analysis_costs`, and `verifier_costs`. Apply it before deploying code
+that reads the new columns. It adds columns without defaults; it does not widen
+or scan the existing populated integer columns. DDL uses bounded lock waits.
+
+The public Python token attributes are hybrid properties: instance reads prefer
+exact usage, SQL reads use `coalesce(exact, legacy::bigint)`, and writes target
+only exact columns. Raw SQL must use the same expression, including casts before
+addition or subtraction. PostgreSQL triggers mirror exact writes into capped
+legacy columns. An explicit UPDATE of a legacy token column clears that field's
+exact value even if the legacy value remains `2147483647`. That handles workers
+still running the previous release. Never update both physical columns in one
+UPDATE, bypass the triggers, or use ORM bulk insert mappings with hybrid names;
+Core inserts/upserts must name `*_tokens_exact` explicitly.
+
+Keep both mapped columns in `load_only` projections. The shared property declares
+its column dependencies for `scripts/load_only_guard.py`; removing either must
+fail the guard. Existing API field names and numeric types remain unchanged.
+JavaScript numbers preserve these observed billion-token counts exactly; values
+above `2**53 - 1` would require a separate lossless API/UI representation.
+
+After old workers retire, use the bounded repair commands in
+[operations tools](docs/operations-tools.md#exact-token-count-repair). A legacy
+count equal to the cap is a lower bound, never evidence for an exact count.
+Artifact recovery must select the stored current attempt, reject concurrent
+changes, and leave recorded dollar costs untouched. Missing evidence stays NULL
+in the exact column. Do not remove legacy columns or triggers in this release;
+application rollback keeps the additive schema. The migration refuses downgrade
+rather than discarding counts above the integer limit.
+
+Changes to these models, migrations, token writers or cost SQL must run
+`tests/test_exact_token_counts.py` against PostgreSQL, covering live saves above
+32 bits, old/new worker overlap, task-page SQL, and repair/write races. A Python
+integer test alone does not exercise PostgreSQL bind types or arithmetic.

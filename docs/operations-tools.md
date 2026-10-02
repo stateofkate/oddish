@@ -181,3 +181,46 @@ errors; it is not restored as a reliable test. The egress probe's incident notes
 are recoverable there too, but its default sandbox does not reproduce a task's
 image and network policy. Obsolete UI routes/components and uncalled internal
 helpers are outside this operational restoration.
+
+## Exact token count repair
+
+`oddish.core.backfill_token_counts` fills the new 64-bit token columns without
+recomputing recorded costs. First apply core migration `tokens_exact_001`, deploy
+new API/worker code, and verify that workers launched from the previous image have
+finished. Keep the old columns and compatibility triggers throughout this release.
+The command uses the configured `ODDISH_DATABASE_URL`; artifact recovery also
+needs read access to the configured object store. Run from `oddish/`.
+
+Preview a batch of finished trials (no database changes are committed):
+
+```bash
+uv run python -m oddish.core.backfill_token_counts --table trials --limit 500
+```
+
+Review `scanned`, `fields_updated`, and `after` in the JSON output. Add `--apply`
+to commit that batch; use its `after` value as `--after VALUE` for the next batch.
+Repeat for `analysis_costs` and `verifier_costs`. The maximum batch is 5,000 rows;
+each command is one transaction. Rows locked by another writer are skipped.
+After reaching `scanned: 0`, repeat from the beginning after concurrent work has
+finished so skipped rows are revisited. NULL counters stay unknown; counters below
+`2147483647` are copied only where exact values are missing. Capped values remain
+unresolved. Already populated exact values are never overwritten.
+
+For one finished trial with a stored current-attempt artifact pointer:
+
+```bash
+uv run python -m oddish.core.backfill_token_counts --recover-trial TRIAL_ID
+```
+
+The preview reads the selected Harbor child's `result.json` and trajectory,
+prints recovered fields, and rolls back. Add `--apply` to commit. Recovery uses
+Harbor's result totals (including multi-step runs) and the existing trajectory
+cache-write parser. It rejects counts below the stored lower bound, mismatched
+trial selection, invalid 64-bit values, and changes made during artifact reads.
+It updates only missing exact token fields, never reward, result, status or
+`cost_usd`. Missing artifact fields remain unresolved; absent or ambiguous
+artifacts raise an error. Historical capped analysis/verifier ledger rows are
+not reconstructed from the solver's usage: they need their own source evidence.
+
+Verify recovered values by comparing `*_tokens_exact` with the selected artifact;
+legacy `*_tokens` remains capped for old readers. No automatic repair is scheduled.

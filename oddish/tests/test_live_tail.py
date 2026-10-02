@@ -527,10 +527,10 @@ async def test_codex_tick_tails_codex_log_and_checkpoints(monkeypatch):
     assert "'/logs/agent/codex.txt'" in env.commands[0]
     assert session.context_entries == 1
     params = update_params(session)
-    assert params[-1]["input_tokens"] == 7
-    assert params[-1]["cache_tokens"] == 2
-    assert params[-1]["cache_write_tokens"] == 0
-    assert params[-1]["output_tokens"] == 3
+    assert params[-1]["input_tokens_exact"] == 7
+    assert params[-1]["cache_tokens_exact"] == 2
+    assert params[-1]["cache_write_tokens_exact"] == 0
+    assert params[-1]["output_tokens_exact"] == 3
     assert params[-1]["cost_usd"] == 0.25
 
 
@@ -627,8 +627,8 @@ async def test_tick_offset_math_and_checkpoint_across_split_chunks(monkeypatch):
     await tailer._tick()
     params = update_params(session)
     assert len(params) == 2
-    assert params[0]["input_tokens"] == 10 and params[0]["output_tokens"] == 2
-    assert params[1]["input_tokens"] == 13 and params[1]["output_tokens"] == 6
+    assert params[0]["input_tokens_exact"] == 10 and params[0]["output_tokens_exact"] == 2
+    assert params[1]["input_tokens_exact"] == 13 and params[1]["output_tokens_exact"] == 6
     assert params[1]["cost_usd"] == 0.5
     assert "+1 " in env.commands[0] and f"+{len(raw1) + 1} " in env.commands[1]
     assert f"head -c {live_tail.MAX_CHUNK_BYTES}" in env.commands[0]
@@ -700,14 +700,14 @@ async def test_codex_tick_banks_usage_when_log_truncates(monkeypatch):
     )
     tailer = make_tailer(env, agent="codex", model="gpt-5.3-codex")
     await tailer._tick()
-    assert update_params(session)[-1]["input_tokens"] == 100
+    assert update_params(session)[-1]["input_tokens_exact"] == 100
     await tailer._tick()
     assert tailer.offset == 0
     await tailer._tick()
     assert "tail -c +1 '" in env.commands[2]
     params = update_params(session)
-    assert params[-1]["input_tokens"] == 130
-    assert params[-1]["output_tokens"] == 14
+    assert params[-1]["input_tokens_exact"] == 130
+    assert params[-1]["output_tokens_exact"] == 14
 
 
 def cursor_line(obj) -> bytes:
@@ -848,10 +848,10 @@ async def test_cursor_tick_tails_cursor_log_and_checkpoints(monkeypatch):
     await tailer._tick()
     assert "'/logs/agent/cursor-cli.txt'" in env.commands[0]
     params = update_params(session)
-    assert params[-1]["input_tokens"] == 10
-    assert params[-1]["cache_tokens"] == 2
-    assert params[-1]["cache_write_tokens"] == 1
-    assert params[-1]["output_tokens"] == 3
+    assert params[-1]["input_tokens_exact"] == 10
+    assert params[-1]["cache_tokens_exact"] == 2
+    assert params[-1]["cache_write_tokens_exact"] == 1
+    assert params[-1]["output_tokens_exact"] == 3
     assert params[-1]["cost_usd"] == 0.75
 
 
@@ -1248,9 +1248,9 @@ async def test_mini_swe_snapshot_tick_reads_whole_file(monkeypatch):
     assert "set -o pipefail" not in command
     assert tailer.offset == 0
     params = update_params(session)
-    assert params[-1]["input_tokens"] == 12
-    assert params[-1]["cache_tokens"] == 3
-    assert params[-1]["output_tokens"] == 4
+    assert params[-1]["input_tokens_exact"] == 12
+    assert params[-1]["cache_tokens_exact"] == 3
+    assert params[-1]["output_tokens_exact"] == 4
     assert params[-1]["cost_usd"] == 0.4
 
 
@@ -1453,7 +1453,7 @@ async def test_failure_cap_persists_pending_fold(monkeypatch):
     tailer.fold.feed_line(assistant_line("m", {"input_tokens": 2}))
     await asyncio.wait_for(tailer.run(), timeout=5)
     assert len(env.commands) == live_tail.MAX_CONSECUTIVE_FAILURES
-    assert update_params(session)[-1]["input_tokens"] == 2
+    assert update_params(session)[-1]["input_tokens_exact"] == 2
 
 
 @pytest.mark.asyncio
@@ -1464,7 +1464,7 @@ async def test_stop_triggers_final_drain(monkeypatch):
     tailer.request_stop()
     await asyncio.wait_for(tailer.run(), timeout=5)
     assert len(env.commands) == 1
-    assert update_params(session)[-1]["input_tokens"] == 5
+    assert update_params(session)[-1]["input_tokens_exact"] == 5
 
 
 @pytest.mark.asyncio
@@ -1491,7 +1491,7 @@ async def test_stop_path_persists_fold_when_final_tick_fails(monkeypatch):
     tailer.fold.feed_line(assistant_line("m", {"input_tokens": 6}))
     tailer.request_stop()
     await asyncio.wait_for(tailer.run(), timeout=5)
-    assert update_params(session)[-1]["input_tokens"] == 6
+    assert update_params(session)[-1]["input_tokens_exact"] == 6
 
 
 @pytest.mark.asyncio
@@ -1522,7 +1522,7 @@ async def test_empty_tick_retries_pending_checkpoint(monkeypatch):
     tailer = make_tailer(env)
     tailer.fold.feed_line(assistant_line("m", {"input_tokens": 3}))
     await tailer._tick()
-    assert update_params(session)[-1]["input_tokens"] == 3
+    assert update_params(session)[-1]["input_tokens_exact"] == 3
 
 
 @pytest.mark.asyncio
@@ -1566,14 +1566,14 @@ async def test_commit_failure_retries_checkpoint_markers(monkeypatch):
 
     assert tailer._last_written is None
     assert tailer._last_cost is None
-    assert update_params(session)[-1]["input_tokens"] == 3
+    assert update_params(session)[-1]["input_tokens_exact"] == 3
 
     session.fail_commit = False
     await tailer._persist_tick()
 
     params = update_params(session)
     assert len(params) == 2
-    assert [p["input_tokens"] for p in params] == [3, 3]
+    assert [p["input_tokens_exact"] for p in params] == [3, 3]
     assert tailer._last_written is not None
     assert tailer._last_cost == 0.5
 

@@ -61,3 +61,17 @@ def test_delivery_page_missing_column_is_rejected(
     query_copy.write_text(missing_column)
     monkeypatch.setattr(guard, "_COVERAGE_UNITS", ((name, query_copy, builders),))
     assert guard.find_violations() == {name: {model: [column]}}
+
+
+@pytest.mark.parametrize("column", ["input_tokens_exact", "input_tokens_legacy"])
+def test_token_read_requires_both_mapped_columns(tmp_path, monkeypatch, column):
+    name, query_path, builders = next(
+        unit for unit in guard._COVERAGE_UNITS if unit[1].name == "tasks_query.py"
+    )
+    query_copy = tmp_path / query_path.name
+    source = query_path.read_text()
+    changed = source.replace(f"TrialModel.{column},", "")
+    assert source != changed
+    query_copy.write_text(changed)
+    monkeypatch.setattr(guard, "_COVERAGE_UNITS", ((name, query_copy, builders),))
+    assert column in guard.find_violations()[name]["TrialModel"]

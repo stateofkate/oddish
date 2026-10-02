@@ -19,20 +19,20 @@ _COST_COMPARISON = text(
         COUNT(*) FILTER (WHERE t.cost_usd = 0) AS zero_cost_trials,
         COUNT(*) FILTER (WHERE t.cost_usd IS NULL) AS null_cost_trials,
         COALESCE(SUM(t.cost_usd), 0) AS recorded_cost_usd,
-        COALESCE(SUM(GREATEST(COALESCE(t.input_tokens, 0), 0)), 0)
+        COALESCE(SUM(GREATEST(COALESCE(t.input_tokens_exact, t.input_tokens::bigint, 0), 0)), 0)
             AS input_tokens,
-        COALESCE(SUM(GREATEST(COALESCE(t.cache_tokens, 0), 0)), 0)
+        COALESCE(SUM(GREATEST(COALESCE(t.cache_tokens_exact, t.cache_tokens::bigint, 0), 0)), 0)
             AS cache_tokens,
-        COALESCE(SUM(GREATEST(COALESCE(t.cache_write_tokens, 0), 0)), 0)
+        COALESCE(SUM(GREATEST(COALESCE(t.cache_write_tokens_exact, t.cache_write_tokens::bigint, 0), 0)), 0)
             AS cache_write_tokens,
-        COALESCE(SUM(GREATEST(COALESCE(t.output_tokens, 0), 0)), 0)
+        COALESCE(SUM(GREATEST(COALESCE(t.output_tokens_exact, t.output_tokens::bigint, 0), 0)), 0)
             AS output_tokens,
         COALESCE(
             SUM(
                 GREATEST(
-                    GREATEST(COALESCE(t.input_tokens, 0), 0)
-                    - GREATEST(COALESCE(t.cache_tokens, 0), 0)
-                    - GREATEST(COALESCE(t.cache_write_tokens, 0), 0),
+                    GREATEST(COALESCE(t.input_tokens_exact, t.input_tokens::bigint, 0), 0)
+                    - GREATEST(COALESCE(t.cache_tokens_exact, t.cache_tokens::bigint, 0), 0)
+                    - GREATEST(COALESCE(t.cache_write_tokens_exact, t.cache_write_tokens::bigint, 0), 0),
                     0
                 )
             ),

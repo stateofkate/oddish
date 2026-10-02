@@ -12,6 +12,7 @@ path, which never passes ``ambient``, behaves exactly as before.
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 from oddish.workers.queue import job_tokens
@@ -45,50 +46,57 @@ def _settings():
 
 
 def test_grok_build_gets_both_xai_names_present_in_ambient():
-    env = job_tokens.scoped_model_env(
+    env = job_tokens.provider_env(
         agent="grok-build", model="grok-4", settings=_settings(), ambient=AMBIENT
-    )
+    ).agent_env
     assert env == {"XAI_API_KEY": "xai-1", "XAI_API_KEYS": "xai-1,xai-2"}
 
 
 def test_only_the_pool_when_that_is_all_that_is_set():
-    env = job_tokens.scoped_model_env(
+    env = job_tokens.provider_env(
         agent="grok-build",
         model="grok-4",
         settings=_settings(),
         ambient={"XAI_API_KEYS": "a,b"},
-    )
+    ).agent_env
     assert env == {"XAI_API_KEYS": "a,b"}
 
 
 def test_nothing_outside_the_two_xai_names_is_forwarded():
-    env = job_tokens.scoped_model_env(
+    env = job_tokens.provider_env(
         agent="grok-build", model="grok-4", settings=_settings(), ambient=AMBIENT
-    )
-    for never in ("DATABASE_URL", "SLACK_BOT_TOKEN", "ANTHROPIC_API_KEY", "AWS_BEARER_TOKEN_BEDROCK"):
+    ).agent_env
+    for never in (
+        "DATABASE_URL",
+        "SLACK_BOT_TOKEN",
+        "ANTHROPIC_API_KEY",
+        "AWS_BEARER_TOKEN_BEDROCK",
+    ):
         assert never not in env
     assert set(env) <= {"XAI_API_KEY", "XAI_API_KEYS"}
 
 
 def test_a_settings_backed_provider_ignores_ambient():
-    env = job_tokens.scoped_model_env(
+    env = job_tokens.provider_env(
         agent="terminus-2",
         model="anthropic/claude-sonnet-5",
         settings=_settings(),
         ambient=AMBIENT,
-    )
+    ).agent_env
     assert env == {"ANTHROPIC_API_KEY": "ant-settings"}
 
 
 def test_an_unknown_provider_still_gets_nothing():
-    env = job_tokens.scoped_model_env(
+    env = job_tokens.provider_env(
         agent="mystery", model="mystery/thing", settings=_settings(), ambient=AMBIENT
-    )
+    ).agent_env
     assert env == {}
 
 
 def test_the_worker_path_without_ambient_is_unchanged():
-    env = job_tokens.scoped_model_env(agent="grok-build", model="grok-4", settings=_settings())
+    env = job_tokens.provider_env(
+        agent="grok-build", model="grok-4", settings=_settings()
+    ).agent_env
     assert env == {}
 
 
@@ -102,12 +110,12 @@ def test_single_llm_on_bedrock_keeps_its_flag_and_gets_the_aws_chain_present():
         "AWS_REGION": "us-west-2",
         "DATABASE_URL": "postgres://never",
     }
-    env = job_tokens.scoped_model_env(
+    env = job_tokens.provider_env(
         agent="single-llm",
         model="global.anthropic.claude-sonnet-4-6",
         settings=settings,
         ambient=ambient,
-    )
+    ).agent_env
     assert env == {
         "CLAUDE_CODE_USE_BEDROCK": "1",
         "AWS_BEARER_TOKEN_BEDROCK": "bearer-1",
@@ -117,9 +125,11 @@ def test_single_llm_on_bedrock_keeps_its_flag_and_gets_the_aws_chain_present():
     }
     assert "AWS_SESSION_TOKEN" not in env  # not set: not invented
     # Worker path unchanged: flag only, the chain is ambient there already.
-    assert job_tokens.scoped_model_env(
-        agent="single-llm", model="global.anthropic.claude-sonnet-4-6", settings=settings
-    ) == {"CLAUDE_CODE_USE_BEDROCK": "1"}
+    assert job_tokens.provider_env(
+        agent="single-llm",
+        model="global.anthropic.claude-sonnet-4-6",
+        settings=settings,
+    ).agent_env == {"CLAUDE_CODE_USE_BEDROCK": "1"}
 
 
 def test_cursor_cli_gets_cursor_api_key_on_top_of_its_provider_key():
@@ -141,16 +151,25 @@ def test_fireworks_and_moonshot_get_only_their_own_key_from_ambient():
         "MOONSHOT_API_KEY": "ms-1",
         "DATABASE_URL": "postgres://never",
     }
-    assert job_tokens.scoped_model_env(
-        agent="claude-code", model="fireworks/glm-5p2", settings=settings, ambient=ambient
-    ) == {"FIREWORKS_API_KEY": "fw-1"}
-    assert job_tokens.scoped_model_env(
-        agent="claude-code", model="moonshot/kimi-k2.7-code", settings=settings, ambient=ambient
-    ) == {"MOONSHOT_API_KEY": "ms-1"}
+    assert job_tokens.provider_env(
+        agent="claude-code",
+        model="fireworks/glm-5p2",
+        settings=settings,
+        ambient=ambient,
+    ).agent_env == {"FIREWORKS_API_KEY": "fw-1"}
+    assert job_tokens.provider_env(
+        agent="claude-code",
+        model="moonshot/kimi-k2.7-code",
+        settings=settings,
+        ambient=ambient,
+    ).agent_env == {"MOONSHOT_API_KEY": "ms-1"}
     # Worker path unchanged: the key is ambient there already.
-    assert job_tokens.scoped_model_env(
-        agent="claude-code", model="fireworks/glm-5p2", settings=settings
-    ) == {}
+    assert (
+        job_tokens.provider_env(
+            agent="claude-code", model="fireworks/glm-5p2", settings=settings
+        ).agent_env
+        == {}
+    )
 
 
 def test_vertex_ai_gets_the_settings_its_driver_resolves_from():
@@ -177,27 +196,31 @@ def test_vertex_ai_gets_the_settings_its_driver_resolves_from():
         "GOOGLE_CLOUD_PROJECT": "oddish-vertex",
     }
     model = "vertex_ai/claude-sonnet-5"
-    env = job_tokens.scoped_model_env(
+    env = job_tokens.provider_env(
         agent="claude-code", model=model, settings=settings, ambient=AMBIENT
     )
-    assert env == {
+    assert env.agent_env == coordinates
+    assert env.driver_env == {
         **coordinates,
         "VERTEX_AI_CREDENTIALS_JSON": '{"type": "service_account"}',
         "VERTEX_AI_PROJECT_ID": "oddish-vertex",
         "VERTEX_AI_LOCATION": "us-east5",
     }
-    assert "VERTEX_AI_API_KEY" not in env  # not configured: not invented
+    assert "VERTEX_AI_API_KEY" not in env.driver_env  # not configured: not invented
     # Worker path unchanged: the credential is in place there.
-    assert job_tokens.scoped_model_env(
-        agent="claude-code", model=model, settings=settings
-    ) == coordinates
+    assert (
+        job_tokens.provider_env(
+            agent="claude-code", model=model, settings=settings
+        ).agent_env
+        == coordinates
+    )
     # Another provider on the same worker never gets it.
-    assert job_tokens.scoped_model_env(
+    assert job_tokens.provider_env(
         agent="terminus-2",
         model="anthropic/claude-sonnet-5",
         settings=settings,
         ambient=AMBIENT,
-    ) == {"ANTHROPIC_API_KEY": "ant-settings"}
+    ).agent_env == {"ANTHROPIC_API_KEY": "ant-settings"}
 
 
 def test_openai_family_gets_the_routing_settings_its_driver_resolves_from(monkeypatch):
@@ -230,11 +253,12 @@ def test_openai_family_gets_the_routing_settings_its_driver_resolves_from(monkey
     )
     public = Settings(_env_file=None, openai_provider="openai", OPENAI_API_KEY="sk-oai")
     for launcher in (azure, public):
-        env = job_tokens.scoped_model_env(
+        env = job_tokens.provider_env(
             agent="codex", model=model, settings=launcher, ambient=AMBIENT
         )
+        assert not names & set(env.agent_env)
         with monkeypatch.context() as sandbox_env:
-            for name, value in env.items():
+            for name, value in env.driver_env.items():
                 sandbox_env.setenv(name, value)
             sandbox = Settings(_env_file=None)
         assert sandbox.azure_openai_deployments == launcher.azure_openai_deployments
@@ -243,15 +267,17 @@ def test_openai_family_gets_the_routing_settings_its_driver_resolves_from(monkey
             launcher.get_openai_agent_env(model=model)
         )
         # Worker path unchanged: its own Settings resolves the route.
-        worker = job_tokens.scoped_model_env(
+        worker = job_tokens.provider_env(
             agent="codex", model=model, settings=launcher
-        )
+        ).agent_env
         assert not names & set(worker)
-    assert "ODDISH_AZURE_OPENAI_DEPLOYMENTS" not in env  # public: none configured
+    assert (
+        json.loads(env.driver_env["ODDISH_AZURE_OPENAI_DEPLOYMENTS"]) == {}
+    )  # public: none configured
     # Another provider on the same worker never gets them.
-    assert job_tokens.scoped_model_env(
+    assert job_tokens.provider_env(
         agent="terminus-2",
         model="anthropic/claude-sonnet-5",
         settings=azure,
         ambient=AMBIENT,
-    ) == {"ANTHROPIC_API_KEY": "ant"}
+    ).agent_env == {"ANTHROPIC_API_KEY": "ant"}

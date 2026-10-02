@@ -2,7 +2,7 @@
 
 A row that carries no model still names one in its ``agent_config``, and the
 runner in the sandbox follows that model. The worker path hands the stored
-config to ``scoped_model_env`` (via ``build_bundle``); keyed on the bare row
+config to ``provider_env`` (via ``build_bundle``); keyed on the bare row
 model alone, the launcher would ship the agent's default bundle instead.
 """
 
@@ -46,7 +46,7 @@ async def test_launch_forwards_the_stored_harbor_config(monkeypatch):
 
     def _scoped(**kwargs):
         seen.append(kwargs.get("raw_harbor_config"))
-        return {}
+        return job_tokens.ProviderEnv(driver_env={}, agent_env={})
 
     monkeypatch.setattr(ml, "control_plane_url", lambda: "https://api.test")
     monkeypatch.setattr(ml, "record_monitor_heartbeat", _noop)
@@ -66,7 +66,7 @@ async def test_launch_forwards_the_stored_harbor_config(monkeypatch):
     monkeypatch.setattr(
         ml.monitor_token, "mint_monitor_credential", lambda *a: _val("tok")
     )
-    monkeypatch.setattr(job_tokens, "scoped_model_env", _scoped)
+    monkeypatch.setattr(job_tokens, "provider_env", _scoped)
     monkeypatch.setattr(
         ml.monitor_image_cache,
         "resolve",

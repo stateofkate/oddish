@@ -1024,3 +1024,14 @@ deferred, failed, and cancelled cycles; only completed cycles advance
 `last_success_at`. Dependency errors still fail dispatch; an internal deadline
 defers work to the next scheduled invocation. External cancellation propagates.
 These changes do not repair slow GKE queries or alter Slack/endpoint schedules.
+
+
+### Execution provenance
+
+Production, staging and preview workflows pass the checked-out Git commit as
+`ODDISH_RELEASE`. Modal includes it in image environment settings and the final
+runtime secret so older named secrets cannot overwrite it. Workers forward it
+to monitor startup; existing observability uses it as the service version.
+Trial settlement events include model, worker job ID, exception type and
+provider error code after the database commit, without credential values or raw
+exception messages. Missing error metadata stays null.
