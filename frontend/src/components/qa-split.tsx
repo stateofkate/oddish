@@ -1,5 +1,7 @@
-// Shared by the server QA issues page and the delivery page's client card.
+// Shared by the QA issues pages, the experiment page, and the delivery page's
+// client card.
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { ShieldAlert } from "lucide-react";
 import { QaBurndownChart } from "@/components/qa-burndown-chart";
 import { BURNDOWN_SERIES, type QaIssueReport } from "@/lib/qa-issues";
@@ -25,6 +27,7 @@ export function QaSplit({
   href,
   pointsHref,
   selected,
+  action,
 }: {
   summary: QaIssueReport["summary"];
   burndown: QaIssueReport["burndown"];
@@ -34,6 +37,8 @@ export function QaSplit({
   pointsHref?: string;
   /** The version the report shows; undefined for Now. */
   selected?: number;
+  /** A control at the end of the count row. */
+  action?: ReactNode;
 }) {
   return (
     <section className="bg-card space-y-3 rounded-xl border p-4">
@@ -47,6 +52,7 @@ export function QaSplit({
             QA issues
           </Link>
         )}
+        {action && <div className="order-last ml-auto">{action}</div>}
         <h2 className="text-sm font-medium">
           <span className="text-muted-foreground">Tasks:</span>{" "}
           <span className="text-2xl font-semibold tabular-nums">

@@ -115,6 +115,10 @@ import {
 } from "lucide-react";
 import { QueueKeyIcon } from "./queue-key-icon";
 import { StatusIcon } from "./status-icon";
+import {
+  ExperimentQaIssues,
+  type QaIssuesTarget,
+} from "@/components/experiment-qa-issues";
 import { apiFetch } from "@/lib/api";
 
 const PassAtKGraph = dynamic(
@@ -165,6 +169,7 @@ type ExperimentTrialsTableProps = {
   allowRerun?: boolean;
   readOnly?: boolean;
   showAnalysis?: boolean;
+  qaIssues?: QaIssuesTarget;
   onTrialSelect?: (
     trial: Trial,
     task: Task,
@@ -599,6 +604,7 @@ export function ExperimentTrialsTable({
   allowRerun = true,
   readOnly = false,
   showAnalysis = true,
+  qaIssues,
   onTrialSelect,
   onTaskSelect,
   onTaskNavChange,
@@ -626,13 +632,15 @@ export function ExperimentTrialsTable({
     [tasks]
   );
   const rejectedCount = rejectedTasks.length;
-  const mustFixTotal = useMemo(
+  const reviewStatusKey = useMemo(
     () =>
-      rejectedTasks.reduce(
-        (total, task) => total + (task.must_fix_count ?? 0),
-        0
-      ),
-    [rejectedTasks]
+      tasks
+        .map(
+          (task) =>
+            `${task.id}:${taskReviewStatus(task)}:${task.pre_trial_status ?? ""}:${task.must_fix_count ?? 0}`
+        )
+        .join(),
+    [tasks]
   );
   const openTaskInDrawer = useCallback(
     (
@@ -2049,47 +2057,48 @@ export function ExperimentTrialsTable({
   return (
     <TooltipProvider>
       <div className="space-y-4">
-        {showAnalysis && (rejectedCount > 0 || rejectedOnly) && (
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-red-500/50 bg-red-500/10 p-4">
-            <div>
-              <p className="text-base font-semibold text-red-700 dark:text-red-300">
-                {`${rejectedCount} ${
-                  rejectedCount === 1 ? "task" : "tasks"
-                } rejected by QA`}
-                {mustFixTotal > 0 ? ` · ${mustFixTotal} Must fix` : null}
-              </p>
-            </div>
-            <Button
-              type="button"
-              variant="outline"
-              aria-pressed={rejectedOnly}
-              onClick={() => {
-                const next = !rejectedOnly;
-                setRejectedOnly(next);
-                setTaskSearch("");
-                setRowFilterMode("none");
-                clearSelection();
-                if (next) {
-                  const reviewTasks = sortVisibleTasks(rejectedTasks, taskSort);
-                  if (reviewTasks[0]) {
-                    openTaskInDrawer(reviewTasks[0], {
-                      orderedTasks: reviewTasks,
-                      taskIndex: 0,
-                      taskNavScope: "rejected",
-                    });
-                  }
-                } else {
-                  // Widen next/prev on the open drawer; do not reopen or jump.
-                  onTaskNavChange?.({
-                    orderedTasks: sortVisibleTasks(tasks, taskSort),
-                    taskNavScope: "experiment",
-                  });
-                }
-              }}
-            >
-              {rejectedOnly ? "Show all tasks" : "Review rejected tasks"}
-            </Button>
-          </div>
+        {showAnalysis && qaIssues && (
+          <ExperimentQaIssues
+            {...qaIssues}
+            refreshKey={reviewStatusKey}
+            action={
+              rejectedCount > 0 || rejectedOnly ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  aria-pressed={rejectedOnly}
+                  onClick={() => {
+                    const next = !rejectedOnly;
+                    setRejectedOnly(next);
+                    setTaskSearch("");
+                    setRowFilterMode("none");
+                    clearSelection();
+                    if (next) {
+                      const reviewTasks = sortVisibleTasks(
+                        rejectedTasks,
+                        taskSort
+                      );
+                      if (reviewTasks[0]) {
+                        openTaskInDrawer(reviewTasks[0], {
+                          orderedTasks: reviewTasks,
+                          taskIndex: 0,
+                          taskNavScope: "rejected",
+                        });
+                      }
+                    } else {
+                      // Widen next/prev on the open drawer; do not reopen or jump.
+                      onTaskNavChange?.({
+                        orderedTasks: sortVisibleTasks(tasks, taskSort),
+                        taskNavScope: "experiment",
+                      });
+                    }
+                  }}
+                >
+                  {rejectedOnly ? "Show all tasks" : "Review rejected tasks"}
+                </Button>
+              ) : null
+            }
+          />
         )}
         {/* Pass/k Graph - only shows when there are multiple trials per task-agent */}
         {showPassAtK && !pagesComplete && (

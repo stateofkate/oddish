@@ -51,15 +51,14 @@ test("page keeps its verdict while the drawer shows its own verdict and control"
   await expect(page.getByText(/^(Verdict rejected: )?1 Must fix$/)).toHaveCount(
     2
   );
+  // A rejected verdict is final: neither the page nor the drawer offers a
+  // rerun.
   await expect(
     page.getByRole("button", { name: /Generate QA verdict for v7/i })
-  ).toHaveCount(2);
+  ).toHaveCount(0);
   const drawer = page.locator('[data-slot="resizable-drawer"]');
   await expect(
     drawer.getByText(/^(Verdict rejected: )?1 Must fix$/)
-  ).toHaveCount(1);
-  await expect(
-    drawer.getByRole("button", { name: /Generate QA verdict for v7/i })
   ).toHaveCount(1);
   await drawer.getByRole("button", { name: "Close", exact: true }).click();
   await expect(page.getByText(/^(Verdict rejected: )?1 Must fix$/)).toHaveCount(
@@ -67,13 +66,7 @@ test("page keeps its verdict while the drawer shows its own verdict and control"
   );
   await expect(
     page.getByRole("button", { name: /Generate QA verdict for v7/i })
-  ).toHaveCount(1);
-  await expect(
-    page.getByRole("button", {
-      name: "Generate QA verdict for v7",
-      exact: true,
-    })
-  ).toBeVisible();
+  ).toHaveCount(0);
 });
 
 test("usage, action counts and experiment groups retain their meaning at desktop and narrow widths", async ({
@@ -213,11 +206,8 @@ test("opening a trial drawer preserves acceptance before and after the panel res
   }
   await panelResponse;
   await expect(
-    drawer.getByRole("button", {
-      name: "Generate QA verdict for v7",
-      exact: true,
-    })
-  ).toBeDisabled();
+    drawer.getByRole("button", { name: /Generate QA verdict/ })
+  ).toHaveCount(0);
   await expect(accepted).toHaveCount(2);
   await expect(explanation).toHaveCount(2);
   await expect(
@@ -240,19 +230,15 @@ for (const mode of ["task", "trial"]) {
       let queued = false;
       await page.route("**/api/tasks/task-a/open**", (route) => {
         const open = openFor(tasks[0], 7);
+        // Only a failed verdict or audit can be run again; an accepted or
+        // rejected verdict is final.
         open.task.verdict_status = queued
           ? review === "verdict"
             ? "queued"
             : null
-          : "success";
-        open.task.verdict = queued
-          ? null
-          : {
-              is_good: true,
-              confidence: "high",
-              recommendations: [],
-              reasoning: "The recorded runs support acceptance.",
-            };
+          : "failed";
+        open.task.verdict = null;
+        open.task.verdict_error = queued ? null : "QA run failed.";
         open.selected_version!.must_fix_count = 0;
         open.selected_version!.pre_trial_must_fix_count = 0;
         return route.fulfill({ json: open });
@@ -260,8 +246,8 @@ for (const mode of ["task", "trial"]) {
       await page.route("**/api/tasks/task-a/panel**", async (route) => {
         const panel = await (await route.fetch()).json();
         panel.qa_active = queued;
-        if (queued && review === "audit")
-          panel.version.pre_trial_status = "queued";
+        if (review === "audit")
+          panel.version.pre_trial_status = queued ? "queued" : "failed";
         panel.can_run_qa = !queued;
         panel.version.pre_trial_findings = [];
         panel.version.retained_findings = [];
@@ -282,7 +268,7 @@ for (const mode of ["task", "trial"]) {
       );
       const drawer = page.locator('[data-slot="resizable-drawer"]');
       await expect(
-        page.getByText("Verdict accepted", { exact: true })
+        page.getByText("Verdict failed", { exact: true })
       ).toHaveCount(2);
       await drawer
         .getByRole("button", {
@@ -300,7 +286,7 @@ for (const mode of ["task", "trial"]) {
         )
       ).toHaveCount(2);
       await expect(
-        page.getByText("Verdict accepted", { exact: true })
+        page.getByText("Verdict failed", { exact: true })
       ).toHaveCount(0);
     });
   }

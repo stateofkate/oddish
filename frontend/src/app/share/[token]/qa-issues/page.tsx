@@ -1,8 +1,7 @@
-import { QaIssuesPage } from "@/components/qa-issues-report";
-import { ShareNav } from "@/components/share-nav";
-import { parseQaIssuesView } from "@/lib/qa-issues";
-import { fetchPublicQaIssueReport } from "@/lib/qa-issues-server";
+import { redirect } from "next/navigation";
+import { qaIssuesHref, parseQaIssuesView } from "@/lib/qa-issues";
 
+// The QA view lives on the shared experiment page; old links keep their view.
 export default async function ShareQaIssuesPage({
   params,
   searchParams,
@@ -11,20 +10,10 @@ export default async function ShareQaIssuesPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { token } = await params;
-  const view = parseQaIssuesView(await searchParams);
-  const href = `/share/${encodeURIComponent(token)}`;
-  return (
-    <>
-      <ShareNav />
-      <main className="mx-auto w-full max-w-(--breakpoint-2xl) px-4 py-4">
-        <QaIssuesPage
-          report={fetchPublicQaIssueReport(token, view)}
-          backHref={href}
-          baseHref={`${href}/qa-issues`}
-          apiHref={`/api/public/experiments/${encodeURIComponent(token)}/qa-issues`}
-          linkTasks={false}
-        />
-      </main>
-    </>
+  redirect(
+    qaIssuesHref(
+      `/share/${encodeURIComponent(token)}`,
+      parseQaIssuesView(await searchParams)
+    )
   );
 }

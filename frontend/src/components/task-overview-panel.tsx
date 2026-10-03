@@ -4,7 +4,7 @@ import { useMemo, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import useSWR from "swr";
-import { ArrowUpRight, Loader2, SearchCode } from "lucide-react";
+import { ArrowUpRight, CheckCircle2, Loader2, SearchCode } from "lucide-react";
 
 import {
   EXECUTION_LABELS,
@@ -429,6 +429,19 @@ export function TaskOverviewPanel({
   const auditRunning = (checksStatus ?? "").toLowerCase() === "running";
   // Audits run on the default version; a disabled button names the version
   // on screen instead of one this view never ran.
+  // A finished audit is final for its version; only an unfinished or failed
+  // one can be run again.
+  const auditFinished =
+    !checksStateUnknown &&
+    (checkState === "clean" || checkState === "findings");
+  // Trial findings count too, so a clean audit is not "Passed" until the
+  // version's trials have loaded.
+  const auditPassed =
+    auditFinished &&
+    versionKnown &&
+    displayTrials != null &&
+    !trialsError &&
+    findingItems.length === 0;
   const auditVersion = checksDisabledReason
     ? version
     : verdictTask?.current_version;
@@ -474,7 +487,9 @@ export function TaskOverviewPanel({
       ? `${mustFixCount} Must fix`
       : findingItems.length > 0
         ? `${findingItems.length} finding${findingItems.length === 1 ? "" : "s"}`
-        : checksLoading || !versionKnown || (displayTrials == null && !trialsError)
+        : checksLoading ||
+            !versionKnown ||
+            (displayTrials == null && !trialsError)
           ? "…"
           : checksLoadError || trialsError
             ? "Unavailable"
@@ -726,7 +741,7 @@ export function TaskOverviewPanel({
           <h2 className="text-muted-foreground font-mono text-[11px] font-semibold tracking-wider uppercase">
             {findingItems.length > 0 ? "Findings" : "Pre-trial audit"}
           </h2>
-          {!(verdictTask && mustFixCount > 0) && (
+          {!auditPassed && !(verdictTask && mustFixCount > 0) && (
             <span className="text-muted-foreground font-mono text-[11px]">
               {findingsSummary}
             </span>
@@ -739,7 +754,7 @@ export function TaskOverviewPanel({
                 label="the task's findings"
               />
             ) : null}
-            {!readOnly && onRerunChecks ? (
+            {!readOnly && onRerunChecks && !auditFinished ? (
               // A disabled button gets no hover events, so a wrapper carries
               // the reason.
               checksDisabledReason ? (
@@ -751,6 +766,14 @@ export function TaskOverviewPanel({
           </div>
         </div>
 
+        {auditPassed ? (
+          <div className="flex items-center gap-2.5 rounded-[10px] border border-emerald-500/40 bg-emerald-500/[0.04] px-3 py-2">
+            <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
+            <span className="font-mono text-[12px] font-semibold text-[color:var(--paper-ink)]">
+              Passed
+            </span>
+          </div>
+        ) : null}
         {checksQueueError ? (
           <p className="text-[11px] text-red-500">{checksQueueError}</p>
         ) : null}
@@ -965,9 +988,7 @@ function TrialQaRow({
 
   return (
     <article className="border-border bg-background/40 rounded-lg border">
-      <header className="flex items-center gap-2.5 px-3 py-2">
-        {header}
-      </header>
+      <header className="flex items-center gap-2.5 px-3 py-2">{header}</header>
       <div className="border-border flex flex-col gap-2 border-t px-3 py-3">
         {analysis?.root_cause ? (
           <div className="flex items-baseline gap-2">

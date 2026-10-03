@@ -174,6 +174,16 @@ async function mockShare(
       body = { result: null };
     } else if (path === `${publicBase}/trials/trial-qa/files`) {
       body = { files: [] };
+    } else if (path === `${publicBase}/qa-issues`) {
+      body = {
+        scope_name: "Shared QA example",
+        summary: { tasks: 1, blocked: 0, clear: 1, waiting: 0 },
+        burndown: [{ version: null, blocked: 0, clear: 1, waiting: 0 }],
+        categories: [],
+        category: null,
+        task_total: 0,
+        tasks: [],
+      };
     } else {
       unexpectedRequests.push(`${request.method()} ${path}${url.search}`);
       await route.fulfill({
@@ -239,6 +249,15 @@ test("a share link shows read-only task and trial QA when the flag is on", async
   await expect(
     page.getByRole("heading", { name: "Shared QA example" })
   ).toBeVisible();
+  // The QA view is part of the shared experiment page.
+  const categories = page.getByRole("button", {
+    name: "Categories",
+    exact: true,
+  });
+  await expect(categories).toHaveAttribute("aria-expanded", "false");
+  await page.getByText("Clear:", { exact: true }).click();
+  await expect(categories).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByText("No issues.", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: task.name, exact: true }).click();
   await page.getByRole("button", { name: "Overview", exact: true }).click();
   await expect(page.getByText(finding.title!, { exact: true })).toBeVisible();

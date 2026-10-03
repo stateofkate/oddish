@@ -53,6 +53,32 @@ export async function GET(request: NextRequest) {
       ? NextResponse.json(trajectory)
       : NextResponse.json({ detail: "Not found" }, { status: 404 });
   }
+  if (parts[0] === "experiments" && parts[2] === "qa-issues") {
+    const category = request.nextUrl.searchParams.get("category");
+    return NextResponse.json({
+      scope_name: "Review demo",
+      summary: { tasks: 6, blocked: 2, clear: 3, waiting: 1 },
+      burndown: [
+        { version: 1, blocked: 4, clear: 1, waiting: 1 },
+        { version: 2, blocked: 3, clear: 2, waiting: 1 },
+        { version: null, blocked: 2, clear: 3, waiting: 1 },
+      ],
+      categories: [
+        {
+          slug: "verifier",
+          name: "Verifier",
+          dimension: "task",
+          description: "The verifier accepts or rejects the wrong output.",
+          issues: 3,
+          blocking_issues: 2,
+          tasks: 2,
+        },
+      ],
+      category,
+      task_total: 0,
+      tasks: [],
+    });
+  }
   if (parts[0] === "duplication" && parts.at(-1) === "trials") {
     const original = tasks[0].trials![0];
     return NextResponse.json(

@@ -16,12 +16,9 @@ import { apiFetch, fetcher } from "@/lib/api";
 import { useExperimentResults } from "@/lib/use-experiment-results";
 import { useExperimentCostTotals } from "@/lib/use-experiment-cost-totals";
 import { isOrgAdminRole } from "@/lib/org-roles";
-import { Pencil, ShieldAlert } from "lucide-react";
+import { Pencil } from "lucide-react";
 import { encodeExperimentRouteParam } from "@/lib/utils";
 import { ExperimentPageSkeleton } from "@/components/experiment-page-skeleton";
-
-const HEADER_ACTION_BUTTON_CLASS =
-  "h-8 select-none gap-[7px] rounded-[7px] border border-[color:var(--paper-line)] bg-[color:var(--paper-surface)] px-3 text-[12px] leading-none text-[color:var(--paper-ink)] transition-colors hover:border-[color:var(--paper-ink-4)] hover:bg-[color:var(--paper-surface-2)]";
 
 type ExperimentClientPageProps = {
   experimentId: string;
@@ -293,6 +290,15 @@ function ExperimentContent({ experimentId }: ExperimentClientPageProps) {
           // it with the fatal error state during a transient backend failure.
           hasError={hasFatalTaskLoadError}
           loadFullTrialOnOpen
+          qaIssues={
+            encodedId
+              ? {
+                  baseHref: `/experiments/${encodedId}`,
+                  apiHref: `/api/experiments/${encodedId}/qa-issues`,
+                  linkTasks: true,
+                }
+              : undefined
+          }
           headerLeft={
             isEditingName ? (
               <div className="flex flex-wrap items-center gap-2">
@@ -383,18 +389,6 @@ function ExperimentContent({ experimentId }: ExperimentClientPageProps) {
           headerRight={
             experimentId ? (
               <div className="flex items-center gap-2">
-                <Button
-                  variant="ghost"
-                  asChild
-                  className={HEADER_ACTION_BUTTON_CLASS}
-                >
-                  <Link
-                    href={`/experiments/${encodeExperimentRouteParam(experimentId)}/qa-issues`}
-                  >
-                    <ShieldAlert className="h-3.5 w-3.5" />
-                    QA issues
-                  </Link>
-                </Button>
                 <ExperimentShareButton
                   experimentId={experimentId}
                   canManageShare={canManageExperimentShare}

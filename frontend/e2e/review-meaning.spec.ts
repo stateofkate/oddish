@@ -7,7 +7,7 @@ import {
 import { deliveryVerdictState } from "../src/lib/verdict-state";
 import { board, tasks, records } from "./review-app/records";
 import { pageFixture } from "./delivery-page-fixtures";
-import type { DeliveryQAStatus } from "../src/lib/types";
+import type { DeliveryQAStatus, Task } from "../src/lib/types";
 
 for (const record of records) {
   test(`review meaning: ${record.name}`, () => {
@@ -114,10 +114,12 @@ test.describe("real components with local fixture API", () => {
           document.body.prepend(bar);
         }
       });
-      const header = page.locator("thead");
+      const header = page
+        .getByRole("table", { name: /^Trial results by task/ })
+        .locator("thead");
       await expect(page.locator("tbody tr[data-index]").first()).toBeVisible();
       await page.evaluate(() => {
-        const table = document.querySelector("tbody")!.closest("table")!;
+        const table = document.querySelector("tbody[role]")!.closest("table")!;
         window.scrollTo(
           0,
           table.getBoundingClientRect().top + window.scrollY + 500
@@ -137,7 +139,7 @@ test.describe("real components with local fixture API", () => {
         (element) => element.getBoundingClientRect().left
       );
       const distance = await page
-        .locator("table:has(tbody)")
+        .locator("table:has(tbody[role])")
         .evaluate((table) => {
           const wrapper = table.parentElement!;
           wrapper.scrollLeft = 120;
@@ -160,8 +162,8 @@ test.describe("real components with local fixture API", () => {
       // body must follow it.
       const scrollLefts = () =>
         page.evaluate(() => {
-          const body = document.querySelector("tbody")!.closest("table")!;
-          const head = document.querySelector("thead")!.closest("table")!;
+          const body = document.querySelector("tbody[role]")!.closest("table")!;
+          const head = document.querySelector("thead[role]")!.closest("table")!;
           return [
             head.parentElement!.scrollLeft,
             body.parentElement!.scrollLeft,
@@ -209,7 +211,7 @@ test.describe("real components with local fixture API", () => {
         const spacer = document.createElement("div");
         spacer.style.height = "1000px";
         document.body.append(spacer);
-        const table = document.querySelector("tbody")!.closest("table")!;
+        const table = document.querySelector("tbody[role]")!.closest("table")!;
         window.scrollTo(
           0,
           table.getBoundingClientRect().bottom + window.scrollY - 30
@@ -311,6 +313,44 @@ test.describe("real components with local fixture API", () => {
     await expect(page.getByRole("tooltip")).toHaveCount(0);
   });
 
+  test("the QA chart opens its categories in place on the experiment page", async ({
+    page,
+  }) => {
+    await page.goto("/experiments/review-demo?keep=1&gone=1");
+    await expect(page.getByText("Blocked:", { exact: true })).toBeVisible();
+    await expect(page.getByText(/rejected by QA/)).toHaveCount(0);
+    // The trials table and drawer keep Next's history state when they write
+    // the URL, so useSearchParams never sees it; the link must use the live URL.
+    await page.evaluate(() =>
+      window.history.replaceState(
+        window.history.state,
+        "",
+        "?keep=1&task=task-a"
+      )
+    );
+    await expect(
+      page.getByRole("button", { name: "Review rejected tasks", exact: true })
+    ).toBeVisible();
+    const categories = page.getByRole("button", {
+      name: "Categories",
+      exact: true,
+    });
+    await expect(categories).toHaveAttribute("aria-expanded", "false");
+    await page.getByText("Blocked:", { exact: true }).click();
+    await expect(categories).toHaveAttribute("aria-expanded", "true");
+    const verifier = page.getByRole("link", { name: /Verifier/ });
+    await expect(verifier).toBeVisible();
+    await verifier.click();
+    // Opening a category keeps the experiment page's own parameters.
+    await expect(page).toHaveURL(/keep=1/);
+    await expect(page).toHaveURL(/task=task-a/);
+    await expect(page).not.toHaveURL(/gone=1/);
+    await expect(page).toHaveURL(/category=verifier/);
+    await categories.click();
+    await expect(categories).toHaveAttribute("aria-expanded", "false");
+    await expect(verifier).toHaveCount(0);
+  });
+
   test("rejected rows show only the must-fix count, with the issue in details", async ({
     page,
   }) => {
@@ -390,6 +430,7 @@ test.describe("real components with local fixture API", () => {
       panel.task.review_version_matches = false;
       panel.version.pre_trial_findings = [];
       panel.version.retained_findings = [];
+      panel.version.pre_trial_trial_id = "task-a-v4-audit";
       await route.fulfill({ json: panel });
     });
     await page.setViewportSize({ width: 1600, height: 900 });
@@ -406,12 +447,18 @@ test.describe("real components with local fixture API", () => {
       "title",
       "This experiment ran v4. Add v7 trials to it to run this."
     );
+    // v4's audit finished clean: it shows as passed with no rerun.
     await expect(
-      drawer.getByRole("button", {
-        name: "Run pre-trial audit v4",
-        exact: true,
-      })
-    ).toBeDisabled();
+      drawer.getByRole("button", { name: /Run pre-trial audit/ })
+    ).toHaveCount(0);
+    await expect(drawer.getByText("Passed", { exact: true })).toBeVisible();
+    for (const vote of ["Agree", "Disagree"])
+      await expect(
+        drawer.getByRole("button", {
+          name: `${vote} with the pre-trial audit`,
+          exact: true,
+        })
+      ).toBeVisible();
     await expect(
       drawer.getByRole("link", {
         name: "Newer task version available · v4 of v7",
@@ -469,12 +516,10 @@ test.describe("real components with local fixture API", () => {
     await expect(
       drawer.getByText("v4's baselines and agent runs support the task.")
     ).toBeVisible();
+    // The accepted verdict is final.
     await expect(
-      drawer.getByRole("button", {
-        name: "Generate QA verdict for v4",
-        exact: true,
-      })
-    ).toBeDisabled();
+      drawer.getByRole("button", { name: /Generate QA verdict/ })
+    ).toHaveCount(0);
     if (process.env.DRAWER_SCREENSHOT_PATH)
       await drawer.screenshot({ path: process.env.DRAWER_SCREENSHOT_PATH });
   });
@@ -937,6 +982,23 @@ test.describe("real components with local fixture API", () => {
       if (request.url().includes("/api/") && request.method() !== "GET")
         writes.push(new URL(request.url()).pathname);
     });
+    // Only a failed audit or verdict can be run again.
+    const fail = (task: Task) => {
+      task.verdict_status = "failed";
+      task.verdict = null;
+      task.verdict_error = "QA run failed.";
+    };
+    await page.route(/\/api\/tasks\/task-a\/open(?:\?|$)/, async (route) => {
+      const open = await (await route.fetch()).json();
+      fail(open.task);
+      await route.fulfill({ json: open });
+    });
+    await page.route(/\/api\/tasks\/task-a\/panel(?:\?|$)/, async (route) => {
+      const panel = await (await route.fetch()).json();
+      fail(panel.task);
+      panel.version.pre_trial_status = "failed";
+      await route.fulfill({ json: panel });
+    });
     await page.goto(findingHref("task-a", 7, records[0].finding!));
     const source = page.getByRole("button", {
       name: "Run pre-trial audit v7",
@@ -1247,9 +1309,7 @@ test.describe("real components with local fixture API", () => {
   });
 });
 
-test("task-page findings show their evidence immediately", async ({
-  page,
-}) => {
+test("task-page findings show their evidence immediately", async ({ page }) => {
   test.skip(process.env.E2E_REVIEW_FIXTURES !== "1");
   const first = {
     id: "first-fix",

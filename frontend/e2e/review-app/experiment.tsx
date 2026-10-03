@@ -124,6 +124,11 @@ export function FixtureExperiment() {
   return (
     <ExperimentDetailView
       experimentId="review-demo"
+      qaIssues={{
+        baseHref: "/experiments/review-demo",
+        apiHref: "/api/experiments/review-demo/qa-issues",
+        linkTasks: true,
+      }}
       tasksForExperiment={displayedTasks}
       pageSummary={summary}
       costTotals={

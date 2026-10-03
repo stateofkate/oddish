@@ -4,6 +4,7 @@
 // with history.pushState, and each category's tasks load once through SWR,
 // starting when the pointer reaches the row.
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import useSWR, { preload, SWRConfig, useSWRConfig } from "swr";
 import {
@@ -50,11 +51,19 @@ export function QaIssuesLink({
 }) {
   const view = useQaIssuesView(baseHref);
   const orgPath = useOrgPath();
+  const router = useRouter();
+  const href = () =>
+    orgPath(qaIssuesHref(baseHref, { ...view, page: 1, ...set }));
   return (
     <Link
-      href={orgPath(qaIssuesHref(baseHref, { ...view, page: 1, ...set }))}
+      href={href()}
       scroll={false}
       prefetch={false}
+      onClick={(event) => {
+        if (event.metaKey || event.ctrlKey || event.shiftKey) return;
+        event.preventDefault();
+        router.push(href(), { scroll: false });
+      }}
       className="hover:underline"
     >
       {children}

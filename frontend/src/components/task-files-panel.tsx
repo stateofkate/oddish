@@ -74,6 +74,7 @@ import { isAgentTrial } from "@/lib/types";
 import { NewTaskVersionBadge } from "@/components/new-task-version-badge";
 import { TaskOverviewPanel } from "@/components/task-overview-panel";
 import { defaultVersionElsewhere } from "@/lib/experiment-task-version";
+import { taskReviewStatus } from "@/lib/review";
 import {
   getCancelActionLabel,
   isActivePipelineStatus,
@@ -1058,6 +1059,13 @@ export function TaskFilesPanel({
     ? currentVersion
     : verdictSource?.current_version;
   const qaActionLabel = `Generate QA verdict${qaVersion != null ? ` for v${qaVersion}` : ""}`;
+  // An accepted or rejected verdict is final: the button returns only when
+  // there is no verdict yet or the last one failed.
+  const qaVerdictReview = verdictSource
+    ? taskReviewStatus(verdictSource)
+    : "no_verdict";
+  const qaVerdictFinal =
+    qaVerdictReview === "accepted" || qaVerdictReview === "rejected";
 
   const navigateTo = useCallback(
     (nextIndex: number) => {
@@ -2261,6 +2269,7 @@ export function TaskFilesPanel({
                     !readOnly &&
                     showAnalysis &&
                     task &&
+                    !qaVerdictFinal &&
                     // A disabled button gets no hover events, so a wrapper
                     // carries the reason.
                     (versionActionHint ? (
@@ -2376,14 +2385,14 @@ export function TaskFilesPanel({
 
               <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
                 <div className="border-border bg-muted/30 rounded-md border px-3 py-1.5 text-right">
-                  <div className="text-muted-foreground text-[9px] leading-none tracking-wider uppercase">
+                  <div className="font-mono text-[9px] leading-none font-semibold tracking-[0.09em] text-[color:var(--paper-ink-3)] uppercase">
                     Avg score
                   </div>
                   <div className="mt-1 flex items-baseline justify-end gap-2">
-                    <span className="font-mono text-sm leading-none font-semibold">
+                    <span className="font-display text-base leading-none font-medium tracking-[-0.02em]">
                       {averageRewardPct !== null ? `${averageRewardPct}%` : "—"}
                     </span>
-                    <span className="text-muted-foreground text-[10px] leading-none">
+                    <span className="text-muted-foreground font-mono text-[10px] leading-none">
                       {rewardTotal && rewardTotal > 0 && rewardSuccess != null
                         ? `${rewardSuccess.toFixed(2)}/${rewardTotal}`
                         : "No results"}

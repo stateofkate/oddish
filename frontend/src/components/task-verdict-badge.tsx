@@ -148,7 +148,10 @@ export function TaskVerdictBadge({
       </div>
     ) : null;
   const verdict = task.verdict ?? null;
-  const showRunButton = onRunJudge != null && !p.pending && !isRunning;
+  // An accepted or rejected verdict is final; disagreement goes through the
+  // verdict feedback votes, not a rerun.
+  const showRunButton =
+    onRunJudge != null && !p.pending && !isRunning && p.isGood === null;
   const showCancelButton = onCancelJudge != null && p.pending;
   const runLabel = `Generate QA verdict${task.current_version != null ? ` for v${task.current_version}` : ""}`;
 

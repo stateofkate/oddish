@@ -1,8 +1,6 @@
 "use client";
 
-import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ShieldAlert } from "lucide-react";
 import useSWR from "swr";
 import { ExperimentDetailView } from "@/components/experiment-detail-view";
 import { ExperimentDescription } from "@/components/experiment-description";
@@ -135,16 +133,14 @@ export default function PublicExperimentPage() {
                 readOnly
               />
             }
-            headerRight={
-              experimentInfo.show_qa && token ? (
-                <Link
-                  href={`/share/${encodeURIComponent(token)}/qa-issues`}
-                  className="hover:bg-muted inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-xs"
-                >
-                  <ShieldAlert className="h-3.5 w-3.5" />
-                  QA issues
-                </Link>
-              ) : null
+            qaIssues={
+              experimentInfo.show_qa && token
+                ? {
+                    baseHref: `/share/${encodeURIComponent(token)}`,
+                    apiHref: `/api/public/experiments/${encodeURIComponent(token)}/qa-issues`,
+                    linkTasks: false,
+                  }
+                : undefined
             }
             readOnly
             allowRetry={false}

@@ -15,6 +15,7 @@ import useSWR from "swr";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { PaperToggle } from "@/components/paper-toggle";
+import { type QaIssuesTarget } from "@/components/experiment-qa-issues";
 import { ExperimentTrialsTable } from "@/components/experiment-trials-table";
 import { ExperimentPageSkeleton } from "@/components/experiment-page-skeleton";
 import {
@@ -158,6 +159,8 @@ interface ExperimentDetailViewProps {
   readOnly?: boolean;
   allowRetry?: boolean;
   showAnalysis?: boolean;
+  /** Where the embedded QA view links and fetches; omitted, it is hidden. */
+  qaIssues?: QaIssuesTarget;
   apiBaseUrl?: string;
   focusUrl?: string;
   onTaskUnlink?: (task: Task) => Promise<void>;
@@ -662,15 +665,24 @@ function ExperimentSummaryBar({
   const costIsSpend = costStatus === "ready";
   const costPending = costStatus === "idle" || costStatus === "loading";
   const costUnavailable = costStatus === "error";
+  // With no gathered trials the two run-cost tiles carry the same number;
+  // show it once.
+  const showOwnedSpend =
+    showNewSpend &&
+    !(
+      summary.costTrialCount === summary.ownedTrialCount &&
+      formatCostUsd(summary.costUsd) === formatCostUsd(summary.ownedCostUsd) &&
+      formatCostUsd(summary.qaCostUsd) === formatCostUsd(summary.ownedQaCostUsd)
+    );
 
   return (
     <div
       className={`grid grid-cols-2 overflow-hidden rounded-[10px] border border-[color:var(--paper-line)] bg-[color:var(--paper-surface)] ${
         qa
-          ? showNewSpend
+          ? showOwnedSpend
             ? "md:grid-cols-[1fr_1.6fr_0.7fr_1fr_1fr_1fr]"
             : "md:grid-cols-[1fr_1.6fr_0.7fr_1fr_1fr]"
-          : showNewSpend
+          : showOwnedSpend
             ? "md:grid-cols-[1fr_1.6fr_0.7fr_1fr_1fr]"
             : "md:grid-cols-[1fr_1.6fr_0.7fr_1fr]"
       }`}
@@ -705,7 +717,7 @@ function ExperimentSummaryBar({
         <span className="font-mono text-[10px] text-[color:var(--paper-ink-3)]">
           {completionPct.toFixed(0)}%
         </span>
-        <div className="border-border mt-2 border-t pt-2 text-[10px] font-semibold tracking-wider text-[color:var(--paper-ink-3)] uppercase">
+        <div className="border-border mt-2 border-t pt-2 font-mono text-[10px] font-semibold tracking-[0.09em] text-[color:var(--paper-ink-3)] uppercase">
           Outcome distribution
         </div>
         <div className="flex h-1.5 overflow-hidden rounded-[3px] bg-[color:var(--paper-bg-2)]">
@@ -775,7 +787,7 @@ function ExperimentSummaryBar({
       </KpiTile>
       {qa && (
         <KpiTile label="QA verdicts">
-          <div className="flex flex-wrap gap-x-1.5 gap-y-0.5 text-xs">
+          <div className="flex flex-wrap gap-x-1.5 gap-y-0.5 font-mono text-[11px] text-[color:var(--paper-ink-2)]">
             {VERDICT_STATES.map(
               (value) =>
                 [value, qa[value], VERDICT_STATE_LABELS[value]] as const
@@ -899,7 +911,7 @@ function ExperimentSummaryBar({
           </span>
         )}
       </KpiTile>
-      {showNewSpend && (
+      {showOwnedSpend && (
         <KpiTile
           label="This experiment's run cost"
           labelInfo="Cost of this experiment’s own trials across all versions, excluding runs collected from other experiments. QA costs are listed separately."
@@ -1022,6 +1034,7 @@ export function ExperimentDetailView({
   readOnly = false,
   allowRetry = true,
   showAnalysis = true,
+  qaIssues,
   apiBaseUrl = "/api",
   focusUrl,
   onTaskUnlink,
@@ -1952,6 +1965,7 @@ export function ExperimentDetailView({
                 allowRerun={allowRetry}
                 readOnly={readOnly}
                 showAnalysis={showAnalysis}
+                qaIssues={qaIssues}
                 rejectedOnly={rejectedOnly}
                 onRejectedOnlyChange={setRejectedOnly}
                 onTrialSelect={(trial, task, context) => {
