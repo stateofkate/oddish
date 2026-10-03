@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from oddish.db import TrialModel, WorkerJobModel, WorkerJobStatus
+from oddish.db import TrialModel, TrialStatus, WorkerJobModel, WorkerJobStatus
 from oddish.db.storage import StorageClient
 from oddish.workers.launcher import settle as monitor_settle
 
@@ -56,6 +56,7 @@ async def test_settle_deletes_the_stored_archive_key_only_after_the_upload(
         id="task-1-0", task_id="task-1", experiment_id=None, task_version_id=None,
         agent="oracle", model=None, environment="docker", harbor_config=None,
         kind="agent", org_id="org-1", billed_user_id=None, attempts=1,
+        status=TrialStatus.RUNNING,
     )  # fmt: skip
     rows = {WorkerJobModel: job, TrialModel: trial}
 

@@ -56,7 +56,12 @@ from oddish.runtime.ec2_orphans import (
     Ec2WorkerLiveness,
     decide_ec2_orphan,
 )
-from oddish.workers.launcher.reaper import REAPABLE, check_stale_monitor_jobs
+from oddish.workers.launcher.reaper import (
+    PASS_DEADLINE_SECONDS,
+    REAPABLE,
+    check_stale_monitor_jobs,
+    drain_shielded_settles,
+)
 from oddish.workers.queue.thunder_fallback import emit_thunder_handoff_event
 from oddish.runtime.registry import get_backend
 from oddish.runtime.backends.thunder import (
@@ -516,6 +521,30 @@ async def cleanup_orphaned_queue_state(
 ) -> dict[str, int]:
     """Reconcile stale scheduling state so the queue can make progress.
 
+    Always waits, before returning or raising, for monitor settles the pass
+    deadline stopped waiting on: returning first would let the process exit
+    cancel one between its trial write and its outcome write.
+    """
+    monitor_settles_unfinished = 0
+    try:
+        counts = await _reconcile_orphaned_queue_state(
+            stale_after_minutes=stale_after_minutes
+        )
+    finally:
+        monitor_settles_unfinished = await drain_shielded_settles()
+        if monitor_settles_unfinished:
+            console.print(
+                f"metric=monitor_settle_drain unfinished={monitor_settles_unfinished}"
+            )
+    return {**counts, "monitor_settles_unfinished": monitor_settles_unfinished}
+
+
+async def _reconcile_orphaned_queue_state(
+    *,
+    stale_after_minutes: int,
+) -> dict[str, int]:
+    """The reconciliation steps behind ``cleanup_orphaned_queue_state``.
+
     The only scheduling failure mode after the unified refactor is a
     ``worker_jobs`` row stuck in ``RUNNING`` with a stale heartbeat
     (worker crashed without committing its terminal state). Everything
@@ -586,7 +615,7 @@ async def cleanup_orphaned_queue_state(
     # Provider calls, so before (and outside) the reconciliation transaction.
     monitor_status_check_errors = 0
     monitor_status_checks_deferred = 0
-    monitor_deadline = asyncio.timeout(60)
+    monitor_deadline = asyncio.timeout(PASS_DEADLINE_SECONDS)
     try:
         async with monitor_deadline:
             monitor_status_checks = await check_stale_monitor_jobs(

@@ -24,8 +24,15 @@ from dataclasses import fields
 from pathlib import Path
 from typing import Literal
 
+from sqlalchemy import update
+
 from oddish.core.trial_artifacts import validate_uploaded_analysis_artifacts
-from oddish.db import TrialModel, WorkerJobModel, WorkerJobStatus, get_session
+from oddish.db import (
+    TrialModel,
+    WorkerJobModel,
+    WorkerJobStatus,
+    get_session,
+)
 from oddish.db.storage import get_storage_client
 from oddish.workers.analysis_trials import ANALYSIS_ARTIFACTS, is_analysis_kind
 from oddish.workers.console import console
@@ -42,7 +49,11 @@ from oddish.workers.queue.trial_handler import (
     settle_compute_costs,
     settle_trial_attempt,
 )
-from oddish.workers.queue.trial_steps import artifact_subprefix, load_trial_context
+from oddish.workers.queue.trial_steps import (
+    PreparedTrialRun,
+    artifact_subprefix,
+    load_trial_context,
+)
 from oddish.workers.queue.worker_job_single_job import (
     ClaimedWorkerJob,
     record_outcome,
@@ -55,6 +66,8 @@ SettleOutcome = Literal["settled", "already_settled", "no_result"]
 # Payload key where the launcher records the sandbox capacity lease a handed-off
 # attempt holds ({"provider": ..., "slot": ...}); settlement releases it.
 CAPACITY_PAYLOAD_KEY = "monitor_capacity"
+# Set in ``worker_jobs.monitor_result`` once the attempt's trial write is done.
+TRIAL_SETTLED_KEY = "trial_settled"
 PostSuccessHook = Callable[[str], Awaitable[None]]
 
 
@@ -177,9 +190,18 @@ async def settle_monitor_result(worker_job_id: str, *, attempt: int) -> SettleOu
         trial = await session.get(TrialModel, job.subject_id)
         if trial is None:
             return "no_result"
+        # A settle interrupted between the trial write and the outcome write
+        # left this job RUNNING. Its upload and trial write already ran, so
+        # only the outcome write is left to do: repeating the upload is what
+        # kept the re-run from ever finishing. The trial's own status cannot
+        # tell: Harbor's END lifecycle event marks it terminal before the
+        # monitor reports, so only this attempt's settle mark counts.
+        trial_already_settled = bool(result.get(TRIAL_SETTLED_KEY))
         # The observed attempt's context, read from its pinned task version.
         # Never the attempt starter: that would restart the attempt.
-        prepared = await load_trial_context(session, trial)
+        prepared = (
+            None if trial_already_settled else await load_trial_context(session, trial)
+        )
         claimed = ClaimedWorkerJob(
             id=job.id,
             kind=job.kind,
@@ -195,6 +217,107 @@ async def settle_monitor_result(worker_job_id: str, *, attempt: int) -> SettleOu
             queue_slot=job.current_queue_slot,
         )
 
+    trial_id, worker_id = claimed.subject_id, claimed.worker_id
+    if prepared is None:
+        harbor_outcome = _outcome_from_payload(result.get("outcome"), None)
+        upload_error = None
+    else:
+        harbor_outcome, upload_error = await _settle_trial(claimed, prepared, result)
+        await _mark_trial_settled(claimed.id, attempt, result)
+
+    ensure_builtin_handlers_registered()
+    outcome = await get_handler(claimed.kind).outcome_for_settled_trial(
+        claimed, harbor_outcome
+    )
+    persisted = await record_outcome(
+        job_id=claimed.id,
+        worker_id=worker_id,
+        outcome=outcome,
+        attempts=claimed.attempts,
+        max_attempts=claimed.max_attempts,
+        kind=claimed.kind,
+        subject_table=claimed.subject_table,
+        subject_id=claimed.subject_id,
+    )
+    console.print(
+        "metric=monitor_settle outcome=settled "
+        f"job_id={claimed.id} trial_id={trial_id} attempt={claimed.attempts} "
+        f"job_status={getattr(persisted, 'value', persisted)} "
+        f"had_archive={bool(result.get('archive_key'))} "
+        f"upload_error={upload_error is not None} "
+        f"trial_already_settled={trial_already_settled}"
+    )
+    await resolve_baseline_gate_after_outcome(
+        kind=claimed.kind,
+        queue_key=claimed.queue_key,
+        subject_table=claimed.subject_table,
+        subject_id=claimed.subject_id,
+        persisted_status=persisted,
+    )
+    # The monitor has reported and exited; make sure its sandbox is gone too.
+    if sandbox_provider and sandbox_id:
+        try:
+            from oddish.workers.launcher.providers import base as monitor_sandbox
+
+            await monitor_sandbox.get_starter(sandbox_provider).stop(sandbox_id)
+        except Exception:  # noqa: BLE001 - the provider timeout is the backstop
+            logger.warning("could not stop monitor sandbox %s", sandbox_id)
+    await release_after_attempt(
+        claimed.id,
+        attempt,
+        queue_key=claimed.queue_key,
+        slot=claimed.queue_slot,
+        worker_id=worker_id,
+        payload=claimed.payload,
+    )
+    hook = _post_success_hook
+    # ``persisted`` is set for the one caller whose outcome write won, so two
+    # settles of the same result fire the hook once.
+    if persisted and outcome.success is not None and hook is not None:
+        try:
+            await hook(trial_id)
+        except Exception:
+            logger.exception("post-success hook failed for job=%s", claimed.id)
+    # Only once its artifacts are uploaded: after a failed unpack or upload the
+    # archive is the only copy left. A re-run that skipped the upload cannot
+    # tell whether the interrupted one uploaded, so it keeps the archive.
+    if prepared is not None and result.get("archive_key") and upload_error is None:
+        try:
+            await get_storage_client().delete_object(result["archive_key"])
+        except Exception:  # noqa: BLE001 - staging object; harmless if it lingers
+            logger.warning("could not delete the staging archive for %s", trial_id)
+    return "settled"
+
+
+async def _mark_trial_settled(job_id: str, attempt: int, result: dict) -> None:
+    """Record on the job that this attempt's trial write finished, so a re-run
+    after an interrupted outcome write skips the upload and trial write.
+
+    Best effort: without the mark a re-run repeats the full settle, which is
+    correct, only slower, so a failed write must not stop the outcome write.
+    """
+    try:
+        async with get_session() as session:
+            await session.execute(
+                update(WorkerJobModel)
+                .where(
+                    WorkerJobModel.id == job_id,
+                    WorkerJobModel.attempts == attempt,
+                    WorkerJobModel.status == WorkerJobStatus.RUNNING,
+                )
+                .values(monitor_result={**result, TRIAL_SETTLED_KEY: True})
+            )
+    except Exception:  # noqa: BLE001 - the full re-settle is the fallback
+        logger.exception("could not mark the trial settled for job=%s", job_id)
+
+
+async def _settle_trial(
+    claimed: ClaimedWorkerJob, prepared: PreparedTrialRun, result: dict
+) -> tuple[HarborOutcome | None, str | None]:
+    """Upload the attempt's artifacts and settle the trial row.
+
+    Returns the Harbor outcome and the artifact upload error, if any.
+    """
     trial_id, worker_id = claimed.subject_id, claimed.worker_id
     with tempfile.TemporaryDirectory(prefix="oddish-settle-") as tmp:
         job_dir: Path | None = None
@@ -265,64 +388,4 @@ async def settle_monitor_result(worker_job_id: str, *, attempt: int) -> SettleOu
             trial_s3_key=trial_s3_key,
             artifact_upload_error=upload_error,
         )
-
-    ensure_builtin_handlers_registered()
-    outcome = await get_handler(claimed.kind).outcome_for_settled_trial(
-        claimed, execution.outcome
-    )
-    persisted = await record_outcome(
-        job_id=claimed.id,
-        worker_id=worker_id,
-        outcome=outcome,
-        attempts=claimed.attempts,
-        max_attempts=claimed.max_attempts,
-        kind=claimed.kind,
-        subject_table=claimed.subject_table,
-        subject_id=claimed.subject_id,
-    )
-    console.print(
-        "metric=monitor_settle outcome=settled "
-        f"job_id={claimed.id} trial_id={trial_id} attempt={claimed.attempts} "
-        f"job_status={getattr(persisted, 'value', persisted)} "
-        f"had_archive={bool(result.get('archive_key'))} "
-        f"upload_error={upload_error is not None}"
-    )
-    await resolve_baseline_gate_after_outcome(
-        kind=claimed.kind,
-        queue_key=claimed.queue_key,
-        subject_table=claimed.subject_table,
-        subject_id=claimed.subject_id,
-        persisted_status=persisted,
-    )
-    # The monitor has reported and exited; make sure its sandbox is gone too.
-    if sandbox_provider and sandbox_id:
-        try:
-            from oddish.workers.launcher.providers import base as monitor_sandbox
-
-            await monitor_sandbox.get_starter(sandbox_provider).stop(sandbox_id)
-        except Exception:  # noqa: BLE001 - the provider timeout is the backstop
-            logger.warning("could not stop monitor sandbox %s", sandbox_id)
-    await release_after_attempt(
-        claimed.id,
-        attempt,
-        queue_key=claimed.queue_key,
-        slot=claimed.queue_slot,
-        worker_id=worker_id,
-        payload=claimed.payload,
-    )
-    hook = _post_success_hook
-    # ``persisted`` is set for the one caller whose outcome write won, so two
-    # settles of the same result fire the hook once.
-    if persisted and outcome.success is not None and hook is not None:
-        try:
-            await hook(trial_id)
-        except Exception:
-            logger.exception("post-success hook failed for job=%s", claimed.id)
-    # Only once its artifacts are uploaded: after a failed unpack or upload the
-    # archive is the only copy left.
-    if result.get("archive_key") and upload_error is None:
-        try:
-            await get_storage_client().delete_object(result["archive_key"])
-        except Exception:  # noqa: BLE001 - staging object; harmless if it lingers
-            logger.warning("could not delete the staging archive for %s", trial_id)
-    return "settled"
+    return execution.outcome, upload_error

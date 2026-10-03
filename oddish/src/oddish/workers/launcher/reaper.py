@@ -47,7 +47,15 @@ REAPABLE = UNRESPONSIVE_SWEEPS
 # One reconciler pass spends at most this on monitors, settlement included.
 PASS_BATCH = 50
 PASS_CONCURRENCY = 10
-PASS_BUDGET_SECONDS = 180.0
+# The reconciler cancels the whole pass at PASS_DEADLINE_SECONDS. The budget
+# stops starting new rows well before that, so the pass ends on its own and
+# rows already started get time to finish; a settle that still runs past the
+# deadline is shielded (see ``_settle_shielded``).
+PASS_DEADLINE_SECONDS = 60.0
+PASS_BUDGET_SECONDS = 40.0
+# How long the reconciler waits, before returning, for settles the deadline
+# stopped waiting on. Well inside the reconciler's own 600s function timeout.
+DRAIN_TIMEOUT_SECONDS = 180.0
 
 
 class Verdict(StrEnum):
@@ -172,6 +180,51 @@ async def check_stale_monitor_jobs(*, stale_after_minutes: int) -> dict[str, int
     return counts
 
 
+# Strong references to shielded settles: the event loop only keeps weak ones.
+_shielded_settles: set[asyncio.Task] = set()
+
+
+async def _settle_shielded(job_id: str, attempt: int) -> str:
+    """Settle in a task the pass deadline cannot cancel.
+
+    Settlement writes the trial and then the job. Cancelled between the two,
+    the trial reads terminal while the job stays RUNNING, and a baseline left
+    like that holds its scope's gated trials BLOCKED. When the deadline fires
+    the pass stops waiting, but the settle runs to the end.
+    """
+    task = asyncio.create_task(settle_monitor_result(job_id, attempt=attempt))
+    _shielded_settles.add(task)
+
+    def _done(finished: asyncio.Task) -> None:
+        _shielded_settles.discard(finished)
+        # Retrieve the error here too: after the deadline nobody awaits it.
+        if not finished.cancelled() and finished.exception() is not None:
+            logger.error(
+                "monitor settle failed for job=%s",
+                job_id,
+                exc_info=finished.exception(),
+            )
+
+    task.add_done_callback(_done)
+    return await asyncio.shield(task)
+
+
+async def drain_shielded_settles(
+    timeout_seconds: float = DRAIN_TIMEOUT_SECONDS,
+) -> int:
+    """Wait for settles the pass deadline stopped waiting on.
+
+    The reconciler calls this before it returns, so the process cannot exit
+    and cancel one between its trial write and outcome write. Returns how many
+    are still running after ``timeout_seconds``.
+    """
+    pending = set(_shielded_settles)
+    if not pending:
+        return 0
+    _done, still_running = await asyncio.wait(pending, timeout=timeout_seconds)
+    return len(still_running)
+
+
 async def _stamp_checked(job_id: str, attempt: int) -> None:
     """Move the job to the back of the rotation, whatever happened to it."""
     async with get_session() as session:
@@ -230,7 +283,7 @@ async def _check_one(
         # Settlement moves artifacts, so it is not cheap: it shares the budget
         # and the rotation with the status checks.
         await _stamp_checked(job_id, attempt)
-        outcome = await settle_monitor_result(job_id, attempt=attempt)
+        outcome = await _settle_shielded(job_id, attempt)
         return f"settle_{outcome}"
     if past_deadline or past_launch_deadline:
         # Out of time whatever the monitor says: stop the sandbox, then reap.
