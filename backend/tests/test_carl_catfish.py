@@ -400,3 +400,24 @@ def test_format_live_dates_hours_when_window_crosses_midnight():
     rows = format_catfish_live(payload).splitlines()
     assert rows[1].startswith("• 10-04 00:00 UTC:")
     assert rows[2].startswith("• 10-03 23:00 UTC:")
+
+
+def test_format_live_without_oddish_ledger_lists_bill_only():
+    payload = {
+        **LIVE_PAYLOAD,
+        "today": {
+            **LIVE_PAYLOAD["today"],
+            "oddishUsd": None,
+            # An older Catfish flagged every model when Oddish was unreachable.
+            "byModel": [
+                {"model": "gpt-6-astra", "billedUsd": 14912.01, "oddishUsd": 0,
+                 "gapUsd": 14912.01, "notInOddish": True},
+            ],
+        },
+    }
+    text = format_catfish_live(payload)
+    assert "Oddish recorded n/a" in text
+    assert "showing the bill only" in text
+    assert "• gpt-6-astra: billed $14,912.01" in text
+    assert "no Oddish trial" not in text
+    assert "gap" not in text.split("showing the bill only")[1]

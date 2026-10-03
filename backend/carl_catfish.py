@@ -308,7 +308,16 @@ def format_catfish_live(data: dict) -> str:
             f"{_money(today.get('billedUsd'))}, Oddish recorded "
             + (_money(oddish) if oddish is not None else "n/a"),
         ]
+        if oddish is None:
+            # Oddish's side is unknown, not $0: list the bill and compare nothing.
+            lines.append(
+                "_Oddish ledger unavailable to Catfish; showing the bill only._"
+            )
         for gap in (today.get("byModel") or [])[:6]:
+            if oddish is None:
+                billed = _money(gap.get("billedUsd"))
+                lines.append(f"• {gap.get('model')}: billed {billed}")
+                continue
             flag = (
                 "  :warning: no Oddish trial or QA ran this model"
                 if gap.get("notInOddish")
