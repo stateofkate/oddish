@@ -264,3 +264,58 @@ def format_catfish_breakdown(data: dict) -> str:
             )
     lines += _view_lines(data)
     return "\n".join(lines)
+
+
+async def fetch_catfish_live(hours: int) -> dict | str:
+    response = await _catfish_get(
+        "/api/carl/live", {"provider": "openai", "hours": str(hours)}
+    )
+    if isinstance(response, str):
+        return response
+    return response.json()
+
+
+def _who(line: dict) -> str:
+    owner = line.get("owner") or ""
+    name = line.get("keyName") or line.get("apiKeyId") or "?"
+    return owner if owner and owner != name else name
+
+
+def format_catfish_live(data: dict) -> str:
+    """OpenAI spend right now: hours newest first, window top lines, today vs Oddish."""
+    hours = data.get("byHour") or []
+    lines = [f"*OpenAI spend, last {data.get('hours')}h* (hourly $ are estimates)"]
+    multi_day = len({str(h.get("hourStart") or "")[:10] for h in hours}) > 1
+    for hour in hours:
+        stamp = str(hour.get("hourStart") or "")
+        start = f"{stamp[5:10]} {stamp[11:16]}" if multi_day else stamp[11:16]
+        top = (hour.get("lines") or [])[:3]
+        detail = ", ".join(
+            f"{_who(l)} · {l.get('model')} {_money(l.get('estimatedUsd'))}"
+            f" ({int(l.get('requests') or 0):,} req)"
+            for l in top
+        )
+        lines.append(f"• {start} UTC: {_money(hour.get('estimatedUsd'))} — {detail}")
+    if hours:
+        lines[-len(hours)] += "  _(current hour, partial)_"
+
+    today = data.get("today") or {}
+    if today:
+        oddish = today.get("oddishUsd")
+        lines += [
+            "",
+            f"*Today ({today.get('date')} UTC, still settling)*: billed "
+            f"{_money(today.get('billedUsd'))}, Oddish recorded "
+            + (_money(oddish) if oddish is not None else "n/a"),
+        ]
+        for gap in (today.get("byModel") or [])[:6]:
+            flag = (
+                "  :warning: no Oddish trial or QA ran this model"
+                if gap.get("notInOddish")
+                else ""
+            )
+            lines.append(
+                f"• {gap.get('model')}: billed {_money(gap.get('billedUsd'))}, "
+                f"Oddish {_money(gap.get('oddishUsd'))}, gap {_money(gap.get('gapUsd'))}{flag}"
+            )
+    return "\n".join(lines)

@@ -14,6 +14,7 @@ from carl_catfish import (
     fetch_catfish_costs,
     format_catfish_breakdown,
     format_catfish_costs,
+    format_catfish_live,
 )
 
 
@@ -301,3 +302,101 @@ async def test_costs_tool_queues_view_url_not_tool_dump(monkeypatch):
     assert "*Catfish cloud spend*" in text
     assert queued == [(png, view, "catfish-mix.png")]
     assert "*Catfish cloud spend*" not in queued[0][1]
+
+
+LIVE_PAYLOAD = {
+    "provider": "openai",
+    "hours": 2,
+    "byHour": [
+        {
+            "hourStart": "2026-10-03T21:00:00.000Z",
+            "estimatedUsd": 1853.41,
+            "requests": 55937,
+            "lines": [
+                {
+                    "apiKeyId": "key_SKJR",
+                    "keyName": "oddish",
+                    "owner": "Oddish (shared key)",
+                    "model": "gpt-5.6-sol",
+                    "estimatedUsd": 1786.53,
+                    "requests": 20271,
+                },
+                {
+                    "apiKeyId": "key_x",
+                    "keyName": "ankit-cybersec",
+                    "owner": "",
+                    "model": "gpt-6-sol",
+                    "estimatedUsd": 3.1,
+                    "requests": 12,
+                },
+            ],
+        },
+        {
+            "hourStart": "2026-10-03T20:00:00.000Z",
+            "estimatedUsd": 1846.22,
+            "requests": 39970,
+            "lines": [],
+        },
+    ],
+    "today": {
+        "date": "2026-10-03",
+        "billedUsd": 54607.32,
+        "oddishUsd": 14781.66,
+        "byModel": [
+            {"model": "gpt-5.6-sol", "billedUsd": 38109.71, "oddishUsd": 0,
+             "gapUsd": 38109.71, "notInOddish": True},
+            {"model": "gpt-6-astra", "billedUsd": 14907.21, "oddishUsd": 13304,
+             "gapUsd": 1603.21, "notInOddish": False},
+        ],
+    },
+}
+
+
+def test_format_live_names_owner_model_and_gap():
+    text = format_catfish_live(LIVE_PAYLOAD)
+    first_hour = text.splitlines()[1]
+    assert first_hour.startswith("• 21:00 UTC: $1,853.41")
+    assert "Oddish (shared key) · gpt-5.6-sol $1,786.53 (20,271 req)" in first_hour
+    # A key with no owner falls back to its name.
+    assert "ankit-cybersec · gpt-6-sol" in first_hour
+    assert "current hour, partial" in first_hour
+    assert "current hour" not in text.splitlines()[2]
+    assert "billed $54,607.32, Oddish recorded $14,781.66" in text
+    sol = next(l for l in text.splitlines() if l.startswith("• gpt-5.6-sol"))
+    assert "no Oddish trial or QA ran this model" in sol
+    astra = next(l for l in text.splitlines() if l.startswith("• gpt-6-astra"))
+    assert "no Oddish" not in astra
+
+
+@pytest.mark.asyncio
+async def test_live_tool_validates_hours_and_registers(monkeypatch):
+    _install_sdk(monkeypatch)
+    import carl_tools
+
+    seen = {}
+
+    async def fake_fetch(hours):
+        seen["hours"] = hours
+        return LIVE_PAYLOAD
+
+    monkeypatch.setattr(carl_tools, "fetch_catfish_live", fake_fetch)
+    text = (await carl_tools.catfish_live({}))["content"][0]["text"]
+    assert seen["hours"] == 3
+    assert "gpt-5.6-sol" in text
+
+    bad = (await carl_tools.catfish_live({"hours": 99}))["content"][0]["text"]
+    assert "1 to 48" in bad
+    assert "mcp__oddish__catfish_live" in carl_tools.allowed_tool_names()
+
+
+def test_format_live_dates_hours_when_window_crosses_midnight():
+    payload = {
+        "hours": 2,
+        "byHour": [
+            {"hourStart": "2026-10-04T00:00:00.000Z", "estimatedUsd": 1, "lines": []},
+            {"hourStart": "2026-10-03T23:00:00.000Z", "estimatedUsd": 2, "lines": []},
+        ],
+    }
+    rows = format_catfish_live(payload).splitlines()
+    assert rows[1].startswith("• 10-04 00:00 UTC:")
+    assert rows[2].startswith("• 10-03 23:00 UTC:")

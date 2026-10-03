@@ -11,8 +11,10 @@ from carl_catfish import (
     catfish_query_params,
     catfish_view_url,
     fetch_catfish_costs,
+    fetch_catfish_live,
     format_catfish_breakdown,
     format_catfish_costs,
+    format_catfish_live,
     maybe_queue_catfish_chart,
 )
 from oddish.timing import RequestTimedAsyncClient
@@ -679,6 +681,32 @@ async def catfish_breakdown(args: dict) -> dict:
     return _text(text)
 
 
+@tool(
+    "catfish_live",
+    "OpenAI spend right now: estimated $ per hour by API key owner and model "
+    "for the last few hours (default 3, max 48), plus today's OpenAI bill per "
+    "model next to what Oddish recorded, flagging models no Oddish trial or QA "
+    "ran. Use for 'who/what is spending right now', spikes in progress, or "
+    "spend on a key that Oddish doesn't explain. OpenAI only.",
+    {
+        "type": "object",
+        "properties": {"hours": {"type": "integer"}},
+        "required": [],
+    },
+)
+async def catfish_live(args: dict) -> dict:
+    try:
+        hours = int(args.get("hours") or 3)
+    except (TypeError, ValueError):
+        return _text(":no_entry: hours must be a whole number from 1 to 48.")
+    if not 1 <= hours <= 48:
+        return _text(":no_entry: hours must be a whole number from 1 to 48.")
+    data = await fetch_catfish_live(hours)
+    if isinstance(data, str):
+        return _text(f":warning: {data}")
+    return _text(format_catfish_live(data))
+
+
 SERVER_NAME = "oddish"
 
 _TOOLS = [
@@ -690,6 +718,7 @@ _TOOLS = [
     oddish_sql,
     catfish_costs,
     catfish_breakdown,
+    catfish_live,
 ]
 
 
