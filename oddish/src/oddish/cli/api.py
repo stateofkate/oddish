@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import copy
-import hashlib
 import json
 import os
 import random
@@ -25,11 +24,9 @@ import tomlkit.exceptions
 import typer
 import yaml
 from harbor.models.environment_type import EnvironmentType
-from harbor.models.task.config import TaskConfig
 from harbor.models.task.task import Task
 from harbor.models.trial.config import AgentConfig
 from harbor.models.trial.result import TrialResult
-from harbor.publisher.packager import Packager
 from harbor.viewer.scanner import JobScanner
 from rich.console import Console
 from rich.live import Live
@@ -65,6 +62,7 @@ from oddish.core.harbor_artifacts import (
     write_trial_selection_manifest,
 )
 from oddish.core.idempotency import compute_sweep_idempotency_key
+from oddish.task_content_hash import compute_task_content_hash
 from oddish.task_timeouts import (
     TaskTimeoutValidationError,
     validate_task_timeout_config,
@@ -445,49 +443,6 @@ def resolve_local_task_paths(
                 )
 
     return validate_tasks(task_paths)
-
-
-_TASK_TOML_RUNTIME_FIELDS = (
-    "schema_version",
-    "verifier",
-    "agent",
-    "environment",
-    "solution",
-    "multi_step_reward_strategy",
-    "steps",
-    "artifacts",
-)
-
-
-def _canonical_task_config_bytes(config_path: Path) -> bytes:
-    """Serialize only the task config fields that affect Harbor execution."""
-    config = TaskConfig.model_validate_toml(config_path.read_text())
-    data = config.model_dump(mode="json", exclude_none=True)
-    runtime_data = {key: data[key] for key in _TASK_TOML_RUNTIME_FIELDS if key in data}
-    return json.dumps(runtime_data, sort_keys=True, separators=(",", ":")).encode()
-
-
-def compute_task_content_hash(task_path: Path) -> str:
-    """Deterministic SHA-256 of a task's execution-relevant contents.
-
-    Uses Harbor's publishable-file selection (including .gitignore handling),
-    but hashes task.toml semantically so descriptive metadata edits do not
-    create new Oddish task versions.
-    """
-    hasher = hashlib.sha256()
-    task_path = task_path.resolve()
-    for file_path in Packager.collect_files(task_path):
-        rel = file_path.relative_to(task_path).as_posix()
-        if rel == "README.md":
-            continue
-        hasher.update(rel.encode("utf-8"))
-        hasher.update(b"\0")
-        if rel == "task.toml":
-            hasher.update(_canonical_task_config_bytes(file_path))
-        else:
-            hasher.update(file_path.read_bytes())
-        hasher.update(b"\0")
-    return hasher.hexdigest()
 
 
 _GIT_LFS_POINTER_PREFIX = b"version https://git-lfs.github.com/spec/v1\n"

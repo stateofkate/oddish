@@ -31,16 +31,22 @@ import uuid
 from datetime import datetime, timezone
 from typing import cast
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from oddish.config import settings
 from oddish.db import (
+    TaskVersionFingerprintModel,
     TaskVersionModel,
     get_session,
     get_storage_client,
     utcnow,
 )
 from oddish.db.storage import StorageClient, normalize_s3_relative_path
+from oddish.task_content_hash import (
+    TASK_CONTENT_HASH_ALGORITHM,
+    compute_task_archive_content_hash,
+)
 from oddish.workers.queue.shared import console
 from oddish.workers.queue.worker_job_single_job import heartbeat_worker_job
 
@@ -130,11 +136,15 @@ async def _promote_expansion_if_current(
     manifest_key: str,
     manifest_bytes: bytes,
     archive_key: str | None = None,
+    server_content_hash: str | None = None,
 ) -> bool:
     """Publish a complete immutable directory by switching the version pointer.
 
     Old directories remain readable for in-flight requests and signed URLs.
-    No storage delete or copy is required to publish the new files.
+    No storage delete or copy is required to publish the new files. The
+    server-computed hash is recorded in the same transaction, so it always
+    describes the archive the published files came from; a publish without
+    one removes any earlier row.
     """
     await storage.upload_bytes(
         manifest_bytes, manifest_key, content_type="application/json"
@@ -164,8 +174,62 @@ async def _promote_expansion_if_current(
             return False
         row.expanded_at = utcnow()
         row.expanded_manifest_key = manifest_key
+        if server_content_hash is not None:
+            fields = {
+                "content_hash": server_content_hash,
+                "algorithm": TASK_CONTENT_HASH_ALGORITHM,
+                "client_content_hash": row.content_hash,
+                "computed_at": utcnow(),
+            }
+            await session.execute(
+                pg_insert(TaskVersionFingerprintModel)
+                .values(task_version_id=row.id, **fields)
+                .on_conflict_do_update(
+                    index_elements=[TaskVersionFingerprintModel.task_version_id],
+                    set_=fields,
+                )
+            )
+        else:
+            # An in-place overwrite replaces the archive; a hash of the old
+            # archive must not outlive it.
+            await session.execute(
+                delete(TaskVersionFingerprintModel).where(
+                    TaskVersionFingerprintModel.task_version_id == row.id
+                )
+            )
         await session.commit()
         return True
+
+
+async def _hash_archive(
+    task_id: str, version: int, archive_bytes: bytes, client_hash: str | None
+) -> str | None:
+    """Return the server's content hash, or None when it cannot be computed.
+
+    A failure here never fails the expansion: the drawer's files matter more
+    than the hash, and a backfill can fill the gap later.
+    """
+    try:
+        content_hash = await asyncio.to_thread(
+            compute_task_archive_content_hash, archive_bytes
+        )
+    except Exception:
+        logger.warning(
+            "TASK_EXPAND %s v%s: could not hash archive",
+            task_id,
+            version,
+            exc_info=True,
+        )
+        return None
+    if client_hash is not None and client_hash != content_hash:
+        logger.warning(
+            "TASK_EXPAND %s v%s: server content hash %s differs from uploaded %s",
+            task_id,
+            version,
+            content_hash,
+            client_hash,
+        )
+    return content_hash
 
 
 async def _resolve_archive_key(
@@ -530,6 +594,9 @@ async def run_task_expand_job(
             archive_key, head=head
         )
         staging_prefix = _staging_prefix_for(task_id, version)
+        server_content_hash = await _hash_archive(
+            task_id, version, archive_bytes, expected_content_hash
+        )
 
         max_member = int(settings.tasks_expand_max_member_bytes)
         extracted_members = _extract_regular_members(
@@ -631,6 +698,7 @@ async def run_task_expand_job(
             manifest_key=f"{staging_prefix}{StorageClient._EXPANDED_MANIFEST_OBJECT_NAME}",
             manifest_bytes=manifest_bytes,
             archive_key=archive_key,
+            server_content_hash=server_content_hash,
         )
         if not promoted:
             publication_started = False
@@ -646,6 +714,7 @@ async def run_task_expand_job(
             "files": len([f for f in manifest_files if not f.get("skipped")]),
             "skipped": len([f for f in manifest_files if f.get("skipped")]),
             "archive_etag": archive_etag,
+            "content_hash": server_content_hash,
         }
         console.print(
             f"[green]TASK_EXPAND {task_id} v{version} done: {summary}[/green]"

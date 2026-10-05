@@ -200,8 +200,14 @@ async def _null_session():
     class _S:
         async def get(self, *_args, **_kwargs):
             return SimpleNamespace(
-                content_hash=None, task_s3_key=None, expanded_manifest_key=None
+                id="task-v1",
+                content_hash=None,
+                task_s3_key=None,
+                expanded_manifest_key=None,
             )
+
+        async def execute(self, *_args, **_kwargs):
+            return None
 
         async def commit(self):
             return None
@@ -789,7 +795,10 @@ async def test_publication_does_not_depend_on_delete_or_erase_uncertain_commit(
     monkeypatch, commit_error
 ):
     row = SimpleNamespace(
-        content_hash="hash", task_s3_key="tasks/t/v1/", expanded_manifest_key=None
+        id="t-v1",
+        content_hash="hash",
+        task_s3_key="tasks/t/v1/",
+        expanded_manifest_key=None,
     )
 
     @asynccontextmanager
@@ -800,6 +809,9 @@ async def test_publication_does_not_depend_on_delete_or_erase_uncertain_commit(
 
             async def scalar(self, *_args, **_kwargs):
                 return row.task_s3_key
+
+            async def execute(self, *_args, **_kwargs):
+                return None
 
             async def commit(self):
                 if commit_error:
@@ -835,3 +847,21 @@ async def test_publication_does_not_depend_on_delete_or_erase_uncertain_commit(
     assert storage._objects[prefix + "instruction.md"] == b"new instruction"
     assert storage._objects["tasks/t/v1-files/instruction.md"] == b"old instruction"
     storage.delete_prefix.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_unhashable_archive_still_expands(monkeypatch, _patched_get_session):
+    archive_bytes = _make_archive({"task.toml": b"not = [valid toml\n"})
+    storage = _FakeStorage(
+        archive_key="tasks/task-bad/v1/.oddish-task.tar.gz",
+        archive_bytes=archive_bytes,
+    )
+    monkeypatch.setattr(task_expand_handler, "get_storage_client", lambda: storage)
+
+    summary = await task_expand_handler.run_task_expand_job(
+        task_id="task-bad", version=1
+    )
+
+    assert summary["status"] == "expanded"
+    assert summary["files"] == 1
+    assert summary["content_hash"] is None

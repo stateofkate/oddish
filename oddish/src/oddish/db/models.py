@@ -3373,6 +3373,35 @@ class TaskAliasModel(Base):
     )
 
 
+class TaskVersionFingerprintModel(Base):
+    """Content hash the server computed from a version's uploaded archive.
+
+    ``task_versions.content_hash`` is whatever the uploader sent. This row is
+    written by the ``TASK_EXPAND`` worker from the archive bytes, in the same
+    transaction that publishes the expansion. Kept out of ``task_versions`` so
+    recording or backfilling a hash never rewrites a version row.
+    """
+
+    __tablename__ = "task_version_fingerprints"
+    __table_args__ = (
+        Index("idx_task_version_fingerprints_content_hash", "content_hash"),
+    )
+
+    task_version_id: Mapped[str] = mapped_column(
+        String(160),
+        ForeignKey("task_versions.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    algorithm: Mapped[str] = mapped_column(String(64), nullable=False)
+    # ``task_versions.content_hash`` when this row was computed, so mismatches
+    # between client and server hashes can be listed with one query.
+    client_content_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    computed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+
+
 class TaskMetadataAssertionModel(Base):
     """One source-backed classification of a task (``field`` = ``value``).
 

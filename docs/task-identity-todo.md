@@ -7,6 +7,10 @@ Goal: one real task has one identity in Oddish, every task version has a content
 fingerprint, and delivery selection reads history across every copy of a task.
 Oddish becomes the place that answers "what is this task, and who has it".
 
+Progress (2026-10-05): 4a is in production (#2054, promoted in #2055).
+Section 1's server-side hashing and fingerprint table are in review (#2063).
+Next: 4b, the cross-task hash check.
+
 ## Constraints from the Forge incident (Sept 21–25)
 
 An AI agent in Neel's Forge pipeline ran on a Modal app holding the production
@@ -32,11 +36,9 @@ For this plan:
   `content_hash` among other columns. Backfilled hashes, fingerprints and git
   provenance go into new tables created by migrations. New uploads are
   unaffected: the server writes their hash on INSERT.
-- Rehearse each migration on a copy of the production schema, not only
-  staging: production still differs from a clean migration build by 153/96
-  catalog lines (2026-09-25). Check new table and index names against the
-  production catalog first. The Forge removal was rehearsed this way (Docker
-  container `oddish-schema-diff`, database `prodcopy`).
+- Each migration is rehearsed by the staging deploy (every merge to
+  `staging` runs it) before promotion to production. Decided 2026-10-05:
+  migrations here only add tables, so no separate production-schema copy.
 - Migrations add tables only. The `content_hash` index is built with
   `CREATE INDEX CONCURRENTLY`; any unavoidable `ALTER TABLE` uses
   `oddish/src/oddish/db/migration_locks.py` (5 s lock window, 60 retries). No
@@ -160,10 +162,12 @@ real measure.
 
 ## 1. A content hash for every task version
 
-- [ ] Move `compute_task_content_hash` (and `_canonical_task_config_bytes`) into
+- [x] Move `compute_task_content_hash` (and `_canonical_task_config_bytes`) into
   shared code so CLI and server produce byte-identical hashes. Test: the same
-  folder hashes the same through both.
-- [ ] Fingerprint table, new and migration-created, e.g.
+  folder hashes the same through both. Done in `oddish/src/oddish/task_content_hash.py`;
+  `compute_task_archive_content_hash` unpacks an uploaded archive and applies
+  the same function.
+- [x] Fingerprint table, new and migration-created, e.g.
   `task_version_fingerprints`: version ID, content hash, and a fixed set of
   git-format hashes (folder tree SHA; `instruction.md` and `task.toml` blob
   SHAs; `tests/`, `environment/`, `solution/` tree SHAs), plus where each value
@@ -172,6 +176,9 @@ real measure.
   repo folders by lookup (section 5). Not one row per file: the reverted file
   index (#1662, reverted in #2010) reached 2.26M rows and 3.3 GB for 6,423
   versions. Readers use `task_versions.content_hash` when set, else this table.
+  Built in PR #2063 (open, 2026-10-05; migration `task_fingerprints_001`)
+  with the server hash, the algorithm label, and the client's hash at the
+  time; the git-format hashes are added with 4c and 5a, their first readers.
 - [ ] Dry run (admin endpoint + CLI, executed by the deployed Oddish app on
   Modal, which holds the storage credentials): count hashless versions,
   current and older, by storage location, and how many still have readable
@@ -186,8 +193,19 @@ real measure.
   repo, PR and Actions run (`…/harbor-forge/pr-935/run-20624475126/…/workflow-orchestrator/task`),
   the run ID gives the commit through the GitHub API, and the folder at that
   commit gives the files.
-- [ ] Compute the hash on the server for every path that creates a version
-  (upload complete, sweep, CI import) so no new version arrives without one.
+- [x] Compute the hash on the server for uploads (upload complete and the
+  `oddish run` sweep). The `TASK_EXPAND` worker job, queued after each
+  upload, hashes the archive and writes the row in the transaction that
+  publishes the expansion. A failed hash logs and leaves the expansion
+  untouched; a client/server mismatch logs a warning. Not covered: archives
+  over `tasks_expand_max_bytes` (1 GiB), pre-archive loose-file tasks, and
+  versions expanded before this change; the backfill handles those.
+- [ ] CI imports. The sweep registers them with a `task_path` in
+  `abundant-github-workflows-bucket`, which the expand job does not read (it
+  resolves keys in Oddish's own bucket and finds nothing), so they still get
+  no hash. Either the CI workflow sends `content_hash` with the sweep request,
+  or the worker reads that bucket. Decide with whoever owns the harbor-forge
+  workflow.
 - [ ] Note the behavior change: after backfill, uploading identical content to
   an existing name returns "content unchanged" instead of a new version.
 
@@ -272,7 +290,8 @@ then content hash, then `instruction.md` blob.
 
 ### Steps
 
-- [x] 4a. Resolver on the server. `_resolve_upload_task` in
+- [x] 4a. Resolver on the server (PR #2054, merged; promoted to production in
+  #2055). `_resolve_upload_task` in
   `oddish/src/oddish/core/tasks.py`, called by `initialize_task_upload`: live
   name, then live alias, then name-as-task-ID. The sweep create path needs no
   call: it only creates rows for task IDs that init minted. Old CLIs and CI get
