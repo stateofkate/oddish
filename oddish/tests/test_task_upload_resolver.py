@@ -51,9 +51,9 @@ def init_upload(session, monkeypatch):
     monkeypatch.setattr(tasks, "get_session", _get_session)
     monkeypatch.setattr(tasks, "get_storage_client", lambda: _Storage())
 
-    async def _init(name, content_hash="new-hash", org_id=ORG):
+    async def _init(name, content_hash="new-hash", org_id=ORG, **options):
         return await tasks.initialize_task_upload(
-            name, org_id=org_id, content_hash=content_hash
+            name, org_id=org_id, content_hash=content_hash, **options
         )
 
     return _init
@@ -159,3 +159,95 @@ async def test_alias_of_a_deleted_task_creates_a_new_task(session, init_upload):
 
     assert result.existing_task is False
     assert result.task_id.startswith("implement-wc-")
+
+
+async def _add_version(session, task, version, content_hash):
+    row = TaskVersionModel(
+        id=f"{task.id}-v{version}",
+        task_id=task.id,
+        version=version,
+        task_path=f"s3://tasks/{task.id}/v{version}/",
+        task_s3_key=f"tasks/{task.id}/v{version}/",
+        content_hash=content_hash,
+    )
+    session.add(row)
+    await session.flush()
+    return row
+
+
+@pytest.mark.asyncio
+async def test_same_files_as_another_tasks_current_version_run_there(
+    session, init_upload
+):
+    word_counter = await _task(session, "word-counter-1a2b3c4d", "word-counter")
+    # A newer, unselected version must not be what the copy is compared to.
+    await _add_version(session, word_counter, 2, "hash-2")
+
+    result = await init_upload("wc-debug", content_hash="hash-1")
+
+    assert result.task_id == word_counter.id
+    assert result.name == "word-counter"
+    assert result.matched_by == "content_hash"
+    assert result.existing_task is True
+    assert result.content_unchanged is True
+    assert result.version == 1
+    assert result.version_id == "word-counter-1a2b3c4d-v1"
+
+
+@pytest.mark.asyncio
+async def test_same_files_as_an_older_version_only_create_a_new_task(
+    session, init_upload
+):
+    word_counter = await _task(session, "word-counter-1a2b3c4d", "word-counter")
+    current = await _add_version(session, word_counter, 2, "hash-2")
+    word_counter.current_version_id = current.id
+    await session.flush()
+
+    result = await init_upload("wc-debug", content_hash="hash-1")
+
+    assert result.existing_task is False
+    assert result.matched_by is None
+    assert result.task_id.startswith("wc-debug-")
+
+
+@pytest.mark.asyncio
+async def test_content_shared_by_several_tasks_creates_a_new_task(session, init_upload):
+    await _task(session, "word-counter-1a2b3c4d", "word-counter")
+    await _task(session, "word-counter-copy-5e6f7a8b", "word-counter-copy")
+
+    result = await init_upload("wc-debug", content_hash="hash-1")
+
+    assert result.existing_task is False
+    assert result.matched_by is None
+
+
+@pytest.mark.asyncio
+async def test_content_match_ignores_other_orgs_deleted_tasks_and_forced_versions(
+    session, init_upload
+):
+    await _task(session, "foreign-task-56bb4ae5", "foreign-task", org_id=OTHER_ORG)
+    deleted = await _task(session, "deleted-task-0c0d0e0f", "deleted-task")
+    deleted.deleted_at = datetime(2026, 10, 5, tzinfo=timezone.utc)
+    await session.flush()
+    await _task(session, "live-task-9a8b7c6d", "live-task", content_hash="hash-2")
+
+    for content_hash, options in (
+        ("hash-1", {}),
+        ("hash-2", {"force_new_version": True}),
+    ):
+        result = await init_upload("wc-debug", content_hash=content_hash, **options)
+        assert result.existing_task is False
+        assert result.matched_by is None
+
+
+@pytest.mark.asyncio
+async def test_live_name_wins_over_a_content_match(session, init_upload):
+    await _task(session, "word-counter-1a2b3c4d", "word-counter")
+    named = await _task(session, "wc-debug-5e6f7a8b", "wc-debug", content_hash="old")
+
+    result = await init_upload("wc-debug", content_hash="hash-1")
+
+    assert result.task_id == named.id
+    assert result.matched_by is None
+    assert result.content_unchanged is False
+    assert result.version == 2

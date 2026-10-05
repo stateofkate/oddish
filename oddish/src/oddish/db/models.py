@@ -911,6 +911,13 @@ class TaskVersionModel(TimestampedMixin, Base):
             "version",
             unique=True,
         ),
+        # Upload init looks for another task whose current version has the
+        # uploaded files. Not unique: a revert repeats a hash within a task.
+        Index(
+            "idx_task_versions_content_hash",
+            "content_hash",
+            postgresql_where=text("content_hash IS NOT NULL"),
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(160), primary_key=True)

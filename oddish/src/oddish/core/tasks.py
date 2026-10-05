@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
-from typing import Literal
 
 from fastapi import HTTPException
 from sqlalchemy import and_, func, select
@@ -21,7 +20,12 @@ from oddish.db import (
     get_session,
 )
 from oddish.db.storage import StorageClient, get_storage_client
-from oddish.schemas import TaskRunSummary, TaskUploadInitResponse, UploadResponse
+from oddish.schemas import (
+    TaskRunSummary,
+    TaskUploadInitResponse,
+    TaskUploadMatch,
+    UploadResponse,
+)
 
 
 async def _next_version_number(session: AsyncSession, task_id: str) -> int:
@@ -48,7 +52,7 @@ async def _find_task_by_name(
 
 async def _resolve_upload_task(
     session: AsyncSession, task_name: str, org_id: str | None
-) -> tuple[TaskModel | None, Literal["alias", "task_id"] | None]:
+) -> tuple[TaskModel | None, TaskUploadMatch | None]:
     """Find the live task an uploaded folder name belongs to.
 
     Returns ``(task, matched_by)``. A live task name wins, as it always has
@@ -84,6 +88,30 @@ async def _resolve_upload_task(
     if task is not None:
         return task, "task_id"
     return None, None
+
+
+async def _find_task_by_current_content(
+    session: AsyncSession, content_hash: str, org_id: str | None
+) -> TaskModel | None:
+    """The one live task whose current version has exactly these files.
+
+    Trials submitted after an upload run on the task's current version
+    (``resolve_append_version_id``), so an older version with the same hash
+    does not qualify. Two or more matching tasks are existing copies; picking
+    one would be a guess, so the upload creates a task as before.
+    """
+    org_clause = (
+        TaskModel.org_id.is_(None) if org_id is None else TaskModel.org_id == org_id
+    )
+    tasks = (
+        await session.scalars(
+            select(TaskModel)
+            .join(TaskVersionModel, TaskVersionModel.id == TaskModel.current_version_id)
+            .where(TaskVersionModel.content_hash == content_hash, org_clause)
+            .limit(2)
+        )
+    ).all()
+    return tasks[0] if len(tasks) == 1 else None
 
 
 async def _latest_version(
@@ -179,11 +207,24 @@ async def initialize_task_upload(
         existing_task, matched_by = await _resolve_upload_task(
             session, normalized_name, org_id
         )
+        if (
+            existing_task is None
+            and content_hash
+            and not force_new_version
+            and not overwrite_current_version
+        ):
+            existing_task = await _find_task_by_current_content(
+                session, content_hash, org_id
+            )
+            if existing_task is not None:
+                matched_by = "content_hash"
         if existing_task is not None and matched_by is not None:
             normalized_name = existing_task.name
         target = None
         if existing_task is not None:
-            if overwrite_current_version:
+            # A content match is on the current version by construction, so
+            # it is reused below rather than compared with the latest one.
+            if overwrite_current_version or matched_by == "content_hash":
                 current_id = existing_task.current_version_id
                 target = (
                     await session.get(TaskVersionModel, current_id)
