@@ -1097,6 +1097,11 @@ def run(
         )
         for task_path, result in zip(task_paths, upload_results):
             is_existing = bool(result.get("existing_task", False))
+            if not quiet and result.get("matched_by"):
+                console.print(
+                    f"[dim]Task '{task_path.name}' matched existing task "
+                    f"'{result.get('name')}' by {str(result['matched_by']).replace('_', ' ')}[/dim]"
+                )
             if not quiet and is_existing:
                 ver = result.get("version", "?")
                 if result.get("content_unchanged"):

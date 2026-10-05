@@ -904,6 +904,10 @@ class TaskUploadInitResponse(UploadResponse):
     requires_completion: bool = False
     staging_key: str | None = None
     overwrite_base_content_hash: str | None = None
+    # How an uploaded name that is not a live task name found its task:
+    # "alias" (an older name of that task) or "task_id" (the folder is named
+    # after the task's ID). None for a live-name match or a new task.
+    matched_by: Literal["alias", "task_id"] | None = None
 
 
 class TrialQueueInfo(BaseModel):

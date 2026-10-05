@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
+from typing import Literal
 
 from fastapi import HTTPException
 from sqlalchemy import and_, func, select
@@ -12,6 +13,7 @@ from oddish.core.tags.enqueue import enqueue_tag_project_worker_job
 from oddish.db import (
     AGENT_TRIAL_KIND,
     Priority,
+    TaskAliasModel,
     TaskModel,
     TaskBrowseSummaryModel,
     TaskVersionModel,
@@ -42,6 +44,46 @@ async def _find_task_by_name(
         clause = and_(TaskModel.name == task_name, TaskModel.org_id == org_id)
 
     return await session.scalar(select(TaskModel).where(clause))
+
+
+async def _resolve_upload_task(
+    session: AsyncSession, task_name: str, org_id: str | None
+) -> tuple[TaskModel | None, Literal["alias", "task_id"] | None]:
+    """Find the live task an uploaded folder name belongs to.
+
+    Returns ``(task, matched_by)``. A live task name wins, as it always has
+    (``matched_by`` None). Otherwise a live ``task_aliases`` name (an older
+    name of a renamed task), then a folder named after a task ID (a pulled
+    or downloaded task). ``(None, None)`` means the upload creates a task.
+    """
+    task = await _find_task_by_name(session, task_name, org_id)
+    if task is not None:
+        return task, None
+
+    if org_id is not None:
+        task = await session.scalar(
+            select(TaskModel)
+            .join(TaskAliasModel, TaskAliasModel.task_id == TaskModel.id)
+            .where(
+                TaskAliasModel.org_id == org_id,
+                TaskAliasModel.name == task_name,
+                TaskAliasModel.valid_until.is_(None),
+                TaskAliasModel.retracted_at.is_(None),
+                TaskModel.org_id == org_id,
+            )
+        )
+        if task is not None:
+            return task, "alias"
+
+    org_clause = (
+        TaskModel.org_id.is_(None) if org_id is None else TaskModel.org_id == org_id
+    )
+    task = await session.scalar(
+        select(TaskModel).where(TaskModel.id == task_name, org_clause)
+    )
+    if task is not None:
+        return task, "task_id"
+    return None, None
 
 
 async def _latest_version(
@@ -134,7 +176,11 @@ async def initialize_task_upload(
     normalized_name = _normalize_task_name(task_name)
 
     async with get_session() as session:
-        existing_task = await _find_task_by_name(session, normalized_name, org_id)
+        existing_task, matched_by = await _resolve_upload_task(
+            session, normalized_name, org_id
+        )
+        if existing_task is not None and matched_by is not None:
+            normalized_name = existing_task.name
         target = None
         if existing_task is not None:
             if overwrite_current_version:
@@ -168,6 +214,7 @@ async def initialize_task_upload(
                 existing_task=True,
                 content_unchanged=True,
                 content_hash=content_hash,
+                matched_by=matched_by,
             )
 
         if existing_task is not None:
@@ -212,6 +259,7 @@ async def initialize_task_upload(
         version_id=version_id,
         existing_task=existing,
         content_hash=content_hash,
+        matched_by=matched_by,
         upload_url=upload_url,
         upload_method="PUT",
         upload_headers={"Content-Type": "application/gzip"},

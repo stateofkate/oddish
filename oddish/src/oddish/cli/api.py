@@ -936,7 +936,10 @@ def upload_task(
             error_console.print(f"[red]Failed to upload task:[/red] {response.text}")
             raise typer.Exit(1)
 
-        return cast(dict, response.json())
+        result = cast(dict, response.json())
+        if init_payload.get("matched_by"):
+            result["matched_by"] = init_payload["matched_by"]
+        return result
     finally:
         if tarball_path is not None:
             shutil.rmtree(Path(tarball_path).parent, ignore_errors=True)
