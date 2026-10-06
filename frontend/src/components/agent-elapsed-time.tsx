@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 
+import { isBaselineAgentName } from "@/lib/experiment-agent-grouping";
+
 export interface AgentTiming {
   started_at?: string | null;
   finished_at?: string | null;
@@ -9,9 +11,10 @@ export interface AgentTiming {
 }
 
 /** Wall time from the worker's agent phase, independent of simulation time. */
-export function AgentElapsedTime({ timing, running = false }: {
+export function AgentElapsedTime({ timing, running = false, agent }: {
   timing?: AgentTiming | null;
   running?: boolean;
+  agent?: string | null;
 }) {
   const [now, setNow] = useState(() => Date.now());
   const start = timing?.started_at ? Date.parse(timing.started_at) : NaN;
@@ -29,6 +32,8 @@ export function AgentElapsedTime({ timing, running = false }: {
     : ticking ? (now - start) / 1000 : timing?.duration_sec;
   const elapsed = seconds != null && Number.isFinite(seconds)
     ? Math.max(0, Math.floor(seconds)) : null;
+  // Oracle and nop trials run a script or nothing, not a timed agent.
+  if (agent && isBaselineAgentName(agent)) return null;
   const label = elapsed === null ? "—" : [
     ...(elapsed >= 3600 ? [Math.floor(elapsed / 3600)] : []),
     Math.floor(elapsed / 60) % 60,

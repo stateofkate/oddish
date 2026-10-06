@@ -1965,6 +1965,7 @@ export function TrialDetailPanel({
               playback={playback}
               active
               observationId={null}
+              agent={trial.agent}
               agentTiming={trial.phase_timing?.agent_execution}
               traceHref={traceHref}
               onOpenTrace={openTrace}
@@ -1984,6 +1985,7 @@ export function TrialDetailPanel({
                 hasTrajectory={trial.has_trajectory}
                 apiBaseUrl={apiBaseUrl}
                 canRegenerateSummary={!readOnly && showAnalysis}
+                agent={trial.agent}
                 agentTiming={trial.phase_timing?.agent_execution}
                 agentRunning={isActiveTrialStatus(trial.status)}
               />

@@ -535,7 +535,7 @@ export function LiveTranscriptPanel({
         </span>
         {stage && <HarborStageBadge stage={stage} />}
         <span className="text-muted-foreground">{numbered.filter(item => item.num > 0).length} steps</span>
-        <AgentElapsedTime timing={last?.agent_timing} running={!done && stage === "agent_running"} />
+        <AgentElapsedTime timing={last?.agent_timing} running={!done && stage === "agent_running"} agent={agent} />
         {usage?.cost_usd != null && (
           <span className="font-mono font-semibold tabular-nums">
             ~{formatCostUsd(usage.cost_usd)}

@@ -677,6 +677,7 @@ function StepContent({
 // =============================================================================
 
 interface TrajectoryViewerProps {
+  agent?: string | null;
   agentTiming?: AgentTiming | null;
   agentRunning?: boolean;
   trialId: string;
@@ -696,6 +697,7 @@ interface TrajectoryViewerProps {
 }
 
 export function TrajectoryViewer({
+  agent,
   agentTiming,
   agentRunning,
   trialId,
@@ -991,7 +993,7 @@ export function TrajectoryViewer({
                   <> · ${trajectory.final_metrics.total_cost_usd.toFixed(4)}</>
                 )}
               </span>
-              <AgentElapsedTime timing={agentTiming} running={agentRunning} />
+              <AgentElapsedTime timing={agentTiming} running={agentRunning} agent={agent} />
               <Button
                 type="button"
                 variant="outline"

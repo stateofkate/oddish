@@ -32,6 +32,7 @@ export function RunPlayback({
   playback,
   active,
   observationId,
+  agent,
   agentTiming,
   ...links
 }: TraceLinks & {
@@ -39,6 +40,7 @@ export function RunPlayback({
   active: boolean;
   /** Observation to show, e.g. when returning from its trace step. */
   observationId: string | null;
+  agent?: string | null;
   agentTiming?: AgentTiming | null;
 }) {
   const data = playback.data;
@@ -70,7 +72,7 @@ export function RunPlayback({
       >
         <div className="border-border flex shrink-0 items-center gap-2 border-b px-3 py-1 text-xs">
           <span>{data.manifest.actions.length} actions</span>
-          <AgentElapsedTime timing={agentTiming} />
+          <AgentElapsedTime timing={agentTiming} agent={agent} />
         </div>
         <div className="min-h-0 flex-1">
           {/* One viewer and download set per index revision. */}
