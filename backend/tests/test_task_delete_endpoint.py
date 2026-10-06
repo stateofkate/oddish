@@ -14,6 +14,8 @@ def test_tasks_router_exposes_whole_task_delete():
         route.path == "/tasks/{task_id}" and "DELETE" in route.methods
         for route in tasks_router.router.routes
     )
+    post_paths = {r.path for r in tasks_router.router.routes if "POST" in r.methods}
+    assert {"/tasks/delete", "/tasks/restore"} <= post_paths
 
 
 @pytest.mark.asyncio

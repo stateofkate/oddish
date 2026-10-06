@@ -45,6 +45,7 @@ from oddish.core.endpoints import (
     create_task_sweep_core,
     delete_experiment_core,
     delete_task_core,
+    delete_tasks_core,
     get_experiment_cost_totals,
     get_experiment_focus_core,
     get_experiment_open_core,
@@ -55,6 +56,7 @@ from oddish.core.endpoints import (
     get_task_version_core,
     list_tasks_core,
     replay_has_retryable_failed_trials,
+    restore_tasks_core,
     list_task_versions_core,
     rerun_task_qa_core,
     set_task_default_version_core,
@@ -153,6 +155,7 @@ from oddish.schemas import (
     TaskBrowseIdsResponse,
     TaskBrowseResponse,
     TaskBatchCancelRequest,
+    TaskBatchDeleteRequest,
     TaskDetailResponse,
     TaskPanelResponse,
     TaskOpenResponse,
@@ -1449,6 +1452,51 @@ async def delete_task(
 
     modal_cancelled = await terminate_run_harvest(result)
     return result | {"modal_calls_cancelled": modal_cancelled}
+
+
+@router.post("/tasks/delete")
+async def delete_tasks(
+    payload: TaskBatchDeleteRequest,
+    auth: Annotated[AuthContext, Depends(require_admin)],
+) -> dict:
+    """``DELETE /tasks/{task_id}`` for up to 500 tasks in one transaction.
+
+    Dry run by default: set ``dry_run`` false to delete.
+    """
+    async with get_session() as session:
+        result = await delete_tasks_core(
+            session,
+            task_ids=payload.task_ids,
+            org_id=auth.org_id,
+            dry_run=payload.dry_run,
+        )
+        await session.commit()
+    if not payload.dry_run:
+        invalidate_dashboard_cache(org_id=auth.org_id)
+    modal_cancelled = await terminate_run_harvest(result)
+    return result | {"dry_run": payload.dry_run, "modal_calls_cancelled": modal_cancelled}
+
+
+@router.post("/tasks/restore")
+async def restore_tasks(
+    payload: TaskBatchDeleteRequest,
+    auth: Annotated[AuthContext, Depends(require_admin)],
+) -> dict:
+    """Undo ``DELETE /tasks/{task_id}`` for up to 500 tasks.
+
+    Dry run by default: set ``dry_run`` false to restore.
+    """
+    async with get_session() as session:
+        result = await restore_tasks_core(
+            session,
+            task_ids=payload.task_ids,
+            org_id=auth.org_id,
+            dry_run=payload.dry_run,
+        )
+        await session.commit()
+    if not payload.dry_run:
+        invalidate_dashboard_cache(org_id=auth.org_id)
+    return result | {"dry_run": payload.dry_run}
 
 
 @router.delete("/experiments/{experiment_id}/tasks/{task_id}")

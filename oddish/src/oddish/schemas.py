@@ -1549,6 +1549,13 @@ class TaskResponse(BaseModel):
     user_tags: list[UserTagRef] = Field(default_factory=list)
 
 
+class TaskBatchDeleteRequest(BaseModel):
+    task_ids: list[str] = Field(min_length=1, max_length=500)
+    dry_run: bool = Field(
+        default=True, description="Report found/missing IDs without changing anything"
+    )
+
+
 class TaskBatchCancelRequest(BaseModel):
     task_ids: list[str] = Field(
         default_factory=list,

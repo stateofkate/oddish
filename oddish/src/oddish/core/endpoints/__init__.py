@@ -28,7 +28,9 @@ from oddish.core.endpoints.deletion import (
     combine_experiments_core,
     delete_experiment_core,
     delete_task_core,
+    delete_tasks_core,
     delete_trial_core,
+    restore_tasks_core,
     unlink_task_from_experiment_core,
 )
 from oddish.core.endpoints.qa import (
@@ -114,7 +116,9 @@ __all__ = [
     "create_qa_eval_core",
     "delete_experiment_core",
     "delete_task_core",
+    "delete_tasks_core",
     "delete_trial_core",
+    "restore_tasks_core",
     "get_experiment_cost_totals",
     "get_experiment_focus_core",
     "get_experiment_open_core",

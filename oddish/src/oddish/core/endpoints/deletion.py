@@ -139,16 +139,19 @@ async def delete_task_core(
             harvest=harvest,
         )
 
+        # One timestamp for both, so restore_task_core can tell this delete's
+        # trials from ones deleted on their own earlier.
+        deleted_at = utcnow()
         await session.execute(
             update(TrialModel)
             .where(TrialModel.task_id == resolved_task_id)
-            .values(deleted_at=utcnow())
+            .values(deleted_at=deleted_at)
             .execution_options(synchronize_session=False)
         )
         await session.execute(
             update(TaskModel)
             .where(TaskModel.id == resolved_task_id)
-            .values(deleted_at=utcnow())
+            .values(deleted_at=deleted_at)
             .execution_options(synchronize_session=False)
         )
 
@@ -257,6 +260,113 @@ async def delete_task_core(
         },
         **harvest.response_keys(),
     }
+
+
+async def delete_tasks_core(
+    session: AsyncSession,
+    *,
+    task_ids: Collection[str],
+    org_id: str | None = None,
+    dry_run: bool = False,
+) -> dict:
+    """Run :func:`delete_task_core` for each live task in ``task_ids``.
+
+    IDs that do not exist, are already deleted, or belong to another org
+    come back in ``missing`` instead of failing the batch. ``dry_run``
+    reports ``found`` / ``missing`` and changes nothing. Same post-commit
+    contract as :func:`delete_task_core`: the caller terminates the
+    returned remote handles after commit.
+    """
+    query = select(TaskModel.id).where(TaskModel.id.in_(task_ids))
+    if org_id is not None:
+        query = query.where(TaskModel.org_id == org_id)
+    found = set((await session.execute(query)).scalars())
+    result = {
+        "found": sorted(found),
+        "missing": [task_id for task_id in task_ids if task_id not in found],
+        "modal_function_call_ids": [],
+        "worker_targets": [],
+    }
+    if dry_run:
+        return result
+    for task_id in result["found"]:
+        deleted = await delete_task_core(session, task_id=task_id, org_id=org_id)
+        result["modal_function_call_ids"] += deleted["modal_function_call_ids"]
+        result["worker_targets"] += deleted["worker_targets"]
+    return result
+
+
+async def restore_tasks_core(
+    session: AsyncSession,
+    *,
+    task_ids: Collection[str],
+    org_id: str | None = None,
+    dry_run: bool = False,
+) -> dict:
+    """Undo unscoped :func:`delete_task_core` for each deleted task in ``task_ids``.
+
+    Clears ``deleted_at`` on the task and on the trials that delete stamped
+    with the same timestamp. Trials deleted on their own before it stay
+    deleted, and the worker jobs it cancelled are not re-queued. IDs that do
+    not exist, are not deleted, or belong to another org come back in
+    ``missing``; tasks whose name a live task now uses come back in
+    ``name_taken`` and stay deleted.
+    """
+    query = select(
+        TaskModel.id, TaskModel.deleted_at, TaskModel.org_id, TaskModel.name
+    ).where(TaskModel.id.in_(task_ids), TaskModel.deleted_at.is_not(None))
+    if org_id is not None:
+        query = query.where(TaskModel.org_id == org_id)
+    rows = (await session.execute(query.execution_options(include_deleted=True))).all()
+    # idx_tasks_unique_org_name allows one live task per (org, name), and a
+    # name is free for reuse once its task is deleted. Skip tasks whose name
+    # a live task (or an earlier task in this batch) now holds.
+    taken = set(
+        (
+            await session.execute(
+                select(TaskModel.org_id, TaskModel.name).where(
+                    TaskModel.name.in_({row.name for row in rows})
+                )
+            )
+        ).all()
+    )
+    deleted, name_taken = {}, []
+    for row in rows:
+        if (row.org_id, row.name) in taken:
+            name_taken.append(row.id)
+        else:
+            taken.add((row.org_id, row.name))
+            deleted[row.id] = row.deleted_at
+    result = {
+        "found": sorted(deleted),
+        "name_taken": sorted(name_taken),
+        "missing": [
+            task_id
+            for task_id in task_ids
+            if task_id not in deleted and task_id not in name_taken
+        ],
+        "trials_restored": 0,
+    }
+    if dry_run:
+        return result
+    # ponytail: exact-timestamp match; trials of tasks deleted before the
+    # shared timestamp in delete_task_core stay deleted. Widen to a window
+    # if those ever need restoring.
+    for task_id, deleted_at in deleted.items():
+        trials = await session.execute(
+            update(TrialModel)
+            .where(TrialModel.task_id == task_id, TrialModel.deleted_at == deleted_at)
+            .values(deleted_at=None)
+            .execution_options(include_deleted=True, synchronize_session=False)
+        )
+        result["trials_restored"] += trials.rowcount
+    await session.execute(
+        update(TaskModel)
+        .where(TaskModel.id.in_(list(deleted)))
+        .values(deleted_at=None)
+        .execution_options(include_deleted=True, synchronize_session=False)
+    )
+    return result
 
 
 async def unlink_task_from_experiment_core(
