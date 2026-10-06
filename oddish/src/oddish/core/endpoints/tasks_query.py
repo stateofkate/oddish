@@ -1286,6 +1286,9 @@ async def browse_tasks_core(
         )
         .select_from(TaskModel)
         .outerjoin(current_version, current_version.id == TaskModel.current_version_id)
+        # The session's soft-delete filter does not reach this query once it
+        # becomes the subquery below, so deleted tasks are excluded here.
+        .where(TaskModel.deleted_at.is_(None))
     )
     if org_id is not None:
         ranked_tasks = ranked_tasks.where(TaskModel.org_id == org_id)

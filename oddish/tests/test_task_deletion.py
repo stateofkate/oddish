@@ -228,3 +228,28 @@ async def test_restore_skips_task_whose_name_was_reused(session):
     session.expunge_all()
     assert await session.get(TaskModel, old.id) is None
     assert await session.get(TaskModel, other.id) is not None
+
+
+@pytest.mark.asyncio
+async def test_browse_hides_deleted_task_until_restored(session):
+    """The task list (/tasks/browse, `oddish ls`) wraps its tasks query in a
+    subquery, which the session's soft-delete filter does not reach."""
+    from oddish.db.models import generate_id
+
+    name = f"browse-{generate_id()}"
+    task = TaskModel(name=name, org_id="org1", user="t", task_path="s3://t")
+    session.add(task)
+    await session.flush()
+
+    async def listed():
+        page = await endpoints.browse_tasks_core(session, org_id="org1", query=name)
+        count = await endpoints.browse_tasks_count_core(
+            session, org_id="org1", query=name
+        )
+        return [item.id for item in page.items], count
+
+    assert await listed() == ([task.id], 1)
+    await endpoints.delete_tasks_core(session, task_ids=[task.id], org_id="org1")
+    assert await listed() == ([], 0)
+    await endpoints.restore_tasks_core(session, task_ids=[task.id], org_id="org1")
+    assert await listed() == ([task.id], 1)
