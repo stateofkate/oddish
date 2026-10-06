@@ -54,6 +54,9 @@ _WRITE_TOOLS: dict[str, frozenset[str]] = {
     ),
     "grok-build": frozenset({"write", "search_replace"}),
     "opencode": frozenset({"write", "edit"}),
+    # Devin CLI: a devin/swe-2 staging run recorded `write`; its system prompt
+    # names the full file toolset as read, write, edit, exec.
+    "devin": frozenset({"write", "edit"}),
 }
 
 # Tools whose arguments carry a command string rather than a path.
@@ -65,6 +68,7 @@ _RUN_TOOLS = frozenset(
         "bash_command",
         "run_shell_command",
         "run_terminal_command",
+        "exec",
     }
 )
 

@@ -3017,6 +3017,62 @@ def test_the_importer_stamps_derived_facts_onto_the_summary():
     assert component["revisits_own_edits"] is True
 
 
+def test_devin_provenance_tracks_write_then_exec_of_the_same_file():
+    """Devin CLI records ``write`` (``file_path``) and ``exec`` (``command``).
+
+    Shapes from a recorded devin/swe-2 run on staging (Devin CLI 3000.11.3):
+    the agent wrote /app/sum.py, then ran it. The run must count as running
+    its own artifact.
+    """
+    from oddish.analyze.trajectory_provenance import component_provenance
+
+    trajectory = {
+        "agent": {"name": "devin"},
+        "steps": [
+            {
+                "step_id": 9,
+                "tool_calls": [
+                    {
+                        "function_name": "write",
+                        "arguments": {"file_path": "/app/sum.py", "content": "..."},
+                    }
+                ],
+            },
+            {
+                "step_id": 10,
+                "tool_calls": [
+                    {
+                        "function_name": "exec",
+                        "arguments": {"command": "python3 /app/sum.py"},
+                    }
+                ],
+            },
+        ],
+    }
+
+    result = component_provenance(trajectory, list(enumerate(trajectory["steps"]))[1:])
+
+    assert result == {
+        "provenance_capable": True,
+        "revisits_own_edits": None,
+        "runs_own_artifacts": True,
+    }
+
+    # A later `edit` of the file it wrote is a revisit of its own work.
+    edit = {
+        "step_id": 11,
+        "tool_calls": [
+            {
+                "function_name": "edit",
+                "arguments": {"file_path": "/app/sum.py", "old_string": "a"},
+            }
+        ],
+    }
+    trajectory["steps"].append(edit)
+    revisit = component_provenance(trajectory, [(2, edit)])
+    assert revisit["revisits_own_edits"] is True
+
+
 def test_antigravity_provenance_reads_agys_pascalcase_path_argument():
     """agy records its write path as ``TargetFile``, and its own tool names.
 

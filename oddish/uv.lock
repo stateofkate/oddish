@@ -8,7 +8,7 @@ resolution-markers = [
 ]
 
 [manifest]
-overrides = [{ name = "harbor", git = "https://github.com/abundant-ai/harbor?rev=8d462620f60803c02480cb62ae5e14f785e919b8" }]
+overrides = [{ name = "harbor", git = "https://github.com/abundant-ai/harbor?rev=0c57ac20618f1936b4215ed63b7b4d4732cfa61d" }]
 
 [[package]]
 name = "aioboto3"
@@ -815,7 +815,7 @@ wheels = [
 [[package]]
 name = "harbor"
 version = "0.20.0"
-source = { git = "https://github.com/abundant-ai/harbor?rev=8d462620f60803c02480cb62ae5e14f785e919b8#8d462620f60803c02480cb62ae5e14f785e919b8" }
+source = { git = "https://github.com/abundant-ai/harbor?rev=0c57ac20618f1936b4215ed63b7b4d4732cfa61d#0c57ac20618f1936b4215ed63b7b4d4732cfa61d" }
 dependencies = [
     { name = "dirhash" },
     { name = "dockerfile-parse" },
@@ -1553,7 +1553,7 @@ requires-dist = [
     { name = "daytona", marker = "extra == 'worker'", specifier = ">=0.192.0" },
     { name = "dockerfile-parse", marker = "extra == 'worker'", specifier = ">=2.0.1" },
     { name = "fastapi", marker = "extra == 'server'", specifier = "==0.128.0" },
-    { name = "harbor", git = "https://github.com/abundant-ai/harbor?rev=8d462620f60803c02480cb62ae5e14f785e919b8" },
+    { name = "harbor", git = "https://github.com/abundant-ai/harbor?rev=0c57ac20618f1936b4215ed63b7b4d4732cfa61d" },
     { name = "httpx", specifier = "==0.28.1" },
     { name = "litellm", specifier = "==1.83.14" },
     { name = "modal", marker = "extra == 'worker'", specifier = ">=1.5.0" },
