@@ -3443,8 +3443,9 @@ and IDs, with separate model/check text columns and full summaries in JSON.
 
 Only mine uses `mine=only` without a duplicate `author=me`. Clearing that
 restriction, globally or through its chip, removes the mode and restores the
-default mine-first order. Explicit Everyone (`mine=off`) stays unpinned when
-other filters are cleared.
+default: everyone's tasks in the chosen sort, unpinned. Only an explicit
+`mine=first` pins the caller's tasks ahead of the rest. `mine=off` is kept
+when other filters are cleared.
 
 Task-browser navigation is URL-owned too: `expanded=TASK_ID` opens a table
 row (`view=table` is implied if view is absent), `filters=1` opens advanced

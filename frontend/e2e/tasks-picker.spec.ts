@@ -324,7 +324,7 @@ test("sorting only-mine links keeps the author filter", async ({page}) => {
 });
 
 for (const clear of ["Clear filters", "Author: Me ×"]) {
-  test(`${clear} restores mine-first after selecting Only mine`, async ({ page }) => {
+  test(`${clear} restores everyone after selecting Only mine`, async ({ page }) => {
     await page.goto("/picker?delivery=existing&mine=off&sort=model_score_desc&run_coverage=model_trials");
     await page.getByRole("button", { name: "Filter tasks by member" }).click();
     await page.getByRole("button", { name: "Mine", exact: true }).click();

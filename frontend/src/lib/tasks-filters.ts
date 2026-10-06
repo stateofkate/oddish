@@ -29,14 +29,16 @@ export type CompareCond = {
 export type OrGroup = Record<string, string[] | number | boolean | CompareCond>;
 
 // Where the signed-in user's own tasks go: ahead of everyone else's
-// (default, ``mine`` absent), alone, or nowhere special.
+// (``first``), alone (``only``), or nowhere special (default, ``mine`` absent,
+// or ``off``).
 export type MineMode = "first" | "only" | "off";
 export const MINE_MODES: readonly MineMode[] = ["first", "only", "off"];
 
 // What the backend gets for one `mine` mode plus the author tokens from the
 // URL and the search box: `only` adds the token `me` to the author FILTER;
-// anything but `off` (including a bare /tasks) PINS the caller's tasks to the
-// top of the page order. Pure, so it is unit-tested without the proxy.
+// only an explicit `first` PINS the caller's tasks to the top of the page
+// order, so a bare /tasks lists everyone's tasks in the chosen sort. Pure, so
+// it is unit-tested without the proxy.
 export function backendAuthorParams(
   mine: string | null,
   authors: string[]
@@ -44,7 +46,7 @@ export function backendAuthorParams(
   const all = mine === "only" ? [...authors, "me"] : authors;
   return {
     author: Array.from(new Set(all.filter(Boolean))),
-    pinAuthor: mine !== "only" && mine !== "off",
+    pinAuthor: mine === "first",
   };
 }
 

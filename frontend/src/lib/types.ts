@@ -452,7 +452,7 @@ export interface TaskBrowseItem {
   steps_p50?: number | null;
   steps_p75?: number | null;
   agent_count?: number;
-  // Matches the browse request's pin_author (the browser's "mine first").
+  // Matches the browse request's pin_author (the browser's `mine=first`).
   author_pinned?: boolean;
   // Every customer the task is recorded as sent to; empty is "no record",
   // not "never sent" (history coverage is partial).

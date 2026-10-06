@@ -34,13 +34,13 @@ test("author and mine round-trip through the URL", () => {
 });
 
 // The proxy turns the display params into the backend's author/pin_author:
-// a bare /tasks pins the caller's tasks first, `mine=only` filters to them,
-// `mine=off` does neither, and the `author` param unions with the search
+// only `mine=first` pins the caller's tasks first, `mine=only` filters to
+// them, a bare /tasks and `mine=off` do neither, and the `author` param unions with the search
 // box's github:/author: tokens.
 test("mine mode resolves to pin_author / author for the backend", () => {
   assert.deepEqual(backendAuthorParams(null, []), {
     author: [],
-    pinAuthor: true,
+    pinAuthor: false,
   });
   assert.deepEqual(backendAuthorParams("first", ["", "bob"]), {
     author: ["bob"],

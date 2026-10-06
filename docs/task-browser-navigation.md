@@ -8,8 +8,8 @@ navigate directly without opening dropdowns. Parameters compose with one another
 |---|---|---|
 | Search | `q=wine` | `oddish ls --query wine` |
 | Only my tasks | `mine=only` | `oddish ls --author me` |
-| Everyone, mine first | `mine=first` (default) | `oddish ls --pin-author me` |
-| Everyone, no priority | `mine=off` | `oddish ls` without author flags |
+| Everyone, mine first | `mine=first` | `oddish ls --pin-author me` |
+| Everyone, no priority | omit `mine` (default) or `mine=off` | `oddish ls` without author flags |
 | Coverage | `run_coverage=scored_model_trials` | `oddish ls --run-coverage scored_model_trials` |
 | Review outcome | `qa_outcomes=unreviewed,outdated` | `--qa-outcome unreviewed --qa-outcome outdated` |
 | Model | `models=openai/gpt-5` | `--model openai/gpt-5` |
