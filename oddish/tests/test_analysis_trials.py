@@ -1955,6 +1955,53 @@ def test_the_validator_enforces_the_verdict_contract():
     assert any("null" in e for e in check_analysis_result(unasked, without_verdict))
 
 
+def test_evaluation_disclosure_uses_existing_audit_and_rejection_contracts():
+    """A disclosure needs no new label or proof that a solver exploited it."""
+    from oddish.analyze.models import ActionItem
+    from oddish.analyze.qa_issue_taxonomy import (
+        CATEGORY_BY_SLUG,
+        category_for_finding,
+    )
+    from oddish.core.verdict_sync import build_pre_trial_payload
+    from oddish.worker.analysis_result_check import check_analysis_result
+    from oddish.workers.analysis_trials import analysis_check_payload
+
+    finding = {
+        "source": "pre_trial",
+        "problem_type": "mismatch",
+        "dimension": "info_leakage",
+        "file": "instruction.md",
+        "line_start": 3,
+        "line_end": 3,
+        "title": "The instruction reveals the task's grader.",
+        "detail": 'The instruction says "the grader checks deleted records". This tells the solver that its work is being evaluated.',
+        "recommendation": 'Replace the grading reference with "Deleted records must no longer appear".',
+        "tier": "must_fix",
+    }
+    assert (
+        check_analysis_result(
+            {"items": [finding]}, analysis_check_payload("audit", None)
+        )
+        == []
+    )
+
+    payload = build_pre_trial_payload([ActionItem.model_validate(finding)])
+    [stored] = payload["items"]
+    assert stored["id"]
+    assert stored["exploited"] is False
+    assert stored["causal"] is False
+    assert stored["file"] == "instruction.md"
+    assert stored["line_start"] == stored["line_end"] == 3
+    category = category_for_finding(stored)
+    assert category == "agent-can-read-hidden-files"  # Keep existing report links.
+    assert CATEGORY_BY_SLUG[category].name == "Agent can access restricted information"
+
+    verdict = apply_deterministic_verdict_rules(
+        None, must_fix_ids=[stored["id"]], baseline_evidence=[]
+    )
+    assert verdict.verdict == "reject"
+
+
 def test_the_validator_holds_audit_items_to_the_prompt_schema():
     """Every audit finding needs the ten keys with the exact values the
     prompt defines; the importer's tolerated alternate spellings (severity

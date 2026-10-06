@@ -7,7 +7,8 @@ is not listed goes to ``other``, so a new subtype shows up in the report.
 
 Only trial subtypes that mark a task problem are listed. An answer shown in
 the instruction is reported as ``info_leakage/mismatch``, the same as other
-leaks, so all leak findings share one category. Bump ``TAXONOMY_VERSION``
+leaks, including disclosures about the task's evaluation, so all leak findings
+share one category. Bump ``TAXONOMY_VERSION``
 when a category or a mapping changes.
 """
 
@@ -15,7 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-TAXONOMY_VERSION = "1"
+TAXONOMY_VERSION = "2"
 
 DIMENSIONS = {
     "grading": "Grading accuracy",
@@ -33,7 +34,7 @@ tests-give-random-results | grading | Tests give random results | Timing, order,
 task-already-solved | grading | Task is already solved | The starting files already contain working code, so no work is needed to pass. | task_pre_solved
 reference-solution-broken | grading | Reference solution is broken | The author's reference solution fails, gives wrong results, or skips the required work. | oracle/incompleteness oracle/mismatch
 baseline-check-failed | grading | Baseline check failed | The empty run passed or the reference solution failed, so the grade means nothing. |
-agent-can-read-hidden-files | integrity | Agent can read hidden files | The agent can read the tests, the reference solution, or other files that must stay hidden. | hidden_file_leak test_inspection oracle_copying info_leakage/incompleteness info_leakage/mismatch
+agent-can-read-hidden-files | integrity | Agent can access restricted information | The agent can access hidden tests, reference solutions, answers, or disclosures about the task's evaluation. | hidden_file_leak test_inspection oracle_copying info_leakage/incompleteness info_leakage/mismatch
 answer-in-instruction | integrity | Answer is in the instruction | The instruction shows text that already is the answer, so the task measures copying. | solution_leaked_in_instruction
 agent-has-extra-access | integrity | Agent has access it should not have | The agent can use root, the Docker socket, host files, secrets, or the internet to get around the task. | unintended_access
 agent-can-hard-code-answers | integrity | Agent can hard-code the answers | The agent passes by returning the expected values instead of computing them. | hardcoding
