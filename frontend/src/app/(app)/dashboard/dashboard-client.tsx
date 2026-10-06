@@ -42,7 +42,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { ExperimentsSkeleton } from "./experiments-skeleton";
-import type { DashboardResponse } from "@/lib/types";
+import type { DashboardResponse, QueueHealthResponse } from "@/lib/types";
+import { QueueKeyIcon } from "@/components/queue-key-icon";
 import { fetcher } from "@/lib/api";
 import { formatTaskAuthor } from "@/lib/format";
 import {
@@ -100,7 +101,6 @@ const STATUS_FILTER_OPTIONS = [
   { value: "pending-verdict", label: "Tasks without a verdict" },
   { value: "failed", label: "Failures" },
 ] as const;
-
 
 function CommandSnippet({ command }: { command: string }) {
   const [copied, setCopied] = useState(false);
@@ -530,7 +530,10 @@ function ExperimentsTableBody({
                             name: experiment.name,
                             counts: experiment.summary_pending
                               ? null
-                              : { tasks: experiment.task_count, trials: experiment.total_trials },
+                              : {
+                                  tasks: experiment.task_count,
+                                  trials: experiment.total_trials,
+                                },
                           })
                         }
                         disabled={
@@ -790,6 +793,38 @@ const TRIAL_FILTER_PARAM_KEYS = [
 function ExperimentTrialFilters() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const [open, setOpen] = useState(false);
+  // Active queue keys come from the admin-only queue health endpoint; anyone
+  // else (or a failed fetch) gets the plain text box. keepPreviousData keeps
+  // the list through the close animation, when the key goes back to null.
+  const isOrgAdmin = isOrgAdminRole(useAuth().orgRole);
+  const { data: queueHealth, error: queueHealthError } =
+    useSWR<QueueHealthResponse>(
+      open && isOrgAdmin ? "/api/admin/queue-health" : null,
+      fetcher,
+      { keepPreviousData: true }
+    );
+  const showQueuePicker = isOrgAdmin && !queueHealthError;
+  // Scheduled retries still match the experiments filter, and the applied
+  // queue stays listed even after it drains so it can be toggled off.
+  const selectedQueue = searchParams.get("queue");
+  const activeQueues = queueHealth?.capacity
+    .map((row) => ({
+      queue_key: row.queue_key,
+      queued: row.queued + row.queued_scheduled,
+      running: row.running,
+    }))
+    .filter(
+      (row) =>
+        row.queued > 0 || row.running > 0 || row.queue_key === selectedQueue
+    );
+  if (
+    activeQueues &&
+    selectedQueue &&
+    !activeQueues.some((row) => row.queue_key === selectedQueue)
+  ) {
+    activeQueues.unshift({ queue_key: selectedQueue, queued: 0, running: 0 });
+  }
 
   const commit = (patch: Record<string, string>) => {
     const next = new URLSearchParams(searchParams.toString());
@@ -851,7 +886,7 @@ function ExperimentTrialFilters() {
   );
 
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
           type="button"
@@ -922,6 +957,41 @@ function ExperimentTrialFilters() {
                   {field(group.keys[0], "min", true)}
                   <span className="text-muted-foreground text-xs">–</span>
                   {field(group.keys[1], "max", true)}
+                </div>
+              ) : group.keys[0] === "queue" && showQueuePicker ? (
+                <div className="max-h-48 space-y-0.5 overflow-y-auto">
+                  {!activeQueues ? (
+                    <p className="text-muted-foreground text-xs">Loading…</p>
+                  ) : activeQueues.length === 0 ? (
+                    <p className="text-muted-foreground text-xs">
+                      Nothing queued or running.
+                    </p>
+                  ) : null}
+                  {activeQueues?.map((row) => {
+                    const selected = selectedQueue === row.queue_key;
+                    return (
+                      <button
+                        key={row.queue_key}
+                        type="button"
+                        title={`${row.queued} queued, ${row.running} running`}
+                        className={cn(
+                          "hover:bg-muted flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left",
+                          selected && "bg-muted"
+                        )}
+                        onClick={() =>
+                          commit({ queue: selected ? "" : row.queue_key })
+                        }
+                      >
+                        <QueueKeyIcon queueKey={row.queue_key} size={12} />
+                        <span className="min-w-0 flex-1 truncate font-mono text-[11px]">
+                          {row.queue_key}
+                        </span>
+                        <span className="text-muted-foreground shrink-0 text-[11px] tabular-nums">
+                          {row.queued} · {row.running}
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
               ) : (
                 field(group.keys[0], group.placeholder ?? "", false)
