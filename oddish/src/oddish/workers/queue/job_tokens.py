@@ -32,6 +32,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Mapping
 
+from oddish.vendor_harnesses import vendor_harness_for_agent
+
 DEFAULT_TTL_SECONDS = (
     14400  # 4h: covers queue wait + run; trial timeouts are under this
 )
@@ -96,9 +98,6 @@ _AMBIENT_PROVIDER_KEYS: dict[str, tuple[str, ...]] = {
     "deepseek": ("DEEPSEEK_API_KEY",),
     "openrouter": ("OPENROUTER_API_KEY",),
 }
-# cursor-cli authenticates with CURSOR_API_KEY read from the host environment
-# (Harbor agents/installed/cursor_cli.py), whatever model provider it fronts.
-_CURSOR_AUTH_ENV = ("CURSOR_API_KEY",)
 
 
 def bedrock_sandbox_env(ambient: Mapping[str, str]) -> dict[str, str]:
@@ -259,11 +258,14 @@ def agent_ambient_env(
     agent: str | None, ambient: Mapping[str, str] | None
 ) -> dict[str, str]:
     """Credentials an agent harness reads from the host by name, whatever model
-    provider it fronts. Only cursor-cli today. Empty without ``ambient``, so the
-    worker path is unchanged."""
-    if not ambient or "cursor-cli" not in (agent or "").strip().lower():
+    provider it fronts: the vendor-service harnesses (cursor-cli, devin). Empty
+    without ``ambient``, so the worker path is unchanged."""
+    harness = vendor_harness_for_agent(agent)
+    if not ambient or harness is None:
         return {}
-    return {name: value for name in _CURSOR_AUTH_ENV if (value := ambient.get(name))}
+    return {
+        name: value for name in harness.auth_env_keys if (value := ambient.get(name))
+    }
 
 
 def merge_agent_env(

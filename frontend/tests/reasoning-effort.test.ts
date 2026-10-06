@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   reasoningEffortOptions,
   REASONING_EFFORT_AGENTS,
+  RUN_AGENTS,
 } from "../src/lib/reasoning-effort.ts";
 import { buildExperimentRunRequests } from "../src/lib/experiment-run.ts";
 
@@ -94,4 +95,10 @@ test("agent and model matching ignores input case and whitespace", () => {
     reasoningEffortOptions(" CODEX ", " OpenAI/GPT-5.6 "),
     extended,
   );
+});
+
+test("devin is offered for runs but has no effort choices", () => {
+  assert.ok(RUN_AGENTS.includes("devin"));
+  assert.ok(!REASONING_EFFORT_AGENTS.includes("devin"));
+  assert.deepEqual(reasoningEffortOptions("devin", "devin/swe-2"), []);
 });

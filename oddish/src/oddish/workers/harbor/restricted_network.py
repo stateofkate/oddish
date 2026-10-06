@@ -34,6 +34,7 @@ from oddish.config import (
     infer_model_provider_prefix,
     is_vertex_ai_model,
 )
+from oddish.vendor_harnesses import DEVIN
 from oddish.workers.agents.network import normalize_domain_or_url
 
 from .model_hosts import (
@@ -675,6 +676,22 @@ def _cursor_profile(
     )
 
 
+def _devin_profile(
+    agent_class: type[Any],
+    agent_config: AgentConfig,
+    resolved_env: Mapping[str, str],
+) -> RestrictedNetworkProfile:
+    # Devin CLI fronts every model through Cognition's service, like Cursor,
+    # and reads no transport base URL. Its runtime hosts are undocumented, so
+    # until they are measured from a trial a restricted phase fails closed.
+    if not DEVIN.runtime_hosts:
+        raise RestrictedNetworkProfileError(
+            "Devin CLI's runtime hosts are not established yet; run devin "
+            "trials with open egress."
+        )
+    return RestrictedNetworkProfile(outbound_hosts=DEVIN.runtime_hosts)
+
+
 def _gemini_profile(
     agent_class: type[Any],
     agent_config: AgentConfig,
@@ -900,6 +917,12 @@ _COMPATIBILITY_PROFILES: dict[str, _RestrictedAgentSpec] = {
     "harbor.agents.installed.cursor_cli:CursorCli": _RestrictedAgentSpec(
         _unattested_stock_harness_profile,
         _cursor_base_url_keys,
+        fronts_own_model_service=True,
+        pins_own_transport=True,
+    ),
+    "harbor.agents.installed.devin:Devin": _RestrictedAgentSpec(
+        _devin_profile,
+        _no_base_url_keys,
         fronts_own_model_service=True,
         pins_own_transport=True,
     ),

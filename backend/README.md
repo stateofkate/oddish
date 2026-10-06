@@ -462,6 +462,14 @@ the internal `META_API_KEY`. Both routes call the same Meta endpoints.
 `META_PUBLIC_2_API_KEY` in `oddish-prod`, with its own queue key and concurrency
 limit.
 
+Devin trials use `--agent devin --model devin/<model>` (for example
+`devin/swe-2`, Cognition's model, which has no API outside the Devin CLI) and
+read `DEVIN_API_KEY` from `oddish-prod`. That one account key pays for every model
+the CLI offers. Harbor writes it into the CLI's `credentials.toml` inside the
+sandbox, so it never enters the agent's run environment. Bare model ids are
+rejected at submit, and restricted-network phases fail closed until Devin's
+runtime hosts are measured.
+
 ### Cycling workers after a secret change
 
 Modal injects secrets at container start, so running containers keep the old

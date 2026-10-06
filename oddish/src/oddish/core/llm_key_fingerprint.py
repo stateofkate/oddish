@@ -6,11 +6,12 @@ import hashlib
 import os
 from collections.abc import Mapping
 
+from oddish.vendor_harnesses import VENDOR_HARNESSES
+
 _ODDISH_PROVIDER_ENV_KEYS = {
     "anthropic-hdo": "ANTHROPIC_HDO_API_KEY",
     "azure": "AZURE_OPENAI_API_KEY",
     "bedrock": "AWS_BEARER_TOKEN_BEDROCK",
-    "cursor": "CURSOR_API_KEY",
     "meta": "META_API_KEY",
     "meta-public": "META_PUBLIC_API_KEY",
     "meta-public-2": "META_PUBLIC_2_API_KEY",
@@ -24,6 +25,8 @@ _ODDISH_PROVIDER_ENV_KEYS = {
     # (non-secret) VERTEXAI_PROJECT for this provider.
     "vertex_ai": "VERTEX_AI_CREDENTIALS_JSON",
     "xai-public": "XAI_PUBLIC_API_KEY",
+    # Vendor-service harnesses (cursor, devin): one vendor key per prefix.
+    **{h.model_prefix: h.auth_env_keys[0] for h in VENDOR_HARNESSES},
 }
 
 

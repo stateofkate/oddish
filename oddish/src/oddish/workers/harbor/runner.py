@@ -65,6 +65,7 @@ from oddish.runtime.sandbox_lifecycle import SandboxLaunchContext
 from oddish.runtime.ports import accelerator_family
 from oddish.runtime.registry import get_backend
 from oddish.schemas import HarborConfig
+from oddish.vendor_harnesses import vendor_harness_for_agent
 from oddish.task_timeouts import validate_task_timeout_config
 from oddish.workers.agents.network import normalize_domain_or_url
 from .agent_config import (
@@ -253,10 +254,6 @@ _GROK_RUNTIME_SECRET_KEYS = (
     "XAI_API_KEYS",
     "XAI_PUBLIC_API_KEY",
 )
-# Ambient Cursor auth the stock cursor-cli agent forwards into the sandbox
-# (cursor_cli.py reads CURSOR_API_KEY from os.environ). Folded into the redaction
-# map for the same reason -- credential, not a route: redaction coverage only.
-_CURSOR_RUNTIME_SECRET_KEYS = ("CURSOR_API_KEY",)
 # Ambient Azure OpenAI credentials, shared by both spellings of the provider
 # below so the two rows cannot drift apart.
 _AZURE_RUNTIME_SECRET_KEYS = (
@@ -381,9 +378,12 @@ def _resolved_runtime_transport_env(
             for key in _GROK_RUNTIME_SECRET_KEYS:
                 if key not in runtime_env and (value := os.environ.get(key)):
                     runtime_env[key] = value
-        is_cursor = name == "cursor-cli" or "cursor_cli:" in import_path
-        if is_cursor:
-            for key in _CURSOR_RUNTIME_SECRET_KEYS:
+        # Vendor-service harnesses (cursor-cli, devin) authenticate with one
+        # vendor key from the worker env whatever model they front. Folded into
+        # the redaction map for the same reason -- credential, not a route.
+        vendor = vendor_harness_for_agent(name, import_path)
+        if vendor is not None:
+            for key in vendor.auth_env_keys:
                 if key not in runtime_env and (value := os.environ.get(key)):
                     runtime_env[key] = value
         # General provider-driven fold: a stock agent (e.g. mini-swe) that

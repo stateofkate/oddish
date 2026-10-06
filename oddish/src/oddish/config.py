@@ -18,6 +18,7 @@ from harbor.models.agent.name import AgentName
 from harbor.models.environment_type import EnvironmentType
 
 from oddish.harbor_pin import load_harbor_pin as _load_harbor_pin
+from oddish.vendor_harnesses import vendor_model_prefix_error
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +117,7 @@ _FIXED_AGENT_PROVIDERS: dict[str, str] = {
     "antigravity-cli": "gemini",
     "codex": "openai",
     "grok-build": "xai",
+    "devin": "devin",
 }
 
 _MODEL_ABSENT_ALIASES: set[str] = {
@@ -1473,6 +1475,9 @@ _MODEL_PROVIDER_ALIASES: dict[str, str] = {
     # DeepSeek official API for the dsh harness.
     "deepseek": DEEPSEEK_PROVIDER,
     "ds": DEEPSEEK_PROVIDER,
+    # Devin CLI fronts every model (SWE-2, Claude, GPT...) through Cognition's
+    # service, so ``devin/<model>`` is its own provider/queue bucket.
+    "devin": "devin",
 }
 
 
@@ -2458,6 +2463,12 @@ class Settings(BaseSettings):
 
         if is_nop_oracle_agent(agent):
             return NOP_ORACLE_QUEUE_KEY
+
+        # A vendor-service harness (devin) needs its own ``devin/`` prefix: a
+        # bare id would fall through to the provider routes below and be
+        # rewritten for a provider the harness never calls.
+        if strict and (prefix_error := vendor_model_prefix_error(agent, cleaned)):
+            raise ValueError(prefix_error)
 
         if not strict and cleaned and cleaned.startswith("claude-"):
             return cleaned

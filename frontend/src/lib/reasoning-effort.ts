@@ -19,6 +19,9 @@ export const REASONING_EFFORT_AGENTS = [
   "muse-code",
 ];
 
+// Agents offered when starting a run. Devin CLI takes no effort setting.
+export const RUN_AGENTS = [...REASONING_EFFORT_AGENTS, "devin"];
+
 /** Choices for the bundled runners, including their model-specific restrictions. */
 export function reasoningEffortOptions(agent: string, model: string): string[] {
   agent = agent.trim().toLowerCase();

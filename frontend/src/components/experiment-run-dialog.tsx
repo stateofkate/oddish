@@ -23,10 +23,7 @@ import {
 import { apiFetch } from "@/lib/api";
 import { isAgentTrial, type Task } from "@/lib/types";
 import { isBaselineAgentName } from "@/lib/experiment-agent-grouping";
-import {
-  REASONING_EFFORT_AGENTS,
-  reasoningEffortOptions,
-} from "@/lib/reasoning-effort";
+import { RUN_AGENTS, reasoningEffortOptions } from "@/lib/reasoning-effort";
 import {
   buildExperimentRunRequests,
   submitExperimentRuns,
@@ -59,10 +56,7 @@ export function ExperimentRunDialog({
       (trial) => isAgentTrial(trial) && !isBaselineAgentName(trial.agent)
     );
   const agents = [
-    ...new Set([
-      ...REASONING_EFFORT_AGENTS,
-      ...solverTrials.map((trial) => trial.agent),
-    ]),
+    ...new Set([...RUN_AGENTS, ...solverTrials.map((trial) => trial.agent)]),
   ];
   const models = [
     ...new Set(

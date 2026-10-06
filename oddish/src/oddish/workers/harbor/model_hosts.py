@@ -42,6 +42,7 @@ from oddish.config import (
     looks_like_bedrock_model_id,
     settings,
 )
+from oddish.vendor_harnesses import CURSOR_CLI, vendor_harness_for_model_prefix
 from oddish.workers.agents.network import normalize_domain_or_url
 from oddish.workers.harbor.vertex_ai import default_hosts as _vertex_default_hosts
 from oddish.workers.harbor.vertex_ai import hosts_from_env as _vertex_hosts_from_env
@@ -136,11 +137,9 @@ _ANTHROPIC_HOSTS = ("api.anthropic.com", "mcp-proxy.anthropic.com")
 _OPENAI_HOSTS = ("api.openai.com", "ab.chatgpt.com")
 _GEMINI_HOSTS = ("generativelanguage.googleapis.com",)
 _XAI_HOSTS = ("api.x.ai",)
-# Cursor CLI fronts every selectable model through Cursor's own API. Its
-# bootstrap endpoint returns the agent-stream URL at runtime (currently under
-# api5), and the installer is intentionally unpinned. Use Cursor's official
-# domain boundary instead of encoding ephemeral transport hostnames.
-_CURSOR_RUNTIME_HOSTS = ("*.cursor.sh",)
+# Cursor CLI fronts every selectable model through Cursor's own API; its hosts
+# live with the other vendor-service harnesses in oddish.vendor_harnesses.
+_CURSOR_RUNTIME_HOSTS = CURSOR_CLI.runtime_hosts
 # tbh (published as ``muse``) reaches Meta through its own service rather than
 # the OpenAI-compatible model API, so its host does not follow from the model
 # id the way every other agent's does: a ``meta/`` model resolves
@@ -623,8 +622,8 @@ def outbound_hosts_for_model(
             # carry must resolve neither a host here nor transport keys, or
             # the operator's real route would be dropped for the public one.
             hosts.extend(_GEMINI_HOSTS)
-        elif head == "cursor":
-            hosts.extend(_CURSOR_RUNTIME_HOSTS)
+        elif (vendor := vendor_harness_for_model_prefix(head)) is not None:
+            hosts.extend(vendor.runtime_hosts)
         elif head == "bedrock":
             hosts.extend(
                 bedrock_domains_for_model(model_name=model_name, region=bedrock_region)
