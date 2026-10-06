@@ -28,7 +28,9 @@ async def test_batch_hashes_each_item_before_resolving_identity(
         submission.user = "server-default"
 
     def get_default_cloud_environment(submission, *, request_hash):
-        routed.append((submission.task_id, submission.user, request_hash))
+        routed.append(
+            (submission.task_id, submission.user, submission.environment, request_hash)
+        )
         return EnvironmentType.ARCHIL
 
     async def require_connected_github_user(*_args):
@@ -81,6 +83,7 @@ async def test_batch_hashes_each_item_before_resolving_identity(
         submissions=[
             TaskSweepSubmission(
                 task_id=task_id,
+                environment=EnvironmentType.MODAL,
                 configs=[AgentModelPair(agent="oracle")],
             )
             for task_id in task_ids
@@ -97,6 +100,6 @@ async def test_batch_hashes_each_item_before_resolving_identity(
 
     assert result.failed == 2
     assert routed == [
-        ("task-a", "server-default", raw_hashes[0]),
-        ("task-b", "server-default", raw_hashes[1]),
+        ("task-a", "server-default", None, raw_hashes[0]),
+        ("task-b", "server-default", None, raw_hashes[1]),
     ]

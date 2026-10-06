@@ -212,3 +212,118 @@ def test_archil_rollout_rejects_out_of_range_percentages(percent):
 
     with pytest.raises(ValidationError, match="archil_traffic_percent"):
         Settings(archil_traffic_percent=percent, _env_file=None)
+
+
+def _routed_environments(submission, *, request_hash):
+    cloud_policy.release_explicit_modal_to_archil_rollout(submission)
+    selected = get_default_cloud_environment(submission, request_hash=request_hash)
+    return [
+        spec.environment
+        for spec in build_trial_specs_from_sweep(
+            submission,
+            default_environment=selected,
+            # EC2 is registered only where its credentials are configured.
+            allowed_environments={
+                *cloud_policy.ALLOWED_CLOUD_ENVIRONMENTS,
+                EnvironmentType.EC2,
+            },
+        )
+    ]
+
+
+@pytest.mark.parametrize("bucket, expected", [(0, "archil"), (99, "modal")])
+def test_explicit_modal_cpu_sweep_joins_the_archil_rollout(
+    monkeypatch, bucket, expected
+):
+    monkeypatch.setattr(cloud_policy.settings, "archil_traffic_percent", 40)
+    submission = TaskSweepSubmission(
+        task_id="t1",
+        environment=EnvironmentType.MODAL,
+        configs=[
+            AgentModelPair(agent="oracle", n_trials=2),
+            AgentModelPair(agent="nop", environment=EnvironmentType.MODAL),
+        ],
+    )
+    assert (
+        _routed_environments(submission, request_hash=f"{bucket:064x}")
+        == [EnvironmentType(expected)] * 3
+    )
+
+
+@pytest.mark.parametrize("percent", [0, 40, 100])
+def test_explicit_modal_rollout_selects_the_configured_request_groups(
+    monkeypatch, percent
+):
+    monkeypatch.setattr(cloud_policy.settings, "archil_traffic_percent", percent)
+    selected = [
+        _routed_environments(
+            TaskSweepSubmission(
+                task_id="t1",
+                environment=EnvironmentType.MODAL,
+                configs=[AgentModelPair(agent="oracle")],
+            ),
+            request_hash=f"{bucket:064x}",
+        )[0]
+        for bucket in range(100)
+    ]
+    assert selected == [EnvironmentType.ARCHIL] * percent + [EnvironmentType.MODAL] * (
+        100 - percent
+    )
+
+
+def test_explicit_ec2_is_never_moved_by_the_archil_rollout(monkeypatch):
+    monkeypatch.setattr(cloud_policy.settings, "archil_traffic_percent", 100)
+    submission = TaskSweepSubmission(
+        task_id="t1",
+        environment=EnvironmentType.EC2,
+        configs=[
+            AgentModelPair(agent="oracle"),
+            AgentModelPair(agent="nop", environment=EnvironmentType.MODAL),
+        ],
+    )
+    assert _routed_environments(submission, request_hash="0" * 64) == [
+        EnvironmentType.EC2,
+        EnvironmentType.MODAL,
+    ]
+
+
+def test_per_config_ec2_is_kept_when_modal_configs_join_the_rollout(monkeypatch):
+    monkeypatch.setattr(cloud_policy.settings, "archil_traffic_percent", 100)
+    submission = TaskSweepSubmission(
+        task_id="t1",
+        configs=[
+            AgentModelPair(agent="oracle", environment=EnvironmentType.EC2),
+            AgentModelPair(agent="nop", environment=EnvironmentType.MODAL),
+        ],
+    )
+    assert _routed_environments(submission, request_hash="0" * 64) == [
+        EnvironmentType.EC2,
+        EnvironmentType.ARCHIL,
+    ]
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"requires_gpu": True},
+        {"harbor": {"environment": {"override_gpus": 1}}},
+        {
+            "registry_auth": [
+                {"registry": "ghcr.io", "username": "user", "token": "test"}
+            ]
+        },
+    ],
+)
+def test_explicit_modal_stays_where_archil_cannot_serve_the_run(monkeypatch, fields):
+    monkeypatch.setattr(cloud_policy.settings, "archil_traffic_percent", 100)
+    submission = TaskSweepSubmission.model_validate(
+        {
+            "task_id": "t1",
+            "environment": "modal",
+            "configs": [{"agent": "oracle", "environment": "modal"}],
+            **fields,
+        }
+    )
+    cloud_policy.release_explicit_modal_to_archil_rollout(submission)
+    assert submission.environment == EnvironmentType.MODAL
+    assert submission.configs[0].environment == EnvironmentType.MODAL

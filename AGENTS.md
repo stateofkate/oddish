@@ -1563,7 +1563,8 @@ Keep these routing rules in sync with `oddish/src/oddish/config.py` and
   percentage of eligible new hosted CPU submissions from Modal to Archil;
   production sets 40 in `.github/workflows/modal-deploy.yml`. The backend hashes
   each raw submission before identity/attribution mutations and selects groups
-  0–39 out of 100. GPU/TPU, private-registry pulls, explicit selections and
+  0–39 out of 100. An explicit `modal` counts as unset (released CLIs send it
+  on every run); explicit `ec2`/`archil`, GPU/TPU, private-registry pulls and
   inherited task environments are excluded. `backend/modal_app.py` pins the
   deploy-time percentage in the image and final runtime secret; rollback to 0
   stops new automatic selections without changing saved trials.

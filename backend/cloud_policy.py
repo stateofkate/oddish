@@ -12,6 +12,33 @@ from oddish.schemas import TaskSweepSubmission
 ALLOWED_CLOUD_ENVIRONMENTS = allowed_cloud_environments()
 
 
+def release_explicit_modal_to_archil_rollout(submission: TaskSweepSubmission) -> None:
+    """Let the Archil rollout split CPU sweeps that name Modal explicitly.
+
+    Released CLIs (PyPI 0.1.12 sends ``environment=modal`` on every hosted run)
+    and pipeline scripts name Modal without choosing it, and an explicit
+    environment wins over the rollout default. Clearing ``modal`` here sends
+    those sweeps through ``get_default_cloud_environment`` like a sweep that
+    named nothing. Every other explicit provider -- notably ``ec2`` -- is kept,
+    and so is Modal wherever Archil cannot serve the run (GPU, TPU, private
+    registry pulls). Call after ``compute_request_hash`` so the routing bucket
+    and idempotency fingerprint still come from the raw request.
+    """
+    if submission.environment not in (None, EnvironmentType.MODAL):
+        return
+    if (
+        submission.harbor.environment.override_tpu is not None
+        or (submission.harbor.environment.override_gpus or 0) > 0
+        or submission.requires_gpu
+        or submission.registry_auth
+    ):
+        return
+    submission.environment = None
+    for config in submission.configs:
+        if config.environment == EnvironmentType.MODAL:
+            config.environment = None
+
+
 def get_default_cloud_environment(
     submission: TaskSweepSubmission | None = None,
     *,
