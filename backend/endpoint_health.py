@@ -163,18 +163,16 @@ async def platform_targets(session: AsyncSession) -> list[EndpointTarget]:
             try:
                 deployment = settings.resolve_azure_openai_deployment(model)
             except ValueError:
-                target = EndpointTarget(
-                    **fields,
-                    configuration_error="No Azure deployment mapping is configured for this model.",
+                fields["configuration_error"] = (
+                    "No Azure deployment mapping is configured for this model."
                 )
-                targets[target.id] = target
-                continue
-            fields.update(
-                model=f"azure/{deployment}",
-                api_key_env="AZURE_OPENAI_API_KEY",
-                api_base_env="AZURE_OPENAI_ENDPOINT",
-                api_version_env="AZURE_OPENAI_API_VERSION",
-            )
+            else:
+                fields.update(
+                    model=f"azure/{deployment}",
+                    api_key_env="AZURE_OPENAI_API_KEY",
+                    api_base_env="AZURE_OPENAI_ENDPOINT",
+                    api_version_env="AZURE_OPENAI_API_VERSION",
+                )
         elif provider in {
             "openai",
             "anthropic",
@@ -238,7 +236,15 @@ async def platform_targets(session: AsyncSession) -> list[EndpointTarget]:
             fields["configuration_error"] = (
                 "No automatic completion check supports this model route; configure ODDISH_ENDPOINT_MONITORS explicitly."
             )
-        target = EndpointTarget(**fields)
+        try:
+            target = EndpointTarget(**fields)
+        except ValueError:
+            # One odd admin queue key must not stop every other monitor.
+            target = EndpointTarget(
+                name=queue_key[:100] or "(empty queue key)",
+                model=f"unresolved/{queue_key or '-'}"[:255],
+                configuration_error="This queue key is not a valid monitor target; configure ODDISH_ENDPOINT_MONITORS explicitly.",
+            )
         targets[target.id] = target
     if len(targets) > 100:
         raise ValueError(

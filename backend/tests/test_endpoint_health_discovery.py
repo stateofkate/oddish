@@ -252,3 +252,21 @@ async def test_missing_azure_mapping_is_visible_as_monitor_error(platform):
     result = await health.check_endpoint(target)
     assert result.outcome == "monitor_error"
     assert "No Azure deployment mapping" in result.error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "queue_key",
+    ["x" * 150, "my.provider/model", "/no-provider", "xai/" + "g" * 300],
+)
+async def test_invalid_queue_key_is_reported_without_dropping_others(
+    platform, queue_key
+):
+    _, stored = platform
+    stored.return_value = {queue_key: 4, "xai/grok-4.6": 8}
+    targets = await health.platform_targets(None)
+    by_name = {t.name: t for t in targets}
+    assert by_name["xai/grok-4.6"].api_key_env == "XAI_API_KEY"
+    (bad,) = (t for t in targets if t.name != "xai/grok-4.6")
+    assert bad.configuration_error
+    assert len(bad.name) <= 100
