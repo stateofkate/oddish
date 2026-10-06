@@ -48,13 +48,18 @@ async def db():
     async with engine.begin() as connection:
         await connection.execute(
             text(
-                "DROP TABLE IF EXISTS endpoint_checks, endpoint_monitors, slack_expense_alerts CASCADE"
+                "DROP TABLE IF EXISTS endpoint_checks, endpoint_monitors, slack_expense_alerts, model_concurrency_overrides CASCADE"
             )
         )
         await connection.run_sync(upgrade)
         await connection.execute(
             text(
                 "CREATE TABLE slack_expense_alerts (alert_key text PRIMARY KEY, payload text, claimed_at timestamptz, notified_at timestamptz)"
+            )
+        )
+        await connection.execute(
+            text(
+                "CREATE TABLE model_concurrency_overrides (queue_key text PRIMARY KEY, concurrency_limit integer)"
             )
         )
     statements = []
@@ -230,6 +235,7 @@ async def test_removed_target_fences_inflight_result(db):
 
 @pytest.mark.asyncio
 async def test_batch_queries_and_no_connection_during_provider_call(db, monkeypatch):
+    monkeypatch.setenv("ODDISH_ENDPOINT_MONITORS", "[]")
     targets = [
         EndpointTarget(
             name=str(i), model=f"openai/test-{i}", api_key_env="TEST_PROVIDER_KEY"
@@ -441,3 +447,52 @@ def test_preview_monitoring_and_alerts_require_explicit_enablement(monkeypatch):
     assert health.alerts_enabled()
     monkeypatch.delenv("SLACK_EXPENSE_WEBHOOK_URL")
     assert not health.alerts_enabled()
+
+
+@pytest.mark.asyncio
+async def test_automatic_registration_and_explicit_empty_override(db, monkeypatch):
+    import oddish.config
+
+    monkeypatch.delenv("ODDISH_ENDPOINT_MONITORS", raising=False)
+    monkeypatch.setattr(oddish.config.settings, "model_concurrency_overrides", {})
+    monkeypatch.setattr(health, "get_session", db.session)
+    async with db.session() as session:
+        await session.execute(
+            text(
+                "INSERT INTO model_concurrency_overrides VALUES ('xai/vendor-latest-learnability', 8)"
+            )
+        )
+    probe = AsyncMock(
+        side_effect=lambda target: CheckResult(target.id, "success", utcnow(), 1)
+    )
+    monkeypatch.setattr(health, "check_endpoint", probe)
+    assert await health.run_checks() == 1
+    assert (await rows(db, "endpoint_monitors"))[0][
+        "name"
+    ] == "xai/vendor-latest-learnability"
+    assert len(await rows(db, "endpoint_checks")) == 1
+    monkeypatch.setenv("ODDISH_ENDPOINT_MONITORS", "[]")
+    assert await health.run_checks() == 0
+    assert not (await rows(db, "endpoint_monitors"))[0]["enabled"]
+    assert probe.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_audit_is_read_only_and_probes_only_selected_models(db, monkeypatch):
+    from scripts import audit_endpoint_monitors as audit_tool
+
+    monkeypatch.setenv("ODDISH_ENDPOINT_MONITORS", json.dumps([TARGET.model_dump()]))
+    monkeypatch.setattr(audit_tool, "get_read_session", db.session)
+    probe = AsyncMock(return_value=CheckResult(TARGET.id, "success", utcnow(), 10))
+    monkeypatch.setattr(health, "check_endpoint", probe)
+    report = await audit_tool.audit([])
+    assert report["source"] == "explicit"
+    assert report["target_count"] == 1
+    assert report["registered"]["total"] == 0
+    probe.assert_not_called()
+    report = await audit_tool.audit([TARGET.name])
+    assert report["connections"][0]["probe"]["outcome"] == "success"
+    probe.assert_awaited_once_with(TARGET)
+    assert await rows(db, "endpoint_monitors") == []
+    assert await rows(db, "endpoint_checks") == []
+    assert await rows(db, "slack_expense_alerts") == []

@@ -917,7 +917,9 @@ advisory locks (org → payer, non-blocking).
 The operator Admin overview shows failing or overdue model connections. Healthy
 connections stay behind **All connections and history**. Opening the page reads
 saved observations; **Check again** schedules one check and does not start a trial.
-Checks only establish whether a small completion works. They do not test agent
+Checks only establish whether a small completion works. The
+[model request health proposal](../docs/model-request-health-plan.md) scopes
+request-error rates separately. They do not test agent
 startup, tools, long contexts, or capacity under load.
 
 Apply backend migration `endpoint_health_001` before deploying. The scheduled
@@ -927,11 +929,31 @@ off in staging and PR previews. To exercise them in a non-production app, set
 same flag to `false` when deploying to disable the schedules. The API reports
 that disabled state explicitly.
 
-Set `ODDISH_ENDPOINT_MONITORS` in the app's runtime secret to a JSON array of
-connections to check. An empty array means no connections are monitored; the
-UI does not report that as healthy. Reference the same provider credentials and
-endpoint settings used for execution. Do not paste secret values into the array.
-For example (replace the deployment/model names with those actually configured):
+When `ODDISH_ENDPOINT_MONITORS` is absent, the checker selects models from
+`ODDISH_MODEL_CONCURRENCY_OVERRIDES` (deployment model limits) and
+`model_concurrency_overrides` (limits saved through Admin). Saved limits override
+deployment limits; a zero limit excludes the model. Baseline and internal
+processing queues are excluded, and aliases sharing one connection are checked
+once. The checker uses the existing runtime credentials and provider routing.
+It does not enumerate provider catalogs or scan trial history, so a model with
+no configured limit needs an explicit target. Image/audio/embedding deployments
+are not selected merely because they appear in the Azure deployment map.
+
+Set `ODDISH_ENDPOINT_MONITORS` in the app's runtime secret only to replace that
+automatic selection with a JSON array of connections. An explicit `[]` selects
+nothing and preserves the existing opt-out. Missing credentials, unsupported
+routes, and missing Azure mappings produce monitoring errors rather than healthy
+results or confirmed provider outages. The supported automatic routes are
+Bedrock, Azure/public OpenAI, direct Anthropic/HDO, Gemini, xAI/public xAI,
+z.ai, MiniMax, Moonshot, DeepSeek, Fireworks, Meta's model API, Geometric, and
+Hunyuan. These checks exercise model APIs, not CLI-specific transports such as
+DSH, Cursor, or Muse Code. Customer-owned keys and per-trial endpoint overrides
+are not used. Automatic xAI checks use `XAI_API_KEY`; they do not test every
+entry in a worker's optional `XAI_API_KEYS` pool.
+
+Explicit targets reference existing credential and endpoint variables; never
+paste secret values into the array. For example (replace the deployment/model
+names with those actually configured):
 
 ```json
 [
@@ -963,12 +985,14 @@ Connection identity includes the model and configuration references, but not the
 display name. Changing a reference creates a new history; rotating the secret
 behind the same reference continues that connection's history. Removed entries
 are disabled on the next scheduler run. History links remain readable for 30 days.
-This first version monitors explicit platform connections, not customer-owned
-keys or models discovered by scanning trial history.
+The connection name is the configured model name; the stored model identifies
+the provider request used to test it. An explicit `api_base` may supply a default
+HTTPS endpoint when no environment-variable reference is needed.
 
 The scheduler wakes every minute, claims up to 10 due connections, and sends at
 most five concurrent requests without holding database connections. Normal checks
-are due every 15 minutes. Failures and monitor errors are due again after one
+are due every 15 minutes. HTTP 400 check rejections are monitoring errors, not
+confirmed provider outages; OpenAI reasoning checks use `max_completion_tokens`. Failures and monitor errors are due again after one
 minute, subject to the batch limit. Two consecutive provider failures open one
 incident; a successful completion closes it. Monitor defects are shown separately
 and never establish or resolve a provider incident. A missing observation for
@@ -977,7 +1001,8 @@ and never establish or resolve a provider incident. A missing observation for
 scheduler ticks to drain; the one-minute confirmation is a due time, not a latency
 promise.
 
-A check batch uses four SQL statements: synchronize configured connections, claim
+Automatic selection adds one small query for saved model limits per tick.
+Explicit configuration skips that query. A check batch otherwise uses four SQL statements: synchronize configured connections, claim
 work, update current state, and insert check history. An incident transition adds
 one bulk Slack-outbox insert in the same transaction. An idle tick uses two
 statements. Claims expire after three minutes and are fenced by unique tokens, so
@@ -1002,8 +1027,23 @@ one monitoring query, in addition to the existing authentication queries.
 
 For local database verification, point `ENDPOINT_TEST_DATABASE_URL` at a disposable
 PostgreSQL database and run `pytest tests/test_endpoint_health.py` from `backend`.
-That suite recreates the monitoring tables and its isolated Slack-outbox fixture;
+That suite recreates the monitoring tables, model-limit table, and isolated Slack-outbox fixture;
 it must not target an application database. Provider calls are mocked.
+
+The scheduled checker initializes Logfire as `oddish-endpoint-monitor` and logs
+`Endpoint monitor tick targets=N due=M`, including idle ticks. This makes an
+empty setup distinguishable from an absent worker. After deployment, verify that
+targets appear in Admin and acquire `last_checked_at` timestamps over the next
+scheduler ticks. A populated card alone does not verify provider access.
+
+From `backend/`, with the intended database and runtime environment loaded, run
+`PYTHONPATH=. uv run python scripts/audit_endpoint_monitors.py`. It uses a
+read-only database transaction with a five-second statement timeout and reports
+selection source, target count, saved monitor count, and credential variable
+names. It does not print secret values or change settings/history. Add
+`--probe xai/vendor-latest-learnability` to send one small billable request for
+that exact selected monitor name; repeat `--probe` for more models. Probe results
+are sanitized and are not saved as monitor history or sent to Slack.
 
 ### Trial artifact isolation
 

@@ -22,6 +22,7 @@ the intended environment before running. Output may contain internal logs.
 
 | Command | Purpose |
 | --- | --- |
+| `PYTHONPATH=. uv run python scripts/audit_endpoint_monitors.py [--probe MODEL]` | From `backend/` with the intended runtime environment loaded, read automatic/explicit target selection and saved monitor counts. Optional probes send billable provider requests but never write monitoring history or alerts; see [monitoring setup](../backend/README.md#model-endpoint-monitoring). |
 | `modal run check_alembic_current_modal.py` | Read both database migration-version tables; compare with `uv run alembic heads` in `oddish/` and `backend/`. Does not apply migrations. |
 | `python3 -m check_clerk_onboarding CLERK_DOMAIN` | From `backend/`, verify that Clerk requires organization membership and disables automatic and user-created organizations. Reads public settings without credentials; see [onboarding setup](../backend/README.md#prevent-accidental-organization-creation) for the dashboard changes. |
 | `modal run probe_docker_failures_modal.py --hours 72 --limit 200` | Compare unscored trial state, saved result exceptions, and worker errors. Pending/running trials are not automatically failures; storage-read errors are reported separately. |

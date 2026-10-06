@@ -9,6 +9,12 @@ status checks and cleanup. The default `ODDISH_HARBOR_ENVIRONMENT` is `modal`.
 
 This guide walks through deploying and developing your own Oddish stack.
 
+For the hosted backend's optional model endpoint checker, see
+[monitoring setup](backend/README.md#model-endpoint-monitoring). With monitoring
+enabled, an unset `ODDISH_ENDPOINT_MONITORS` uses configured model limits and
+existing provider credentials; an explicit `[]` opts out. This checker belongs
+to the hosted backend and does not start in the standalone core server.
+
 The recommended architecture:
 
 - **Backend API + workers** on [Modal](https://modal.com) (serverless)

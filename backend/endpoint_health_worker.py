@@ -16,6 +16,10 @@ from oddish.db import close_database_connections, get_session
     schedule=modal.Cron("* * * * *"),
 )
 async def check_model_endpoints() -> None:
+    from observability import configure_logfire, configure_stdlib_log_bridge
+
+    active = configure_logfire(service_name="oddish-endpoint-monitor")
+    configure_stdlib_log_bridge(logfire_active=active)
     try:
         await run_checks()
     finally:

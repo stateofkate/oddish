@@ -1,4 +1,4 @@
-"""Scheduled checks of explicitly configured platform model connections.
+"""Scheduled checks of configured platform model connections.
 
 The database owns claims and incident transitions; provider calls hold no DB
 connection. Admin reads only the small current-state table, never trial history.
@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from oddish.db import get_session, utcnow
 
-log = logging.getLogger(__name__)
+log = logging.getLogger("oddish.endpoint_health")
 CHECK_INTERVAL = timedelta(minutes=15)
 CONFIRM_INTERVAL = timedelta(minutes=1)
 LEASE_DURATION = timedelta(minutes=3)
@@ -46,11 +46,17 @@ class EndpointTarget(BaseModel):
     api_key_env: EnvName | None = None
     api_base_env: EnvName | None = None
     api_version_env: EnvName | None = None
+    api_base: str | None = None
+    configuration_error: str | None = Field(default=None, exclude=True)
     region: str | None = None
     max_tokens: int = Field(default=1024, ge=32, le=4096)
 
     @model_validator(mode="after")
     def require_credentials(self):
+        if self.api_base and self.api_base_env:
+            raise ValueError("Use either api_base or api_base_env")
+        if self.configuration_error:
+            return self
         if not self.model.startswith("bedrock/") and not self.api_key_env:
             raise ValueError("api_key_env is required outside Bedrock")
         if self.model.startswith("bedrock/") and (self.api_key_env or not self.region):
@@ -66,6 +72,9 @@ class EndpointTarget(BaseModel):
         # Labels do not identify connections. Changing a model, credential
         # reference, region, or endpoint reference creates a new history.
         identity = self.model_dump(exclude={"name", "max_tokens"})
+        # Preserve histories for existing explicit configurations.
+        if self.api_base is None:
+            identity.pop("api_base")
         return hashlib.sha256(
             json.dumps(identity, sort_keys=True).encode()
         ).hexdigest()[:32]
@@ -80,6 +89,162 @@ def configured_targets() -> list[EndpointTarget]:
     if len({t.id for t in targets}) != len(targets):
         raise ValueError("Endpoint monitors must name distinct connections")
     return targets
+
+
+async def platform_targets(session: AsyncSession) -> list[EndpointTarget]:
+    """Reuse configured model queues and platform credentials, never customer keys."""
+    from oddish.config import (
+        ANALYSIS_PIPELINE_QUEUE_KEY,
+        DEEPSEEK_DEFAULT_BASE_URL,
+        FIREWORKS_DEFAULT_BASE_URL,
+        MINIMAX_DEFAULT_BASE_URL,
+        MOONSHOT_DEFAULT_BASE_URL,
+        NOP_ORACLE_QUEUE_KEY,
+        VERDICT_PIPELINE_QUEUE_KEY,
+        ZAI_DEFAULT_BASE_URL,
+        deepseek_bare_model_id,
+        fireworks_api_model_id,
+        infer_model_provider_prefix,
+        minimax_api_model_id,
+        settings,
+        to_anthropic_api_model_id,
+    )
+    from oddish.core.model_concurrency import get_model_concurrency_overrides
+
+    limits = {
+        settings.normalize_queue_key(model): limit
+        for model, limit in settings.model_concurrency_overrides.items()
+    }
+    limits.update(
+        {
+            settings.normalize_queue_key(model): limit
+            for model, limit in (await get_model_concurrency_overrides(session)).items()
+        }
+    )
+    targets: dict[str, EndpointTarget] = {}
+    anthropic_routes = {
+        "zai": ("ZAI_API_KEY", "ZAI_BASE_URL", ZAI_DEFAULT_BASE_URL),
+        "minimax": ("MINIMAX_API_KEY", "MINIMAX_BASE_URL", MINIMAX_DEFAULT_BASE_URL),
+        "moonshot": (
+            "MOONSHOT_API_KEY",
+            "MOONSHOT_BASE_URL",
+            MOONSHOT_DEFAULT_BASE_URL,
+        ),
+        "fireworks": (
+            "FIREWORKS_API_KEY",
+            "FIREWORKS_BASE_URL",
+            FIREWORKS_DEFAULT_BASE_URL,
+        ),
+    }
+    for queue_key, limit in sorted(limits.items()):
+        if limit <= 0:
+            continue
+        model = queue_key
+        if model in {
+            NOP_ORACLE_QUEUE_KEY,
+            ANALYSIS_PIPELINE_QUEUE_KEY,
+            VERDICT_PIPELINE_QUEUE_KEY,
+        }:
+            continue
+        provider = infer_model_provider_prefix(model)
+        bare = model.split("/", 1)[-1]
+        fields: dict = {
+            "name": model,
+            "model": model if "/" in model else f"unresolved/{model}",
+        }
+        if provider == "bedrock":
+            fields.update(
+                model=f"bedrock/{bare}",
+                region=os.environ.get("AWS_REGION")
+                or os.environ.get("AWS_DEFAULT_REGION")
+                or "us-east-1",
+            )
+        elif provider == "openai" and settings.get_openai_provider() == "azure":
+            try:
+                deployment = settings.resolve_azure_openai_deployment(model)
+            except ValueError:
+                target = EndpointTarget(
+                    **fields,
+                    configuration_error="No Azure deployment mapping is configured for this model.",
+                )
+                targets[target.id] = target
+                continue
+            fields.update(
+                model=f"azure/{deployment}",
+                api_key_env="AZURE_OPENAI_API_KEY",
+                api_base_env="AZURE_OPENAI_ENDPOINT",
+                api_version_env="AZURE_OPENAI_API_VERSION",
+            )
+        elif provider in {
+            "openai",
+            "anthropic",
+            "anthropic-hdo",
+            "gemini",
+            "xai",
+            "xai-public",
+        }:
+            key, transport = {
+                "openai": ("OPENAI_API_KEY", "openai"),
+                "anthropic": ("ANTHROPIC_API_KEY", "anthropic"),
+                "anthropic-hdo": ("ANTHROPIC_HDO_API_KEY", "anthropic"),
+                "gemini": ("GEMINI_API_KEY", "gemini"),
+                "xai": ("XAI_API_KEY", "xai"),
+                "xai-public": ("XAI_PUBLIC_API_KEY", "xai"),
+            }[provider]
+            if transport == "anthropic":
+                bare = to_anthropic_api_model_id(bare) or bare
+            fields.update(model=f"{transport}/{bare}", api_key_env=key)
+            if provider in {"openai", "anthropic"}:
+                base_env = f"{provider.upper()}_BASE_URL"
+                if os.environ.get(base_env):
+                    fields["api_base_env"] = base_env
+        elif provider in anthropic_routes:
+            key, base_env, default_base = anthropic_routes[provider]
+            if provider == "minimax":
+                bare = minimax_api_model_id(bare)
+            elif provider == "fireworks":
+                bare = fireworks_api_model_id(bare)
+            fields.update(model=f"anthropic/{bare}", api_key_env=key)
+            if os.environ.get(base_env):
+                fields["api_base_env"] = base_env
+            else:
+                fields["api_base"] = default_base
+        elif provider == "deepseek":
+            # dsh sends DeepSeek's OpenAI-compatible API, not its /anthropic one.
+            fields.update(
+                model=f"openai/{deepseek_bare_model_id(model)}",
+                api_key_env="DEEPSEEK_API_KEY",
+            )
+            if os.environ.get("DEEPSEEK_BASE_URL"):
+                fields["api_base_env"] = "DEEPSEEK_BASE_URL"
+            else:
+                fields["api_base"] = DEEPSEEK_DEFAULT_BASE_URL
+        elif provider in {
+            "meta",
+            "meta-public",
+            "meta-public-2",
+            "geometric",
+            "hunyuan",
+        }:
+            key, base = {
+                "meta": ("META_API_KEY", settings.meta_base_url),
+                "meta-public": ("META_PUBLIC_API_KEY", settings.meta_base_url),
+                "meta-public-2": ("META_PUBLIC_2_API_KEY", settings.meta_base_url),
+                "geometric": ("GEOMETRIC_API_KEY", settings.geometric_base_url),
+                "hunyuan": ("HUNYUAN_API_KEY", settings.hunyuan_base_url),
+            }[provider]
+            fields.update(model=f"openai/{bare}", api_key_env=key, api_base=base)
+        else:
+            fields["configuration_error"] = (
+                "No automatic completion check supports this model route; configure ODDISH_ENDPOINT_MONITORS explicitly."
+            )
+        target = EndpointTarget(**fields)
+        targets[target.id] = target
+    if len(targets) > 100:
+        raise ValueError(
+            "At most 100 endpoint monitors are supported; set ODDISH_ENDPOINT_MONITORS explicitly"
+        )
+    return list(targets.values())
 
 
 def monitoring_enabled() -> bool:
@@ -104,10 +269,25 @@ class CheckResult:
 
 
 async def check_endpoint(target: EndpointTarget) -> CheckResult:
+    if target.configuration_error:
+        return CheckResult(
+            target.id, "monitor_error", utcnow(), 0, target.configuration_error
+        )
     import litellm
 
     start = monotonic()
-    kwargs: dict = {"max_tokens": target.max_tokens}
+    # New OpenAI reasoning models reject max_tokens. Keep max_tokens for
+    # other vendors using the OpenAI-compatible transport (Meta, Hunyuan, etc.).
+    token_parameter = (
+        "max_completion_tokens"
+        if target.model.startswith(
+            ("openai/gpt-", "openai/o1", "openai/o3", "openai/o4", "azure/")
+        )
+        else "max_tokens"
+    )
+    kwargs: dict = {token_parameter: target.max_tokens}
+    if target.api_base:
+        kwargs["api_base"] = target.api_base
     # No ambient model router, fallback list, or SDK retry may hide which
     # connection failed. A confirmation is a separate recorded check.
     try:
@@ -127,7 +307,11 @@ async def check_endpoint(target: EndpointTarget) -> CheckResult:
                         f"Missing {field} configuration.",
                     )
                 kwargs[argument] = value
-        if target.api_base_env:
+        if "api_base" in kwargs:
+            if target.model.startswith("azure/"):
+                kwargs["api_base"] = (
+                    kwargs["api_base"].rstrip("/").removesuffix("/openai/v1")
+                )
             url = urlsplit(kwargs["api_base"])
             if (
                 url.scheme != "https"
@@ -192,7 +376,7 @@ async def check_endpoint(target: EndpointTarget) -> CheckResult:
         request_id = getattr(exc, "request_id", None)
         return CheckResult(
             target.id,
-            "failure",
+            "monitor_error" if status == 400 else "failure",
             utcnow(),
             round((monotonic() - start) * 1000),
             error,
@@ -249,7 +433,12 @@ async def sync_targets(session: AsyncSession, targets: list[EndpointTarget]) -> 
                         "id": t.id,
                         "name": t.name,
                         "model": t.model,
-                        "credential_ref": t.api_key_env or "AWS runtime credentials",
+                        "credential_ref": t.api_key_env
+                        or (
+                            "AWS runtime credentials"
+                            if t.model.startswith("bedrock/")
+                            else "Not configured"
+                        ),
                     }
                     for t in targets
                 ]
@@ -418,11 +607,16 @@ async def save_results(
 
 
 async def run_checks() -> int:
-    targets = configured_targets()
-    by_id = {target.id: target for target in targets}
     async with get_session() as session:
+        targets = (
+            configured_targets()
+            if "ODDISH_ENDPOINT_MONITORS" in os.environ
+            else await platform_targets(session)
+        )
+        by_id = {target.id: target for target in targets}
         await sync_targets(session, targets)
         claimed = await claim_checks(session, utcnow(), list(by_id))
+    log.info("Endpoint monitor tick targets=%d due=%d", len(targets), len(claimed))
     semaphore = asyncio.Semaphore(CONCURRENCY)
 
     async def probe(row):

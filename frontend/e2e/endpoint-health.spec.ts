@@ -102,8 +102,8 @@ test.describe("Operator endpoint monitoring", () => {
     await expect(page.getByText("Provider request: request-1")).toBeVisible();
     await page.getByRole("button", { name: "Check again" }).click();
     await expect(
-      page.getByText("Check requested; waiting for the monitor.")
-    ).toBeVisible();
+      page.getByRole("button", { name: "Queued", exact: true })
+    ).toBeDisabled();
     expect(posts).toBe(1);
   });
 

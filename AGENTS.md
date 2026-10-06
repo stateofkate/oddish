@@ -2338,10 +2338,16 @@ sweep):
 
 Endpoint health monitoring is hosted-only. `endpoint_health_worker.py` registers
 an independent one-minute check schedule and hourly 30-day retention job;
-`endpoint_health.py` owns explicit `ODDISH_ENDPOINT_MONITORS` configuration,
+`endpoint_health.py` derives targets from positive deployment/Admin model limits
+when `ODDISH_ENDPOINT_MONITORS` is absent; an explicit array replaces selection
+and `[]` opts out. Existing runtime credentials and provider routing are reused.
+Unsupported routes appear as monitor errors. The module owns configuration,
 provider calls, database claims, and incident transitions. Production registers
 these schedules by default; staging/previews require the deploy-time
 `ODDISH_ENABLE_ENDPOINT_MONITORING=true` flag. No targets means unmonitored.
+The checker initializes `oddish-endpoint-monitor` telemetry and logs target/due
+counts each tick. `scripts/audit_endpoint_monitors.py` reads setup and optionally
+probes selected models without saving observations or sending alerts.
 `endpoint_monitors` owns current state and expiring claim tokens;
 `endpoint_checks` stores completed observations. Provider calls hold no DB
 connection. Results update current state, append history, and write any Slack

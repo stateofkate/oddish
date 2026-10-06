@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { CheckCircle2, CircleX, TriangleAlert, Clock3 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { useRouter, useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import { fetcher } from "@/lib/api";
@@ -32,6 +34,41 @@ type Check = {
   error: string | null;
   status_code: number | null;
   request_id: string | null;
+};
+
+const checkStyles = {
+  success: {
+    icon: CheckCircle2,
+    row: "border-l-emerald-600 bg-emerald-50/60 dark:border-l-emerald-400 dark:bg-emerald-950/20",
+    badge:
+      "border-emerald-200 bg-emerald-100 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-200",
+    iconColor: "text-emerald-700 dark:text-emerald-400",
+    label: "Succeeded",
+  },
+  failure: {
+    icon: CircleX,
+    row: "border-l-red-600 bg-red-50/60 dark:border-l-red-400 dark:bg-red-950/20",
+    badge:
+      "border-red-200 bg-red-100 text-red-900 dark:border-red-800 dark:bg-red-950 dark:text-red-200",
+    iconColor: "text-red-700 dark:text-red-400",
+    label: "Failed",
+  },
+  monitor_error: {
+    icon: TriangleAlert,
+    row: "border-l-amber-600 bg-amber-50/60 dark:border-l-amber-400 dark:bg-amber-950/20",
+    badge:
+      "border-amber-200 bg-amber-100 text-amber-950 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200",
+    iconColor: "text-amber-700 dark:text-amber-400",
+    label: "Check could not run",
+  },
+  overdue: {
+    icon: Clock3,
+    row: "border-l-slate-500 bg-slate-50/60 dark:border-l-slate-400 dark:bg-slate-900/30",
+    badge:
+      "border-slate-200 bg-slate-100 text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200",
+    iconColor: "text-slate-600 dark:text-slate-400",
+    label: "Checks overdue",
+  },
 };
 
 export function EndpointHealthCard() {
@@ -114,7 +151,7 @@ export function EndpointHealthCard() {
       <CardHeader>
         <CardTitle className="text-base">Model endpoint health</CardTitle>
         <p className="text-muted-foreground text-sm">
-          Connections that need attention. Checks run automatically.
+          Checks run automatically. Check any connection again with one click.
         </p>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -151,12 +188,41 @@ export function EndpointHealthCard() {
                 {lastCheck && new Date(lastCheck).toLocaleString()}.
               </p>
             )}
-            {visible.map((m) => (
-              <div key={m.id} className="space-y-2 rounded-md border p-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-medium">{m.name}</span>
-                  <Badge variant={m.incident_id ? "destructive" : "outline"}>
-                    {m.stale
+            {visible.map((m) => {
+              const status =
+                m.stale || !m.last_outcome
+                  ? "overdue"
+                  : m.last_outcome === "monitor_error"
+                    ? "monitor_error"
+                    : m.incident_id
+                      ? "failure"
+                      : m.last_outcome;
+              const style = checkStyles[status];
+              const StatusIcon = style.icon;
+              return (
+                <div
+                  key={m.id}
+                  className={cn(
+                    "flex items-center gap-3 rounded-md border border-l-4 px-3 py-2",
+                    style.row
+                  )}
+                >
+                  <StatusIcon
+                    aria-hidden="true"
+                    className={cn("size-4 shrink-0", style.iconColor)}
+                  />
+                  <span
+                    className="min-w-0 flex-1 truncate font-medium"
+                    title={m.name}
+                  >
+                    {m.name}
+                  </span>
+                  <Badge
+                    variant="outline"
+                    className={cn("shrink-0 whitespace-nowrap", style.badge)}
+                    title={m.error ?? undefined}
+                  >
+                    {status === "overdue"
                       ? "Checks overdue"
                       : m.last_outcome === "monitor_error"
                         ? "Check could not run"
@@ -166,23 +232,10 @@ export function EndpointHealthCard() {
                             ? "Confirming failure"
                             : "Healthy"}
                   </Badge>
-                </div>
-                <p className="text-muted-foreground text-xs break-all">
-                  {m.model} · {m.credential_ref}
-                </p>
-                {m.error && <p className="text-sm">{m.error}</p>}
-                <p className="text-muted-foreground text-xs">
-                  Last check:{" "}
-                  {m.last_checked_at
-                    ? new Date(m.last_checked_at).toLocaleString()
-                    : "No completed checks"}
-                  {m.incident_opened_at &&
-                    ` · Incident opened ${new Date(m.incident_opened_at).toLocaleString()}`}
-                </p>
-                <div className="flex flex-wrap items-center gap-2">
                   <Button
                     size="sm"
-                    variant="outline"
+                    variant="ghost"
+                    className="shrink-0"
                     onClick={() => selectMonitor(m.id)}
                   >
                     Inspect checks
@@ -190,30 +243,40 @@ export function EndpointHealthCard() {
                   <Button
                     size="sm"
                     variant="outline"
+                    className="shrink-0"
                     disabled={
                       checkRequest?.id === m.id &&
-                      checkRequest.state === "sending"
+                      (checkRequest.state === "sending" ||
+                        (checkRequest.state === "scheduled" &&
+                          checkRequest.observedAt === m.last_checked_at))
                     }
                     onClick={() => requestCheck(m.id)}
                   >
-                    Check again
+                    {checkRequest?.id === m.id &&
+                    checkRequest.state === "sending"
+                      ? "Requesting…"
+                      : checkRequest?.id === m.id &&
+                          checkRequest.state === "scheduled" &&
+                          checkRequest.observedAt === m.last_checked_at
+                        ? "Queued"
+                        : "Check again"}
                   </Button>
                   {checkRequest?.id === m.id &&
                     checkRequest.state === "scheduled" &&
                     checkRequest.observedAt === m.last_checked_at && (
-                      <span role="status" className="text-sm">
+                      <span role="status" className="sr-only">
                         Check requested; waiting for the monitor.
                       </span>
                     )}
                   {checkRequest?.id === m.id &&
                     checkRequest.state === "error" && (
-                      <span role="alert" className="text-destructive text-sm">
-                        Could not request a check. Try again.
+                      <span role="alert" className="text-destructive text-xs">
+                        Request failed. Try again.
                       </span>
                     )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
             <Button
               size="sm"
               variant="ghost"
@@ -246,6 +309,21 @@ export function EndpointHealthCard() {
               Latest 100 checks from the past 30 days. Times use your local
               timezone.
             </p>
+            {selected && (
+              <div className="space-y-1 text-sm">
+                {selected.error && <p>{selected.error}</p>}
+                <p className="text-muted-foreground text-xs">
+                  Request model: {selected.model} · Credential:{" "}
+                  {selected.credential_ref}
+                </p>
+                <p className="text-muted-foreground text-xs">
+                  Last check:{" "}
+                  {selected.last_checked_at
+                    ? new Date(selected.last_checked_at).toLocaleString()
+                    : "No completed checks"}
+                </p>
+              </div>
+            )}
             {historyError ? (
               <div role="alert">
                 Could not load check history.{" "}
@@ -263,30 +341,38 @@ export function EndpointHealthCard() {
               <p>No recorded checks.</p>
             ) : (
               <ol className="max-h-96 space-y-3 overflow-y-auto text-sm">
-                {history.checks.map((check) => (
-                  <li key={check.id} className="space-y-1 border-b pb-2">
-                    <p>
-                      {new Date(check.checked_at).toLocaleString()} ·{" "}
-                      {check.outcome === "success"
-                        ? "Succeeded"
-                        : check.outcome === "failure"
-                          ? "Failed"
-                          : "Monitor error"}{" "}
-                      · {check.latency_ms} ms
-                    </p>
-                    {check.error && (
-                      <p>
-                        {check.error}
-                        {check.status_code && ` (HTTP ${check.status_code})`}
-                      </p>
-                    )}
-                    {check.request_id && (
-                      <p className="text-muted-foreground text-xs break-all">
-                        Provider request: {check.request_id}
-                      </p>
-                    )}
-                  </li>
-                ))}
+                {history.checks.map((check) => {
+                  const style = checkStyles[check.outcome];
+                  const StatusIcon = style.icon;
+                  return (
+                    <li key={check.id} className="space-y-2 border-b pb-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge
+                          variant="outline"
+                          className={cn("gap-1.5", style.badge)}
+                        >
+                          <StatusIcon aria-hidden="true" className="size-3.5" />
+                          {style.label}
+                        </Badge>
+                        <span>
+                          {new Date(check.checked_at).toLocaleString()} ·{" "}
+                          {check.latency_ms} ms
+                        </span>
+                      </div>
+                      {check.error && (
+                        <p>
+                          {check.error}
+                          {check.status_code && ` (HTTP ${check.status_code})`}
+                        </p>
+                      )}
+                      {check.request_id && (
+                        <p className="text-muted-foreground text-xs break-all">
+                          Provider request: {check.request_id}
+                        </p>
+                      )}
+                    </li>
+                  );
+                })}
               </ol>
             )}
           </section>
