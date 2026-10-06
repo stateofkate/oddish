@@ -532,6 +532,30 @@ def test_kube_chart_contract_pins_transport_authoritative_agent_hosts(tmp_path):
     assert not hosts & {"api.openai.com", "ab.chatgpt.com"}
 
 
+def test_kube_chart_contract_includes_devin_installer_hosts(tmp_path):
+    """The chart's proxy enforces during agent install, not only the run.
+
+    A production Devin trial on an SRE-World chart task failed with
+    ``curl: (22) ... returned error: 403`` for cli.devin.ai/install.sh: the
+    runtime hosts reached the proxy, the installer host did not.
+    """
+    task_path = _write_kube_network_policy_task(tmp_path)
+    environment_config = HarborEnvironmentConfig(type=EnvironmentType.DAYTONA)
+    agent_config = HarborAgentConfig(name="devin", model_name="devin/swe-2")
+
+    harbor_runner._apply_restricted_agent_network_defaults(
+        task_path=task_path,
+        environment_config=environment_config,
+        agent_config=agent_config,
+    )
+
+    hosts = environment_config.kwargs["helm_values"]["agentEgressProxy"][
+        "runtimeAllowedHosts"
+    ].split(";")
+    assert {"cli.devin.ai", "static.devin.ai", "server.codeium.com"} <= set(hosts)
+    assert len(hosts) == len(set(hosts))
+
+
 @pytest.mark.parametrize("model_name", ["openai/gpt-5.2", "cursor/gpt-5.2"])
 def test_kube_chart_contract_rejects_wildcard_pinned_agent(tmp_path, model_name):
     """Cursor's attested boundary is the wildcard ``*.cursor.sh``, which this

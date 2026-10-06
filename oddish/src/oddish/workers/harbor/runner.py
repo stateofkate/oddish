@@ -1327,7 +1327,12 @@ def _kube_chart_agent_policy_hosts(
             agent_config,
             resolved_env=resolved_env,
         )
-        return list(profile.outbound_hosts)
+        # An opted-in chart's proxy is already enforcing while the agent
+        # installs, so a self-installing vendor harness (devin) also needs its
+        # installer hosts here: without cli.devin.ai the proxy 403s install.sh.
+        vendor = vendor_harness_for_agent(agent_config.name, agent_config.import_path)
+        install_hosts = vendor.install_hosts if vendor is not None else ()
+        return list(dict.fromkeys([*profile.outbound_hosts, *install_hosts]))
     return [
         *outbound_hosts_for_model(
             agent_config.model_name,
