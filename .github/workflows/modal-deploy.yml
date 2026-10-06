@@ -72,12 +72,12 @@ jobs:
       # disable monitor routing: "0". At 100, retries also stay on the monitor.
       ODDISH_MONITOR_EXECUTION_SAMPLE_PERCENT: "70"
       ODDISH_MONITOR_EXECUTION_FALLBACK_AFTER_ATTEMPTS: "1"
-      # Route 40% of eligible new CPU submissions to Archil, otherwise Modal.
+      # Route 20% of eligible new CPU submissions to Archil, otherwise Modal.
       # Request-hash groups keep a submission's trials together. Explicit
       # "modal" is split too; explicit ec2/archil, GPU/TPU, private-registry
       # pulls and appends to existing tasks are excluded.
-      # Restore the prior rollout: "20"; disable automatic routing: "0".
-      ODDISH_ARCHIL_TRAFFIC_PERCENT: "40"
+      # Restore the prior rollout: "40"; disable automatic routing: "0".
+      ODDISH_ARCHIL_TRAFFIC_PERCENT: "20"
       # Split Archil trials across regions by weight. Every region with a
       # positive weight needs ARCHIL_API_KEY_<REGION> (e.g.
       # ARCHIL_API_KEY_AWS_US_EAST_1) in oddish-prod. Keep a drained region

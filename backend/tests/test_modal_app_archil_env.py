@@ -36,10 +36,10 @@ def _baked_value(env: dict[str, str]) -> list[str]:
 
 
 def test_archil_traffic_percent_is_baked_with_modal_default() -> None:
-    assert _baked_value({**os.environ, "ODDISH_ARCHIL_TRAFFIC_PERCENT": "40"}) == [
+    assert _baked_value({**os.environ, "ODDISH_ARCHIL_TRAFFIC_PERCENT": "20"}) == [
         "modal",
-        "40",
-        "40",
+        "20",
+        "20",
     ]
 
 

@@ -1570,9 +1570,9 @@ Keep these routing rules in sync with `oddish/src/oddish/config.py` and
   cancellation, orphan cleanup, historical records, and snapshot deletion remain
   available. `ODDISH_ARCHIL_TRAFFIC_PERCENT` (0–100, default 0) routes that
   percentage of eligible new hosted CPU submissions from Modal to Archil;
-  production sets 40 in `.github/workflows/modal-deploy.yml`. The backend hashes
+  production sets 20 in `.github/workflows/modal-deploy.yml`. The backend hashes
   each raw submission before identity/attribution mutations and selects groups
-  0–39 out of 100. An explicit `modal` is replaced with that pick and stays
+  0–19 out of 100. An explicit `modal` is replaced with that pick and stays
   explicit (released CLIs send it on every run); explicit `ec2`/`archil`,
   GPU/TPU, private-registry pulls and inherited task environments are excluded.
   The trial handler moves an Archil trial whose task.toml requests GPUs to
