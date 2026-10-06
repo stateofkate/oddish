@@ -35,7 +35,7 @@ test("each producer's shell call shows its command, other scalars as meta", () =
     {
       code: "ls",
       language: "bash",
-      meta: ["duration 0.5"],
+      meta: ["duration: 0.5"],
     }
   );
   assert.equal(

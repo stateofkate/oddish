@@ -106,7 +106,7 @@ export function toolInput(name: string, args: ToolArgs): CodeView | null {
     return {
       code,
       language: field === "input" ? SOURCE_TOOLS[name] : "bash",
-      meta: rest.map(([key, value]) => `${key} ${value}`),
+      meta: rest.map(([key, value]) => `${key}: ${value}`),
     };
   }
   if (!Object.keys(args).length) return null;

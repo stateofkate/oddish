@@ -174,7 +174,7 @@ export function ToolCallCard({
         failed ? "border-red-500/40" : "border-purple-500/20"
       )}
     >
-      <div className="flex min-w-0 flex-wrap items-center gap-1.5 bg-purple-500/10 px-2 py-1">
+      <div className="flex min-w-0 flex-wrap items-baseline gap-1.5 bg-purple-500/10 px-2 py-1">
         <span className="font-mono text-xs text-purple-600 dark:text-purple-400">
           {view.name || "tool"}
         </span>

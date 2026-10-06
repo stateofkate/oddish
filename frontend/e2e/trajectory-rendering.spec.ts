@@ -105,7 +105,7 @@ test("live tool calls use the same command and output rendering", async ({
   await openAll(live);
   await expect(live.getByText("pytest -q tests/")).toBeVisible();
   await expect(live.getByText("2 passed in 0.31s")).toBeVisible();
-  await expect(live.getByText("description Run tests")).toBeVisible();
+  await expect(live.getByText("description: Run tests")).toBeVisible();
 });
 
 
