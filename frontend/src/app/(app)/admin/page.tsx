@@ -359,6 +359,7 @@ function QueueHealthCard() {
     return {
       kind: entry.kind ?? "TRIAL",
       queueKey,
+      environment: entry.environment ?? "",
       queued,
       running,
       totalSlots,
@@ -377,6 +378,7 @@ function QueueHealthCard() {
     queueRows.push({
       kind: "SLOT",
       queueKey,
+      environment: "",
       queued: 0,
       running: 0,
       totalSlots: slotSummary.total_slots,
@@ -389,7 +391,7 @@ function QueueHealthCard() {
   }
   const filteredRows = queueRows
     .filter((row) =>
-      `${row.kind} ${row.queueKey}`
+      `${row.kind} ${row.queueKey} ${row.environment}`
         .toLowerCase()
         .includes(queueFilter.toLowerCase().trim())
     )
@@ -477,7 +479,9 @@ function QueueHealthCard() {
               </TableHeader>
               <TableBody>
                 {filteredRows.map((row) => (
-                  <TableRow key={`${row.kind}-${row.queueKey}`}>
+                  <TableRow
+                    key={`${row.kind}-${row.queueKey}-${row.environment}`}
+                  >
                     <TableCell>
                       <Badge
                         variant="outline"
@@ -492,6 +496,14 @@ function QueueHealthCard() {
                         <span className="font-mono text-xs">
                           {row.queueKey}
                         </span>
+                        {row.environment && (
+                          <Badge
+                            variant="secondary"
+                            className="font-mono text-[10px]"
+                          >
+                            {row.environment}
+                          </Badge>
+                        )}
                       </span>
                     </TableCell>
                     <TableCell className="text-right font-mono text-xs">

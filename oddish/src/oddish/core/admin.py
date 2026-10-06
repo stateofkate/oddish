@@ -80,6 +80,8 @@ class QueueSlotsResponse(BaseModel):
 class QueueStatusEntry(BaseModel):
     kind: str = "TRIAL"
     queue_key: str
+    # Sandbox the trial runs in (modal, archil, ec2, ...); "" when unset.
+    environment: str = ""
     queued: int
     running: int
 
@@ -266,6 +268,7 @@ async def get_queue_status_core(
                         ELSE wj.kind::text
                     END AS kind,
                     wj.queue_key,
+                    COALESCE(tr.environment, '') AS environment,
                     COUNT(*) FILTER (WHERE wj.status::text IN ('QUEUED', 'RETRYING')) AS queued,
                     COUNT(*) FILTER (WHERE wj.status::text = 'RUNNING') AS running
                 FROM worker_jobs wj
@@ -276,8 +279,8 @@ async def get_queue_status_core(
                 WHERE wj.status::text IN ('QUEUED', 'RETRYING', 'RUNNING')
                   AND wj.kind::text = ANY(CAST(:active_kinds AS TEXT[]))
                   AND (CAST(:org_id AS TEXT) IS NULL OR wj.org_id = CAST(:org_id AS TEXT))
-                GROUP BY 1, wj.queue_key
-                ORDER BY 1, wj.queue_key
+                GROUP BY 1, wj.queue_key, 3
+                ORDER BY 1, wj.queue_key, 3
                 """
             ),
             {"org_id": org_id, "active_kinds": active_kinds},
@@ -295,6 +298,7 @@ async def get_queue_status_core(
         entry = QueueStatusEntry(
             kind=kind,
             queue_key=settings.normalize_queue_key(row.queue_key),
+            environment=row.environment,
             queued=queued,
             running=running,
         )

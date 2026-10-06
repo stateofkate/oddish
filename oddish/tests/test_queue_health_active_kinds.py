@@ -46,3 +46,32 @@ def test_queue_status_only_counts_active_worker_job_kinds():
     assert params["active_kinds"] == [
         kind.value for kind in ACTIVE_WORKER_JOB_KINDS
     ]
+
+
+def test_queue_status_splits_trial_rows_by_environment():
+    from types import SimpleNamespace
+
+    rows = [
+        SimpleNamespace(
+            kind="TRIAL", queue_key="k", environment="archil", queued=2, running=1
+        ),
+        SimpleNamespace(
+            kind="TRIAL", queue_key="k", environment="modal", queued=3, running=0
+        ),
+    ]
+
+    class _Rows:
+        def all(self):
+            return rows
+
+    class _RowSession:
+        async def execute(self, statement, params):
+            assert "tr.environment" in str(statement)
+            return _Rows()
+
+    response = asyncio.run(get_queue_status_core(_RowSession()))
+
+    assert [(e.environment, e.queued, e.running) for e in response.trial_queues] == [
+        ("archil", 2, 1),
+        ("modal", 3, 0),
+    ]

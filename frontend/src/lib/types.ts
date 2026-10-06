@@ -1090,6 +1090,7 @@ export interface QueueSlotsResponse {
 interface QueueStatusEntry {
   kind?: string;
   queue_key: string;
+  environment?: string;
   queued: number;
   running: number;
 }
