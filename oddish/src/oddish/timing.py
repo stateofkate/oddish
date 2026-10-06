@@ -121,8 +121,8 @@ def timed_phase(name: str, **attributes: Any):
     stage = current_request_stage()
     started_at = now()
     try:
-        with span(f"backend.{name.replace('_', '.')}", **attributes):
-            yield
+        with span(f"backend.{name.replace('_', '.')}", **attributes) as active:
+            yield active
     finally:
         timing = current_request_timing()
         if timing is not None:

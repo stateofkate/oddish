@@ -1189,6 +1189,10 @@ same revision bookkeeping. A late matching panel hash must not change the body
 request key or clear the preview; a differing body hash still triggers a fresh
 read. Preserve `source_hash` through previews, binary URLs, and full-file reads.
 
+GET/HEAD spans classify confirmed missing objects as `storage.outcome=not_found`
+without an error event; the original exception still reaches callers. Other
+storage failures remain errors, including permission failures and missing buckets.
+
 Storage HEAD/GET/body-read/LIST/DELETE and archive parsing have named timing phases.
 `backend.request.phases` includes storage operation counts, downloaded/archive bytes,
 archive-cache hit/miss, file source, and known file bytes. SDK failures log only

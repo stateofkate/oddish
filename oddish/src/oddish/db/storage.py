@@ -44,15 +44,20 @@ def storage_operation(operation: str, key: str, *, batch_size: int | None = None
     timing = current_request_timing()
     if timing is not None:
         timing.storage_request_count += 1
+    missing = None
     with timed_phase(
         f"storage_{operation}", **{"storage.key": key, "storage.batch_size": batch_size}
-    ):
+    ) as active:
         try:
             yield
         except ClientError as exc:
-            metadata = exc.response.get("ResponseMetadata", {})
-            error = exc.response.get("Error", {})
-            if not is_missing_object(exc):
+            if operation in {"get", "head"} and is_missing_object(exc):
+                missing = exc
+                if active is not None:
+                    active.set_attribute("storage.outcome", "not_found")
+            else:
+                metadata = exc.response.get("ResponseMetadata", {})
+                error = exc.response.get("Error", {})
                 logger.warning(
                     "S3 %s failed: status=%s code=%s request_id=%s retries=%s batch_size=%s message=%s",
                     operation,
@@ -63,7 +68,11 @@ def storage_operation(operation: str, key: str, *, batch_size: int | None = None
                     batch_size,
                     str(error.get("Message", ""))[:500],
                 )
-            raise
+                raise
+    # Callers still decide whether absence is allowed. Raise after the storage
+    # span closes so an optional-object probe does not become a storage error.
+    if missing is not None:
+        raise missing
 
 
 def record_file_source(source: str, size: int | None = None) -> None:
