@@ -87,7 +87,8 @@ not authorize a later mutation.
    identifier.
 
    Without `--env`, hosted CPU runs use Modal
-   or enabled Numinous provider. Explicit environments choose initial placement;
+   or enabled Numinous provider; a CPU task with `environment/chart/Chart.yaml`
+   (a Helm chart) uses EC2. Explicit environments choose initial placement;
    after two failed Archil attempts, an allowed retry uses Modal.
 
    Use `--env thunder` only when the target deployment has explicitly enabled

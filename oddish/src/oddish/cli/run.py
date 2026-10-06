@@ -130,6 +130,19 @@ def _task_config_requests_tpu(task_path: Path) -> bool:
     return task_config.environment.tpu is not None
 
 
+def _task_ships_helm_chart(task_path: Path) -> bool:
+    """Same trigger as Harbor's ``kube_chart_present``: a task with
+    ``environment/<chart_path>/Chart.yaml`` runs on k3s. Inlined so the
+    Homebrew client does not import Harbor's sandbox modules."""
+    config_path = task_path / "task.toml"
+    try:
+        task_config = HarborTaskConfig.model_validate_toml(config_path.read_text())
+        chart_path = (task_config.environment.kwargs or {}).get("chart_path", "chart")
+    except Exception:
+        return False
+    return (task_path / "environment" / chart_path / "Chart.yaml").is_file()
+
+
 def _read_harbor_manifest(*candidates: Path | None) -> dict[str, str] | None:
     """Read a ``[harbor] source/ref`` table from an ``oddish.toml`` sidecar.
 
@@ -197,7 +210,8 @@ def _default_cloud_environment_for_task(
     the hosted API negotiate it.
 
     The CLI resolves only what needs no knowledge of the deployment: TPU work
-    can run nowhere but GKE, and opt-in Numinous keeps its existing precedence.
+    can run nowhere but GKE, CPU tasks that ship a Helm chart nowhere but EC2,
+    and opt-in Numinous keeps its existing precedence.
     Plain CPU work leaves provider selection to the hosted Modal default.
     Which GPU backend a deployment offers, and whether a private-registry pull
     forces Modal, is the hosted policy's call:
@@ -224,6 +238,9 @@ def _default_cloud_environment_for_task(
     # The hosted API validates the requested environment against its policy.
     if settings.numinous_enabled and (not requires_gpu or settings.numinous_gpu_enabled):
         return EnvironmentType.NUMINOUS
+    # Of the hosted backends only EC2 runs k3s, so a Helm task names it.
+    if not requires_gpu and task_path is not None and _task_ships_helm_chart(task_path):
+        return EnvironmentType.EC2
     return None
 
 
@@ -423,8 +440,8 @@ def run(
             help=(
                 "Execution environment (docker, ec2, e2b, modal, archil, "
                 "runloop, gke, thunder). "
-                "Defaults: modal for CPU-only hosted tasks, thunder or modal for GPU hosted "
-                "tasks, docker otherwise."
+                "Defaults: modal for CPU-only hosted tasks, ec2 for hosted tasks with "
+                "a Helm chart, thunder or modal for GPU hosted tasks, docker otherwise."
             ),
         ),
     ] = None,

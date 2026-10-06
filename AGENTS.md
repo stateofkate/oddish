@@ -3422,7 +3422,8 @@ line range in the current task pane; they preserve the experiment route.
 from an immutable Oddish commit. Its client-files.txt owns the distribution list;
 an import-closure check rejects dependencies on excluded Oddish modules. Keep
 CLI imports independent of server and sandbox implementations. Client CPU/GPU
-selection uses Modal (Numinous when explicitly enabled); hosted APIs
+selection uses Modal (Numinous when explicitly enabled), and a CPU task with a
+Helm chart selects EC2 (the hosted k3s backend); hosted APIs
 validate the requested environment. Homebrew installs carry a HOMEBREW marker
 in their distribution metadata so version/update commands never replace the
 Homebrew-managed environment through PyPI.

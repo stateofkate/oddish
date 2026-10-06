@@ -158,8 +158,10 @@ oddish run ./my-task --env ec2 -a claude-code -m anthropic/claude-sonnet-4-5
 ```
 
 The hosted API rejects `--env ec2` when its operator has not enabled and fully
-configured the backend. EC2 is not an automatic fallback: CPU-only hosted runs
-without `--env` continue to use Daytona. V1 does not accept GPU/TPU requests,
+configured the backend. A CPU task that ships a Helm chart
+(`environment/<chart_path>/Chart.yaml`, `chart_path` defaulting to `chart`)
+routes to EC2 without `--env`, since EC2 is the hosted backend that runs k3s.
+Other CPU-only hosted runs without `--env` use Modal. V1 does not accept GPU/TPU requests,
 attach mode, retained instances, or caller overrides of platform EC2 settings.
 It uses a public address and key-only SSH; the instance is terminated after the
 trial or cancellation.
