@@ -578,6 +578,21 @@ def _apply_meta_mini_swe_agent(agent_config: AgentConfig) -> None:
     agent_config.kwargs = dict(agent_config.kwargs or {})
 
 
+def _apply_meta_model_reasoning_policy(agent_config: AgentConfig) -> None:
+    """Run every Meta model, on any key route, at the harness's top effort."""
+    if not (
+        is_meta_model(agent_config.model_name)
+        or is_meta_public_model(agent_config.model_name)
+    ):
+        return
+
+    # tbh's --reasoning-effort has no "max"; "ultra" is its highest value.
+    is_tbh = (agent_config.name or "").strip().lower() == "tbh"
+    kwargs = dict(agent_config.kwargs or {})
+    kwargs["reasoning_effort"] = "ultra" if is_tbh else "max"
+    agent_config.kwargs = kwargs
+
+
 # The names the Meta harnesses authenticate with. muse-code and tbh read
 # META_API_KEY (tbh during setup, for ``tbh auth set``). The route's public-key
 # name is set too, so a submitted value cannot sit unused next to the platform key.
@@ -922,6 +937,7 @@ def _build_routed_agent_config(
     _apply_claude_code_geometric_env(agent_config)
     _apply_claude_code_minimax_env(agent_config)
     _apply_claude_code_moonshot_env(agent_config)
+    _apply_meta_model_reasoning_policy(agent_config)
 
     if claude_route:
         agent_config.env = {
