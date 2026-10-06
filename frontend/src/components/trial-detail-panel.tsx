@@ -789,9 +789,10 @@ export function TrialDetailPanel({
   paneAction,
 }: TrialDetailPanelProps) {
   // Public result pages carry compact trial rows. Read the shared task to
-  // fill in report evidence without using the private trial-detail route.
+  // fill in report evidence and agent timing without using the private
+  // trial-detail route; the backend strips QA when the share hides it.
   const { data: publicTask } = useSWR<Task>(
-    isOpen && readOnly && showAnalysis && task?.id
+    isOpen && readOnly && task?.id
       ? `${apiBaseUrl}/tasks/${encodeURIComponent(task.id)}`
       : null,
     fetcher,
