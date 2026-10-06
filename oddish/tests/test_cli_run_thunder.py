@@ -121,3 +121,31 @@ def test_explicit_numinous_gpu_opt_in_keeps_its_priority(monkeypatch):
     monkeypatch.setattr(settings, "numinous_gpu_enabled", False)
     assert run_module._default_cloud_environment_for_task(None, override_gpus=1) is None
     assert run_module._default_cloud_environment_for_task(None, override_gpus=0) is EnvironmentType.NUMINOUS
+
+
+def test_explicit_environment_still_carries_the_task_gpu_need(tmp_path) -> None:
+    # The hosted Archil rollout may replace an explicit ``modal``; it can only
+    # keep a GPU task on Modal if the payload says the task needs GPUs.
+    (tmp_path / "task.toml").write_text(
+        '[environment]\ngpus = 1\ngpu_types = ["H100"]\n'
+    )
+    assert run_module._hosted_task_routing(
+        EnvironmentType.MODAL, tmp_path, override_gpus=None, is_modal_api=True
+    ) == (EnvironmentType.MODAL, True, ["H100"])
+    (tmp_path / "task.toml").write_text("[environment]\ncpus = 2\n")
+    assert run_module._hosted_task_routing(
+        EnvironmentType.MODAL, tmp_path, override_gpus=None, is_modal_api=True
+    ) == (EnvironmentType.MODAL, False, None)
+    assert run_module._hosted_task_routing(
+        EnvironmentType.MODAL, tmp_path, override_gpus=1, is_modal_api=True
+    ) == (EnvironmentType.MODAL, True, None)
+
+
+def test_hosted_routing_leaves_local_and_task_id_runs_alone(tmp_path) -> None:
+    (tmp_path / "task.toml").write_text("[environment]\ngpus = 1\n")
+    assert run_module._hosted_task_routing(
+        EnvironmentType.DOCKER, tmp_path, override_gpus=None, is_modal_api=False
+    ) == (EnvironmentType.DOCKER, False, None)
+    assert run_module._hosted_task_routing(
+        None, None, override_gpus=None, is_modal_api=True
+    ) == (None, False, None)

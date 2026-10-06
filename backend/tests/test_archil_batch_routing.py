@@ -78,6 +78,9 @@ async def test_batch_hashes_each_item_before_resolving_identity(
     monkeypatch.setattr(tasks, "create_task_sweep_batch_core", create_batch_core)
     monkeypatch.setattr(tasks, "get_session", get_session)
     monkeypatch.setattr(tasks, "_spawn_gke_image_builds", spawn_gke_image_builds)
+    import cloud_policy
+
+    monkeypatch.setattr(cloud_policy.settings, "archil_traffic_percent", 100)
 
     payload = TaskSweepBatchRequest(
         submissions=[
@@ -100,6 +103,6 @@ async def test_batch_hashes_each_item_before_resolving_identity(
 
     assert result.failed == 2
     assert routed == [
-        ("task-a", "server-default", None, raw_hashes[0]),
-        ("task-b", "server-default", None, raw_hashes[1]),
+        ("task-a", "server-default", EnvironmentType.ARCHIL, raw_hashes[0]),
+        ("task-b", "server-default", EnvironmentType.ARCHIL, raw_hashes[1]),
     ]

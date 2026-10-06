@@ -215,7 +215,9 @@ def test_archil_rollout_rejects_out_of_range_percentages(percent):
 
 
 def _routed_environments(submission, *, request_hash):
-    cloud_policy.release_explicit_modal_to_archil_rollout(submission)
+    cloud_policy.apply_archil_rollout_to_explicit_modal(
+        submission, request_hash=request_hash
+    )
     selected = get_default_cloud_environment(submission, request_hash=request_hash)
     return [
         spec.environment
@@ -324,6 +326,48 @@ def test_explicit_modal_stays_where_archil_cannot_serve_the_run(monkeypatch, fie
             **fields,
         }
     )
-    cloud_policy.release_explicit_modal_to_archil_rollout(submission)
+    cloud_policy.apply_archil_rollout_to_explicit_modal(
+        submission, request_hash="0" * 64
+    )
     assert submission.environment == EnvironmentType.MODAL
     assert submission.configs[0].environment == EnvironmentType.MODAL
+
+
+@pytest.mark.parametrize("bucket, expected", [(0, "archil"), (99, "modal")])
+def test_explicit_modal_still_overrides_an_inherited_daytona_provider(
+    monkeypatch, bucket, expected
+):
+    # Re-running a saved Daytona task with --env modal is the documented way
+    # off Daytona; the rollout pick must stay explicit so it beats inheritance.
+    from oddish.core.endpoints.sweep import _effective_sweep_environment
+
+    monkeypatch.setattr(cloud_policy.settings, "archil_traffic_percent", 40)
+    submission = TaskSweepSubmission(
+        task_id="t1",
+        environment=EnvironmentType.MODAL,
+        configs=[AgentModelPair(agent="oracle")],
+    )
+    request_hash = f"{bucket:064x}"
+    cloud_policy.apply_archil_rollout_to_explicit_modal(
+        submission, request_hash=request_hash
+    )
+    assert _effective_sweep_environment(
+        submission.environment,
+        EnvironmentType.DAYTONA,
+        get_default_cloud_environment(submission, request_hash=request_hash),
+    ) == EnvironmentType(expected)
+
+
+def test_unset_submission_environment_stays_unset_for_append_inheritance(
+    monkeypatch,
+):
+    monkeypatch.setattr(cloud_policy.settings, "archil_traffic_percent", 100)
+    submission = TaskSweepSubmission(
+        task_id="t1",
+        configs=[AgentModelPair(agent="nop", environment=EnvironmentType.MODAL)],
+    )
+    cloud_policy.apply_archil_rollout_to_explicit_modal(
+        submission, request_hash="0" * 64
+    )
+    assert submission.environment is None
+    assert submission.configs[0].environment == EnvironmentType.ARCHIL

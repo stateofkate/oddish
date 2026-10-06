@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from cloud_policy import (
     ALLOWED_CLOUD_ENVIRONMENTS,
     get_default_cloud_environment,
-    release_explicit_modal_to_archil_rollout,
+    apply_archil_rollout_to_explicit_modal,
 )
 from oddish.dispatch.backends.modal import ModalDispatcher
 from oddish.dispatch.ports import WorkerHandle
@@ -403,7 +403,7 @@ async def create_task_sweep(
         attribution = await resolve_sweep_attribution(
             session, submission, auth, connected_user
         )
-        release_explicit_modal_to_archil_rollout(submission)
+        apply_archil_rollout_to_explicit_modal(submission, request_hash=request_hash)
 
         try:
             task, new_trials, is_append, experiment = await create_task_sweep_core(
@@ -515,7 +515,7 @@ async def create_task_sweep_batch(
         attribution = await resolve_sweep_attribution(
             session, submission, auth, connected_user
         )
-        release_explicit_modal_to_archil_rollout(submission)
+        apply_archil_rollout_to_explicit_modal(submission, request_hash=request_hash)
         return (
             get_default_cloud_environment(submission, request_hash=request_hash),
             attribution,

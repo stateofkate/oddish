@@ -12,17 +12,23 @@ from oddish.schemas import TaskSweepSubmission
 ALLOWED_CLOUD_ENVIRONMENTS = allowed_cloud_environments()
 
 
-def release_explicit_modal_to_archil_rollout(submission: TaskSweepSubmission) -> None:
+def apply_archil_rollout_to_explicit_modal(
+    submission: TaskSweepSubmission, *, request_hash: str
+) -> None:
     """Let the Archil rollout split CPU sweeps that name Modal explicitly.
 
     Released CLIs (PyPI 0.1.12 sends ``environment=modal`` on every hosted run)
     and pipeline scripts name Modal without choosing it, and an explicit
-    environment wins over the rollout default. Clearing ``modal`` here sends
-    those sweeps through ``get_default_cloud_environment`` like a sweep that
-    named nothing. Every other explicit provider -- notably ``ec2`` -- is kept,
-    and so is Modal wherever Archil cannot serve the run (GPU, TPU, private
-    registry pulls). Call after ``compute_request_hash`` so the routing bucket
-    and idempotency fingerprint still come from the raw request.
+    environment wins over the rollout default. Each explicit ``modal`` is
+    replaced with this request's rollout pick (Modal or Archil). The pick stays
+    explicit, so it still overrides an append's inherited provider -- re-running
+    a saved Daytona task with ``--env modal`` must not inherit Daytona. Every
+    other explicit provider -- notably ``ec2`` -- is kept, and so is Modal
+    wherever Archil cannot serve the run (GPU, TPU, private registry pulls). A
+    GPU count declared only in task.toml is invisible here; the trial handler
+    moves those Archil trials to Modal before launch. Call after
+    ``compute_request_hash`` so the routing bucket and idempotency fingerprint
+    still come from the raw request.
     """
     if submission.environment not in (None, EnvironmentType.MODAL):
         return
@@ -33,10 +39,14 @@ def release_explicit_modal_to_archil_rollout(submission: TaskSweepSubmission) ->
         or submission.registry_auth
     ):
         return
-    submission.environment = None
+    selected = get_default_cloud_environment(submission, request_hash=request_hash)
+    if selected not in (EnvironmentType.MODAL, EnvironmentType.ARCHIL):
+        return
+    if submission.environment == EnvironmentType.MODAL:
+        submission.environment = selected
     for config in submission.configs:
         if config.environment == EnvironmentType.MODAL:
-            config.environment = None
+            config.environment = selected
 
 
 def get_default_cloud_environment(

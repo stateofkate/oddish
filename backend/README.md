@@ -542,9 +542,12 @@ eligible new hosted CPU submissions to Archil. Production sets `40` in
 `.github/workflows/modal-deploy.yml`; promotion to `main` and deployment activate
 it. The API hashes each raw submission into one of 100 groups and selects Archil
 for groups 0–39, keeping every unset trial in the submission together. An
-explicit `modal` (submission or config level) counts as unset, because released
-CLIs send it on every run; explicit `ec2` and `archil` are kept. GPU/TPU,
-private-registry pulls and inherited task environments are excluded. This targets submissions, not an exact share of jobs. The deployment
+explicit `modal` (submission or config level) is replaced with the request's
+pick, because released CLIs send it on every run; the pick stays explicit, so it
+still overrides an append's saved provider. Explicit `ec2` and `archil` are
+kept. GPU/TPU, private-registry pulls and inherited task environments are
+excluded; a GPU count only task.toml declares moves the Archil trial to Modal
+before launch. This targets submissions, not an exact share of jobs. The deployment
 pins the value in the image and final runtime secret so stale shared secrets
 cannot override it. Set `20` and redeploy to restore the prior rollout, or
 `0` and redeploy to stop new automatic selections;

@@ -126,7 +126,49 @@ async def _task_requests_gpu(trial_id: str) -> bool:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-async def _monitor_routes(trial_id: str, attempt: int) -> bool:
+async def _move_gpu_trial_off_archil(trial_id: str) -> bool | None:
+    """Move an Archil trial whose task requests GPUs to Modal before launch.
+
+    Archil has no GPUs. The hosted rollout keeps GPU sweeps on Modal when the
+    request says so, but a count declared only in task.toml is invisible to
+    clients that send an explicit environment, so the rollout can still pick
+    Archil. Returns the GPU answer when it was read (``None`` otherwise) so the
+    monitor route does not read the task a second time.
+    """
+    async with get_session() as session:
+        trial = await session.get(TrialModel, trial_id)
+        environment = getattr(trial, "environment", None) or ""
+        if environment.strip().lower() != "archil":
+            return None
+    try:
+        requests_gpu = await _task_requests_gpu(trial_id)
+    except Exception:  # noqa: BLE001 - the launch path reports unreadable tasks
+        return None
+    if not requests_gpu:
+        return False
+    from sqlalchemy import func, update
+
+    from oddish.workers.console import console
+
+    async with get_session() as session:
+        await session.execute(
+            update(TrialModel)
+            .where(
+                TrialModel.id == trial_id,
+                func.lower(TrialModel.environment) == "archil",
+            )
+            .values(environment="modal")
+        )
+    console.out(
+        f"metric=archil_gpu_reroute trial={trial_id} target=modal",
+        highlight=False,
+    )
+    return True
+
+
+async def _monitor_routes(
+    trial_id: str, attempt: int, *, requests_gpu: bool | None = None
+) -> bool:
     """The sampled-rollout decision, logged once per claim with its reason."""
     from oddish.config import settings
     from oddish.workers.console import console
@@ -143,7 +185,9 @@ async def _monitor_routes(trial_id: str, attempt: int) -> bool:
         route = Route(False, blocker)
     elif route.monitor:
         try:
-            if await _task_requests_gpu(trial_id):
+            if requests_gpu is None:
+                requests_gpu = await _task_requests_gpu(trial_id)
+            if requests_gpu:
                 route = Route(False, "gpu")
         except Exception:  # noqa: BLE001 - the launcher could not read it either
             route = Route(False, "task-unreadable")
@@ -175,8 +219,9 @@ class TrialJobHandler:
             return _fail_permanent(str(exc))
         from oddish.config import settings
 
+        requests_gpu = await _move_gpu_trial_off_archil(trial_id)
         if settings.monitor_execution_enabled and await _monitor_routes(
-            trial_id, job.attempts
+            trial_id, job.attempts, requests_gpu=requests_gpu
         ):
             from oddish.workers.launcher.launch import launch_monitor_attempt
 

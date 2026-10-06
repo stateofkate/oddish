@@ -227,6 +227,29 @@ def _default_cloud_environment_for_task(
     return None
 
 
+def _hosted_task_routing(
+    environment: EnvironmentType | None,
+    task_path: Path | None,
+    *,
+    override_gpus: int | None,
+    is_modal_api: bool,
+) -> tuple[EnvironmentType | None, bool, list[str] | None]:
+    """The environment, GPU need, and GPU types one task's payload carries.
+
+    The GPU need is sent with an explicit environment too: the hosted Archil
+    rollout may replace an explicit ``modal`` and must keep GPU tasks on Modal.
+    """
+    if not is_modal_api or task_path is None:
+        return environment, False, None
+    requires_gpu = _task_requires_gpu(task_path, override_gpus=override_gpus)
+    gpu_types = _task_config_gpu_types(task_path) if requires_gpu else None
+    if environment is None:
+        environment = _default_cloud_environment_for_task(
+            task_path, override_gpus=override_gpus
+        )
+    return environment, requires_gpu, gpu_types
+
+
 def _map_batch_sweep_results(
     batch_results: list,
     submit_targets: list,
@@ -1005,18 +1028,13 @@ def run(
             tags["github_meta"] = github_meta
 
         task_configs = copy.deepcopy(configs)
-        task_environment = environment
-        requires_gpu = False
-        gpu_types: list[str] | None = None
-        _validate_explicit_environment_for_task(task_environment, task_path)
-        if task_environment is None and is_modal_api and task_path is not None:
-            requires_gpu = _task_requires_gpu(task_path, override_gpus=override_gpus)
-            if requires_gpu:
-                gpu_types = _task_config_gpu_types(task_path)
-            task_environment = _default_cloud_environment_for_task(
-                task_path,
-                override_gpus=override_gpus,
-            )
+        _validate_explicit_environment_for_task(environment, task_path)
+        task_environment, requires_gpu, gpu_types = _hosted_task_routing(
+            environment,
+            task_path,
+            override_gpus=override_gpus,
+            is_modal_api=is_modal_api,
+        )
         return build_sweep_payload(
             task_id=task_id,
             configs=task_configs,
