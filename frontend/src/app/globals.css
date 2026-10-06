@@ -366,8 +366,12 @@
 @layer base {
   * {
     @apply border-border;
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--muted-foreground) / 0.35) transparent;
   }
   html {
+    /* Native controls and scrollbars follow the app theme, not the OS. */
+    color-scheme: var(--app-color-scheme);
     overflow-y: scroll !important;
     overflow-x: clip;
     overscroll-behavior-y: none;
