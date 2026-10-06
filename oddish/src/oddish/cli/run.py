@@ -428,6 +428,13 @@ def run(
             ),
         ),
     ] = None,
+    no_archil: Annotated[
+        bool,
+        typer.Option(
+            "--no-archil",
+            help="Run on Modal, bypassing the Archil rollout (implies --env modal).",
+        ),
+    ] = False,
     priority: Annotated[
         str,
         typer.Option(
@@ -997,6 +1004,8 @@ def run(
     if not experiment_id and not existing_task_ids:
         experiment_id = generate_experiment_name()
 
+    if no_archil:
+        environment = EnvironmentType.MODAL
     if environment is None and not existing_task_ids and not is_modal_api:
         environment = EnvironmentType.DOCKER
     else:
@@ -1041,6 +1050,7 @@ def run(
             environment=task_environment,
             requires_gpu=requires_gpu,
             gpu_types=gpu_types,
+            skip_archil=no_archil,
             user=user,
             priority=priority,
             experiment_id=experiment_id,

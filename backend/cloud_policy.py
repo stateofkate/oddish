@@ -99,6 +99,7 @@ def get_default_cloud_environment(
         current_default == EnvironmentType.MODAL
         and not requires_gpu
         and not requires_private_registry
+        and not (submission is not None and submission.skip_archil)
         and int(request_hash, 16) % 100 < settings.archil_traffic_percent
     ):
         return EnvironmentType.ARCHIL

@@ -448,6 +448,10 @@ class TaskSweepSubmission(BaseModel):
             "reject the task at launch. Never changes what the trial runs with."
         ),
     )
+    skip_archil: bool = Field(
+        False,
+        description="Keep Modal trials on Modal: opt out of the Archil rollout.",
+    )
     gate_baselines: bool = Field(
         True,
         description=(

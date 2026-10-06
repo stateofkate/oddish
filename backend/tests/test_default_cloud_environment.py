@@ -371,3 +371,16 @@ def test_unset_submission_environment_stays_unset_for_append_inheritance(
     )
     assert submission.environment is None
     assert submission.configs[0].environment == EnvironmentType.ARCHIL
+
+
+def test_skip_archil_keeps_explicit_modal_on_modal(monkeypatch):
+    monkeypatch.setattr(cloud_policy.settings, "archil_traffic_percent", 100)
+    submission = TaskSweepSubmission(
+        task_id="t1",
+        environment=EnvironmentType.MODAL,
+        skip_archil=True,
+        configs=[AgentModelPair(agent="oracle")],
+    )
+    assert _routed_environments(submission, request_hash="0" * 64) == [
+        EnvironmentType.MODAL
+    ]

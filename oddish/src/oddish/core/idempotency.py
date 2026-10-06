@@ -127,6 +127,8 @@ def compute_request_hash(submission: Any) -> str:
         payload.pop("requires_gpu", None)
     if not payload.get("gpu_types"):
         payload.pop("gpu_types", None)
+    if not payload.get("skip_archil"):
+        payload.pop("skip_archil", None)
     # Drop an absent github_id so an honest retry that never sent it hashes the
     # same as the original (linkage idempotency guard).
     if payload.get("github_id") is None:
