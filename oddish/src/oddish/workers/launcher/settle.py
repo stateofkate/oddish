@@ -88,13 +88,25 @@ def _outcome_from_payload(
     )
 
 
+def _skip_unsafe_members(member: tarfile.TarInfo, path: str) -> tarfile.TarInfo | None:
+    """The ``data`` filter, but a member it rejects is skipped instead of
+    failing the whole unpack: a task's own symlink to an absolute path (Lean's
+    ``.lake/packages``) is never a trial output and must not cost the trial
+    its artifacts."""
+    try:
+        return tarfile.data_filter(member, path)
+    except tarfile.FilterError:
+        logger.warning("skipped unsafe archive member %s", member.name)
+        return None
+
+
 async def _unpack_archive(archive_key: str, dest: Path) -> Path:
     archive = dest / "archive.tar.gz"
     await get_storage_client().download_file(archive_key, archive)
     job_dir = dest / "job"
     job_dir.mkdir()
     with tarfile.open(archive, mode="r:gz") as tar:
-        tar.extractall(job_dir, filter="data")
+        tar.extractall(job_dir, filter=_skip_unsafe_members)
     return job_dir
 
 
