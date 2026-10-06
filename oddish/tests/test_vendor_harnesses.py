@@ -21,7 +21,6 @@ from oddish.vendor_harnesses import (
 from oddish.workers.harbor import runner as harbor_runner
 from oddish.workers.harbor.model_hosts import outbound_hosts_for_model
 from oddish.workers.harbor.restricted_network import (
-    RestrictedNetworkProfileError,
     agent_keeps_public_model_identity,
     restricted_network_profile_for_config,
 )
@@ -84,13 +83,22 @@ def test_prefix_check_is_devin_only_and_skips_stored_reads() -> None:
     assert settings.normalize_trial_model("devin", "swe-2", strict=False) == "swe-2"
 
 
-def test_devin_model_grants_no_host_until_measured() -> None:
-    assert outbound_hosts_for_model("devin/swe-2") == []
+def test_devin_model_grants_cognition_hosts() -> None:
+    assert outbound_hosts_for_model("devin/swe-2") == [
+        "server.codeium.com",
+        "api.devin.ai",
+        "static.devin.ai",
+    ]
 
 
-def test_devin_restricted_phase_fails_closed_and_keeps_model_identity() -> None:
+def test_devin_restricted_phase_allows_cognition_and_keeps_model_identity() -> None:
     config = AgentConfig(name="devin", model_name="devin/swe-2")
 
     assert agent_keeps_public_model_identity(config)
-    with pytest.raises(RestrictedNetworkProfileError, match="not established"):
-        restricted_network_profile_for_config(config, resolved_env={})
+    profile = restricted_network_profile_for_config(config, resolved_env={})
+    assert profile.outbound_hosts == (
+        "server.codeium.com",
+        "api.devin.ai",
+        "static.devin.ai",
+    )
+    assert profile.server_web_disabled

@@ -1640,6 +1640,22 @@ def _grok_build_environment_hosts(agent_config: HarborAgentConfig) -> list[str]:
     )
 
 
+def _vendor_harness_environment_hosts(
+    agent: str | None, agent_config: HarborAgentConfig
+) -> list[str]:
+    """Install + runtime hosts for a self-installing vendor-service harness.
+
+    Empty for every other agent, including vendor harnesses that declare no
+    install hosts (cursor-cli), so their closed-task behaviour is unchanged.
+    """
+    vendor = vendor_harness_for_agent(
+        agent or agent_config.name, getattr(agent_config, "import_path", None)
+    )
+    if vendor is None or not vendor.install_hosts:
+        return []
+    return list(dict.fromkeys([*vendor.install_hosts, *vendor.runtime_hosts]))
+
+
 def _antigravity_environment_hosts(agent_config: HarborAgentConfig) -> list[str]:
     """Hosts agy needs across install *and* run.
 
@@ -2546,6 +2562,20 @@ async def _run_harbor_trial_async_impl(
             )
         ):
             hosts = _grok_build_environment_hosts(agent_config)
+            env_config.extra_allowed_hosts = [
+                *env_config.extra_allowed_hosts,
+                *[h for h in hosts if h not in env_config.extra_allowed_hosts],
+            ]
+
+        # A vendor-service harness that self-installs (devin) runs its install
+        # script at agent-setup under the environment baseline -- same lifecycle
+        # problem as the opencode arm above. On a closed task its install and
+        # runtime hosts must ride that baseline, or setup dies before the run.
+        hosts = _vendor_harness_environment_hosts(agent, agent_config)
+        if hosts and not _supports_daytona_compose_restricted_agent_network(
+            task_path=effective_task_path,
+            environment_config=env_config,
+        ):
             env_config.extra_allowed_hosts = [
                 *env_config.extra_allowed_hosts,
                 *[h for h in hosts if h not in env_config.extra_allowed_hosts],

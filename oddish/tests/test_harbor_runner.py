@@ -6101,6 +6101,36 @@ def test_grok_build_environment_hosts_span_install_and_model(
     assert len(hosts) == len(set(hosts))
 
 
+def test_devin_environment_hosts_span_install_and_runtime():
+    """Devin installs from cli.devin.ai during setup, then dials Cognition.
+
+    On a closed task both ride the environment baseline; cursor-cli declares
+    no install hosts and keeps getting none from this arm.
+    """
+    hosts = harbor_runner._vendor_harness_environment_hosts(
+        "devin", HarborAgentConfig(name="devin", model_name="devin/swe-2")
+    )
+
+    assert "cli.devin.ai" in hosts  # install.sh
+    assert "static.devin.ai" in hosts  # binary + runtime assets
+    assert "server.codeium.com" in hosts  # login + inference
+    assert "api.devin.ai" in hosts  # remote config
+    assert "deb.debian.org" in hosts  # apt-get install curl on slim images
+    assert len(hosts) == len(set(hosts))
+    assert (
+        harbor_runner._vendor_harness_environment_hosts(
+            "cursor-cli", HarborAgentConfig(name="cursor-cli")
+        )
+        == []
+    )
+    assert (
+        harbor_runner._vendor_harness_environment_hosts(
+            "codex", HarborAgentConfig(name="codex")
+        )
+        == []
+    )
+
+
 def test_is_grok_build_agent_matches_name_and_import_path():
     assert harbor_runner._is_grok_build_agent(agent="grok-build", agent_config=None)
     assert harbor_runner._is_grok_build_agent(agent=" Grok-Build ", agent_config=None)

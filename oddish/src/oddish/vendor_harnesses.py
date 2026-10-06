@@ -30,6 +30,9 @@ class VendorHarness:
     # Hosts the harness dials at runtime. Empty means not yet established, and
     # restricted-network trials fail closed for this harness.
     runtime_hosts: tuple[str, ...]
+    # Hosts its self-install needs during agent SETUP. A closed task runs setup
+    # under the environment baseline, so these ride along with runtime_hosts.
+    install_hosts: tuple[str, ...] = ()
     # Bare model ids are rejected at submit: without the prefix, Oddish's
     # provider routing would rewrite the id for a provider the harness never
     # calls (e.g. ``claude-*`` -> ``anthropic/`` or ``bedrock/``).
@@ -66,9 +69,19 @@ DEVIN = VendorHarness(
     # Harbor's Devin agent writes this key into the CLI's credentials.toml and
     # keeps it out of the agent's run environment.
     auth_env_keys=("DEVIN_API_KEY",),
-    # Not documented by Cognition; to be read from a trial's
-    # ~/.local/share/devin/cli/logs with RUST_LOG=debug.
-    runtime_hosts=(),
+    # Connections in the CLI's RUST_LOG=debug logs from devin/swe-2 runs on
+    # staging (Devin CLI 3000.11.3): login and inference, remote config, and
+    # static assets. Its Sentry ingest host is left out (error reporting only).
+    runtime_hosts=("server.codeium.com", "api.devin.ai", "static.devin.ai"),
+    install_hosts=(
+        "cli.devin.ai",  # install.sh
+        "static.devin.ai",  # CLI binary (install.sh downloads static.devin.ai/cli)
+        # ``install`` first runs ``apt-get install curl``; slim images without
+        # curl need their distro mirrors.
+        "deb.debian.org",
+        "archive.ubuntu.com",
+        "security.ubuntu.com",
+    ),
     requires_model_prefix=True,
 )
 

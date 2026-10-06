@@ -682,14 +682,14 @@ def _devin_profile(
     resolved_env: Mapping[str, str],
 ) -> RestrictedNetworkProfile:
     # Devin CLI fronts every model through Cognition's service, like Cursor,
-    # and reads no transport base URL. Its runtime hosts are undocumented, so
-    # until they are measured from a trial a restricted phase fails closed.
-    if not DEVIN.runtime_hosts:
-        raise RestrictedNetworkProfileError(
-            "Devin CLI's runtime hosts are not established yet; run devin "
-            "trials with open egress."
-        )
-    return RestrictedNetworkProfile(outbound_hosts=DEVIN.runtime_hosts)
+    # and reads no transport base URL. Its URL reads run in the sandbox, so the
+    # egress allowlist blocks them; its server-side web search is off through
+    # the Devin team's "Web search" setting, which the CLI logs as
+    # ``cascade_web_search_enabled: false``.
+    return RestrictedNetworkProfile(
+        outbound_hosts=DEVIN.runtime_hosts,
+        server_web_disabled=True,
+    )
 
 
 def _gemini_profile(
