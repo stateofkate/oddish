@@ -34,6 +34,7 @@ from oddish.core.verdict_state import (
 )
 from oddish.db import (
     ACTIVE_TRIAL_STATUSES,
+    QUOTA_CANCELLED_MESSAGE,
     AnalysisStatus,
     TaskModel,
     TaskStatus,
@@ -47,7 +48,6 @@ from oddish.db import (
 
 logger = logging.getLogger(__name__)
 
-QUOTA_CANCELLED_MESSAGE = "Cancelled because quota was reached"
 _RETRY_INITIAL_SECONDS = 1.0
 _RETRY_MAX_SECONDS = 30.0
 # Remote teardown after a quota cancellation is best-effort reaping: the

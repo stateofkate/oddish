@@ -30,3 +30,13 @@ def test_skipped_status_is_counted_not_dropped():
     assert stats, "skipped status was dropped instead of counted"
     (bucket,) = stats.values()
     assert bucket["skipped"] == 3
+
+
+def test_every_trial_status_has_a_bucket():
+    from oddish.db import TrialStatus
+
+    assert set(_empty_queue_counts()) == {status.value for status in TrialStatus}
+    stats: dict[str, dict[str, int]] = {}
+    _accumulate_queue_stat(stats, "fireworks/kimi-k2p7-code", "PAUSED", 2)
+    (bucket,) = stats.values()
+    assert bucket["paused"] == 2

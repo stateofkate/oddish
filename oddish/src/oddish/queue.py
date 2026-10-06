@@ -42,6 +42,7 @@ from oddish.core.verdict_state import (
 from oddish.db import (
     ACTIVE_TRIAL_STATUSES,
     AGENT_TRIAL_KIND,
+    USER_CANCELLED_MESSAGE,
     AnalysisStatus,
     ExperimentModel,
     TaskModel,
@@ -71,8 +72,6 @@ from oddish.workers.jobs.enqueue import (
 )
 
 logger = logging.getLogger(__name__)
-
-USER_CANCELLED_MESSAGE = "Cancelled by user"
 
 
 class TrialSupersedeConflict(RuntimeError):
@@ -2165,32 +2164,15 @@ async def maybe_advance_legacy_analyzing_task(
 # =============================================================================
 
 
-# Valid per-queue status buckets. Shared by the per-org and grouped-by-org
-# aggregators so both emit byte-identical queue-stat shapes.
-_VALID_QUEUE_STATUSES = {
-    "pending",
-    "queued",
-    "running",
-    "success",
-    "failed",
-    "retrying",
-    # Gate-skipped trials are terminal; count them (like success/failed) so they
-    # don't vanish from a queue's per-status trial pipeline totals.
-    "skipped",
-}
+# Valid per-queue status buckets, one per TrialStatus so a new status (PAUSED
+# was once missing) cannot silently drop out of the counts. Shared by the
+# per-org and grouped-by-org aggregators so both emit identical shapes.
+_VALID_QUEUE_STATUSES = tuple(status.value for status in TrialStatus)
 
 
 def _empty_queue_counts() -> dict[str, int]:
     """Fresh zeroed status-count bucket for one queue key."""
-    return {
-        "pending": 0,
-        "queued": 0,
-        "running": 0,
-        "success": 0,
-        "failed": 0,
-        "retrying": 0,
-        "skipped": 0,
-    }
+    return dict.fromkeys(_VALID_QUEUE_STATUSES, 0)
 
 
 def _accumulate_queue_stat(

@@ -53,6 +53,7 @@ from oddish.db import (
     WorkerJobModel,
     WorkerJobStatus,
     get_session,
+    is_cancelled_or_exhausted_trial,
     utcnow,
 )
 from oddish.core.llm_key_fingerprint import trial_llm_key_hash
@@ -711,9 +712,7 @@ async def _store_trial_results(
             outcome and is_modal_image_build_failure(outcome.error)
         )
 
-        user_cancelled = trial.error_message == "Cancelled by user" or (
-            trial.status == TrialStatus.FAILED and trial.max_attempts <= trial.attempts
-        )
+        user_cancelled = is_cancelled_or_exhausted_trial(trial)
         if user_cancelled:
             if judge_summary is not None:
                 trial.result = {**(trial.result or {}), "_verifier_judges": judge_summary}
@@ -1216,11 +1215,7 @@ async def handle_harbor_event(
                 )
                 return
 
-            user_cancelled = trial.error_message == "Cancelled by user" or (
-                trial.status == TrialStatus.FAILED
-                and trial.max_attempts <= trial.attempts
-                and trial.max_attempts > 0
-            )
+            user_cancelled = is_cancelled_or_exhausted_trial(trial)
             if user_cancelled and event in (
                 TrialEvent.END,
                 TrialEvent.CANCEL,

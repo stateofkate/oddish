@@ -13,7 +13,11 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Protocol
 
-from oddish.db import VerdictStatus
+from oddish.db import (
+    QUOTA_CANCELLED_MESSAGE,
+    USER_CANCELLED_MESSAGE,
+    VerdictStatus,
+)
 
 
 class VerdictState(Protocol):
@@ -52,9 +56,7 @@ def is_insufficient_evidence(error: str | None) -> bool:
 
 # cancel_verdict() errors: the QA cancel endpoint and queue cancels write
 # USER_CANCELLED_MESSAGE, quota enforcement writes QUOTA_CANCELLED_MESSAGE.
-CANCELLED_VERDICT_ERRORS = frozenset(
-    ("Cancelled by user", "Cancelled because quota was reached")
-)
+CANCELLED_VERDICT_ERRORS = frozenset((USER_CANCELLED_MESSAGE, QUOTA_CANCELLED_MESSAGE))
 
 
 def is_cancelled_verdict(error: str | None) -> bool:

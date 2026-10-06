@@ -238,6 +238,22 @@ def is_worker_owned_trial_status(status: TrialStatus | str) -> bool:
     return status in WORKER_OWNED_TRIAL_STATUSES
 
 
+USER_CANCELLED_MESSAGE = "Cancelled by user"
+QUOTA_CANCELLED_MESSAGE = "Cancelled because quota was reached"
+
+
+def is_cancelled_or_exhausted_trial(trial: Any) -> bool:
+    """A trial a late worker result or Harbor hook must not reopen.
+
+    Every cancel path (user, QA, quota) sets FAILED with
+    ``max_attempts = attempts``, so the attempts check also covers quota
+    cancels and trials that failed on their final attempt.
+    """
+    return trial.error_message == USER_CANCELLED_MESSAGE or (
+        trial.status == TrialStatus.FAILED and trial.max_attempts <= trial.attempts
+    )
+
+
 class Priority(str, Enum):
     """Task priority levels."""
 

@@ -39,6 +39,7 @@ from oddish.core.verdict_state import fail_verdict, queue_verdict
 from oddish.costs.recorder import reconcile_compute_cost_spans
 from oddish.costs.verifier_cost import backfill_verifier_costs_from_s3
 from oddish.db import (
+    USER_CANCELLED_MESSAGE,
     AnalysisStatus,
     TaskModel,
     TaskStatus,
@@ -2180,7 +2181,7 @@ async def _heal_cancelled_audits(session) -> int:
                     if task.verdict_status == VerdictStatus.SUCCESS:
                         task.status = TaskStatus.COMPLETED
                     else:
-                        cancel_verdict(task, error="Cancelled by user", now=now)
+                        cancel_verdict(task, error=USER_CANCELLED_MESSAGE, now=now)
                         task.status = TaskStatus.FAILED
                     task.finished_at = task.finished_at or now
                 logger.info(

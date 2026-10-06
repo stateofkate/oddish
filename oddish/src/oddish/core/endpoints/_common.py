@@ -6,9 +6,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from oddish.core.verdict_state import reset_verdict
-from oddish.db import ExperimentModel, TaskModel, TrialModel
+from oddish.db import (
+    USER_CANCELLED_MESSAGE as USER_CANCELLED_MESSAGE,
+    ExperimentModel,
+    TaskModel,
+    TrialModel,
+)
 
-USER_CANCELLED_MESSAGE = "Cancelled by user"
 _ACTIVE_WORKER_JOB_STATUSES_SQL = "'QUEUED', 'RETRYING', 'RUNNING', 'BLOCKED'"
 
 

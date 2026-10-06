@@ -90,6 +90,7 @@ async def test_pipeline_counts_use_reserved_buckets() -> None:
         "pending": 0,
         "queued": 3,
         "running": 7,
+        "paused": 0,
         "success": 0,
         "failed": 0,
         "retrying": 0,
