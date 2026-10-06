@@ -1,0 +1,283 @@
+{
+  "repository": "abundant-ai/oddish",
+  "collection": "engineering",
+  "reviewedCommit": "branch mark/docs-technical-engineering, uncommitted on 5 Oct 2026",
+  "skill": "abundant-ai/abundant-docs skills/repo-docs at 0b63386",
+  "pages": [
+    {
+      "slug": "index",
+      "status": "code-reviewed",
+      "sources": [
+        "abundant-ai/abundant-docs sources.json",
+        "scripts/import-docs.mjs",
+        "scripts/content-validation.mjs"
+      ],
+      "claims": [
+        "collection is staff-only",
+        "designed pages are served sandboxed with a Markdown twin",
+        "report.css is the shared stylesheet"
+      ],
+      "gaps": [
+        "reader grants are set by the docs admin, not verified here"
+      ]
+    },
+    {
+      "slug": "sandboxes/overview",
+      "status": "code-reviewed",
+      "sources": [
+        "oddish .github/workflows/modal-deploy.yml on main 8e6b65d04 (monitor 70%, Archil 40%)",
+        "oddish/src/oddish/workers/jobs/handlers.py _monitor_blocker",
+        "oddish/src/oddish/workers/launcher/providers/base.py _STARTERS",
+        "PR #1967 Daytona disabled"
+      ],
+      "claims": [
+        "which provider is supervised by what"
+      ],
+      "gaps": [
+        "Archil 40% is the configured share, not a measured count"
+      ]
+    },
+    {
+      "slug": "sandboxes/oddish-mon/introduction",
+      "status": "tested",
+      "sources": [
+        "production modal_costs and worker_jobs queries run by Mark on 5 Oct 2026 (notes/prod-checks/q9-daily-savings-since-rollout.sql, q8b route share by attempt)",
+        "8-week ledger report 21 Sep 2026"
+      ],
+      "claims": [
+        "35% less compute per CPU trial",
+        "10% of Modal CPU-trial compute saved 2 to 4 Oct",
+        "ceiling about 30% / 14% / 3.7% by denominator",
+        "first-attempt failure rate at or below the old path"
+      ],
+      "gaps": [
+        "100% run rate is an extrapolation at this week's volume",
+        "ledger not reconciled with the Modal invoice since July"
+      ]
+    },
+    {
+      "slug": "sandboxes/oddish-mon/architecture",
+      "status": "tested",
+      "sources": [
+        "same queries as the introduction, 3 Oct averages",
+        "oddish-mon design notes 19 to 24 Sep"
+      ],
+      "claims": [
+        "per-part shares: watcher 37%, sandbox 62%, verifier 1.5%, launcher 1%, warm-up 1%"
+      ],
+      "gaps": [
+        "sandbox share is derived from the day total minus the watcher, not read directly"
+      ]
+    },
+    {
+      "slug": "sandboxes/oddish-mon/results",
+      "status": "tested",
+      "sources": [
+        "q9 daily savings 22 Sep to 5 Oct",
+        "q8b attempt split 1 to 5 Oct",
+        "PR bodies #1974 #2006 #2028 #2052 #2038"
+      ],
+      "claims": [
+        "daily saved share and ran share",
+        "failure and cancellation rates 2 to 4 Oct",
+        "timeline dates"
+      ],
+      "gaps": [
+        "2 Oct cancellation spike attributed to the stuck-job bug on timing only"
+      ]
+    },
+    {
+      "slug": "sandboxes/oddish-mon/appendix",
+      "status": "code-reviewed",
+      "sources": [
+        "GPU-PROBLEM.md and H100 sidecar probe 24 Sep",
+        "ABT-1373",
+        "ABT-1376",
+        "q8b attempt-6 failures 4 Oct"
+      ],
+      "claims": [
+        "GPU watcher 3.6% of GPU trial compute",
+        "1,592 six-attempt failures on 4 Oct"
+      ],
+      "gaps": [
+        "attempt-6 failure causes not read"
+      ]
+    },
+    {
+      "slug": "sandboxes/oddish-mon/design/problem",
+      "status": "code-reviewed",
+      "sources": [
+        "notes/liveness-first-principles.md (18 Sep)",
+        "notes/heartbeat-current.html (staging 10f4a3ef)",
+        "notes/liveness-redesign.html (19 Sep)"
+      ],
+      "claims": [
+        "worker ran Harbor in-process",
+        "15 min stale threshold, 240 s sweep",
+        "pooler incident reaped 25 to 70 trials",
+        "duty-by-duty mapping"
+      ],
+      "gaps": [
+        "file:line citations refer to staging 10f4a3ef, not current main"
+      ]
+    },
+    {
+      "slug": "sandboxes/oddish-mon/design/step-by-step",
+      "status": "code-reviewed",
+      "sources": [
+        "notes/oddish-mon-as-built.html \u00a72",
+        "notes/oddish-v1-1-plan.html \u00a71 (hand-off at create, aee45ec9)",
+        "PR #2038 (trial_settled mark)",
+        "PR #1866 fast stop"
+      ],
+      "claims": [
+        "hand-off 8 to 19 s",
+        "heartbeat 30 s, control 15 s",
+        "settle marks trial_settled",
+        "teardown about 1 s"
+      ],
+      "gaps": [
+        "step timings are from staging and previews in September"
+      ]
+    },
+    {
+      "slug": "sandboxes/oddish-mon/design/failure-handling",
+      "status": "tested",
+      "sources": [
+        "notes/oddish-mon-architecture.html \u00a74-5",
+        "staging drills 23 Sep (buildtest/staging-mon-liveness-20260923)",
+        "PRs #1836 #1867 #1906 #2038"
+      ],
+      "claims": [
+        "four verdicts",
+        "3 strikes",
+        "12 h deadline",
+        "drill results"
+      ],
+      "gaps": [
+        "Daytona outage drill never run"
+      ]
+    },
+    {
+      "slug": "sandboxes/oddish-mon/design/network-isolation",
+      "status": "tested",
+      "sources": [
+        "notes/oddish-mon-ping-before-after.html (21 Sep)",
+        "Harbor PRs #73 #74 #76 #77 merged 3 Oct via #93, Harbor #94",
+        "buildtest/results net3 and old1 (21 Sep)"
+      ],
+      "claims": [
+        "bypass before fix",
+        "22/22 22/22 20/20 22/22 33/33 per provider",
+        "ping behaviour change",
+        "refused privileged tasks non-retryable"
+      ],
+      "gaps": [
+        "counts are from the preview run on d5b9c8cb, not re-run on Harbor main 4e26be20"
+      ]
+    },
+    {
+      "slug": "sandboxes/oddish-mon/design/images-and-warm-up",
+      "status": "tested",
+      "sources": [
+        "notes/mon-image-fix/PLAN.md",
+        "PR #1853 body and preview rounds",
+        "handover 24 Sep \u00a74",
+        "q9 warm-up rows 1 to 4 Oct"
+      ],
+      "claims": [
+        "snapshot key contents",
+        "7 day life",
+        "8/8 hits, 1 warmed 4 waited",
+        "82 to 86% setup seconds removed",
+        "13% of monitor trials paid a warm-up"
+      ],
+      "gaps": [
+        "warm-up rejection of single-trial rule is from a 30-day pull in September"
+      ]
+    },
+    {
+      "slug": "sandboxes/oddish-mon/delivery/proven",
+      "status": "tested",
+      "sources": [
+        "notes/oddish-mon-proof-checklist.html (21 Sep, 47 rows)",
+        "Downloads/qa40-oddish-mon-report.html (22 Sep)",
+        "LOG.md 23 Sep staging regression 120/120"
+      ],
+      "claims": [
+        "every row of the checklist as summarised"
+      ],
+      "gaps": [
+        "not-proven list as stated"
+      ]
+    },
+    {
+      "slug": "sandboxes/oddish-mon/delivery/what-changed",
+      "status": "code-reviewed",
+      "sources": [
+        "notes/oddish-mon-as-built.html \u00a75-6",
+        "notes/oddish-mon-parity-fix-plan.md",
+        "memory of 23 Sep (exit contract, hand-off at create)",
+        "PRs #1893 #1895 #1896 #1899 #1904 #1905 #1906 #2038"
+      ],
+      "claims": [
+        "each added or fixed item"
+      ],
+      "gaps": [
+        "none"
+      ]
+    },
+    {
+      "slug": "sandboxes/oddish-mon/running/costs",
+      "status": "tested",
+      "sources": [
+        "oddish/src/oddish/costs/modal_cost.py rate card",
+        "oddish/src/oddish/db/models.py component_role comment",
+        "notes/prod-checks/*.sql",
+        "q8, q8b, q9 outputs 5 Oct"
+      ],
+      "claims": [
+        "roles",
+        "rate card date",
+        "denominators"
+      ],
+      "gaps": [
+        "rate card not reconciled with invoice"
+      ]
+    },
+    {
+      "slug": "sandboxes/oddish-mon/running/operations",
+      "status": "code-reviewed",
+      "sources": [
+        "oddish .github/workflows/modal-deploy.yml on main 8e6b65d04",
+        "workers/jobs/handlers.py _monitor_blocker",
+        "notes/prod-checks/oddish-mon-prod-health.sql",
+        "PR #2028 (quota)"
+      ],
+      "claims": [
+        "switch values",
+        "eligibility rules",
+        "check list"
+      ],
+      "gaps": [
+        "Logfire use is from Kyle's PR bodies, not verified by the author"
+      ]
+    },
+    {
+      "slug": "sandboxes/oddish-mon/roadmap/not-built",
+      "status": "code-reviewed",
+      "sources": [
+        "notes/oddish-v1-1-plan.html",
+        "notes/mon-image-fix/GPU-PROBLEM.md",
+        "Linear ABT-1373 ABT-1296 ABT-1311 ABT-1375",
+        "AGENTS.md Archil rollout section"
+      ],
+      "claims": [
+        "each item's status"
+      ],
+      "gaps": [
+        "Archil adapter effort is an estimate"
+      ]
+    }
+  ]
+}

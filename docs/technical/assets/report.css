@@ -1,0 +1,408 @@
+/* Shared stylesheet for designed Engineering reports. Uses the docs site's
+   fonts and colour tokens so a report reads as part of the site. No scripts
+   are allowed in reports; the unit switch below is CSS only. */
+:root {
+  color-scheme: light dark;
+  --bg: #fbfcf9;
+  --panel: #ffffff;
+  --ink: #20261d;
+  --muted: #777d70;
+  --line: #e4e8dc;
+  --accent: #4f681f;
+  --selected: #eef3e3;
+  --sandbox: #3b82c4;
+  --watcher: #d9892a;
+  --warm: #7c5cc4;
+  --verify: #2f9e63;
+  --tokens: #9a978e;
+  --sandbox-fill: #e3eef9;
+  --watcher-fill: #fbecd9;
+  --warm-fill: #ebe4f8;
+  --verify-fill: #dff3e8;
+  --plain-fill: #f3f1ea;
+  --ok: #1f8a4c;
+  --warn: #b8741a;
+  --bad: #c23b3b;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --hand: "Patrick Hand", "Comic Sans MS", cursive;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #131611;
+    --panel: #1a1e17;
+    --ink: #e9ede3;
+    --muted: #9ba591;
+    --line: #2e3528;
+    --accent: #c3dc91;
+    --selected: #29331f;
+    --sandbox: #5aa0dd;
+    --watcher: #e8a24a;
+    --warm: #a386e6;
+    --verify: #4cc27f;
+    --tokens: #7d7b73;
+    --sandbox-fill: #1a2a3c;
+    --watcher-fill: #35281a;
+    --warm-fill: #271f3a;
+    --verify-fill: #173024;
+    --plain-fill: #1f232a;
+    --ok: #4cc27f;
+    --warn: #e8a24a;
+    --bad: #ef6b6b;
+  }
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  color: var(--ink);
+  background: var(--bg);
+  font: 15px/1.75 system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+.wrap {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 36px 48px 90px;
+}
+h1 {
+  font-size: 34px;
+  letter-spacing: -0.035em;
+  line-height: 1.15;
+  margin: 0 0 12px;
+  text-wrap: balance;
+}
+h2 {
+  font-size: 22px;
+  letter-spacing: -0.02em;
+  margin: 48px 0 8px;
+}
+h3 {
+  font-size: 12px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+  margin: 0 0 12px;
+}
+p {
+  max-width: 68ch;
+  margin: 0 0 12px;
+}
+.lede {
+  font-size: 17px;
+  color: var(--muted);
+  max-width: 62ch;
+}
+.meta {
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 24px;
+}
+a {
+  color: var(--accent);
+  text-underline-offset: 3px;
+}
+section {
+  margin-top: 40px;
+}
+.sub {
+  color: var(--muted);
+  margin: 0 0 16px;
+  max-width: 66ch;
+}
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 24px;
+  overflow-x: auto;
+}
+.panel + .panel {
+  margin-top: 16px;
+}
+.panel table {
+  min-width: 560px;
+}
+.two {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.three {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 16px;
+}
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+.tile {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 16px;
+}
+.tile .k {
+  font-size: 11px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.tile .v {
+  font-family: var(--mono);
+  font-size: 26px;
+  font-weight: 500;
+  margin: 6px 0 4px;
+  line-height: 1.1;
+}
+.tile .d {
+  font-size: 13px;
+  color: var(--muted);
+}
+figure {
+  margin: 0;
+}
+figcaption {
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 12px;
+  max-width: 64ch;
+}
+.scroll {
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+.scroll svg {
+  min-width: 720px;
+}
+svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  font-family: system-ui, sans-serif;
+}
+.hand {
+  font-family: var(--hand);
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+th,
+td {
+  text-align: left;
+  padding: 10px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+th {
+  font-size: 11px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+}
+tr:last-child td {
+  border-bottom: 0;
+}
+td.n,
+th.n {
+  text-align: right;
+  font-family: var(--mono);
+  white-space: nowrap;
+}
+.pill {
+  display: inline-block;
+  font-size: 12px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.pill.ok {
+  background: color-mix(in srgb, var(--ok) 16%, transparent);
+  color: var(--ok);
+}
+.pill.warn {
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+  color: var(--warn);
+}
+.pill.off {
+  background: var(--selected);
+  color: var(--muted);
+}
+ul {
+  margin: 0;
+  padding-left: 20px;
+}
+li {
+  margin: 5px 0;
+  max-width: 70ch;
+}
+.timeline {
+  list-style: none;
+  margin: 0 0 0 6px;
+  padding: 0;
+  border-left: 2px solid var(--line);
+}
+.timeline li {
+  position: relative;
+  padding: 0 0 12px 18px;
+  max-width: none;
+}
+.timeline li::before {
+  content: "";
+  position: absolute;
+  left: -7px;
+  top: 10px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.timeline li.next::before {
+  background: var(--panel);
+  border: 2px solid var(--line);
+}
+.timeline .d {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  display: block;
+}
+.donut {
+  display: grid;
+  grid-template-columns: 112px 1fr;
+  gap: 16px;
+  align-items: center;
+}
+.donut svg {
+  width: 112px;
+  height: 112px;
+}
+.donut .big {
+  font-family: var(--mono);
+  font-size: 22px;
+  font-weight: 500;
+  line-height: 1.1;
+}
+.donut .cap {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.donut .leg {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 13px;
+}
+.donut .leg li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 3px 0;
+  max-width: none;
+}
+.donut .leg i {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex: none;
+}
+.donut .leg b {
+  font-family: var(--mono);
+  font-weight: 500;
+  margin-left: auto;
+  padding-left: 8px;
+}
+.donut-note {
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 12px;
+}
+.ask {
+  border-left: 3px solid var(--accent);
+  padding: 12px 16px;
+  background: var(--panel);
+  margin: 12px 0;
+  border-radius: 0 9px 9px 0;
+}
+.ask b {
+  display: block;
+  margin-bottom: 2px;
+}
+.foot {
+  font-size: 13px;
+  color: var(--muted);
+  border-top: 1px solid var(--line);
+  margin-top: 48px;
+  padding-top: 16px;
+}
+
+/* Unit switch, CSS only. Every amount carries both forms:
+   <span class="amt"><span class="pct">35%</span><span class="usd">$0.20</span></span> */
+.units {
+  display: inline-flex;
+  gap: 2px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px;
+  background: var(--panel);
+  font-size: 12px;
+}
+.units label {
+  padding: 3px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  color: var(--muted);
+}
+.units input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.units input:focus-visible + label {
+  outline: 2px solid var(--accent);
+}
+body:has(#unit-pct:checked) label[for="unit-pct"],
+body:has(#unit-usd:checked) label[for="unit-usd"] {
+  background: var(--ink);
+  color: var(--bg);
+}
+.amt .usd {
+  display: none;
+}
+body:has(#unit-usd:checked) .amt .pct {
+  display: none;
+}
+body:has(#unit-usd:checked) .amt .usd {
+  display: inline;
+}
+.topline {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+@media (max-width: 860px) {
+  .tiles {
+    grid-template-columns: 1fr 1fr;
+  }
+  .two,
+  .three {
+    grid-template-columns: 1fr;
+  }
+  .wrap {
+    padding: 24px 16px 64px;
+  }
+  h1 {
+    font-size: 27px;
+  }
+}

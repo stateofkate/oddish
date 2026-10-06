@@ -1,0 +1,50 @@
+<svg width="940" height="470" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 470"><style>:root{
+  --bg:#fbfcf9; --surface:#ffffff; --surface-2:#eef1f1; --line:#e4e8dc; --ink:#20261d; --ink-soft:#4c5a59; --ink-faint:#7b8786;
+  --accent:#1f6f78; --ok:#1d7a46; --warn:#9a6200; --bad:#a8322f;
+  --font:system-ui,-apple-system,"Segoe UI",sans-serif; --mono:ui-monospace,"SF Mono",Menlo,monospace;
+  --s1:4px;--s2:8px;--s3:12px;--s4:16px;--s6:24px;--s8:32px;--s12:48px; --radius:6px;
+}@media (prefers-color-scheme:dark){:root{
+  --bg:#131611; --surface:#1a1e17; --surface-2:#1d2626; --line:#2e3528; --ink:#e9ede3; --ink-soft:#a9b6b5; --ink-faint:#74807f;
+  --accent:#6fc3cc; --ok:#5fcf8c; --warn:#e0a64a; --bad:#f08a86;}}text{font-family:system-ui,sans-serif}</style>
+    <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker>
+    <marker id="r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="var(--bad)"/></marker></defs>
+    <g font-family="system-ui,sans-serif" font-size="12" fill="currentColor">
+      <rect x="10" y="10" width="920" height="120" rx="8" fill="none" stroke="currentColor" stroke-dasharray="5 4"/>
+      <text x="22" y="30" font-weight="700">Modal control plane</text><text x="170" y="30" fill="var(--ink-soft)">knows per function call: pending, running, finished, failed, container gone</text>
+      <g fill="none" stroke="currentColor" stroke-width="1.4">
+        <rect x="30" y="46" width="250" height="70" rx="6"/><rect x="345" y="46" width="250" height="70" rx="6"/><rect x="660" y="46" width="250" height="70" rx="6"/>
+        <rect x="250" y="200" width="440" height="150" rx="8" stroke="var(--accent)" stroke-width="2.2"/>
+        <rect x="30" y="390" width="250" height="66" rx="6"/>
+      </g>
+      <text x="42" y="66" font-weight="700">worker container</text><text x="42" y="84">process_single_job, up to 12 h</text><text x="42" y="102" fill="var(--ink-soft)">non-preemptible, one trial at a time</text>
+      <text x="357" y="66" font-weight="700">reconcile_queue_state</text><text x="357" y="84">singleton, every 240 s</text><text x="357" y="102" fill="var(--ink-soft)">the only thing that declares death</text>
+      <text x="672" y="66" font-weight="700">poll_queue (dispatcher)</text><text x="672" y="84">on a timer, spawns workers per queue key</text><text x="672" y="102" fill="var(--ink-soft)">discards the spawn handle</text>
+
+      <text x="264" y="222" font-weight="700" fill="var(--accent)">Postgres, the only liveness signal</text>
+      <text x="264" y="244" font-family="ui-monospace,monospace">worker_jobs</text><text x="400" y="244">heartbeat_at, current_worker_id, attempts,</text>
+      <text x="400" y="260">modal_function_call_id, heartbeat_failure_count</text>
+      <text x="264" y="282" font-family="ui-monospace,monospace">trials</text><text x="400" y="282">heartbeat_at mirror, for the live UI only</text>
+      <text x="264" y="304" font-family="ui-monospace,monospace">queue_slots</text><text x="400" y="304">lease per model slot, locked_until = 12 h + 30 s</text>
+      <text x="264" y="326" font-family="ui-monospace,monospace">sandbox_capacity_leases</text><text x="440" y="326">renewed by the same heartbeat</text>
+
+      <g fill="none" stroke="currentColor" stroke-width="1.4">
+        <path d="M120 116 L120 170 L330 170 L330 198" marker-end="url(#a)"/>
+        <path d="M470 116 L470 198" marker-end="url(#a)"/>
+        <path d="M785 116 L785 170 L620 170 L620 198" marker-end="url(#a)"/>
+        <path d="M250 300 L155 300 L155 388" marker-end="url(#a)"/>
+      </g>
+      <text x="128" y="150">every 30 s: two writes,</text><text x="128" y="165">each on a fresh connection</text>
+      <text x="478" y="150">read RUNNING rows where</text><text x="478" y="165">heartbeat older than 15 min</text>
+      <text x="640" y="150">read queue depth,</text><text x="640" y="165">claim metadata</text>
+      <text x="42" y="410" font-weight="700">sandbox provider</text><text x="42" y="428">Modal, Daytona, EC2, Thunder</text><text x="42" y="446" fill="var(--ink-soft)">torn down after a reap, by external_id</text>
+      <text x="165" y="350">teardown targets</text>
+
+      <g fill="none" stroke="var(--bad)" stroke-width="1.6" stroke-dasharray="6 4">
+        <path d="M470 46 L470 22" marker-end="url(#r)"/>
+      </g>
+      <rect x="560" y="390" width="370" height="66" rx="6" fill="none" stroke="var(--bad)" stroke-width="1.6"/>
+      <text x="572" y="410" font-weight="700" fill="var(--bad)">not wired for liveness</text>
+      <text x="572" y="428">FunctionCall.from_id is used only to cancel.</text>
+      <text x="572" y="446">ModalDispatcher.check_active yields every handle unasked.</text>
+    </g>
+  </svg>

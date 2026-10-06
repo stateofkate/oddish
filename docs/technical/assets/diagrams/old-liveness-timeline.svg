@@ -1,0 +1,22 @@
+<svg width="940" height="210" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 210"><style>:root{
+  --bg:#fbfcf9; --surface:#ffffff; --surface-2:#eef1f1; --line:#e4e8dc; --ink:#20261d; --ink-soft:#4c5a59; --ink-faint:#7b8786;
+  --accent:#1f6f78; --ok:#1d7a46; --warn:#9a6200; --bad:#a8322f;
+  --font:system-ui,-apple-system,"Segoe UI",sans-serif; --mono:ui-monospace,"SF Mono",Menlo,monospace;
+  --s1:4px;--s2:8px;--s3:12px;--s4:16px;--s6:24px;--s8:32px;--s12:48px; --radius:6px;
+}@media (prefers-color-scheme:dark){:root{
+  --bg:#131611; --surface:#1a1e17; --surface-2:#1d2626; --line:#2e3528; --ink:#e9ede3; --ink-soft:#a9b6b5; --ink-faint:#74807f;
+  --accent:#6fc3cc; --ok:#5fcf8c; --warn:#e0a64a; --bad:#f08a86;}}text{font-family:system-ui,sans-serif}</style>
+    <g font-family="system-ui,sans-serif" font-size="12" fill="currentColor">
+      <line x1="30" y1="90" x2="910" y2="90" stroke="currentColor" stroke-width="1.4"/>
+      <g stroke="currentColor" stroke-width="1.4"><line x1="60" y1="80" x2="60" y2="100"/><line x1="130" y1="80" x2="130" y2="100"/><line x1="620" y1="80" x2="620" y2="100"/><line x1="760" y1="80" x2="760" y2="100"/><line x1="880" y1="80" x2="880" y2="100"/></g>
+      <rect x="130" y="84" width="490" height="12" fill="var(--bad)" opacity=".35"/>
+      <text x="60" y="70" text-anchor="middle">last heartbeat</text><text x="60" y="120" text-anchor="middle" fill="var(--ink-soft)">t minus 0 to 30 s</text>
+      <text x="130" y="50" text-anchor="middle" font-weight="700">container dies</text><text x="130" y="120" text-anchor="middle" fill="var(--ink-soft)">Modal knows now</text>
+      <text x="375" y="76" text-anchor="middle">row still says RUNNING, slot still leased, nothing is looking</text>
+      <text x="620" y="50" text-anchor="middle" font-weight="700">row is stale</text><text x="620" y="120" text-anchor="middle" fill="var(--ink-soft)">+15 min</text>
+      <text x="760" y="50" text-anchor="middle" font-weight="700">next sweep reaps it</text><text x="760" y="120" text-anchor="middle" fill="var(--ink-soft)">+0 to 4 min</text><text x="760" y="138" text-anchor="middle" fill="var(--ink-soft)">RETRYING or FAILED</text>
+      <text x="880" y="50" text-anchor="middle" font-weight="700">replacement</text><text x="880" y="120" text-anchor="middle" fill="var(--ink-soft)">backoff, then next poll</text>
+      <text x="30" y="180" fill="var(--ink-soft)">Detection takes 15 to 19 minutes. Each dead worker also pins one slot of that model's concurrency for that whole window,</text>
+      <text x="30" y="197" fill="var(--ink-soft)">and default concurrency is 8 per model, so a handful of crashes can stall a queue.</text>
+    </g>
+  </svg>

@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>oddish-mon architecture</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Patrick+Hand&display=swap">
+<link rel="stylesheet" href="../../report.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="topline">
+    <div>
+      <h1>Architecture: before and after</h1>
+      <p class="lede">One trial, drawn twice. Each box says what it costs, as a share of what the trial cost on the old path.</p>
+    </div>
+    <div class="units" role="group" aria-label="Units">
+      <input type="radio" name="unit" id="unit-pct" checked><label for="unit-pct">Percent</label>
+      <input type="radio" name="unit" id="unit-usd"><label for="unit-usd">Dollars</label>
+    </div>
+  </div>
+  <p class="meta">Shares and dollars are the 3 October 2026 production averages for CPU trials on Modal. A trial on the old path cost about <span class="amt"><span class="pct">100%</span><span class="usd">$0.59</span></span> of compute; that is the denominator for every box.</p>
+
+  <section>
+    <h3>Before: two machines per trial, one of them only waits</h3>
+    <div class="panel">
+      <div class="scroll">
+      <svg viewBox="0 0 900 260" role="img" aria-label="Before: the queue hands a trial to a watcher machine that lives for the whole trial and takes 37 percent of the trial's compute; the watcher drives a sandbox that takes 62 percent and a small verifier box.">
+        <defs><marker id="h1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M1 1 L9 5 L1 9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></marker></defs>
+        <g class="hand" font-family="Patrick Hand, cursive">
+          <path d="M22 62 q-3 -6 4 -7 l150 -1 q6 0 6 6 l1 76 q0 6 -6 6 l-150 1 q-6 1 -6 -6 z" fill="var(--plain-fill)" stroke="var(--muted)" stroke-width="1.6"/>
+          <text x="102" y="86" text-anchor="middle" font-size="19" fill="currentColor">Oddish queue</text>
+          <text x="102" y="108" text-anchor="middle" font-size="15" fill="var(--muted)">API, dispatcher, reaper</text>
+          <text x="102" y="130" text-anchor="middle" font-size="15" fill="var(--muted)">shared, not per trial</text>
+          <path d="M232 42 q-2 -7 5 -7 l236 -2 q7 0 7 7 l-1 118 q0 7 -7 7 l-236 1 q-7 0 -6 -7 z" fill="var(--watcher-fill)" stroke="var(--watcher)" stroke-width="2"/>
+          <text x="355" y="66" text-anchor="middle" font-size="21" fill="currentColor">Watcher machine</text>
+          <text x="355" y="90" text-anchor="middle" font-size="15" fill="var(--muted)">1 core, held for the whole trial</text>
+          <text x="355" y="110" text-anchor="middle" font-size="15" fill="var(--muted)">billed at 3x: it must not be interrupted</text>
+          <rect x="283" y="124" width="144" height="30" rx="15" fill="var(--watcher)"/>
+          <text x="355" y="145" text-anchor="middle" font-size="18" fill="#fff"><tspan class="amt"><tspan class="pct">37% of the trial</tspan><tspan class="usd">$0.22 per trial</tspan></tspan></text>
+          <path d="M528 42 q-3 -7 4 -7 l226 -1 q7 -1 7 6 l1 118 q0 7 -7 7 l-226 1 q-7 0 -6 -7 z" fill="var(--sandbox-fill)" stroke="var(--sandbox)" stroke-width="2"/>
+          <text x="645" y="66" text-anchor="middle" font-size="21" fill="currentColor">Task sandbox</text>
+          <text x="645" y="90" text-anchor="middle" font-size="15" fill="var(--muted)">where the trial actually runs</text>
+          <text x="645" y="110" text-anchor="middle" font-size="15" fill="var(--muted)">sized to the task, builds its own images</text>
+          <rect x="575" y="124" width="140" height="30" rx="15" fill="var(--sandbox)"/>
+          <text x="645" y="145" text-anchor="middle" font-size="18" fill="#fff"><tspan class="amt"><tspan class="pct">62% of the trial</tspan><tspan class="usd">~$0.37 per trial</tspan></tspan></text>
+          <path d="M528 190 q-2 -6 4 -6 l226 -1 q7 0 7 6 l0 44 q0 6 -6 6 l-226 1 q-7 0 -6 -6 z" fill="var(--verify-fill)" stroke="var(--verify)" stroke-width="2"/>
+          <text x="600" y="221" text-anchor="middle" font-size="18" fill="currentColor">Verifier box</text>
+          <text x="708" y="221" text-anchor="middle" font-size="16" fill="var(--verify)"><tspan class="amt"><tspan class="pct">1.5%</tspan><tspan class="usd">$0.009</tspan></tspan></text>
+          <g stroke="currentColor" fill="none" stroke-width="1.8" stroke-linecap="round" color="var(--muted)">
+            <path d="M184 100 q20 -6 44 -2" marker-end="url(#h1)"/>
+            <path d="M478 96 q22 -4 46 2" marker-end="url(#h1)"/>
+            <path d="M478 150 q30 40 46 62" marker-end="url(#h1)"/>
+            <path d="M355 166 q4 60 -40 60 l-200 2 q-12 0 -12 -12 l-1 -70" marker-end="url(#h1)"/>
+          </g>
+          <text x="206" y="84" text-anchor="middle" font-size="14" fill="var(--muted)">claim</text>
+          <text x="502" y="84" text-anchor="middle" font-size="14" fill="var(--muted)">drives</text>
+          <text x="250" y="248" text-anchor="middle" font-size="14" fill="var(--muted)">heartbeat every 30 s, for hours, then the result</text>
+        </g>
+      </svg>
+      </div>
+      <figcaption>More than a third of a CPU trial's compute went to a machine that waits. On GPU trials the sandbox is 10 to 50 times the watcher, so there the share is a few percent.</figcaption>
+    </div>
+  </section>
+
+  <section>
+    <h3>After: one machine per trial, and it reports on itself</h3>
+    <div class="panel">
+      <div class="scroll">
+      <svg viewBox="0 0 900 300" role="img" aria-label="After: the queue hands a trial to a launcher that creates the sandbox in about twenty seconds and exits, taking about one percent; the sandbox contains oddish-mon which heartbeats and posts its result; a warm-up box builds images once per task version, about one percent spread over trials; the queue checks on a quiet sandbox three times before giving up on it.">
+        <defs><marker id="h2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M1 1 L9 5 L1 9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></marker></defs>
+        <g class="hand" font-family="Patrick Hand, cursive">
+          <path d="M22 62 q-3 -6 4 -7 l150 -1 q6 0 6 6 l1 96 q0 6 -6 6 l-150 1 q-6 1 -6 -6 z" fill="var(--plain-fill)" stroke="var(--muted)" stroke-width="1.6"/>
+          <text x="102" y="86" text-anchor="middle" font-size="19" fill="currentColor">Oddish queue</text>
+          <text x="102" y="108" text-anchor="middle" font-size="15" fill="var(--muted)">API, dispatcher, reaper</text>
+          <text x="102" y="128" text-anchor="middle" font-size="15" fill="var(--muted)">+ listens for heartbeats</text>
+          <text x="102" y="148" text-anchor="middle" font-size="15" fill="var(--muted)">shared, not per trial</text>
+          <path d="M232 52 q-2 -7 5 -7 l166 -2 q7 0 7 7 l-1 88 q0 7 -7 7 l-166 1 q-7 0 -6 -7 z" fill="var(--watcher-fill)" stroke="var(--watcher)" stroke-width="2" stroke-dasharray="7 4"/>
+          <text x="320" y="76" text-anchor="middle" font-size="21" fill="currentColor">Launcher</text>
+          <text x="320" y="99" text-anchor="middle" font-size="15" fill="var(--muted)">creates the sandbox, then exits</text>
+          <text x="320" y="118" text-anchor="middle" font-size="15" fill="var(--muted)">about 20 seconds, same machine type</text>
+          <rect x="258" y="124" width="124" height="26" rx="13" fill="var(--watcher)"/>
+          <text x="320" y="142" text-anchor="middle" font-size="16" fill="#fff"><tspan class="amt"><tspan class="pct">1% of the trial</tspan><tspan class="usd">$0.007 per trial</tspan></tspan></text>
+          <path d="M458 30 q-3 -7 4 -7 l400 -1 q7 -1 7 6 l1 150 q0 7 -7 7 l-400 1 q-7 0 -6 -7 z" fill="var(--sandbox-fill)" stroke="var(--sandbox)" stroke-width="2"/>
+          <text x="660" y="54" text-anchor="middle" font-size="21" fill="currentColor">Task sandbox (a small VM)</text>
+          <path d="M478 68 q-2 -5 4 -5 l170 -1 q5 0 5 5 l0 70 q0 5 -5 5 l-170 1 q-5 0 -4 -5 z" fill="var(--panel)" stroke="var(--sandbox)" stroke-width="1.4"/>
+          <text x="566" y="90" text-anchor="middle" font-size="18" fill="currentColor">oddish-mon</text>
+          <text x="566" y="110" text-anchor="middle" font-size="14" fill="var(--muted)">runs the trial, sends heartbeats,</text>
+          <text x="566" y="128" text-anchor="middle" font-size="14" fill="var(--muted)">posts the result when done</text>
+          <path d="M668 68 q-2 -5 4 -5 l170 -1 q5 0 5 5 l0 70 q0 5 -5 5 l-170 1 q-5 0 -4 -5 z" fill="var(--panel)" stroke="var(--sandbox)" stroke-width="1.4"/>
+          <text x="756" y="90" text-anchor="middle" font-size="18" fill="currentColor">the task itself</text>
+          <text x="756" y="110" text-anchor="middle" font-size="14" fill="var(--muted)">agent, then verifier, in containers</text>
+          <text x="756" y="128" text-anchor="middle" font-size="14" fill="var(--muted)">walled off from oddish-mon</text>
+          <rect x="590" y="150" width="140" height="28" rx="14" fill="var(--sandbox)"/>
+          <text x="660" y="170" text-anchor="middle" font-size="17" fill="#fff"><tspan class="amt"><tspan class="pct">62% of the trial</tspan><tspan class="usd">~$0.37 per trial</tspan></tspan></text>
+          <path d="M458 212 q-3 -6 4 -6 l400 -1 q7 0 7 6 l1 48 q0 6 -7 6 l-400 1 q-7 0 -6 -6 z" fill="var(--warm-fill)" stroke="var(--warm)" stroke-width="2"/>
+          <text x="530" y="246" text-anchor="middle" font-size="19" fill="currentColor">Warm-up box</text>
+          <text x="735" y="236" text-anchor="middle" font-size="14" fill="var(--muted)">builds a task's images once, keeps a snapshot</text>
+          <text x="735" y="256" text-anchor="middle" font-size="15" fill="var(--warm)"><tspan class="amt"><tspan class="pct">1% of the trial, spread over the task's trials</tspan><tspan class="usd">$0.007 per trial, spread over the task's trials</tspan></tspan></text>
+          <g stroke="currentColor" fill="none" stroke-width="1.8" stroke-linecap="round" color="var(--muted)">
+            <path d="M184 100 q20 -6 44 -2" marker-end="url(#h2)"/>
+            <path d="M410 96 q22 -4 44 2" marker-end="url(#h2)"/>
+            <path d="M300 156 q0 80 70 82 l84 0" marker-end="url(#h2)" stroke="var(--warm)" stroke-dasharray="5 4"/>
+            <path d="M478 120 q-30 0 -36 30 l-10 40 q-6 20 -26 20 l-200 0 q-20 0 -20 -20 l0 -24" marker-end="url(#h2)" stroke="var(--sandbox)"/>
+            <path d="M102 172 q0 110 110 112 l300 0 q30 0 36 -20" marker-end="url(#h2)" stroke-dasharray="5 4"/>
+          </g>
+          <text x="206" y="84" text-anchor="middle" font-size="14" fill="var(--muted)">claim</text>
+          <text x="434" y="84" text-anchor="middle" font-size="14" fill="var(--muted)">create</text>
+          <text x="330" y="230" text-anchor="middle" font-size="14" fill="var(--warm)">first run of a task version: warm first</text>
+          <text x="300" y="204" text-anchor="middle" font-size="14" fill="var(--sandbox)">heartbeat every 30 s · result when done</text>
+          <text x="300" y="296" text-anchor="middle" font-size="14" fill="var(--muted)">if a sandbox goes quiet, the queue asks it 3 times, then cleans up and retries on the old path</text>
+        </g>
+      </svg>
+      </div>
+      <figcaption>Compute per CPU trial falls to <span class="amt"><span class="pct">65% of the old path</span><span class="usd">about $0.38</span></span>. The watcher became a launcher plus a warm-up share, <span class="amt"><span class="pct">2% together</span><span class="usd">$0.014 together</span></span>. The sandbox costs what it always did.</figcaption>
+    </div>
+  </section>
+
+  <section>
+    <h2>How it stays safe</h2>
+    <div class="two">
+      <div class="panel">
+        <h3>On purpose</h3>
+        <ul>
+          <li>Behaviour kept identical. Same results, same files, one extra log. No feature rode along.</li>
+          <li>Ramp by sample with automatic fallback, so a bad day costs one retry, not a trial.</li>
+          <li>Images built once per task version in a warm-up box, not inside every paid trial.</li>
+          <li>Restricted-network tasks got a stricter firewall on the way. A restricted task can no longer ping out, which the old path quietly allowed.</li>
+          <li>5% memory headroom kept so 8 and 16 GiB tasks do not run short.</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h3>Deliberately not built</h3>
+        <ul>
+          <li><b>No shared launch host.</b> A follow-on design that removed the per-trial launcher too was set aside on 23 Sep: it traded a known-safe per-trial process for a shared one, for about <span class="amt"><span class="pct">0.5% of compute</span><span class="usd">$25k a year</span></span>.</li>
+          <li><b>No GPU path yet.</b> Small prize, separate design. See the appendix.</li>
+          <li><b>No review jobs yet.</b> Audit and QA stay on the old path until the credential handling is carried over.</li>
+          <li><b>Old path kept.</b> It is the fallback and the only path for four categories. Deletion waits for 100% and full coverage.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Modal, the constraints we designed around</h2>
+    <div class="panel">
+      <ul>
+        <li><b>Work that must not be interrupted costs 3x.</b> The watcher was that for hours. The launcher still is, for 20 seconds.</li>
+        <li><b>Docker needs a VM, and VMs cannot have GPUs.</b> One constraint, and it is the whole GPU story.</li>
+        <li><b>Sandboxes are rate limited at creation.</b> About 5 a second observed; 16 launches were refused in one hour at 20%. Each refusal falls back to the old path, so trials still run but the saving leaks. 10 a second needs a support request.</li>
+        <li><b>Creating a sandbox takes 16 to 39 seconds.</b> The snapshot cache hides most of it on repeat tasks.</li>
+        <li><b>The invoice and our ledger are different things.</b> Our ledger prices each piece with a rate card last checked in July. Percentages here are the ledger's; dollars are estimates until the two are reconciled.</li>
+      </ul>
+    </div>
+  </section>
+
+  <div class="foot">Shares are of the compute a CPU trial cost on the old path on 3 October 2026 (Oddish cost ledger, Modal, agent trials). Dollar figures are the ledger's rate-card estimates.</div>
+</div>
+</body>
+</html>

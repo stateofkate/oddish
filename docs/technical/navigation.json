@@ -1,0 +1,18 @@
+[
+  { "slug": "index", "title": "About this section" },
+  { "slug": "sandboxes/overview", "title": "Overview", "group": "Sandboxes" },
+  { "slug": "sandboxes/oddish-mon/introduction", "title": "Introduction", "group": "Sandboxes / oddish-mon" },
+  { "slug": "sandboxes/oddish-mon/design/problem", "title": "Problem and principles", "group": "Sandboxes / oddish-mon / Design" },
+  { "slug": "sandboxes/oddish-mon/architecture", "title": "Architecture", "group": "Sandboxes / oddish-mon / Design", "html": "assets/reports/oddish-mon/architecture.html" },
+  { "slug": "sandboxes/oddish-mon/design/step-by-step", "title": "One trial, step by step", "group": "Sandboxes / oddish-mon / Design" },
+  { "slug": "sandboxes/oddish-mon/design/failure-handling", "title": "Failure handling", "group": "Sandboxes / oddish-mon / Design" },
+  { "slug": "sandboxes/oddish-mon/design/network-isolation", "title": "Network isolation", "group": "Sandboxes / oddish-mon / Design" },
+  { "slug": "sandboxes/oddish-mon/design/images-and-warm-up", "title": "Images and warm-up", "group": "Sandboxes / oddish-mon / Design" },
+  { "slug": "sandboxes/oddish-mon/results", "title": "Rollout and results", "group": "Sandboxes / oddish-mon / Delivery", "html": "assets/reports/oddish-mon/results.html" },
+  { "slug": "sandboxes/oddish-mon/delivery/proven", "title": "What was proven", "group": "Sandboxes / oddish-mon / Delivery" },
+  { "slug": "sandboxes/oddish-mon/delivery/what-changed", "title": "What it fixed", "group": "Sandboxes / oddish-mon / Delivery" },
+  { "slug": "sandboxes/oddish-mon/running/costs", "title": "Costs and how to measure", "group": "Sandboxes / oddish-mon / Running it" },
+  { "slug": "sandboxes/oddish-mon/running/operations", "title": "Operations", "group": "Sandboxes / oddish-mon / Running it" },
+  { "slug": "sandboxes/oddish-mon/roadmap/not-built", "title": "Not built, and why", "group": "Sandboxes / oddish-mon / Roadmap" },
+  { "slug": "sandboxes/oddish-mon/appendix", "title": "Appendix", "group": "Sandboxes / oddish-mon" }
+]
