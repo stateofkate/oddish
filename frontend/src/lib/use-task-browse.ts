@@ -37,9 +37,10 @@ export function browseKey(
   mode: "page" | "count" | "ids" = "page"
 ): string {
   const params = new URLSearchParams();
-  // Only select-all excludes existing members. Page/count retain them.
+  // Every mode hides copies in the delivery picker; only select-all also
+  // excludes existing members (see buildBrowseQuery).
   const delivery = searchParams.get("delivery");
-  if (delivery && mode === "ids") params.set("delivery", delivery);
+  if (delivery) params.set("delivery", delivery);
   const q = searchParams.get("q") ?? searchParams.get("query");
   if (q) params.set("q", q);
   for (const key of BROWSE_FORWARD_KEYS) {

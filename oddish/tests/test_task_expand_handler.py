@@ -8,6 +8,7 @@ needing live infrastructure.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import sys
@@ -865,3 +866,27 @@ async def test_unhashable_archive_still_expands(monkeypatch, _patched_get_sessio
     assert summary["status"] == "expanded"
     assert summary["files"] == 1
     assert summary["content_hash"] is None
+
+
+@pytest.mark.asyncio
+async def test_expand_records_the_instruction_hash(monkeypatch, _patched_get_session):
+    archive_bytes = _make_archive(
+        {"instruction.md": b"Count words.\n", "task.toml": b"name = 'demo'\n"}
+    )
+    storage = _FakeStorage(
+        archive_key="tasks/task-instr/v1/.oddish-task.tar.gz",
+        archive_bytes=archive_bytes,
+    )
+    monkeypatch.setattr(task_expand_handler, "get_storage_client", lambda: storage)
+    promote = task_expand_handler._promote_expansion_if_current
+    seen = {}
+
+    async def _spy(*args, **kwargs):
+        seen.update(kwargs)
+        return await promote(*args, **kwargs)
+
+    monkeypatch.setattr(task_expand_handler, "_promote_expansion_if_current", _spy)
+
+    await task_expand_handler.run_task_expand_job(task_id="task-instr", version=1)
+
+    assert seen["instruction_hash"] == hashlib.sha256(b"Count words.\n").hexdigest()

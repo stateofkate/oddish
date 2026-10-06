@@ -28,6 +28,12 @@ export function buildBrowseQuery(
 ): URLSearchParams {
   const query = new URLSearchParams();
   const delivery = display.get("delivery");
+  // The delivery picker lists each task once, hiding later copies of it and
+  // tasks with no files Oddish can read.
+  if (delivery) {
+    query.set("hide_copies", "true");
+    query.set("hide_unreadable", "true");
+  }
   if (delivery && idsOnly) query.set("exclude_delivery_id", delivery);
   if (countOnly) {
     query.set("count_only", "true");

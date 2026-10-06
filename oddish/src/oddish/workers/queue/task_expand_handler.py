@@ -137,6 +137,7 @@ async def _promote_expansion_if_current(
     manifest_bytes: bytes,
     archive_key: str | None = None,
     server_content_hash: str | None = None,
+    instruction_hash: str | None = None,
 ) -> bool:
     """Publish a complete immutable directory by switching the version pointer.
 
@@ -179,6 +180,7 @@ async def _promote_expansion_if_current(
                 "content_hash": server_content_hash,
                 "algorithm": TASK_CONTENT_HASH_ALGORITHM,
                 "client_content_hash": row.content_hash,
+                "instruction_hash": instruction_hash,
                 "computed_at": utcnow(),
             }
             await session.execute(
@@ -699,6 +701,15 @@ async def run_task_expand_job(
             manifest_bytes=manifest_bytes,
             archive_key=archive_key,
             server_content_hash=server_content_hash,
+            # The manifest already carries each file's sha256.
+            instruction_hash=next(
+                (
+                    f.get("sha256")
+                    for f in manifest_files
+                    if f["path"] == "instruction.md"
+                ),
+                None,
+            ),
         )
         if not promoted:
             publication_started = False

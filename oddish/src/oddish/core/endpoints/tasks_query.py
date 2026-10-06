@@ -59,6 +59,7 @@ from oddish.db import (
     TaskDeliveryHistoryModel,
     TaskMetadataAssertionModel,
     TaskModel,
+    TaskVersionFingerprintModel,
     TaskVersionModel,
     TaskBrowseSummaryModel,
     TrialFacetModel,
@@ -1125,6 +1126,8 @@ async def browse_tasks_core(
     verdict_statuses: Sequence[str] | None = None,
     qa_outcomes: Sequence[str] | None = None,
     exclude_delivery_id: str | None = None,
+    hide_copies: bool = False,
+    hide_unreadable: bool = False,
     selection_id: str | None = None,
     actor_user_id: str | None = None,
     has_link: bool | None = None,
@@ -1389,6 +1392,41 @@ async def browse_tasks_core(
                 DeliveryTaskModel.deleted_at.is_(None),
             )
         ))
+    if hide_copies:
+        # The delivery picker lists each prompt once: a task is hidden when an
+        # older live task in the org has any version with the same
+        # instruction.md as this task's current version. Tasks without a hash
+        # stay listed.
+        # ponytail: one indexed probe per listed task, before pagination;
+        # store a per-task "first with this prompt" flag if the picker slows.
+        own_fp = aliased(TaskVersionFingerprintModel)
+        other_fp = aliased(TaskVersionFingerprintModel)
+        other_version = aliased(TaskVersionModel)
+        other_task = aliased(TaskModel)
+        ranked_tasks = ranked_tasks.where(~exists(
+            select(other_task.id)
+            .select_from(own_fp)
+            .join(other_fp, other_fp.instruction_hash == own_fp.instruction_hash)
+            .join(other_version, other_version.id == other_fp.task_version_id)
+            .join(other_task, other_task.id == other_version.task_id)
+            .where(
+                own_fp.task_version_id == TaskModel.current_version_id,
+                other_task.deleted_at.is_(None),
+                other_task.org_id.is_not_distinct_from(TaskModel.org_id),
+                tuple_(other_task.created_at, other_task.id)
+                < tuple_(TaskModel.created_at, TaskModel.id),
+            )
+        ))
+    if hide_unreadable:
+        # Oddish stores every version it uploads under ``tasks/``. Versions
+        # imported with keys elsewhere (the July 2026 CI-log import) have no
+        # files Oddish can read, so they cannot be run or hashed.
+        ranked_tasks = ranked_tasks.where(
+            or_(
+                current_version.task_s3_key.is_(None),
+                current_version.task_s3_key.startswith("tasks/"),
+            )
+        )
     if qa_outcomes:
         ranked_tasks = ranked_tasks.where(qa_outcome.in_(qa_outcomes))
     if verdict_statuses:

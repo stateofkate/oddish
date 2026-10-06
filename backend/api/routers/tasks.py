@@ -772,6 +772,20 @@ async def browse_tasks(
     statuses: str | None = Query(None, description="Task status CSV"),
     priorities: str | None = Query(None, description="Task priority CSV"),
     exclude_delivery_id: str | None = Query(None),
+    hide_copies: bool = Query(
+        False,
+        description=(
+            "Delivery picker: hide a task when an older live task has a version "
+            "with the same instruction.md."
+        ),
+    ),
+    hide_unreadable: bool = Query(
+        False,
+        description=(
+            "Delivery picker: hide tasks whose current version is stored "
+            "outside Oddish's task storage, so has no readable files."
+        ),
+    ),
     selection_id: str | None = Query(None),
     qa_outcomes: str | None = Query(None, description="QA outcome on the current task version"),
     verdict_statuses: str | None = Query(None, description="Task verdict status CSV"),
@@ -1003,6 +1017,8 @@ async def browse_tasks(
             verdict_statuses=_split_tag_csv(verdict_statuses),
             qa_outcomes=_split_tag_csv(qa_outcomes),
             exclude_delivery_id=exclude_delivery_id,
+            hide_copies=hide_copies,
+            hide_unreadable=hide_unreadable,
             selection_id=selection_id,
             actor_user_id=auth.user_id,
             has_link=has_link,

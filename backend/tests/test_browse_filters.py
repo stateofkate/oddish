@@ -1166,6 +1166,53 @@ async def test_delivery_picker_excludes_members_from_page_count_and_ids():
         await engine.dispose()
 
 
+async def test_delivery_picker_hides_later_copies_of_a_prompt():
+    engine = create_async_engine(URL)
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        await _setup(engine)
+        async with maker() as session:
+            # alpha (oldest) had prompt P in an older version; beta's current
+            # version copies it. gamma has its own prompt.
+            await session.execute(text("""
+                insert into task_version_fingerprints
+                    (task_version_id,content_hash,algorithm,instruction_hash,computed_at)
+                values ('v-a-old','h1','x','P',now()), ('v-a','h2','x','P2',now()),
+                       ('v-b','h3','x','P',now()), ('v-c','h4','x','Q',now())
+            """))
+            filters = {"hide_copies": True}
+            assert await _names(session, **filters) == {"alpha", "gamma"}
+            assert await browse_tasks_count_core(session, org_id=ORG, **filters) == 2
+            assert set(await browse_tasks_core(session, org_id=ORG, ids_only=True, **filters)) == {"t-a", "t-c"}
+            assert await _names(session) == {"alpha", "beta", "gamma"}
+            # Deleting the original lists the oldest remaining copy.
+            await session.execute(text("update tasks set deleted_at=now() where id='t-a'"))
+            assert await _names(session, **filters) == {"beta", "gamma"}
+    finally:
+        await engine.dispose()
+
+
+async def test_delivery_picker_hides_tasks_without_readable_files():
+    engine = create_async_engine(URL)
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        await _setup(engine)
+        async with maker() as session:
+            await session.execute(text("""
+                update task_versions set task_s3_key = case id
+                    when 'v-a' then 'tasks/t-a/v1/'
+                    when 'v-b' then 'abundant-ai/export/run-1/task/' end
+                where id in ('v-a','v-b')
+            """))
+            filters = {"hide_unreadable": True}
+            # gamma has no key recorded and stays listed.
+            assert await _names(session, **filters) == {"alpha", "gamma"}
+            assert await browse_tasks_count_core(session, org_id=ORG, **filters) == 2
+            assert await _names(session) == {"alpha", "beta", "gamma"}
+    finally:
+        await engine.dispose()
+
+
 async def test_shared_selection_permissions_and_modes():
     from oddish.core.tags.saved_filters import create_saved_tag_filter_core
 

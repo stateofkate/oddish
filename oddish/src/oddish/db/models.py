@@ -3408,6 +3408,11 @@ class TaskVersionFingerprintModel(Base):
     __tablename__ = "task_version_fingerprints"
     __table_args__ = (
         Index("idx_task_version_fingerprints_content_hash", "content_hash"),
+        Index(
+            "idx_task_version_fingerprints_instruction_hash",
+            "instruction_hash",
+            postgresql_where=text("instruction_hash IS NOT NULL"),
+        ),
     )
 
     task_version_id: Mapped[str] = mapped_column(
@@ -3420,6 +3425,9 @@ class TaskVersionFingerprintModel(Base):
     # ``task_versions.content_hash`` when this row was computed, so mismatches
     # between client and server hashes can be listed with one query.
     client_content_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # sha256 of the archive's ``instruction.md``. The delivery picker hides a
+    # task whose prompt matches a version of an older live task (a copy).
+    instruction_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     computed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )
