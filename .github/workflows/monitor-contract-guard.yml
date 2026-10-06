@@ -100,6 +100,18 @@ jobs:
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
+    services:
+      monitor-postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: oddish
+          POSTGRES_PASSWORD: oddish
+          POSTGRES_DB: oddish
+        options: >-
+          --health-cmd "pg_isready -U oddish"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -133,3 +145,12 @@ jobs:
           tests/test_provider_startup.py tests/test_verifier_credentials.py
           tests/test_job_tokens.py tests/test_judge_keys.py
           tests/test_scoped_model_env_ambient.py -q
+
+      # Run directly against a service so the lock regression cannot silently
+      # skip when the job container has no Docker CLI/daemon.
+      - name: Prove heartbeat renewal while a trial row is locked
+        working-directory: oddish
+        env:
+          UV_PROJECT_ENVIRONMENT: /opt/venvs/oddish
+          ODDISH_DATABASE_URL: postgresql+asyncpg://oddish:oddish@monitor-postgres:5432/oddish
+        run: uv run python tests/launcher/proofs/_monitor_heartbeat_lock_proof.py

@@ -185,15 +185,17 @@ async def touch_trial_execution(
     worker_id: str | None,
     queue_slot: int | None,
     claimed: bool = False,
+    skip_locked: bool = False,
     pending_failure_count: int = 0,
     pending_last_error: str | None = None,
     pending_last_error_at: datetime | None = None,
 ) -> bool:
-    """Update the trial heartbeat row."""
-    async with _trial_session(trial_id, allow_missing=True, with_for_update=True) as (
-        session,
-        trial,
-    ):
+    """Update trial heartbeat metadata; optionally defer a locked row."""
+    async with _trial_session(
+        trial_id,
+        allow_missing=True,
+        with_for_update={"skip_locked": True} if skip_locked else True,
+    ) as (session, trial):
         if not trial or not is_worker_owned_trial_status(trial.status):
             return False
         if trial.superseded_by_trial_id is not None:

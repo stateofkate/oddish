@@ -408,84 +408,97 @@ async def heartbeat_worker_job(
     job_id: str,
     *,
     current_worker_id: str | None = None,
+    current_attempt: int | None = None,
     pending_failure_count: int = 0,
     pending_last_error: str | None = None,
 ) -> bool:
     """Update a RUNNING worker_job's heartbeat timestamp.
 
     Returns whether the worker still owns a running row. Terminal rows remain
-    untouched so a late heartbeat cannot resurrect them.
+    untouched so a late heartbeat cannot resurrect them. Monitor callers also
+    fence by attempt. Job and capacity renewal commit together before callers
+    update secondary trial metadata.
     """
     connection = await _open_connection()
     try:
-        if pending_failure_count > 0:
-            await connection.execute(
+        async with connection.transaction():
+            if pending_failure_count > 0:
+                await connection.execute(
+                    """
+                    UPDATE worker_jobs
+                    SET    heartbeat_at = NOW(),
+                           heartbeat_failure_count = heartbeat_failure_count + $2,
+                           last_heartbeat_error = $3,
+                           last_heartbeat_error_at = NOW(),
+                           -- A beat is an answer: the reaper's failed checks start
+                           -- over, so a later stale spell needs its own full count.
+                           monitor_status_check_count = NULL
+                    WHERE  id = $1
+                      AND  status::text = 'RUNNING'
+                      AND  (current_worker_id IS NOT DISTINCT FROM $4
+                            OR ($4::text IS NULL AND $5::int IS NULL))
+                      AND  ($5::int IS NULL OR attempts = $5)
+                    """,
+                    job_id,
+                    pending_failure_count,
+                    (pending_last_error or "")[:500] or None,
+                    current_worker_id,
+                    current_attempt,
+                )
+            else:
+                await connection.execute(
+                    """
+                    UPDATE worker_jobs
+                    SET    heartbeat_at = NOW(),
+                           monitor_status_check_count = NULL  -- as above
+                    WHERE  id = $1
+                      AND  status::text = 'RUNNING'
+                      AND  (current_worker_id IS NOT DISTINCT FROM $2
+                            OR ($2::text IS NULL AND $3::int IS NULL))
+                      AND  ($3::int IS NULL OR attempts = $3)
+                    """,
+                    job_id,
+                    current_worker_id,
+                    current_attempt,
+                )
+            capacity_heartbeat = await connection.fetchrow(
                 """
-                UPDATE worker_jobs
-                SET    heartbeat_at = NOW(),
-                       heartbeat_failure_count = heartbeat_failure_count + $2,
-                       last_heartbeat_error = $3,
-                       last_heartbeat_error_at = NOW(),
-                       -- A beat is an answer: the reaper's failed checks start
-                       -- over, so a later stale spell needs its own full count.
-                       monitor_status_check_count = NULL
-                WHERE  id = $1
-                  AND  status::text = 'RUNNING'
-                  AND  ($4::text IS NULL OR current_worker_id = $4)
+                WITH running_job AS (
+                    SELECT id, current_worker_id, execution_lane
+                    FROM worker_jobs
+                    WHERE id = $1
+                      AND status::text = 'RUNNING'
+                      AND (current_worker_id IS NOT DISTINCT FROM $2
+                           OR ($2::text IS NULL AND $4::int IS NULL))
+                      AND ($4::int IS NULL OR attempts = $4)
+                ), renewed AS (
+                    UPDATE sandbox_capacity_leases AS lease
+                    SET locked_until = NOW() + make_interval(secs => $3)
+                    FROM running_job AS wj
+                    WHERE lease.worker_job_id = wj.id
+                      AND lease.locked_by = wj.current_worker_id
+                    RETURNING lease.slot
+                )
+                SELECT EXISTS (SELECT 1 FROM running_job) AS still_owned,
+                       (SELECT execution_lane FROM running_job) AS execution_lane,
+                       EXISTS (SELECT 1 FROM renewed) AS capacity_renewed
                 """,
                 job_id,
-                pending_failure_count,
-                (pending_last_error or "")[:500] or None,
                 current_worker_id,
+                SANDBOX_CAPACITY_LEASE_SECONDS,
+                current_attempt,
             )
-        else:
-            await connection.execute(
-                """
-                UPDATE worker_jobs
-                SET    heartbeat_at = NOW(),
-                       monitor_status_check_count = NULL  -- as above
-                WHERE  id = $1
-                  AND  status::text = 'RUNNING'
-                  AND  ($2::text IS NULL OR current_worker_id = $2)
-                """,
-                job_id,
-                current_worker_id,
+            heartbeat_lane = (
+                capacity_heartbeat["execution_lane"]
+                if capacity_heartbeat is not None
+                else None
             )
-        capacity_heartbeat = await connection.fetchrow(
-            """
-            WITH running_job AS (
-                SELECT id, current_worker_id, execution_lane
-                FROM worker_jobs
-                WHERE id = $1
-                  AND status::text = 'RUNNING'
-                  AND ($2::text IS NULL OR current_worker_id = $2)
-            ), renewed AS (
-                UPDATE sandbox_capacity_leases AS lease
-                SET locked_until = NOW() + make_interval(secs => $3)
-                FROM running_job AS wj
-                WHERE lease.worker_job_id = wj.id
-                  AND lease.locked_by = wj.current_worker_id
-                RETURNING lease.slot
-            )
-            SELECT EXISTS (SELECT 1 FROM running_job) AS still_owned,
-                   (SELECT execution_lane FROM running_job) AS execution_lane,
-                   EXISTS (SELECT 1 FROM renewed) AS capacity_renewed
-            """,
-            job_id,
-            current_worker_id,
-            SANDBOX_CAPACITY_LEASE_SECONDS,
-        )
-        heartbeat_lane = (
-            capacity_heartbeat["execution_lane"]
-            if capacity_heartbeat is not None
-            else None
-        )
-        capacity_provider = capacity_provider_for_execution_lane(heartbeat_lane)
-        if capacity_provider is not None and not capacity_heartbeat["capacity_renewed"]:
-            raise SandboxCapacityLeaseLostError(
-                f"{capacity_provider} worker_job {job_id} lost its global capacity lease"
-            )
-        return bool(capacity_heartbeat and capacity_heartbeat["still_owned"])
+            capacity_provider = capacity_provider_for_execution_lane(heartbeat_lane)
+            if capacity_provider is not None and not capacity_heartbeat["capacity_renewed"]:
+                raise SandboxCapacityLeaseLostError(
+                    f"{capacity_provider} worker_job {job_id} lost its global capacity lease"
+                )
+            return bool(capacity_heartbeat and capacity_heartbeat["still_owned"])
     finally:
         await connection.close()
 

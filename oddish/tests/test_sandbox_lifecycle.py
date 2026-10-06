@@ -363,6 +363,10 @@ async def test_worker_heartbeat_renews_bound_capacity_lease(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class Connection:
+        @asynccontextmanager
+        async def transaction(self):
+            yield
+
         def __init__(self) -> None:
             self.statements: list[str] = []
 
@@ -400,6 +404,10 @@ async def test_worker_heartbeat_reports_cancelled_job(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class Connection:
+        @asynccontextmanager
+        async def transaction(self):
+            yield
+
         async def execute(self, _statement: str, *_args):
             return "UPDATE 0"
 
@@ -429,6 +437,10 @@ async def test_ec2_heartbeat_fails_loudly_when_capacity_lease_is_lost(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class Connection:
+        @asynccontextmanager
+        async def transaction(self):
+            yield
+
         async def execute(self, _statement: str, *_args):
             return "UPDATE 1"
 

@@ -8,7 +8,7 @@ async def _trial_session(
     trial_id: str,
     *,
     allow_missing: bool = False,
-    with_for_update: bool = False,
+    with_for_update: bool | dict[str, bool] = False,
 ):
     async with get_session() as session:
         trial = await session.get(TrialModel, trial_id, with_for_update=with_for_update)

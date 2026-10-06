@@ -13,6 +13,7 @@ from test_off_modal_portability import _docker_available, _wait_for_postgres
 
 _PROOFS = [
     "_monitor_heartbeat_proof.py",
+    "_monitor_heartbeat_lock_proof.py",
     "_monitor_events_proof.py",
     "_monitor_result_proof.py",
     "_monitor_lifecycle_proof.py",

@@ -1328,6 +1328,15 @@ production setting takes effect only after promotion to `main` and deployment.
 Restore sample 40 to undo this increase, or 0 to disable monitor routing;
 these routing settings do not cancel already-running monitor attempts.
 
+Monitor heartbeats renew `worker_jobs.heartbeat_at` and the bound sandbox capacity
+lease in one transaction, fenced by worker ID and attempt number. Only after
+that commit do they update the secondary `trials.heartbeat_at` copy. A locked
+trial row is skipped with `FOR UPDATE SKIP LOCKED` and retried on the next beat;
+`metric=monitor_trial_heartbeat outcome=skipped` also covers inactive or
+no-longer-owned trial rows. Scheduling and stale-monitor checks use the job
+heartbeat, not that secondary copy. Missing required capacity rolls back the
+job renewal and still stops the monitor through the existing HTTP 410 response.
+
 The experimental monitor cache builds standard single-Dockerfile task images
 before snapshotting. Images use Harbor's environment content hash; restored
 monitors verify them locally and select Harbor's existing prebuilt-image path.
