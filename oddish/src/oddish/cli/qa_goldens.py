@@ -16,6 +16,7 @@ import typer
 
 from oddish.analyze.models import Classification
 from oddish.analyze.qa_stages import STAGES, QAStage
+from oddish.cli.experiment import dashboard_experiments_params
 from oddish.cli.qa_api import (
     ApiOption,
     JsonOption,
@@ -24,7 +25,6 @@ from oddish.cli.qa_api import (
     QAGoldenReview,
     QAGoldenState,
     emit,
-    parse_task_search,
     qa_client,
 )
 
@@ -102,23 +102,9 @@ def experiments(
         # The page picks members by user id; another member is an author:
         # search over everyone's, which the link carries too.
         member, search = "all", " ".join(filter(None, [f"author:{member}", search]))
-    parsed = parse_task_search(search or "")
-    params = {
-        "include_queues": "false",
-        "include_tasks": "false",
-        "include_usage": "false",
-        "experiments_limit": str(limit),
-        "experiments_author": None if member == "all" else member,
-        "experiments_query": parsed.text,
-        "experiments_tags": ",".join(parsed.all),
-        "experiments_tags_any": ",".join(parsed.any),
-        "experiments_tags_none": ",".join(parsed.none),
-        "experiments_author_query": ",".join(parsed.authors),
-    }
+    params = dashboard_experiments_params(author=member, search=search, limit=limit)
     with qa_client(api) as client:
-        data = client.call(
-            "GET", "/dashboard", params={k: v for k, v in params.items() if v}
-        )
+        data = client.call("GET", "/dashboard", params=params)
         url = client.page_url(label="1", member=member, search=search)
     rows = data.get("experiments") or []
 

@@ -9,6 +9,7 @@ A command-line tool runs typed commands in a terminal. Run `oddish --help` to li
 | `oddish upload PATH`                         | Registers files or imports existing results. | Yes                    |
 | `oddish run PATH`                            | Submits new trials.                          | Yes; can incur charges |
 | `oddish ls`                                  | Lists tasks in your workspace.               | No                     |
+| `oddish experiment ls`                       | Lists experiments; `--queue KEY` filters.    | No                     |
 | `oddish status ID`                           | Shows task, trial, or experiment progress.   | No                     |
 | `oddish logs TRIAL_ID`                       | Prints live agent output.                    | No                     |
 | `oddish pull ID`                             | Downloads available output files.            | Writes local files     |

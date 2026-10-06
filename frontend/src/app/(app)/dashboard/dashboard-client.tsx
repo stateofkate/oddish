@@ -62,6 +62,7 @@ import {
   buildDashboardApiPath,
   dashboardExperimentsRequest,
   DASHBOARD_DEFAULT_EXPERIMENTS_AUTHOR,
+  QUEUE_STATES,
 } from "@/lib/dashboard-request";
 import { badgeVariants } from "@/components/ui/badge";
 import { UsageSummaryCard } from "@/components/usage-overview";
@@ -760,6 +761,11 @@ const TRIAL_FILTER_GROUPS: {
   placeholder?: string;
 }[] = [
   { label: "Model", keys: ["models"], placeholder: "e.g. openai/gpt-5" },
+  {
+    label: "Queue",
+    keys: ["queue"],
+    placeholder: "queue key, e.g. openai/gpt-5",
+  },
   { label: "Trajectory length", keys: ["min_steps", "max_steps"] },
   {
     label: "Trajectory time (s)",
@@ -778,6 +784,7 @@ const TRIAL_FILTER_GROUPS: {
 const TRIAL_FILTER_PARAM_KEYS = [
   ...TRIAL_FILTER_GROUPS.flatMap((group) => group.keys),
   "trial_metric_match",
+  "queue_state",
 ];
 
 function ExperimentTrialFilters() {
@@ -807,6 +814,7 @@ function ExperimentTrialFilters() {
         next.set(maxKey, String(min));
       }
     }
+    if (!next.get("queue")) next.delete("queue_state");
     next.delete("page");
     const queryString = next.toString();
     window.history.pushState(
@@ -918,6 +926,24 @@ function ExperimentTrialFilters() {
               ) : (
                 field(group.keys[0], group.placeholder ?? "", false)
               )}
+              {group.keys[0] === "queue" && searchParams.get("queue") ? (
+                <div className="mt-1.5 grid grid-cols-3 rounded-md border p-0.5">
+                  {(["", ...QUEUE_STATES] as const).map((value) => (
+                    <button
+                      key={value || "both"}
+                      type="button"
+                      className={cn(
+                        "rounded px-2 py-1.5 text-xs capitalize",
+                        (searchParams.get("queue_state") ?? "") === value &&
+                          "bg-primary text-primary-foreground"
+                      )}
+                      onClick={() => commit({ queue_state: value })}
+                    >
+                      {value || "both"}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
             </div>
           ))}
           <div title={help}>

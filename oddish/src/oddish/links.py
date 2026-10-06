@@ -174,3 +174,36 @@ def experiment_url(
     if task_lines is not None:
         pairs.append(("taskLines", format_lines(task_lines)))
     return _build(f"/experiments/{quote(experiment_id, safe='')}", pairs, base_url)
+
+
+def experiments_url(
+    *,
+    base_url: str = "",
+    author: str = "all",
+    status: str = "all",
+    q: str | None = None,
+    models: list[str] | None = None,
+    queue: str | None = None,
+    queue_state: str | None = None,
+    page: int = 1,
+) -> str:
+    """The dashboard experiments list (``/dashboard``) with these filters.
+
+    Mirrors ``dashboardExperimentsRequest`` in
+    ``frontend/src/lib/dashboard-request.ts``; defaults are left out, as the
+    page leaves them out.
+    """
+    pairs = [
+        (key, str(value))
+        for key, value, default in (
+            ("author", author, "all"),
+            ("status", status, "all"),
+            ("q", (q or "").strip(), ""),
+            ("models", ",".join(models or []), ""),
+            ("queue", queue or "", ""),
+            ("queue_state", queue_state or "", ""),
+            ("page", page, 1),
+        )
+        if value != default
+    ]
+    return _build("/dashboard", pairs, base_url)

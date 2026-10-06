@@ -78,6 +78,8 @@ export async function GET(request: NextRequest) {
       "experiments_trial_metric_match",
       "experiments_tool_names",
       "experiments_tool_count_mins",
+      "experiments_queue",
+      "experiments_queue_state",
     ]) {
       const value = searchParams.get(name);
       if (value) params[name] = value;

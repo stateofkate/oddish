@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Annotated, Callable, Optional
+from typing import Annotated, Any, Callable, Literal, Optional
 
 import httpx
 import typer
@@ -13,6 +13,8 @@ from oddish.cli.config import (
     get_dashboard_url,
     require_api_key,
 )
+from oddish.cli.qa_api import parse_task_search
+from oddish.links import experiments_url
 
 console = Console()
 experiment_app = typer.Typer(help="Manage experiments.", no_args_is_help=True)
@@ -479,3 +481,165 @@ def rename_model(
         console.print_json(data=data)
         return
     _print_renames(data)
+
+
+# The dashboard list's page size; --page N matches the page's ?page=N.
+EXPERIMENTS_PAGE_SIZE = 25
+ExperimentStatus = Literal[
+    "all",
+    "active",
+    "retrying",
+    "completed",
+    "needs-review",
+    "pending-verdict",
+    "failed",
+]
+
+
+def dashboard_experiments_params(
+    *,
+    author: str = "all",
+    search: str | None = None,
+    status: str = "all",
+    models: list[str] | None = None,
+    queue: str | None = None,
+    queue_state: str | None = None,
+    limit: int = EXPERIMENTS_PAGE_SIZE,
+    offset: int = 0,
+) -> dict[str, str]:
+    """``GET /dashboard`` params for the experiments list only, built the way
+    ``dashboardExperimentsRequest`` builds them from the page URL."""
+    parsed = parse_task_search(search or "")
+    params = {
+        "include_queues": "false",
+        "include_tasks": "false",
+        "include_usage": "false",
+        "experiments_limit": str(limit),
+        "experiments_offset": str(offset) if offset else None,
+        "experiments_status": None if status == "all" else status,
+        "experiments_author": None if author == "all" else author,
+        "experiments_query": parsed.text,
+        "experiments_tags": ",".join(parsed.all),
+        "experiments_tags_any": ",".join(parsed.any),
+        "experiments_tags_none": ",".join(parsed.none),
+        "experiments_author_query": ",".join(parsed.authors),
+        "experiments_models": ",".join(models or []),
+        "experiments_queue": queue,
+        "experiments_queue_state": queue_state,
+    }
+    return {k: v for k, v in params.items() if v}
+
+
+@experiment_app.command("ls")
+def list_experiments(
+    queue: Annotated[
+        Optional[str],
+        typer.Option(
+            "--queue",
+            help="Only experiments with trial jobs queued or running on this "
+            "queue key (as `oddish status --queue` prints it).",
+        ),
+    ] = None,
+    queue_state: Annotated[
+        Optional[Literal["queued", "running"]],
+        typer.Option(
+            "--queue-state", help="With --queue: only queued, or only running."
+        ),
+    ] = None,
+    status: Annotated[
+        ExperimentStatus, typer.Option("--status", help="The page's status filter.")
+    ] = "all",
+    author: Annotated[
+        str,
+        typer.Option("--author", help="'all' (default), 'me', or a member's user id."),
+    ] = "all",
+    search: Annotated[
+        Optional[str],
+        typer.Option(
+            "--search", "-q", help="The page's search, with author: and tag: words."
+        ),
+    ] = None,
+    model: Annotated[
+        Optional[list[str]],
+        typer.Option(
+            "--model", help="Has a completed trial on this model (repeatable)."
+        ),
+    ] = None,
+    page: Annotated[int, typer.Option("--page", min=1)] = 1,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Print the raw rows.")
+    ] = False,
+    api_url: Annotated[
+        Optional[str],
+        typer.Option("--api-url", "-u", help="API URL (uses configured URL if unset)."),
+    ] = None,
+):
+    """List experiments like the dashboard does, most recently active first.
+
+        oddish experiment ls --queue anthropic/claude-opus-4-5
+        oddish experiment ls --queue anthropic/claude-opus-4-5 --queue-state queued
+        oddish experiment ls --status failed -q "tag:nightly" --page 2
+    """
+    if queue_state and not queue:
+        console.print("[red]--queue-state needs --queue.[/red]")
+        raise typer.Exit(1)
+    if not api_url:
+        api_url = get_api_url()
+    require_api_key(api_url)
+
+    params = dashboard_experiments_params(
+        author=author,
+        search=search,
+        status=status,
+        models=model,
+        queue=queue,
+        queue_state=queue_state,
+        offset=(page - 1) * EXPERIMENTS_PAGE_SIZE,
+    )
+    with httpx.Client(timeout=60.0, headers=get_auth_headers()) as client:
+        try:
+            resp = client.get(f"{api_url}/dashboard", params=params)
+        except httpx.RequestError as e:
+            console.print(f"[red]Failed to connect to API:[/red] {e}")
+            raise typer.Exit(1)
+    if resp.status_code != 200:
+        _explain_failure(resp, "Listing experiments needs a READ-scoped API key.")
+        raise typer.Exit(1)
+
+    data = resp.json()
+    rows: list[dict[str, Any]] = data.get("experiments") or []
+    if json_output:
+        console.print_json(data=rows)
+        return
+    from rich.table import Table
+
+    table = Table(show_header=True, header_style="bold")
+    for column in ("ID", "Name", "Tasks", "Trials", "Active", "Failed"):
+        table.add_column(
+            column, justify="left" if column in ("ID", "Name") else "right"
+        )
+    for row in rows:
+        table.add_row(
+            row["id"],
+            row["name"],
+            str(row.get("task_count") or 0),
+            f"{row.get('completed_trials') or 0}/{row.get('total_trials') or 0}",
+            str(row.get("active_trials") or 0),
+            str(row.get("failed_trials") or 0),
+        )
+    console.print(table if rows else "[dim]No experiments match.[/dim]")
+    if data.get("experiments_has_more"):
+        console.print(f"[dim]More: --page {page + 1}[/dim]")
+    console.print(
+        experiments_url(
+            base_url=get_dashboard_url(api_url),
+            author=author,
+            status=status,
+            q=search,
+            models=model,
+            queue=queue,
+            queue_state=queue_state,
+            page=page,
+        ),
+        soft_wrap=True,
+    )

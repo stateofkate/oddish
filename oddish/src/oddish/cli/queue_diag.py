@@ -142,6 +142,9 @@ def _render_health(health: dict[str, Any]) -> None:
                 oldest_str,
             )
         console.print(table)
+        console.print(
+            "  [dim]Experiments on a queue: oddish experiment ls --queue <queue key>[/dim]"
+        )
 
 
 def _render_queue_status(status: dict[str, Any]) -> None:

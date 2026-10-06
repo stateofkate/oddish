@@ -19,6 +19,8 @@ type DashboardRequestParams = {
   experiments_tool_names?: string;
   experiments_tool_count_mins?: string;
   experiments_trial_metric_match?: string;
+  experiments_queue?: string;
+  experiments_queue_state?: string;
   experiments_author?: string;
   experiments_author_query?: string;
   usage_minutes?: number | null;
@@ -107,6 +109,8 @@ function buildDashboardSearchParams(
     "experiments_trial_metric_match",
     "experiments_tool_names",
     "experiments_tool_count_mins",
+    "experiments_queue",
+    "experiments_queue_state",
   ] as const) {
     const value = input[name]?.trim();
     if (value) params.set(name, value);
@@ -144,6 +148,18 @@ export function buildDashboardBackendParams(
   input: DashboardRequestParams
 ): Record<string, string> {
   return Object.fromEntries(buildDashboardSearchParams(input).entries());
+}
+
+// Admin Queue Health's Queued (incl. retrying) and Running columns.
+export const QUEUE_STATES = ["queued", "running"] as const;
+export type QueueState = (typeof QUEUE_STATES)[number];
+
+/** The experiments list narrowed to jobs on one queue key (the same filter
+ * `oddish experiment ls --queue` applies). */
+export function queueExperimentsHref(queueKey: string, state?: QueueState) {
+  const params = new URLSearchParams({ queue: queueKey });
+  if (state) params.set("queue_state", state);
+  return `/dashboard?${params.toString()}`;
 }
 
 /** One URL parser for the experiment list's request and cache identity. */
@@ -193,6 +209,11 @@ export function dashboardExperimentsRequest(
     experiments_tags_none: parsedQuery.none.join(","),
     experiments_author_query: parsedQuery.authors.join(","),
     experiments_models: params.models || undefined,
+    experiments_queue: params.queue || undefined,
+    experiments_queue_state:
+      params.queue && QUEUE_STATES.includes(params.queue_state as QueueState)
+        ? params.queue_state
+        : undefined,
     experiments_min_steps: minSteps,
     experiments_max_steps: maxSteps,
     experiments_min_duration_seconds: minTime,

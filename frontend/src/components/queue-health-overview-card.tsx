@@ -1,6 +1,7 @@
 "use client";
 
 import useSWR from "swr";
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -28,6 +29,8 @@ import type {
 } from "@/lib/types";
 import { apiFetch, fetcher } from "@/lib/api";
 import { QueueKeyIcon } from "@/components/queue-key-icon";
+import { queueExperimentsHref } from "@/lib/dashboard-request";
+import { cn } from "@/lib/utils";
 import {
   Activity,
   AlertCircle,
@@ -423,16 +426,26 @@ function CapacityTable({
             return (
               <TableRow key={row.queue_key}>
                 <TableCell>
-                  <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                  <Link
+                    href={queueExperimentsHref(row.queue_key)}
+                    title="Experiments with jobs on this queue"
+                    className="inline-flex items-center gap-1.5 whitespace-nowrap hover:underline"
+                  >
                     <QueueKeyIcon queueKey={row.queue_key} size={12} />
                     <span className="font-mono text-[11px]">
                       {row.queue_key}
                     </span>
-                  </span>
+                  </Link>
                 </TableCell>
                 <TableCell className="text-right font-mono text-[11px]">
                   {row.queued > 0 ? (
-                    <span className={underfilled ? "text-amber-400" : ""}>
+                    <Link
+                      href={queueExperimentsHref(row.queue_key, "queued")}
+                      className={cn(
+                        "hover:underline",
+                        underfilled && "text-amber-400"
+                      )}
+                    >
                       {row.queued}
                       {row.queued_scheduled > 0 ? (
                         <span className="text-muted-foreground">
@@ -440,14 +453,19 @@ function CapacityTable({
                           (+{row.queued_scheduled})
                         </span>
                       ) : null}
-                    </span>
+                    </Link>
                   ) : (
                     <span className="text-muted-foreground/40">0</span>
                   )}
                 </TableCell>
                 <TableCell>
                   {!editable ? (
-                    <span className="font-mono text-[11px]">{row.running}</span>
+                    <Link
+                      href={queueExperimentsHref(row.queue_key, "running")}
+                      className="font-mono text-[11px] hover:underline"
+                    >
+                      {row.running}
+                    </Link>
                   ) : underfilled ? (
                     <Tooltip>
                       <TooltipTrigger asChild>

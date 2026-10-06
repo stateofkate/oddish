@@ -22,7 +22,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import aliased, selectinload
 
 from oddish.core.baseline_gate import baseline_agent_clause
 from oddish.core.cost_basis import settled_cost_columns, settled_cost_parts
@@ -50,7 +50,7 @@ from oddish.core.tags.projection import (
     list_direct_tags_for_targets,
     list_effective_user_tags_for_task_versions,
 )
-from oddish.config import normalize_model_id
+from oddish.config import normalize_model_id, settings
 from oddish.db import (
     ACTIVE_TRIAL_STATUSES,
     ExperimentModel,
@@ -631,6 +631,95 @@ def _absent_legacy_user_clause():
     )
 
 
+# Same buckets as admin Queue Health (get_queue_status_core): RETRYING counts
+# as queued there, so a link from either number lands on the same jobs.
+QUEUE_STATE_STATUSES: dict[str, tuple[WorkerJobStatus, ...]] = {
+    "queued": (WorkerJobStatus.QUEUED, WorkerJobStatus.RETRYING),
+    "running": (WorkerJobStatus.RUNNING,),
+}
+
+
+def _queue_state_statuses(queue_state: str | None) -> tuple[WorkerJobStatus, ...]:
+    return QUEUE_STATE_STATUSES.get(queue_state or "") or (
+        *QUEUE_STATE_STATUSES["queued"],
+        *QUEUE_STATE_STATUSES["running"],
+    )
+
+
+async def _active_raw_queue_keys(
+    session: AsyncSession,
+    queue_key: str,
+    statuses: Sequence[WorkerJobStatus],
+    org_id: str | None,
+) -> list[str]:
+    """Stored ``worker_jobs.queue_key`` values in the same bucket as ``queue_key``.
+
+    Queue Health groups jobs by ``settings.normalize_queue_key`` (``gpt-5`` and
+    ``openai/gpt-5`` are one row) and links with the normalized key, so the
+    filter must match every stored alias. Normalization is Python-only, so read
+    the few distinct keys among active jobs and keep those in the bucket.
+    """
+    query = (
+        select(WorkerJobModel.queue_key)
+        .distinct()
+        .where(
+            WorkerJobModel.status.in_(statuses),
+            WorkerJobModel.subject_table == "trials",
+        )
+    )
+    if org_id is not None:
+        query = query.where(WorkerJobModel.org_id == org_id)
+    target = settings.normalize_queue_key(queue_key)
+    return [
+        raw
+        for raw in (await session.execute(query)).scalars()
+        if settings.normalize_queue_key(raw) == target
+    ]
+
+
+def _experiment_queue_predicate(
+    raw_queue_keys: Sequence[str], statuses: Sequence[WorkerJobStatus]
+):
+    """Experiment has a trial job queued/running on one of ``raw_queue_keys``.
+
+    Reads ``worker_jobs`` (the rows Queue Health counts), not trial status, and
+    credits QA/audit jobs in a shadow experiment to its listed parent.
+    """
+    shadow = aliased(ExperimentModel)
+    return exists(
+        select(WorkerJobModel.id)
+        .join(
+            TrialModel,
+            and_(
+                WorkerJobModel.subject_table == "trials",
+                TrialModel.id == WorkerJobModel.subject_id,
+            ),
+        )
+        .where(
+            WorkerJobModel.queue_key.in_(raw_queue_keys),
+            WorkerJobModel.status.in_(statuses),
+            or_(
+                TrialModel.experiment_id == ExperimentModel.id,
+                TrialModel.experiment_id.in_(
+                    select(shadow.id)
+                    .where(shadow.shadow_of == ExperimentModel.id)
+                    .correlate(ExperimentModel)
+                ),
+                exists(
+                    select(experiment_trials.c.trial_id)
+                    .where(
+                        experiment_trials.c.experiment_id == ExperimentModel.id,
+                        experiment_trials.c.trial_id == TrialModel.id,
+                        experiment_trials.c.deleted_at.is_(None),
+                    )
+                    .correlate(ExperimentModel, TrialModel)
+                ),
+            ),
+        )
+        .correlate(ExperimentModel)
+    )
+
+
 def _experiment_freetext_match(
     needle: str,
     *,
@@ -1118,6 +1207,8 @@ async def load_dashboard_experiments(
     experiments_tool_names: Sequence[str] | None = None,
     experiments_tool_count_mins: Mapping[str, int] | None = None,
     experiments_trial_metric_match: str = "any",
+    experiments_queue: str | None = None,
+    experiments_queue_state: str | None = None,
     experiments_author_user_id: str | None = None,
     experiments_author_github_usernames: Sequence[str] | None = None,
     experiments_author_emails: Sequence[str] | None = None,
@@ -1258,6 +1349,16 @@ async def load_dashboard_experiments(
         )
         if metric_predicate is not None:
             page_query = page_query.where(metric_predicate)
+    if experiments_queue:
+        queue_statuses = _queue_state_statuses(experiments_queue_state)
+        raw_queue_keys = await _active_raw_queue_keys(
+            session, experiments_queue, queue_statuses, org_id
+        )
+        if not raw_queue_keys:
+            return [], False
+        page_query = page_query.where(
+            _experiment_queue_predicate(raw_queue_keys, queue_statuses)
+        )
     # Apply the same status rule to stored counts before pagination.
     status_counts = {
         key: func.coalesce(ExperimentSummaryModel.payload[key].as_integer(), 0)
@@ -2006,6 +2107,8 @@ async def get_dashboard_core(
     experiments_tool_names: Sequence[str] | None = None,
     experiments_tool_count_mins: Mapping[str, int] | None = None,
     experiments_trial_metric_match: str = "any",
+    experiments_queue: str | None = None,
+    experiments_queue_state: str | None = None,
     experiments_author_user_id: str | None = None,
     experiments_author_github_usernames: Sequence[str] | None = None,
     experiments_author_emails: Sequence[str] | None = None,
@@ -2182,6 +2285,8 @@ async def get_dashboard_core(
             experiments_tool_names=experiments_tool_names,
             experiments_tool_count_mins=experiments_tool_count_mins,
             experiments_trial_metric_match=experiments_trial_metric_match,
+            experiments_queue=experiments_queue,
+            experiments_queue_state=experiments_queue_state,
             experiments_author_user_id=experiments_author_user_id,
             experiments_author_github_usernames=experiments_author_github_usernames,
             experiments_author_emails=experiments_author_emails,

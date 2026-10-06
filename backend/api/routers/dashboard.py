@@ -424,6 +424,10 @@ async def get_dashboard(
     experiments_tool_names: str | None = Query(None),
     experiments_tool_count_mins: str | None = Query(None),
     experiments_trial_metric_match: str = Query("any", pattern="^(any|all)$"),
+    experiments_queue: str | None = Query(
+        None, max_length=512, description="Worker-job queue_key with active trial jobs"
+    ),
+    experiments_queue_state: str | None = Query(None, pattern="^(queued|running)$"),
     experiments_author: str | None = Query(
         None,
         description=(
@@ -536,6 +540,8 @@ async def get_dashboard(
             experiments_tool_names=metric_filter.tool_names,
             experiments_tool_count_mins=metric_filter.tool_count_mins,
             experiments_trial_metric_match=metric_filter.match.value,
+            experiments_queue=(experiments_queue or "").strip() or None,
+            experiments_queue_state=experiments_queue_state,
             experiments_author_user_id=author_user_id,
             experiments_author_github_usernames=author_github_usernames,
             experiments_author_emails=author_emails,

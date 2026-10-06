@@ -111,6 +111,12 @@ unique IDs. Narrow filters before retrying a truncated selection. Plain `--ids`
 prints IDs one per line and refuses truncated output. `--exclude-delivery-id`
 excludes existing delivery members by full delivery ID.
 
+`oddish experiment ls` lists experiments like the dashboard (`--status`,
+`--author`, `-q`, `--model`, `--page`, `--json`) and prints the matching
+dashboard URL. `--queue KEY` keeps experiments with trial jobs queued or
+running on that queue key now; add `--queue-state queued|running` to narrow.
+Queue keys are the ones `oddish status --queue` prints.
+
 `oddish delivery customers [--json]` lists destinations;
 `oddish delivery create-customer NAME [--json]` creates one independently.
 `oddish delivery history TASK` remains the QA trail, not shipment history.

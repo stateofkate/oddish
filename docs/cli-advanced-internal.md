@@ -26,6 +26,7 @@ Repository-only reference migrated from DOCS.md. Contains operator and advanced 
 - `oddish experiment create` - build a collection experiment from explicit trial IDs
 - `oddish experiment add` / `oddish experiment remove` / `oddish experiment rename` - edit a collection in place; its share link keeps working
 - `oddish experiment rename-model` - alias a model id to a display name on an experiment's public share view
+- `oddish experiment ls` - list experiments like the dashboard; `--queue KEY [--queue-state queued|running]` keeps those with trial jobs on that queue now, and the printed URL opens the same filtered list
 - `oddish delete` - delete trials, tasks, or experiments (what's allowed depends on the deployment; see [Delete Data](#delete-data))
 - `oddish publish` / `oddish unpublish` - toggle public read-only sharing for an experiment
 - `oddish link` - print the dashboard URL for a task or trial (built locally; needs no API key)
@@ -570,6 +571,11 @@ oddish status --queue                  # human-readable panel
 oddish status --queue --json           # combined JSON for agents/scripts
 oddish status --queue --stale-after 30 # widen the stale-heartbeat window
 ```
+
+To see which experiments a queue key's work belongs to, pass that key to
+`oddish experiment ls --queue KEY` (add `--queue-state queued` or `running` to
+match the Queued or Running column). The dashboard's queue links open the same
+list at `/dashboard?queue=KEY&queue_state=...`. The list needs only a `read` key.
 
 On hosted Oddish these diagnostics require a **full-scope** API key
 (`read`/`tasks` keys get a clear error); a self-hosted core server applies no
