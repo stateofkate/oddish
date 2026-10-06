@@ -84,7 +84,7 @@ worker = [
     # Harbor's pinned Daytona implementation uses runtime network settings,
     # which require the SDK API shipped in 0.192.0 and newer.
     "daytona>=0.192.0",
-    "archil==0.14.0",
+    "archil==0.15.0",
     # Hosted workers orchestrate Thunder sandboxes directly. Keep this aligned
     # with Harbor's thunder extra so cancellation can recover a sandbox by id.
     "thunder-sandbox==0.7.5",
@@ -115,7 +115,7 @@ oddish = "oddish.cli:app"
 
 [tool.uv.sources]
 # Mirror src/oddish/harbor-pin.toml (run scripts/sync_harbor_pin.py after edits).
-harbor = { git = "https://github.com/abundant-ai/harbor", rev = "41d2d22da79f272a3efe5f045a14b6bcfebf7468" }
+harbor = { git = "https://github.com/abundant-ai/harbor", rev = "47214bb99831aeaa47b7062225991a8ce8c22340" }
 
 [tool.uv]
 override-dependencies = ["harbor==0.16.1"]

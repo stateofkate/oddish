@@ -100,6 +100,75 @@ def test_archil_teardown_treats_missing_sandbox_as_done(monkeypatch) -> None:
     assert calls["closed"] is True
 
 
+def test_archil_teardown_searches_each_weighted_region(monkeypatch) -> None:
+    clients: list[dict[str, object]] = []
+
+    class _NotFoundError(Exception):
+        status = 404
+
+    async def _stop_aio():
+        sandbox.status = "stopped"
+        return sandbox
+
+    async def _delete_aio():
+        clients[-1]["deleted"] = True
+
+    sandbox = types.SimpleNamespace(
+        status="running",
+        stop=types.SimpleNamespace(aio=_stop_aio),
+        delete=types.SimpleNamespace(aio=_delete_aio),
+    )
+
+    class _FakeClient:
+        def __init__(self, *, region: str, api_key: str, timeout: int):
+            record: dict[str, object] = {"region": region, "api_key": api_key}
+            clients.append(record)
+
+            async def _get_aio(external_id: str):
+                if region != "aws-us-east-1":
+                    raise _NotFoundError
+                return sandbox
+
+            self.sandboxes = types.SimpleNamespace(
+                get=types.SimpleNamespace(aio=_get_aio)
+            )
+
+            async def _close_aio():
+                record["closed"] = True
+
+            self.close = types.SimpleNamespace(aio=_close_aio)
+
+    fake_archil = types.ModuleType("archil")
+    fake_archil.Archil = _FakeClient
+    monkeypatch.setitem(sys.modules, "archil", fake_archil)
+    monkeypatch.delenv("ARCHIL_BASE_URL", raising=False)
+    monkeypatch.setenv(
+        "ARCHIL_REGIONS", "aws-us-west-2=60,aws-us-east-1=40,aws-eu-west-1=0"
+    )
+    monkeypatch.setenv("ARCHIL_API_KEY_AWS_US_WEST_2", "key-west")
+    monkeypatch.setenv("ARCHIL_API_KEY_AWS_US_EAST_1", "key-east")
+    monkeypatch.delenv("ARCHIL_API_KEY_AWS_EU_WEST_1", raising=False)
+
+    assert asyncio.run(ArchilBackend().teardown("sb-east")) is True
+    assert clients == [
+        {"region": "aws-us-west-2", "api_key": "key-west", "closed": True},
+        {
+            "region": "aws-us-east-1",
+            "api_key": "key-east",
+            "deleted": True,
+            "closed": True,
+        },
+    ]
+    assert sandbox.status == "stopped"
+
+    clients.clear()
+    assert asyncio.run(ArchilBackend().teardown("sb-gone")) is True
+    assert [client["region"] for client in clients] == [
+        "aws-us-west-2",
+        "aws-us-east-1",
+    ]
+
+
 def test_modal_teardown_terminates_sandbox_by_id(monkeypatch) -> None:
     calls: dict[str, str] = {}
 

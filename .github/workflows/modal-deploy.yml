@@ -78,6 +78,12 @@ jobs:
       # pulls and appends to existing tasks are excluded.
       # Restore the prior rollout: "20"; disable automatic routing: "0".
       ODDISH_ARCHIL_TRAFFIC_PERCENT: "40"
+      # Split Archil trials across regions by weight. Every region with a
+      # positive weight needs ARCHIL_API_KEY_<REGION> (e.g.
+      # ARCHIL_API_KEY_AWS_US_EAST_1) in oddish-prod. Keep a drained region
+      # listed at 0 with its key so recovery cleanup still reaches its
+      # sandboxes. Single region: remove this line.
+      ARCHIL_REGIONS: "aws-us-west-2=60,aws-us-east-1=40"
       # Thunder must be enabled in the deploy process itself so modal_app.py
       # attaches the worker-only oddish-thunder credential secret.
       ODDISH_THUNDER_ENABLED: "true"

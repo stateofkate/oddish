@@ -124,6 +124,10 @@ jobs:
       ODDISH_THUNDER_ENABLED: "true"
       ODDISH_THUNDER_SECRET_NAME: "oddish-thunder"
       ODDISH_THUNDER_MAX_CAPACITY: "128"
+      # Archil trials split across regions as in production, with each
+      # region's key from oddish-prod. ARCHIL_PREVIEW_<PR> (a test fleet's
+      # ARCHIL_BASE_URL) overrides it.
+      ARCHIL_REGIONS: "aws-us-west-2=60,aws-us-east-1=40"
       # Let one model fill the preview worker pool during load tests.
       ODDISH_DEFAULT_MODEL_CONCURRENCY: "300"
       ODDISH_MODEL_CONCURRENCY_OVERRIDES: "{}"
