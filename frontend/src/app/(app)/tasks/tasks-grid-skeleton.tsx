@@ -4,7 +4,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 // Mirrors the TaskCard layout: identity, activity, results, trial previews, experiment links.
 export function TasksGridSkeleton({ count = 9 }: { count?: number }) {
   return (
-    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+    <div className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(min(100%,320px),1fr))]">
       {Array.from({ length: count }).map((_, index) => (
         <div
           key={index}

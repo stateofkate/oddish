@@ -347,3 +347,24 @@ its duration still requires recorded timestamps. Pending, queued and retrying
 rows do not reuse stale initialization milestones or timing from an earlier run.
 
 The task Overview labels a rejection from a different review as “Previous task review: Rejected” when a trial is selected, including on the same task version. “View rejected review” links directly to the verdict’s `_graded_by` source; opening that source does not label it as a different review. Unmatched prior-version rejections remain explicitly unconfirmed for the selected version. Source-review and audit links open in a new tab so the original run remains available. This adds no history view or API request.
+
+## Task browser preview
+
+The left sidebar exposes model and agent selection, mutually exclusive model-run
+states, execution errors, review, experiment, author, and delivery history. These
+primary controls do not require expanding a section. Model, agent, and experiment
+search only narrow existing choices; typed text never creates a filter value.
+Sort field and direction are separate. Cards keep pass/fail/error/pending
+counts visible and put trial previews and experiment history in disclosures;
+the table retains the same outcome counts. Numeric sorting displays the server's
+`sort_value` beside each task. Live refresh defaults on and can be paused.
+Selection is disabled on cards and table rows while the query is changing or its
+last update failed. Stored selections, old coverage links and saved views retain
+their existing semantics. Lower-priority controls share one Additional filters
+section using the installed Radix accordion. Tool-name CSV entry is hidden until
+a recorded tool-name vocabulary is available; existing URLs remain readable and
+removable through their active-filter chip.
+
+Run `DELIVERY_TEST_PORT=3219 pnpm exec playwright test -c playwright.delivery.config.ts tasks-picker.spec.ts task-run-coverage.spec.ts`
+for the fixture-backed browser checks. The corresponding PostgreSQL checks are
+`oddish/tests/test_task_run_coverage.py`; run against a disposable local database.

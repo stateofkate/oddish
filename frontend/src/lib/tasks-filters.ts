@@ -50,14 +50,21 @@ export function backendAuthorParams(
   };
 }
 
-export const RUN_COVERAGE_OPTIONS = [
+export const LEGACY_RUN_COVERAGE_OPTIONS = [
   { value: "any", label: "Any" },
   { value: "no_trials", label: "No trials on this version" },
   { value: "validation_only", label: "Oracle / NOP only" },
   { value: "model_trials", label: "Has model trials" },
   { value: "scored_model_trials", label: "Has scored model results" },
 ] as const;
-export type RunCoverage = typeof RUN_COVERAGE_OPTIONS[number]["value"];
+export const RUN_COVERAGE_OPTIONS = [
+  { value: "any", label: "All" },
+  { value: "no_model_runs", label: "No model runs" },
+  { value: "in_progress", label: "In progress" },
+  { value: "finished", label: "Finished" },
+  { value: "unknown", label: "Unknown" },
+] as const;
+export type RunCoverage = typeof RUN_COVERAGE_OPTIONS[number]["value"] | typeof LEGACY_RUN_COVERAGE_OPTIONS[number]["value"];
 
 export interface FilterValues {
   runCoverage: RunCoverage;
@@ -275,7 +282,22 @@ export const COMPARE_MARGIN_UNIT_OPTIONS: Option[] = [
   { value: "abs", label: "abs" },
 ];
 
-// Aggregate sort tokens (kept in sync with backend ``_AGGREGATE_SORTS``).
+export const TASK_SORT_FIELDS = [
+  { value: "last_run", label: "Last run" },
+  { value: "created", label: "Created" },
+  { value: "name", label: "Task name" },
+  { value: "model_pending", label: "Pending runs" },
+  { value: "model_errors", label: "Execution errors" },
+  { value: "model_fail", label: "Failures" },
+  { value: "model_pass", label: "Passes" },
+  { value: "model_trials", label: "Model trials" },
+  { value: "cost", label: "Trial cost" },
+  { value: "total_tokens", label: "Total tokens" },
+  { value: "steps_p50", label: "Median steps" },
+  { value: "runtime_avg", label: "Average run time" },
+];
+
+// Legacy tokens remain readable in saved views and shared URLs.
 export const SORT_OPTIONS: Option[] = [
   { value: "model_score_desc", label: "Model score (high → low)" },
   { value: "model_score_asc", label: "Model score (low → high)" },
@@ -325,6 +347,7 @@ export const FILTER_DEFS: FilterDef[] = [
     group: "Trial",
     control: "agentmodel",
   },
+  { key: "agents", label: "Agent", group: "Trial", control: "multiselect", facet: "agents" },
   {
     key: "models",
     label: "Model",
@@ -450,6 +473,8 @@ export const FILTER_DEFS: FilterDef[] = [
   },
   {
     key: "toolNames",
+    // ponytail: restore the picker when recorded tool-name options are available.
+    hidden: true,
     label: "Tool names",
     group: "Trial",
     control: "toolnames",
@@ -1132,7 +1157,7 @@ export function searchParamsToFilters(sp: URLSearchParams): FilterValues {
     priorities: csv("priorities"),
     verdictStatuses: csv("verdict_statuses"),
     qaOutcomes: csv("qa_outcomes"),
-    runCoverage: RUN_COVERAGE_OPTIONS.find(option => option.value === sp.get("run_coverage"))?.value ?? "any",
+    runCoverage: [...RUN_COVERAGE_OPTIONS, ...LEGACY_RUN_COVERAGE_OPTIONS].find(option => option.value === sp.get("run_coverage"))?.value ?? "any",
     agents: csv("agents"),
     models: csv("models"),
     agentModels: csv("agent_models"),

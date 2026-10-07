@@ -4,13 +4,14 @@ import {
   BROWSE_FORWARD_KEYS,
   FILTER_PARAM_KEYS,
   RUN_COVERAGE_OPTIONS,
+  LEGACY_RUN_COVERAGE_OPTIONS,
   SORT_OPTIONS,
   filterParams,
   searchParamsToFilters,
 } from "../src/lib/tasks-filters.ts";
 
 test("coverage round trips through shared URL, saved view and forwarding registries", () => {
-  for (const { value } of RUN_COVERAGE_OPTIONS) {
+  for (const { value } of [...RUN_COVERAGE_OPTIONS, ...LEGACY_RUN_COVERAGE_OPTIONS]) {
     const filters = searchParamsToFilters(
       new URLSearchParams(`run_coverage=${value}`)
     );

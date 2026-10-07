@@ -8,9 +8,11 @@ import {
 } from "react";
 import { useSearchParams } from "next/navigation";
 import useSWR from "swr";
-import { ChevronDown, FileText, Filter, Plus, X } from "lucide-react";
+import { ChevronDown, FileText, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -57,8 +59,9 @@ import {
   updateTaskSearchParams,
   QA_OUTCOME_OPTIONS,
   RUN_COVERAGE_OPTIONS,
+  LEGACY_RUN_COVERAGE_OPTIONS,
+  TASK_SORT_FIELDS,
   SORT_OPTIONS,
-  type RunCoverage,
   isFilterActive,
   searchParamsToFilters,
   type CompareCond,
@@ -226,7 +229,6 @@ export function TasksFilters({
     // must not overwrite a newer edit already written by onChange.
     setFilterSearch(new URLSearchParams(window.location.search).get("filter_search") ?? "");
   }, [urlFilterSearch]);
-  const openGroups = (searchParams.get("filter_groups") ?? "").split(",");
   const [copyNotice, setCopyNotice] = useState("");
   const historyLabs = [...values.deliveredTo, ...values.notDeliveredTo];
   const lab = historyLabs.length === 1 ? historyLabs[0] : searchParams.get("lab") ?? "";
@@ -260,6 +262,7 @@ export function TasksFilters({
       Object.fromEntries(fields.map((field) => [field, EMPTY_FILTERS[field]]))
     );
   };
+  const primaryKeys = ["models", "agents", "experiments"];
   const activeDefs = FILTER_DEFS.filter(
     (def) => def.key !== "sort" && isFilterActive(def.key, values)
   );
@@ -288,15 +291,12 @@ export function TasksFilters({
       .join(", ");
   };
   return (
-    <div className="space-y-3" data-testid="tasks-filters">
-      <fieldset className="rounded-lg border p-3">
-        <legend className="px-1 text-xs font-medium">Find tasks</legend>
-        <div className="flex flex-wrap items-center gap-2">
-        <div className="relative min-w-56 flex-1">
+    <aside aria-label="Task filters" data-testid="tasks-filters" className="min-w-0 space-y-5 rounded-xl border bg-card/50 p-4 md:sticky md:top-24 md:max-h-[calc(100vh-7rem)] md:overflow-y-auto">
+        <div className="relative min-w-0">
           <Input
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
-            placeholder="Search tasks or filters…"
+            placeholder="Search tasks…"
             aria-label="Search tasks"
             className="pr-8"
           />
@@ -324,6 +324,52 @@ export function TasksFilters({
             />
           </SearchSyntaxHelp>
         </div>
+
+        {values.runCoverage !== "any" || activeDefs.length ||
+        searchQuery.trim() ||
+        values.author.length ||
+        values.mine === "only" ? (
+          <Button variant="ghost" size="sm" onClick={onClearFilters}>
+            Clear filters
+          </Button>
+        ) : null}
+      <section aria-label="Sort" className="space-y-2">
+        <h2 className="text-sm font-medium">Sort</h2>
+        <TasksSort />
+      </section>
+      {["models", "agents"].map(key => {
+        const def = FILTER_DEFS.find(def => def.key === key)!;
+        return <section key={key} role="group" aria-label={def.label} className="space-y-2">
+          <h2 className="text-sm font-medium">{def.label}</h2>
+          <FilterControl def={def} values={values} set={setTaskFilters} facets={facets} facetsLoading={facetsLoading} facetsError={Boolean(facetsError)} onRetryFacets={() => mutateFacets()} />
+        </section>;
+      })}
+      <fieldset className="grid grid-cols-2 gap-x-2 gap-y-2">
+        <legend className="mb-2 text-sm font-medium">Runs</legend>
+        {[...RUN_COVERAGE_OPTIONS, ...LEGACY_RUN_COVERAGE_OPTIONS.filter(option => option.value !== "any" && option.value === values.runCoverage)].map(option => (
+          <label key={option.value} className="flex cursor-pointer items-center gap-2 text-xs">
+            <input type="radio" name="run-coverage" value={option.value} checked={values.runCoverage === option.value} onChange={() => setTaskFilters({ runCoverage: option.value })} className="accent-primary" />
+            {option.label}
+          </label>
+        ))}
+      </fieldset>
+      <label className="flex cursor-pointer items-center gap-2 text-sm">
+        <Checkbox checked={values.harnessCountMin !== null && values.harnessCountMin >= 1} onCheckedChange={checked => setTaskFilters({ harnessCountMin: checked ? 1 : null })} />
+        Has execution errors
+      </label>
+      <fieldset className="grid grid-cols-2 gap-x-2 gap-y-2">
+        <legend className="mb-2 text-sm font-medium">Review</legend>
+        {QA_OUTCOME_OPTIONS.map(option => <label key={option.value} className="flex cursor-pointer items-center gap-2 text-xs">
+          <Checkbox checked={values.qaOutcomes.includes(option.value)} onCheckedChange={checked => setTaskFilters({ qaOutcomes: checked ? [...values.qaOutcomes, option.value] : values.qaOutcomes.filter(value => value !== option.value) })} />
+          {option.label}
+        </label>)}
+      </fieldset>
+      <section role="group" aria-label="Experiment" className="space-y-2">
+        <h2 className="text-sm font-medium">Experiment</h2>
+        <ExperimentControl values={values} set={setTaskFilters} />
+      </section>
+      <section aria-label="Author" className="space-y-2 [&>div]:w-full [&>div>button:first-child]:min-w-0 [&>div>button:first-child]:flex-1 [&>div>button:first-child]:w-auto">
+        <h2 className="text-sm font-medium">Author</h2>
         <MemberFilterTypeahead
           ariaLabel="Filter tasks by member"
           selectedUserId={onlyMine ? "me" : values.author.join(", ") || null}
@@ -335,133 +381,39 @@ export function TasksFilters({
             )
           }
         />
-        </div>
-      </fieldset>
-      <div className="grid gap-3 md:grid-cols-2">
-      <fieldset className="rounded-lg border p-3">
-        <legend className="px-1 text-xs font-medium">Evidence on this version</legend>
-        <div className="flex flex-wrap items-center gap-2">
-        <select aria-label="Runs on current version" title="Coverage for the current default version" className="border-input bg-background h-9 rounded-md border px-3 text-sm" value={values.runCoverage} onChange={event => setTaskFilters({ runCoverage: event.target.value as RunCoverage })}>
-          {RUN_COVERAGE_OPTIONS.map(option => <option key={option.value} value={option.value}>Runs: {option.label}</option>)}
-        </select>
-        {FILTER_DEFS.filter(def => def.key === "qaOutcomes").map(def => (
-          <Popover key={def.key}>
-            <PopoverTrigger asChild>
-              <Button variant="outline">Review: {isFilterActive(def.key, values) ? summary(def) : "Any"}<ChevronDown className="ml-2 h-4 w-4" /></Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-80" align="start">
-              <FilterGroup def={def} values={values} set={setTaskFilters} facets={facets} facetsLoading={facetsLoading} facetsError={Boolean(facetsError)} onRetryFacets={() => mutateFacets()} onRemove={() => clearKey(def.key)} />
-            </PopoverContent>
-          </Popover>
-        ))}
-        <Popover open={open} onOpenChange={next => updateTaskSearchParams(params => {
-          if (next) params.set("filters", "1");
-          else params.delete("filters");
-        }, { resetPage: false })}>
-          <PopoverTrigger asChild>
-            <Button variant="outline">
-              <Filter className="mr-2 h-4 w-4" />
-              More criteria{activeDefs.length ? ` (${activeDefs.length})` : ""}
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent
-            align="end"
-            className="w-[min(440px,calc(100vw-2rem))] p-4"
-            aria-label="Task filters"
-          >
-            <Input
-              aria-label="Find a filter"
-              placeholder="Find a filter…"
-              value={filterSearch}
-              onChange={event => {
-                const next = event.target.value;
-                setFilterSearch(next);
-                updateTaskSearchParams(params => {
-                  if (next) params.set("filter_search", next);
-                  else params.delete("filter_search");
-                }, { resetPage: false });
-              }}
-              className="mb-4"
-            />
-            <div className="max-h-[60vh] space-y-4 overflow-y-auto pr-1">
-              {(["Delivery", "Task", "Trial"] as const).map((group) => {
-                const defs = FILTER_DEFS.filter(d => !d.hidden && !["sort", "qaOutcomes"].includes(d.key) && d.group === group && d.label.toLowerCase().includes(filterSearch.toLowerCase()));
-                const expanded = Boolean(filterSearch) || openGroups.includes(group);
-                return defs.length ? (
-                  <section key={group} className="space-y-3">
-                    <button type="button" aria-expanded={expanded} className="w-full text-left text-sm font-medium" onClick={() => updateTaskSearchParams(params => {
-                      const groups = new Set((params.get("filter_groups") ?? "").split(",").filter(Boolean));
-                      if (groups.has(group)) groups.delete(group); else groups.add(group);
-                      if (groups.size) params.set("filter_groups", [...groups].join(",")); else params.delete("filter_groups");
-                    }, { resetPage: false })}>
-                      {group === "Delivery"
-                        ? "Delivery history"
-                        : group === "Trial"
-                          ? "Trial filters"
-                          : "Task filters"}
-                    </button>
-                    {expanded && defs.map((def) => (
-                      <FilterGroup
-                        key={def.key}
-                        def={def}
-                        values={values}
-                        set={setTaskFilters}
-                        facets={facets}
-                        facetsLoading={facetsLoading}
-                        facetsError={Boolean(facetsError)}
-                        onRetryFacets={() => mutateFacets()}
-                        onRemove={
-                          isFilterActive(def.key, values)
-                            ? () => clearKey(def.key)
-                            : undefined
-                        }
-                      />
-                    ))}
-                  </section>
-                ) : null;
-              })}
-            </div>
-          </PopoverContent>
-        </Popover>
-        </div>
-      </fieldset>
-      <fieldset className="rounded-lg border p-3">
-        <legend className="px-1 text-xs font-medium">Delivery history</legend>
-        <div className="flex flex-wrap items-center gap-2">
-        <select aria-label="Lab" disabled={facetsLoading && !facets} className="border-input bg-background h-9 rounded-md border px-3 text-sm" value={lab} onChange={event => changeDeliveryFilter(event.target.value, deliveryStatus === "custom" || (deliveryStatus === "all" && event.target.value) ? "delivered" : deliveryStatus)}>
-          <option value="">Lab: All labs</option>
-          {[...new Set([...(facets?.delivery_customers ?? []), ...(lab ? [lab] : [])])].map(name => <option key={name} value={name}>Lab: {name}</option>)}
-        </select>
+
+
+      </section>
+      <section aria-label="Delivery history" className="space-y-2">
+        <h2 className="text-sm font-medium">Delivery history</h2>
+        <Select value={lab || "all"} onValueChange={value => changeDeliveryFilter(value === "all" ? "" : value, deliveryStatus === "custom" ? "all" : deliveryStatus)} disabled={facetsLoading && !facets}>
+          <SelectTrigger aria-label="Lab" className="h-9 text-sm [&[data-state=open]>svg]:rotate-180"><SelectValue placeholder="All labs" /></SelectTrigger>
+          <SelectContent><SelectItem value="all">All labs</SelectItem>{[...new Set([...(facets?.delivery_customers ?? []), ...(lab ? [lab] : [])])].map(name => <SelectItem key={name} value={name}>{name}</SelectItem>)}</SelectContent>
+        </Select>
         {facetsError ? <Button variant="ghost" onClick={() => mutateFacets()}>Retry labs</Button> : null}
-        <select aria-label="Delivery status" className="border-input bg-background h-9 rounded-md border px-3 text-sm" value={deliveryStatus} onChange={event => changeDeliveryFilter(lab, event.target.value)}>
-          <option value="all">Delivery: All tasks</option>
-          <option value="delivered">Delivery: Recorded</option>
-          <option value="none">Delivery: No record</option>
-          {deliveryStatus === "custom" ? <option value="custom">Delivery: Advanced filters</option> : null}
-        </select>
-        </div>
-        <p className="text-muted-foreground mt-2 text-xs">Delivery readiness is checked in the selected delivery.</p>
-      </fieldset>
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <select aria-label="Sort tasks" className="border-input bg-background h-9 rounded-md border px-3 text-sm" value={values.sort ?? "recent"} onChange={event => setTaskFilters({ sort: event.target.value === "recent" ? null : event.target.value })}>
-          <option value="recent">Sort: Recent activity</option>
-          {SORT_OPTIONS.map(option => <option key={option.value} value={option.value}>Sort: {option.label}</option>)}
-        </select>
-        <SavedFiltersMenu />
-        <Button variant="outline" onClick={async () => {
-          const url = new URL(window.location.href);
-          url.searchParams.delete("delivery");
-          if (!url.searchParams.has("expanded")) url.searchParams.delete("offset");
-          if (searchQuery.trim()) url.searchParams.set("q", searchQuery.trim());
-          else url.searchParams.delete("q");
-          url.searchParams.delete("query");
-          try { await navigator.clipboard.writeText(url.toString()); setCopyNotice("View link copied"); }
-          catch { setCopyNotice("Could not copy link. Copy the page address instead."); }
-        }}>Copy view link</Button>
-        {copyNotice ? <span role="status" className="text-muted-foreground text-xs">{copyNotice}</span> : null}
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
+        <Select value={deliveryStatus} onValueChange={value => changeDeliveryFilter(lab, value)}>
+          <SelectTrigger aria-label="Delivery status" className="h-9 text-sm [&[data-state=open]>svg]:rotate-180"><SelectValue /></SelectTrigger>
+          <SelectContent><SelectItem value="all">Any record</SelectItem><SelectItem value="delivered">Recorded</SelectItem><SelectItem value="none">No record</SelectItem>{deliveryStatus === "custom" && <SelectItem value="custom">Advanced filters</SelectItem>}</SelectContent>
+        </Select>
+      </section>
+      <Accordion type="single" collapsible value={open ? "additional" : ""} onValueChange={value => updateTaskSearchParams(params => { if (value) params.set("filters", "1"); else params.delete("filters"); }, { resetPage: false })}>
+        <AccordionItem value="additional">
+          <AccordionTrigger className="py-2 text-sm">Additional filters</AccordionTrigger>
+          <AccordionContent className="space-y-4 pt-3">
+            <Input aria-label="Find a filter" placeholder="Find a filter…" value={filterSearch} onChange={event => {
+              setFilterSearch(event.target.value);
+              updateTaskSearchParams(params => { if (event.target.value) params.set("filter_search", event.target.value); else params.delete("filter_search"); }, { resetPage: false });
+            }} />
+            {FILTER_DEFS.filter(def => !def.hidden && ![...primaryKeys, "sort", "qaOutcomes"].includes(def.key) && def.group !== "Delivery" && def.label.toLowerCase().includes(filterSearch.toLowerCase())).map(def => (
+              <section key={def.key} role="group" aria-label={def.label} className="space-y-2">
+                <h3 className="text-sm font-medium">{def.label}</h3>
+                <FilterControl def={def} values={values} set={setTaskFilters} facets={facets} facetsLoading={facetsLoading} facetsError={Boolean(facetsError)} onRetryFacets={() => mutateFacets()} />
+              </section>
+            ))}
+          </AccordionContent>
+        </AccordionItem>
+      </Accordion>
+      <div className="flex flex-wrap gap-2">
         {searchParams.get("selection_id") ? <Button variant="secondary" size="sm" onClick={() => updateTaskSearchParams(params => params.delete("selection_id"))}>Shared selection ×</Button> : null}
         {activeDefs.map((def) => (
           <button
@@ -491,63 +443,24 @@ export function TasksFilters({
             Author: {values.mine === "only" ? "Me" : authorLabel} ×
           </button>
         ) : null}
-        {values.runCoverage !== "any" || activeDefs.length ||
-        searchQuery.trim() ||
-        values.author.length ||
-        values.mine === "only" ? (
-          <Button variant="ghost" size="sm" onClick={onClearFilters}>
-            Clear filters
-          </Button>
-        ) : null}
-      </div>
-    </div>
-  );
-}
 
-function FilterGroup({
-  def,
-  values,
-  set,
-  facets,
-  facetsLoading,
-  facetsError,
-  onRetryFacets,
-  onRemove,
-}: {
-  def: FilterDef;
-  values: FilterValues;
-  set: (patch: Partial<FilterValues>) => void;
-  facets: TaskBrowseFacets | null;
-  facetsLoading: boolean;
-  facetsError: boolean;
-  onRetryFacets: () => void;
-  onRemove?: () => void;
-}) {
-  return (
-    <div role="group" aria-label={def.label} className="border-b border-[#6f88b4]/10 pb-3 last:border-0 last:pb-0">
-      <div className="mb-1.5 flex items-center justify-between">
-        <span className="text-xs font-medium">{def.label}</span>
-        {onRemove ? (
-          <button
-            type="button"
-            aria-label={`Remove ${def.label} filter`}
-            className="text-muted-foreground hover:text-foreground"
-            onClick={onRemove}
-          >
-            <X className="h-3 w-3" />
-          </button>
-        ) : null}
       </div>
-      <FilterControl
-        def={def}
-        values={values}
-        set={set}
-        facets={facets}
-        facetsLoading={facetsLoading}
-        facetsError={facetsError}
-        onRetryFacets={onRetryFacets}
-      />
-    </div>
+      <div className="flex flex-wrap gap-2 border-t pt-4">
+        <SavedFiltersMenu />
+        <Button variant="outline" onClick={async () => {
+          const url = new URL(window.location.href);
+          url.searchParams.delete("delivery");
+          if (!url.searchParams.has("expanded")) url.searchParams.delete("offset");
+          if (searchQuery.trim()) url.searchParams.set("q", searchQuery.trim());
+          else url.searchParams.delete("q");
+          url.searchParams.delete("query");
+          try { await navigator.clipboard.writeText(url.toString()); setCopyNotice("View link copied"); }
+          catch { setCopyNotice("Could not copy link. Copy the page address instead."); }
+        }}>Copy view link</Button>
+        {copyNotice ? <span role="status" className="text-muted-foreground text-xs">{copyNotice}</span> : null}
+
+      </div>
+    </aside>
   );
 }
 
@@ -657,22 +570,6 @@ function FilterControl({
       return <MatchAnyControl values={values} set={set} facets={facets} />;
     case "metricmatch":
       return <MetricMatchControl values={values} set={set} />;
-    case "toolnames":
-      return (
-        <Input
-          value={values.toolNames.join(", ")}
-          placeholder="bash, read_file"
-          className="h-8 text-xs"
-          onChange={(event) =>
-            set({
-              toolNames: event.target.value
-                .split(",")
-                .map((value) => value.trim())
-                .filter(Boolean),
-            })
-          }
-        />
-      );
     case "num":
       return <NumericFilter key={def.key} label={def.label} min={values[NUM_FIELD[def.key]] as number | null} max={null} presets={def.key === "agentCount" ? [2, 3, 5] : [5, 10, 20]} onChange={min => set({[NUM_FIELD[def.key]]: min})} />;
     case "tags":
@@ -762,12 +659,12 @@ function AgentModelControl({
         <Button
           variant="outline"
           size="sm"
-          className="h-8 w-full justify-between text-xs font-normal"
+          className="h-9 w-full justify-between text-sm font-normal [&[data-state=open]>svg]:rotate-180"
         >
           <span className="truncate">
             {selected.length === 0 ? "Any" : `${selected.length} selected`}
           </span>
-          <ChevronDown className="h-3.5 w-3.5 opacity-60" />
+          <ChevronDown className="h-4 w-4 shrink-0 opacity-70 transition-transform" />
         </Button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-64 p-2">
@@ -875,7 +772,7 @@ function ExperimentControl({
   const results = (data?.items ?? []).filter((o) => !selected.includes(o.id));
   const label =
     selected.length === 0
-      ? "Any"
+      ? "Select experiment…"
       : selected.length === 1
         ? (nameById.get(selected[0]) ?? selected[0])
         : `${selected.length} selected`;
@@ -884,12 +781,13 @@ function ExperimentControl({
     <Popover>
       <PopoverTrigger asChild>
         <Button
+          aria-label="Select experiment"
           variant="outline"
           size="sm"
-          className="h-8 w-full justify-between text-xs font-normal"
+          className="h-9 w-full justify-between text-sm font-normal [&[data-state=open]>svg]:rotate-180"
         >
           <span className="truncate">{label}</span>
-          <ChevronDown className="h-3.5 w-3.5 opacity-60" />
+          <ChevronDown className="h-4 w-4 shrink-0 opacity-70 transition-transform" />
         </Button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-64 p-2">
@@ -1019,12 +917,12 @@ function TagsControl({
           <Button
             variant="outline"
             size="sm"
-            className="h-8 w-full justify-between text-xs font-normal"
+            className="h-9 w-full justify-between text-sm font-normal [&[data-state=open]>svg]:rotate-180"
           >
             <span className="truncate">
               {total === 0 ? "Any" : `${total} selected`}
             </span>
-            <ChevronDown className="h-3.5 w-3.5 opacity-60" />
+            <ChevronDown className="h-4 w-4 shrink-0 opacity-70 transition-transform" />
           </Button>
         </PopoverTrigger>
         <PopoverContent align="start" className="w-56 p-2">
@@ -1081,6 +979,7 @@ function MultiSelect({
   values: FilterValues;
   set: (patch: Partial<FilterValues>) => void;
 }) {
+  const fieldLabel = FILTER_DEFS.find(def => ARRAY_FIELD[def.key] === field)?.label ?? String(field);
   const [search, setSearch] = useState("");
   const selected = (values[field] as string[]) ?? [];
   const toggle = (value: string) => {
@@ -1096,7 +995,7 @@ function MultiSelect({
     : options;
   const label =
     selected.length === 0
-      ? "Any"
+      ? `Select ${fieldLabel.toLowerCase()}…`
       : selected.length === 1
         ? (options.find((o) => o.value === selected[0])?.label ?? selected[0])
         : `${selected.length} selected`;
@@ -1105,21 +1004,23 @@ function MultiSelect({
     <Popover>
       <PopoverTrigger asChild>
         <Button
+          aria-label={`Select ${fieldLabel.toLowerCase()}`}
           variant="outline"
           size="sm"
-          className="h-8 w-full justify-between text-xs font-normal"
+          className="h-9 w-full justify-between text-sm font-normal [&[data-state=open]>svg]:rotate-180"
         >
           <span className="truncate">{label}</span>
-          <ChevronDown className="h-3.5 w-3.5 opacity-60" />
+          <ChevronDown className="h-4 w-4 shrink-0 opacity-70 transition-transform" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-56 p-2">
-        {options.length > 8 ? (
+      <PopoverContent align="start" className="w-[min(360px,calc(100vw-2rem))] p-2">
+        {options.length > 8 || ["models", "agents"].includes(String(field)) ? (
           <Input
             autoFocus
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search…"
+            aria-label={`Find ${fieldLabel.toLowerCase()} options`}
+            placeholder={`Find ${fieldLabel.toLowerCase()}…`}
             className="mb-2 h-7 text-xs"
           />
         ) : null}
@@ -2262,4 +2163,26 @@ function RewardThreshold({
       onChange={choose}
     />
   );
+}
+
+export function TasksSort() {
+  const params = useSearchParams();
+  const sort = params.get("sort") ?? "recent";
+  const field = sort === "recent" ? "last_run" : sort.replace(/_(asc|desc)$/, "");
+  const ascending = sort.endsWith("_asc");
+  const flipped = `${field}_${ascending ? "desc" : "asc"}`;
+  // Legacy tokens such as last_model_activity_desc have no reverse the API accepts.
+  const canFlip = TASK_SORT_FIELDS.some(option => option.value === field) || SORT_OPTIONS.some(option => option.value === flipped);
+  const label = field === "name" ? (ascending ? "A to Z" : "Z to A")
+    : ["last_run", "created"].includes(field) ? (ascending ? "Oldest first" : "Newest first")
+    : ascending ? "Lowest first" : "Highest first";
+  return <div className="flex items-center gap-1">
+    <Select value={field} onValueChange={value => setTaskFilters({ sort: `${value}_${value === "name" ? "asc" : "desc"}` })}>
+      <SelectTrigger aria-label="Sort tasks" className="h-9 min-w-0 text-sm [&[data-state=open]>svg]:rotate-180"><SelectValue /></SelectTrigger>
+      <SelectContent>{TASK_SORT_FIELDS.map(option => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}
+        {!TASK_SORT_FIELDS.some(option => option.value === field) && <SelectItem value={field}>{SORT_OPTIONS.find(option => option.value === sort)?.label ?? field}</SelectItem>}
+      </SelectContent>
+    </Select>
+    <Button variant="outline" size="icon" aria-label={label} title={label} disabled={!canFlip} onClick={() => setTaskFilters({ sort: flipped })}>{ascending ? "↑" : "↓"}</Button>
+  </div>;
 }

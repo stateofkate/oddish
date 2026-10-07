@@ -3485,6 +3485,20 @@ Homebrew-managed environment through PyPI.
 
 ### Task run coverage
 
+The task browser's Runs selector uses the additive coverage values
+`no_model_runs`, `in_progress`, `finished`, and `unknown`. These partition
+current-version model summaries: zero trials, positive pending count, positive
+trial count with no pending trials, or missing summary. All earlier coverage
+values remain accepted in saved views and installed clients.
+Browse sorting also accepts `last_run`, `created`, `name`, `model_pending`,
+`model_errors`, `model_fail`, `model_pass`, and `model_trials` with `_asc`/`_desc`.
+`cost_asc` complements the existing descending cost sort. Page responses add
+nullable `sort_value` (the numeric ordering value) and `created_at`; no migration
+is needed. Count and bulk-selection requests retain the same filter semantics.
+The browser explicitly requests `last_run_desc` by default; other clients keep
+their existing default ordering. Filters stay URL-backed, and legacy sort and
+coverage links remain readable. Review keeps the existing outcome semantics.
+
 `GET /tasks/browse` accepts `run_coverage=any|no_trials|validation_only|model_trials|scored_model_trials`.
 Coverage and the additive `run_summary` describe `tasks.current_version_id`;
 `/tasks/{id}/open` carries that same summary on its selected version. Counts and
@@ -3503,7 +3517,7 @@ rebuilds these summaries. Apply `task_run_coverage_001`
 and follow the cutover reconciliation in `SELF_HOSTING.md`.
 
 The shared `TaskRunSummary` renders exact model results and separate baseline
-checks in cards, table rows, and task detail. Recent-trial strips stay visible in cards and group by the shared agent/model/effort key.
+checks in cards, table rows, and task detail. Cards and table rows show model outcome counts without a mean score; task detail retains its score. Recent-trial strips are collapsed on cards and group by the shared agent/model/effort key.
 They are previews, never aggregate percentages; links open individual trials on the task page.
 `TaskEvidence` shares those dots and all-version experiment affiliations between
 cards and expanded table rows without repeating selection or headers.

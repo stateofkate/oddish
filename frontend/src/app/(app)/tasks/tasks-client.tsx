@@ -3,16 +3,10 @@
 import { useEffect, useState, useTransition } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { ChevronDown, RefreshCw } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ImportDialog } from "@/components/import-dialog";
 import { useSelection } from "./selection-context";
-import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuCheckboxItem,
-} from "@/components/ui/dropdown-menu";
 import {
   useTaskBrowseCount,
   useTaskBrowseRevalidate,
@@ -61,30 +55,12 @@ export function TasksHeader() {
 // alone, so it neither delays the cards nor re-runs when you page.
 export function TasksMatchCount() {
   const searchParams = useSearchParams();
-  const { total, isStale } = useTaskBrowseCount(
+  const { total, isStale, error } = useTaskBrowseCount(
     new URLSearchParams(searchParams.toString())
   );
-  // Nothing to claim before the first answer lands: a count guessed from the
-  // page would be wrong for every filter state with more than one page.
-  if (total === null) return null;
-  const label = `${total.toLocaleString()} matching ${
-    total === 1 ? "task" : "tasks"
-  }`;
-  // While the next filter state is in flight — or after it failed — the
-  // number on screen belongs to the PREVIOUS filters. Dim it and say so,
-  // rather than letting a stale total pass as the current answer.
-  return (
-    <>
-      <span
-        className={cn(isStale && "opacity-50")}
-        aria-busy={isStale || undefined}
-        title={isStale ? `${label} (for the previous filters)` : undefined}
-      >
-        {label}
-        {isStale ? "…" : ""}
-      </span>
-    </>
-  );
+  if (error) return <span>Task count unavailable</span>;
+  if (total === null || isStale) return <span role="status">Counting tasks…</span>;
+  return <span>{total.toLocaleString()} matching {total === 1 ? "task" : "tasks"}</span>;
 }
 
 // Every refresh path revalidates the grid's client-side browse fetch only —
@@ -93,12 +69,12 @@ export function TasksMatchCount() {
 function TasksToolbar({ showImport }: { showImport: boolean }) {
   const revalidateBrowse = useTaskBrowseRevalidate();
   const [isPending, startTransition] = useTransition();
-  const [autoRefresh, setAutoRefresh] = useState(false);
+  const [autoRefresh, setAutoRefresh] = useState(true);
 
   // Restore the saved preference client-side (avoids a hydration mismatch).
   useEffect(() => {
     try {
-      setAutoRefresh(window.localStorage.getItem(AUTO_REFRESH_KEY) === "1");
+      setAutoRefresh(window.localStorage.getItem(AUTO_REFRESH_KEY) !== "0");
     } catch {
       /* Use the default when storage is unavailable. */
     }
@@ -143,21 +119,10 @@ function TasksToolbar({ showImport }: { showImport: boolean }) {
       >
         <RefreshCw className={cn("h-4 w-4", isPending && "animate-spin")} />
       </Button>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="outline" size="icon" aria-label="Refresh settings">
-            <ChevronDown className="h-4 w-4" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuCheckboxItem
-            checked={autoRefresh}
-            onCheckedChange={toggleAuto}
-          >
-            Auto-refresh every 60 seconds
-          </DropdownMenuCheckboxItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+      <Button variant="outline" aria-label="Live updates" aria-pressed={autoRefresh} onClick={() => toggleAuto(!autoRefresh)}>
+        <span className={cn("mr-2 h-2 w-2 rounded-full", autoRefresh ? "bg-emerald-500" : "bg-muted-foreground")} />
+        {autoRefresh ? "Live" : "Paused"}
+      </Button>
       {showImport ? (
         <ImportDialog onImported={() => void revalidateBrowse()} />
       ) : null}

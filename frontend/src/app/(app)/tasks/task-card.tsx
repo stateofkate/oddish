@@ -41,7 +41,7 @@ import {
   prBadge,
   taskPrUrl,
 } from "@/lib/utils";
-import { QA_OUTCOME_OPTIONS } from "@/lib/tasks-filters";
+import { QA_OUTCOME_OPTIONS, TASK_SORT_FIELDS } from "@/lib/tasks-filters";
 import { useSelection } from "./selection-context";
 
 // "median 412 steps (p25 300 · p75 600) · 3 agents": the stored summary's
@@ -71,15 +71,13 @@ function TrajectorySummary({ task }: { task: TaskBrowseItem }) {
 // the browse filter targets one lab. Missing records do not prove a task was
 // never sent: imported history can be incomplete.
 export function TaskDeliveryHistory({ task, showEmpty = false }: { task: TaskBrowseItem; showEmpty?: boolean }) {
-  const params = useSearchParams();
+  const delivery = useSearchParams().get("delivery");
   const records = [...(task.active_deliveries ?? []), ...(task.deliveries ?? [])];
   if (!records.length) return showEmpty ? <span className="text-muted-foreground text-xs">No delivery recorded</span> : null;
   return (
     <details className="text-xs">
       <summary className="cursor-pointer">
-        {[...new Set(records.map(record => record.status === "active"
-          ? record.delivery_id === params.get("delivery") ? "In this delivery" : `In active batch · ${record.customer}`
-          : `${record.customer} · ${record.source === "history" ? "Recorded" : "Finalized"}`))].join(", ")}
+        {delivery && records.some(record => record.delivery_id === delivery) ? <span>In this delivery</span> : `Deliveries · ${records.length}`}
       </summary>
       <ul className="mt-2 space-y-1">
         {records.map((record, index) => <li key={record.delivery_id ?? `${record.customer}-${index}`}>
@@ -133,7 +131,7 @@ function TrialIcon({ trial, taskId }: { trial: LatestTrial; taskId: string }) {
   );
 }
 
-export function TaskEvidence({ task, showSummary = false }: { task: TaskBrowseItem; showSummary?: boolean }) {
+export function TaskEvidence({ task, expanded = false }: { task: TaskBrowseItem; expanded?: boolean }) {
   const groups = new Map<string, LatestTrial[]>();
   for (const trial of task.latest_trials) {
     const key = getExperimentAgentKey({ ...trial, kind: "agent" });
@@ -145,13 +143,10 @@ export function TaskEvidence({ task, showSummary = false }: { task: TaskBrowseIt
     Number(isBaselineAgentName(a[0].agent)) - Number(isBaselineAgentName(b[0].agent))
   );
   return (
-    <div className={showSummary ? "contents" : "space-y-3"}>
-      {showSummary ? (
-        <section aria-label="Results" className="mx-5 border-t border-border/60 py-3">
-          <TaskRunSummary summary={task.run_summary} />
-        </section>
-      ) : null}
-      <section aria-label="Recent trials" className={cn("space-y-3", showSummary && "mx-5 border-t border-border/60 py-3")}>
+    <div className="space-y-3">
+      <details open={expanded || undefined} className="border-t pt-3">
+        <summary className="cursor-pointer text-sm">Runs · {task.total_trials} trials</summary>
+        <section aria-label="Recent trials" className="mt-3 space-y-3">
         <div className="flex flex-wrap items-baseline justify-between gap-2 text-xs">
           <span className="text-muted-foreground">Recent trials · current version</span>
           <TrajectorySummary task={task} />
@@ -173,9 +168,12 @@ export function TaskEvidence({ task, showSummary = false }: { task: TaskBrowseIt
             View all results
           </Link>
         </p>
-      </section>
-      <section aria-label="Experiments" className={cn("space-y-1 border-t border-border/60 pt-3", showSummary && "mx-5 pb-5")}>
-        <div className="text-muted-foreground text-xs">Experiments · all versions</div>
+        </section>
+      </details>
+      <details className="border-t pt-3">
+        <summary className="cursor-pointer text-sm">Experiments · {task.experiments.length}</summary>
+        <section aria-label="Experiments" className="mt-3 space-y-1">
+        <div className="text-muted-foreground text-xs">All versions</div>
         {task.experiments.length ? <ExperimentsList
           experiments={task.experiments}
           taskId={task.id}
@@ -184,12 +182,13 @@ export function TaskEvidence({ task, showSummary = false }: { task: TaskBrowseIt
           className="text-xs"
           linkClassName="text-[#5d77a5] dark:text-[#a8b8d2]"
         /> : <p className="text-muted-foreground text-xs">No linked experiments</p>}
-      </section>
+        </section>
+      </details>
     </div>
   );
 }
 
-export function TaskCard({ task }: { task: TaskBrowseItem }) {
+export function TaskCard({ task, disabled = false }: { task: TaskBrowseItem; disabled?: boolean }) {
   const { isSelected, toggle, deliveryId } = useSelection();
   const alreadyAdded = task.active_deliveries?.some(record => record.delivery_id === deliveryId) ?? false;
   const selected = isSelected(task.id);
@@ -197,7 +196,7 @@ export function TaskCard({ task }: { task: TaskBrowseItem }) {
   return (
     <Card
       className={cn(
-        "row-span-5 grid min-w-0 grid-rows-subgrid gap-y-0 bg-card/95 border-[#6f88b4]/20 shadow-xs transition-colors hover:border-[#6f88b4]/40",
+        "min-w-0 gap-0 self-start bg-card/95 border-[#6f88b4]/20 shadow-xs transition-colors hover:border-[#6f88b4]/40",
         selected && "border-[#6f88b4]/70 ring-1 ring-[#6f88b4]/40"
       )}
     >
@@ -205,7 +204,7 @@ export function TaskCard({ task }: { task: TaskBrowseItem }) {
         <div className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-3">
           <Checkbox
             checked={selected || alreadyAdded}
-            disabled={alreadyAdded}
+            disabled={alreadyAdded || disabled}
             onCheckedChange={() => toggle(task)}
             aria-label={`Select ${task.name}`}
             className="mt-0.5 shrink-0"
@@ -279,6 +278,8 @@ export function TaskCard({ task }: { task: TaskBrowseItem }) {
         ) : null}
         <TaskDeliveryHistory task={task} />
       </CardHeader>
+      <section aria-label="Results" className="px-5 pb-4"><TaskRunSummary summary={task.run_summary} outcomesOnly /></section>
+      <TaskSortMetric task={task} hidden={disabled} />
       <section aria-label="Activity and cost" className="mx-5 grid grid-cols-2 gap-3 pb-3">
         <div className="min-w-0">
           <div className="text-muted-foreground text-[11px] tracking-wide uppercase">
@@ -328,7 +329,19 @@ export function TaskCard({ task }: { task: TaskBrowseItem }) {
           ) : null}
         </div>
       </section>
-      <TaskEvidence task={task} showSummary />
+      <div className="px-5 pb-4"><TaskEvidence task={task} /></div>
     </Card>
   );
+}
+
+export function TaskSortMetric({ task, hidden = false }: { task: TaskBrowseItem; hidden?: boolean }) {
+  const sort = useSearchParams().get("sort") ?? "";
+  const field = sort.replace(/_(asc|desc)$/, "");
+  const label = TASK_SORT_FIELDS.find(option => option.value === field)?.label;
+  if (hidden || !label || ["name", "last_run"].includes(field)) return null;
+  const value = field === "created" ? (task.created_at ? formatShortDateTime(task.created_at) : "Unknown")
+    : task.sort_value == null ? "Unavailable"
+    : field === "cost" ? formatCostUsd(task.sort_value)
+    : `${task.sort_value.toLocaleString(undefined, { maximumFractionDigits: 1 })}${field === "runtime_avg" ? " s" : ""}`;
+  return <div className="mx-5 mb-3 text-sm tabular-nums">{label}: <strong>{value}</strong></div>;
 }

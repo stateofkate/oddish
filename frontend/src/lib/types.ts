@@ -425,6 +425,8 @@ export interface TaskRunGroup {
 export type TaskRunSummary = Record<"model" | "oracle" | "nop", TaskRunGroup>;
 
 export interface TaskBrowseItem {
+  sort_value?: number | null;
+  created_at?: string | null;
   run_summary?: TaskRunSummary | null;
   qa_outcome?: "accepted" | "rejected" | "outdated" | "unreviewed" | "running" | "failed";
   id: string;

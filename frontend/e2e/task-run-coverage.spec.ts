@@ -109,97 +109,108 @@ const empty: TaskBrowseItem = {
   run_summary: { model: zero, oracle: zero, nop: zero },
 };
 
-test("coverage and author scope reach selection while result links preserve context", async ({
-  page,
-}) => {
+test("compact cards keep exact outcomes, direct filters and expandable evidence", async ({ page }) => {
   let summaryUnavailable = false;
-  await page.route("**/api/**", async (route) => {
+  let release: (() => void) | undefined;
+  let hold = false;
+  await page.route("**/api/**", async route => {
     const url = new URL(route.request().url());
-    const coverage = url.searchParams.get("run_coverage");
-    const items =
-      coverage === "model_trials"
-        ? [base]
-        : coverage === "validation_only"
-          ? [validation]
-          : [base, validation, empty];
+    const items = url.searchParams.get("run_coverage") === "in_progress" ? [base] : [base, validation, empty];
     let body: unknown = [];
     if (url.pathname === "/api/tasks/browse") {
-      body = { items: items.map(item => summaryUnavailable ? { ...item, run_summary: null } : item), limit: 24, offset: 0, has_more: false };
+      if (hold) await new Promise<void>(resolve => { release = resolve; });
+      body = { items: items.map(item => ({ ...item, sort_value: url.searchParams.get("sort")?.startsWith("steps_p50") ? 184 : 1234567, run_summary: summaryUnavailable ? null : item.run_summary })), limit: 24, offset: 0, has_more: false };
     } else if (url.pathname.endsWith("/count")) body = { total: items.length };
-    else if (url.pathname.endsWith("/ids"))
-      body = { ids: items.map((item) => item.id), truncated: false };
-    else if (url.pathname.endsWith("/facets")) body = {};
+    else if (url.pathname.endsWith("/ids")) body = { ids: items.map(item => item.id), truncated: false };
+    else if (url.pathname.endsWith("/experiment-options")) body = { items: [] };
+    else if (url.pathname.endsWith("/facets")) body = { delivery_customers: ["GDM"], models: ["known-model"], agents: ["known-agent"] };
     else if (url.pathname === "/api/people/search") body = { items: [] };
     await route.fulfill({ json: body });
   });
   await page.goto("/tasks?mine=off");
-  await expect(
-    page.getByText("Model score: 25%", { exact: true })
-  ).toBeVisible();
-  await expect(page.getByText("No model trials", { exact: true })).toHaveCount(
-    2
-  );
-  await expect(
-    page.getByText("NOP: 1/1 as expected · 1 trial", {
-      exact: true,
-    })
-  ).toBeVisible();
-  await expect(page.getByRole("combobox", { name: "Task view" })).toHaveValue("cards");
+  const results = page.getByRole("region", { name: "Results", exact: true }).first();
+  await expect(results.getByText("Pass 1", { exact: true })).toBeVisible();
+  await expect(results.getByText("Fail 3", { exact: true })).toBeVisible();
+  await expect(results.getByText("Error 0", { exact: true })).toBeVisible();
+  await expect(results.getByText("Pending 1", { exact: true })).toBeVisible();
+  await expect(page.getByText("Model score:", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("NOP: 1/1 as expected · 1 trial", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Live updates" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("link", { name: "High effort pass Pass" })).not.toBeVisible();
+  await page.locator("summary").filter({ hasText: "Runs · 35 trials" }).click();
   await expect(page.getByText("test-model/high", { exact: true })).toBeVisible();
   await expect(page.getByText("test-model/low", { exact: true })).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: "Baseline validation experiment" }).first()
-  ).toHaveAttribute("href", "/experiments/exp-one?task=model-task");
-  await expect(
-    page.getByRole("link", { name: "Recent oracle run Pass" }).first()
-  ).toHaveAttribute("href", "/tasks/model-task?trial=oracle-run");
-  // Compare actual section positions: varying titles, costs and trial groups
-  // must not move results or experiment links between neighboring cards.
+  await expect(page.getByRole("link", { name: "Recent oracle run Pass", exact: true })).toHaveAttribute("href", "/tasks/model-task?trial=oracle-run");
+  await page.locator("summary").filter({ hasText: "Experiments · 2" }).first().click();
+  await expect(page.getByRole("link", { name: /Baseline validation experiment/ }).first()).toHaveAttribute("href", "/experiments/exp-one?task=model-task");
   for (const width of [1280, 900, 390]) {
     await page.setViewportSize({ width, height: 1100 });
-    for (const name of ["Activity and cost", "Results", "Recent trials", "Experiments"]) {
-      const boxes = await page.getByRole("region", { name, exact: true }).evaluateAll(nodes =>
-        nodes.map(node => ({ top: node.getBoundingClientRect().top, bottom: node.getBoundingClientRect().bottom }))
-      );
-      const columns = width >= 1280 ? 3 : width >= 768 ? 2 : 1;
-      expect(new Set(boxes.slice(0, columns).map(box => box.top)).size).toBe(1);
-      expect(new Set(boxes.slice(0, columns).map(box => box.bottom)).size).toBe(1);
-    }
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
-    if (width === 1280) await page.screenshot({ path: "task-run-coverage.png", fullPage: true });
   }
   await page.setViewportSize({ width: 1280, height: 1100 });
-  await page.getByRole("button", { name: "Filter tasks by member" }).click();
-  await page.getByRole("button", { name: "Mine", exact: true }).click();
-  await page
-    .getByRole("combobox", { name: "Sort tasks" })
-    .selectOption("model_score_desc");
-  await expect(page).toHaveURL(/mine=only/);
-  await expect(page).toHaveURL(/sort=model_score_desc/);
-  await page
-    .getByRole("combobox", { name: "Runs on current version" })
-    .selectOption("model_trials");
-  await expect(page).toHaveURL(/run_coverage=model_trials/);
-  await expect(
-    page.getByText("Oracle and NOP checks only", { exact: true })
-  ).toHaveCount(0);
-  const selection = page.waitForRequest((request) =>
-    request.url().includes("/api/tasks/browse/ids?")
-  );
+  await page.getByRole("heading", { name: "Tasks", exact: true }).scrollIntoViewIfNeeded();
+  const sidebar = await page.getByRole("complementary", { name: "Task filters" }).boundingBox();
+  const cards = await page.getByRole("region", { name: "Results", exact: true }).first().boundingBox();
+  expect(sidebar!.x + sidebar!.width).toBeLessThan(cards!.x);
+  await page.screenshot({ path: "tasks-sidebar-preview.png", fullPage: true });
+  await expect(page.getByRole("checkbox", { name: "Accepted", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Select model", exact: true }).click();
+  const modelSearch = page.getByRole("textbox", { name: "Find model options", exact: true });
+  await modelSearch.fill("invented-model");
+  await modelSearch.press("Enter");
+  expect(new URL(page.url()).searchParams.has("models")).toBe(false);
+  await expect(page.getByText("No options", { exact: true })).toBeVisible();
+  await modelSearch.fill("known");
+  await page.getByRole("checkbox", { name: "known-model", exact: true }).check();
+  await expect(page).toHaveURL(/models=known-model/);
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Select agent", exact: true }).click();
+  await page.getByRole("checkbox", { name: "known-agent", exact: true }).check();
+  await expect(page).toHaveURL(/agents=known-agent/);
+  await page.keyboard.press("Escape");
+  await page.getByRole("checkbox", { name: "Has execution errors", exact: true }).check();
+  await expect(page).toHaveURL(/harness_count_min=1/);
+  await page.getByRole("checkbox", { name: "Accepted", exact: true }).check();
+  await expect(page).toHaveURL(/qa_outcomes=accepted/);
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Clear filters", exact: true }).click();
+  await page.getByRole("combobox", { name: "Sort tasks" }).click();
+  await page.getByRole("option", { name: "Total tokens", exact: true }).click();
+  await expect(page.getByText("Total tokens: 1,234,567", { exact: true })).toHaveCount(3);
+  await page.getByRole("button", { name: "Highest first", exact: true }).click();
+  await expect(page).toHaveURL(/sort=total_tokens_asc/);
+  await page.getByRole("combobox", { name: "Task view" }).selectOption("table");
+  await expect(page.getByText("Pending 1", { exact: true })).toBeVisible();
+  await expect(page.getByText("Error 0", { exact: true })).toHaveCount(3);
+  await page.getByRole("combobox", { name: "Task view" }).selectOption("cards");
+  hold = true;
+  release = undefined;
+  await page.getByRole("combobox", { name: "Sort tasks" }).click();
+  await page.getByRole("option", { name: "Median steps", exact: true }).click();
+  await expect(page.getByText("Median steps: 1,234,567", { exact: true })).toHaveCount(0);
+  await expect.poll(() => Boolean(release)).toBe(true);
+  hold = false;
+  release!();
+  await expect(page.getByText("Median steps: 184", { exact: true })).toHaveCount(3);
+  hold = true;
+  release = undefined;
+  await page.getByRole("radio", { name: "In progress", exact: true }).check();
+  await expect(page.getByRole("status").filter({ hasText: "Updating tasks…" })).toBeVisible();
+  await expect(page.getByRole("checkbox", { name: `Select ${base.name}`, exact: true })).toBeDisabled();
+  await expect.poll(() => Boolean(release)).toBe(true);
+  hold = false;
+  release!();
+  await expect(page.getByRole("link", { name: validation.name, exact: true })).toHaveCount(0);
+  const selection = page.waitForRequest(request => request.url().includes("/api/tasks/browse/ids?"));
   await page.getByRole("button", { name: /Select .*matching tasks/ }).click();
-  expect(
-    new URL((await selection).url()).searchParams.get("run_coverage")
-  ).toBe("model_trials");
-  await page
-    .getByRole("button", { name: "Clear filters", exact: true })
-    .click();
-  await expect(
-    page.getByRole("combobox", { name: "Runs on current version" })
-  ).toHaveValue("any");
+  expect(new URL((await selection).url()).searchParams.get("run_coverage")).toBe("in_progress");
+  await page.screenshot({ path: "tasks-mece-preview.png", fullPage: true });
   summaryUnavailable = true;
   await page.reload();
-  await expect(page.getByText("Run summary unavailable", { exact: true })).toHaveCount(3);
-  await expect(page.getByText("Model score: —", { exact: true })).toHaveCount(3);
-  await expect(page.getByRole("region", { name: "Experiments", exact: true })).toHaveCount(3);
+  await expect(page.getByText("Run summary unavailable", { exact: true })).toBeVisible();
   await expect(page.getByText("No model trials", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Pass 0", { exact: true })).toHaveCount(0);
+  await page.route("**/api/tasks/browse/count?*", route => route.fulfill({ status: 500, json: { error: "Unavailable" } }));
+  await page.reload();
+  await expect(page.getByText("Task count unavailable", { exact: true })).toBeVisible();
 });

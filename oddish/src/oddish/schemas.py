@@ -2030,7 +2030,10 @@ class TaskBrowseDelivery(BaseModel):
     status: Literal["active", "finalized"] | None = None
 
 
-RunCoverage = Literal["any", "no_trials", "validation_only", "model_trials", "scored_model_trials"]
+RunCoverage = Literal[
+    "any", "no_trials", "validation_only", "model_trials", "scored_model_trials",
+    "no_model_runs", "in_progress", "finished", "unknown",
+]
 
 
 class TaskRunGroup(BaseModel):
@@ -2054,6 +2057,8 @@ class TaskRunSummary(BaseModel):
 
 
 class TaskBrowseItem(BaseModel):
+    sort_value: float | None = None
+    created_at: datetime | None = None
     run_summary: TaskRunSummary | None = None
     qa_outcome: Literal["accepted", "rejected", "outdated", "unreviewed", "running", "failed"] = "unreviewed"
     id: str

@@ -387,3 +387,54 @@ async def test_browse_preview_projects_saved_effort_in_both_query_paths(session,
     assert trials[f"{task}-1"].reasoning_effort == "low"
     assert trials[f"{task}-2"].reasoning_effort is None
     assert all("harbor_config" not in trial.model_dump() for trial in trials.values())
+
+
+@pytest.mark.asyncio
+async def test_browser_run_states_partition_tasks_and_preserve_selection(session):
+    org = uuid.uuid4().hex
+    cases = [
+        ([], "no_model_runs"),
+        ([{"agent": "oracle"}], "no_model_runs"),
+        ([{}, {"status": TrialStatus.RUNNING, "reward": None}], "in_progress"),
+        ([{"status": TrialStatus.FAILED, "error_message": "boom", "reward": None}], "finished"),
+        ([{"status": TrialStatus.SKIPPED, "reward": None}], "finished"),
+        ([{"reward": None}], "finished"),
+        ([{}], "finished"),
+    ]
+    expected = {state: set() for state in ("no_model_runs", "in_progress", "finished", "unknown")}
+    for specs, state in cases:
+        task, _, _ = await seed(session, specs, org=org)
+        expected[state].add(task)
+    missing, version, _ = await seed(session, org=org)
+    await session.execute(update(TaskBrowseSummaryModel).where(TaskBrowseSummaryModel.task_version_id == version).values(run_summary=None))
+    expected["unknown"].add(missing)
+    seen = set()
+    for state, ids in expected.items():
+        page = await browse_tasks_core(session, org_id=org, run_coverage=state)
+        assert {item.id for item in page.items} == ids
+        assert await browse_tasks_core(session, org_id=org, run_coverage=state, count_only=True) == len(ids)
+        assert set(await browse_tasks_core(session, org_id=org, run_coverage=state, ids_only=True)) == ids
+        assert not seen & ids
+        seen |= ids
+    assert len(seen) == len(cases) + 1
+
+
+@pytest.mark.asyncio
+async def test_browser_sort_value_matches_order_in_both_directions(session):
+    org = uuid.uuid4().hex
+    first, _, _ = await seed(session, [{"input_tokens": 100}, {"status": TrialStatus.PENDING, "reward": None}], org=org)
+    second, _, _ = await seed(session, [{"input_tokens": 500}, {}, {"status": TrialStatus.FAILED, "error_message": "boom", "reward": None}], org=org)
+    for field, expected in [
+        ("total_tokens", {first: 100, second: 500}),
+        ("model_pending", {first: 1, second: 0}),
+        ("model_errors", {first: 0, second: 1}),
+        ("model_pass", {first: 1, second: 2}),
+        ("model_trials", {first: 2, second: 3}),
+    ]:
+        for direction in ("asc", "desc"):
+            sort = f"{field}_{direction}"
+            page = await browse_tasks_core(session, org_id=org, sort=sort)
+            assert {item.id: item.sort_value for item in page.items} == expected
+            assert [item.sort_value for item in page.items] == sorted(expected.values(), reverse=direction == "desc")
+            assert await browse_tasks_core(session, org_id=org, sort=sort, ids_only=True) == [item.id for item in page.items]
+            assert all(item.created_at is not None for item in page.items)

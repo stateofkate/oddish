@@ -2,9 +2,10 @@ import type { TaskRunSummary as RunSummary } from "@/lib/types";
 import { STATUS_CONFIG } from "@/lib/status-config";
 
 /** Exact selected-version results. Preview strips never determine these totals. */
-export function TaskRunSummary({ summary, compact = false }: {
+export function TaskRunSummary({ summary, compact = false, outcomesOnly = false }: {
   summary?: RunSummary | null;
   compact?: boolean;
+  outcomesOnly?: boolean;
 }) {
   const model = summary?.model;
   const score = model?.scored ? model.reward_sum / model.scored : null;
@@ -21,20 +22,20 @@ export function TaskRunSummary({ summary, compact = false }: {
     <div className="space-y-2 text-xs" aria-label="Selected version run summary">
       <div className="space-y-2">
         <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-          <div title="Mean reward across scored model trials on this version; excludes oracle/NOP checks.">
+          {!outcomesOnly && <div title="Mean reward across scored model trials on this version; excludes oracle/NOP checks.">
             <span className="text-muted-foreground">Model score:</span>{" "}
             <strong className={`${compact ? "text-base" : "text-xl"} font-mono tabular-nums ${tone}`}>
               {score === null ? "—" : `${Math.round(score * 100)}%`}
             </strong>
-          </div>
+          </div>}
           <span className="text-muted-foreground" title={model ? `${model.reward_sum.toFixed(2)} reward across ${model.scored} scored trials` : undefined}>
             {!model ? "Run summary unavailable" : model.total ? `${model.scored} scored / ${model.total} model trials` : "No model trials"}
           </span>
         </div>
-        {!compact ? (
+        {(!compact || outcomesOnly) && model ? (
           <div className="flex min-h-4 flex-wrap gap-x-3 gap-y-1">
-            {outcomes.filter(([, count]) => count > 0).map(([status, count]) => (
-              <span key={status} className="inline-flex items-center gap-1">
+            {outcomes.filter(([status, count]) => count > 0 || (outcomesOnly && ["pass", "fail", "harness-error", "pending"].includes(status))).map(([status, count]) => (
+              <span key={status} className={outcomesOnly ? "inline-flex items-center gap-1.5 rounded-md border px-2 py-1.5 text-sm" : "inline-flex items-center gap-1"}>
                 <span className={`h-2 w-2 rounded-full ${STATUS_CONFIG[status].bracketClass}`} aria-hidden />
                 {STATUS_CONFIG[status].shortLabel} <span className="font-mono">{count}</span>
               </span>

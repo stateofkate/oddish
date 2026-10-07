@@ -4,12 +4,11 @@ import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { clearTaskFilters, setTaskFilters, updateTaskSearchParams } from "@/lib/tasks-filters";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { TasksMatchCount, TasksHeader } from "./tasks-client";
+import { TasksHeader } from "./tasks-client";
 import { TasksFilters } from "./tasks-filters";
 import {
   SelectionBar,
   SelectionProvider,
-  TasksSelectionControls,
 } from "./selection-context";
 import { RecentTasksResults } from "./recent-tasks-results";
 
@@ -72,6 +71,7 @@ export default function TasksPage() {
       <TooltipProvider>
         <div className="space-y-5" data-testid="tasks-browser">
           <TasksHeader />
+          <div className="grid items-start gap-6 md:grid-cols-[280px_minmax(0,1fr)]">
           <TasksFilters
             searchQuery={searchQuery}
             onSearchChange={setSearchQuery}
@@ -84,13 +84,8 @@ export default function TasksPage() {
             }}
             onClearFilters={clearFilters}
           />
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <span className="text-muted-foreground text-sm">
-              <TasksMatchCount />
-            </span>
-            <TasksSelectionControls />
+          <div className="min-w-0"><RecentTasksResults onClearFilters={clearFilters} /></div>
           </div>
-          <RecentTasksResults onClearFilters={clearFilters} />
           <div className="bg-background/95 sticky bottom-3 z-10 rounded-lg">
             <SelectionBar />
           </div>

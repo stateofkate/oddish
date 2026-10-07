@@ -76,22 +76,16 @@ test("rapid author and sort changes preserve each other and pending search", asy
     .getByRole("textbox", { name: "Search tasks", exact: true })
     .fill("some task");
   await page.getByRole("button", { name: "Filter tasks by member" }).click();
-  await page.evaluate(() => {
-    const mine = Array.from(document.querySelectorAll("button")).find(button => button.textContent?.trim() === "Mine")!;
-    const sort = document.querySelector<HTMLSelectElement>(
-      'select[aria-label="Sort tasks"]'
-    )!;
-    mine.click();
-    sort.value = "total_trials_desc";
-    sort.dispatchEvent(new Event("change", { bubbles: true }));
-  });
+  await page.getByRole("button", { name: "Mine", exact: true }).click();
+  await page.getByRole("combobox", { name: "Sort tasks" }).click();
+  await page.getByRole("option", { name: "Model trials", exact: true }).click();
   await expect
     .poll(() => new URL(page.url()).searchParams.get("q"))
     .toBe("some task");
   expect(new URL(page.url()).searchParams.get("mine")).toBe("only");
   expect(new URL(page.url()).searchParams.has("author")).toBe(false);
   expect(new URL(page.url()).searchParams.get("sort")).toBe(
-    "total_trials_desc"
+    "model_trials_desc"
   );
   await expect(
     page.getByRole("button", { name: "Ready to ship", exact: true })
@@ -179,7 +173,7 @@ test("filter presets and delivery context survive clearing filters", async ({
   await expect(
     page.getByRole("heading", { name: "Add tasks to Existing" })
   ).toBeVisible();
-  await page.getByRole("button", { name: /^More criteria/ }).click();
+  await page.getByRole("button", { name: /^Additional filters$/ }).click();
   await page.getByRole("textbox", { name: "Find a filter" }).fill("trial");
   await page
     .getByRole("combobox", { name: "Trial count", exact: true })
@@ -268,7 +262,7 @@ test("delivery picker preserves trial counts and only adds to its named destinat
   await page
     .getByRole("button", { name: "Trial details", exact: true })
     .click();
-  await expect(page.getByText("Model score: 97%", { exact: true })).toBeVisible();
+  await expect(page.getByText("Pass 29", { exact: true })).toBeVisible();
   await page
     .getByRole("checkbox", { name: "Select Queue recovery", exact: true })
     .first()
@@ -283,7 +277,7 @@ test("delivery picker preserves trial counts and only adds to its named destinat
 test("numeric custom ranges apply once and reject inverted bounds", async ({
   page,
 }) => {
-  await page.getByRole("button", { name: /^More criteria/ }).click();
+  await page.getByRole("button", { name: /^Additional filters$/ }).click();
   await page.getByRole("textbox", { name: "Find a filter" }).fill("Median steps");
   await page
     .getByRole("combobox", { name: "Median steps", exact: true })
@@ -311,14 +305,12 @@ test("numeric custom ranges apply once and reject inverted bounds", async ({
 test("sorting only-mine links keeps the author filter", async ({page}) => {
   await page.goto("/picker?mine=only");
   await expect(page.getByText("1,201 selected", { exact: true })).toBeVisible();
-  await page.getByRole("combobox", {name: "Sort tasks"}).selectOption("model_score_desc");
+  await page.getByRole("combobox", {name: "Sort tasks"}).click();
+  await page.getByRole("option", {name: "Passes", exact: true}).click();
   await expect.poll(() => new URL(page.url()).searchParams.get("mine")).toBe("only");
-  await page.evaluate(() => {
-    const sort = document.querySelector<HTMLSelectElement>('select[aria-label="Sort tasks"]')!;
-    const clear = document.querySelector<HTMLButtonElement>('button[aria-label="Clear member filter"]')!;
-    sort.value = "recent"; sort.dispatchEvent(new Event("change", {bubbles: true}));
-    clear.click();
-  });
+  await page.getByRole("combobox", {name: "Sort tasks"}).click();
+  await page.getByRole("option", {name: "Last run", exact: true}).click();
+  await page.getByRole("button", {name: "Clear member filter", exact: true}).click();
   await expect.poll(() => new URL(page.url()).searchParams.get("mine")).toBe("off");
   expect(new URL(page.url()).searchParams.has("author")).toBe(false);
 });
@@ -355,26 +347,27 @@ for (const [filter, option, key, value] of [
   ["Agent · Model", "test-model", "agent_models", "test-agent:test-model"],
 ]) {
   test(`nested ${filter} accepts pointer clicks above its parent`, async ({ page }) => {
-    if (filter === "QA outcome") await page.getByRole("button", { name: "Review: Any", exact: true }).click();
-    else {
-      await page.getByRole("button", { name: /^More criteria/ }).click();
+    if (filter !== "QA outcome") {
+      await page.getByRole("button", { name: /^Additional filters$/ }).click();
       await page.getByRole("textbox", { name: "Find a filter" }).fill(filter);
     }
+    if (filter !== "QA outcome") {
     await page
       .getByRole("group", { name: filter, exact: true })
-      .getByRole("button", { name: "Any", exact: true })
+      .getByRole("button", { name: filter === "Category" ? "Select category" : "Any", exact: true })
       .click();
+    }
     await page.getByRole("checkbox", { name: option, exact: true }).click();
     await expect.poll(() => new URL(page.url()).searchParams.get(key)).toBe(value);
   });
 }
 
 test("advanced conditions accept pointer clicks above the filters panel", async ({ page }) => {
-  await page.getByRole("button", { name: /^More criteria/ }).click();
+  await page.getByRole("button", { name: /^Additional filters$/ }).click();
   await page.getByRole("textbox", { name: "Find a filter" }).fill("Match any");
   await page.getByRole("button", { name: "Add condition", exact: true }).click();
   await page.getByRole("menuitem", { name: "Trial count", exact: true }).click();
-  await expect(page.getByRole("dialog", { name: "Task filters" }).getByText("Trial count", { exact: true })).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Task filters" }).getByText("Trial count", { exact: true })).toBeVisible();
 });
 
 test("empty customer list supports creation without losing delivery name or picks", async ({ page }) => {
@@ -441,14 +434,14 @@ test("tags load only when their filter is revealed and reuse the result on reope
     tagRequests++;
     await route.fulfill({ json: { items: [] } });
   });
-  await page.getByRole("button", { name: /^More criteria/ }).click();
+  await page.getByRole("button", { name: /^Additional filters$/ }).click();
   await expect(page.getByRole("textbox", { name: "Find a filter" })).toBeVisible();
-  expect(tagRequests).toBe(0);
+  await expect.poll(() => tagRequests).toBe(1);
   await page.getByRole("textbox", { name: "Find a filter" }).fill("Tags");
   await expect.poll(() => tagRequests).toBe(1);
   await expect(page.getByRole("button", { name: "Has all", exact: true })).toBeVisible();
-  await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: /^More criteria/ }).click();
+  await page.getByRole("button", { name: /^Additional filters$/ }).click();
+  await page.getByRole("button", { name: /^Additional filters$/ }).click();
   await expect(page.getByRole("button", { name: "Has all", exact: true })).toBeVisible();
   expect(tagRequests).toBe(1);
 });
@@ -511,26 +504,23 @@ for (const destination of ["", "?delivery=existing"]) {
     }));
     await page.goto(`/picker${destination}`);
     await expect(
-      page.locator("summary").filter({ hasText: "Mapped Lab" })
+      page.locator("summary").filter({ hasText: "Deliveries ·" })
     ).toBeVisible();
-    await page.locator("summary").filter({ hasText: "Mapped Lab" }).click();
+    await page.locator("summary").filter({ hasText: "Deliveries ·" }).click();
     await expect(page.getByText(/August batch · 2026-08-01/)).toBeVisible();
-    await page
-      .getByRole("combobox", { name: "Lab", exact: true })
-      .selectOption("Mapped Lab");
-    expect(new URL(page.url()).searchParams.get("delivered_to")).toBe("Mapped Lab");
+    await page.getByRole("combobox", { name: "Lab", exact: true }).click();
+    await page.getByRole("option", { name: "Mapped Lab", exact: true }).click();
+    expect(new URL(page.url()).searchParams.get("delivered_to")).toBe(null);
     expect(new URL(page.url()).searchParams.has("not_delivered_to")).toBe(
       false
     );
-    await page
-      .getByRole("combobox", { name: "Delivery status" })
-      .selectOption("delivered");
+    await page.getByRole("combobox", { name: "Delivery status" }).click();
+    await page.getByRole("option", { name: "Recorded", exact: true }).click();
     await expect
       .poll(() => new URL(page.url()).searchParams.get("delivered_to"))
       .toBe("Mapped Lab");
-    await page
-      .getByRole("combobox", { name: "Delivery status" })
-      .selectOption("none");
+    await page.getByRole("combobox", { name: "Delivery status" }).click();
+    await page.getByRole("option", { name: "No record", exact: true }).click();
     await expect
       .poll(() => new URL(page.url()).searchParams.get("not_delivered_to"))
       .toBe("Mapped Lab");
@@ -551,10 +541,8 @@ for (const view of ["table", "cards"]) {
         }], offset: 0, has_more: false,
       } }));
       await page.goto(`/picker?view=${view}&${filter}`);
-      const history = page.locator("summary").filter({ hasText: "Legacy Lab" });
-      await expect(history).toContainText("Legacy Lab · Recorded");
-      await expect(history).toContainText("Legacy Lab · Finalized");
-      await expect(history).toContainText("In active batch · Legacy Lab");
+      const history = page.locator("summary").filter({ hasText: "Deliveries · 3" });
+      await expect(history).toBeVisible();
       await expect(page.getByText("No delivery recorded", { exact: true })).toHaveCount(0);
       await history.click();
       await expect(page.getByText("Legacy Lab · Imported batch · 2026-08-01", { exact: true })).toBeVisible();
@@ -671,7 +659,7 @@ test("presentation changes preserve the page without refetching", async ({ page 
   await page.getByRole("checkbox", { name: "Cost", exact: true }).check();
   await expect(page.getByRole("columnheader", { name: "Cost", exact: true })).toBeVisible();
   await page.getByRole("combobox", { name: "Task view" }).selectOption("cards");
-  await expect(page.getByText("Model score: 97%", { exact: true })).toBeVisible();
+  await expect(page.getByText("Pass 29", { exact: true })).toBeVisible();
   expect(new URL(page.url()).searchParams.get("offset")).toBe("24");
   expect(requests).toBe(before);
 });
@@ -787,7 +775,7 @@ test("URL restores expanded evidence and criteria without changing the task quer
   await page.reload();
   await expect(page.getByRole("button", {name: "Trial details"})).toHaveAttribute("aria-expanded", "true");
   const before = requests;
-  await page.getByRole("button", {name: /^More criteria/}).click();
+  await page.getByRole("button", {name: /^Additional filters$/}).click();
   await page.getByRole("textbox", {name: "Find a filter"}).fill("Median steps");
   await expect.poll(() => new URL(page.url()).searchParams.get("filter_search")).toBe("Median steps");
   expect(new URL(page.url()).searchParams.get("filters")).toBe("1");
@@ -814,7 +802,7 @@ test("URL restores expanded evidence and criteria without changing the task quer
   await expect(page.getByRole("combobox", {name: "Task view"})).toHaveValue("table");
   expect(new URL(page.url()).searchParams.has("expanded")).toBe(false);
   await page.goto("/picker?filters=1&filter_groups=Trial");
-  await expect(page.getByRole("button", {name: "Trial filters", exact: true})).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByRole("group", {name: "Trial status", exact: true})).toBeVisible();
 });
 
 test("criteria search preserves caret edits and follows URL navigation", async ({ page }) => {
@@ -822,7 +810,7 @@ test("criteria search preserves caret edits and follows URL navigation", async (
   const input = page.getByRole("textbox", { name: "Find a filter" });
   await input.pressSequentially("steps");
   await expect(input).toHaveValue("steps");
-  await input.press("Home");
+  for (let i = 0; i < 5; i++) await input.press("ArrowLeft");
   await input.pressSequentially("Median ", { delay: 20 });
   await expect(input).toHaveValue("Median steps");
   await expect.poll(() => new URL(page.url()).searchParams.get("filter_search")).toBe("Median steps");

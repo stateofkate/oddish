@@ -6,7 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { useSelection } from "./selection-context";
+import { useSelection, TasksSelectionControls } from "./selection-context";
 import {
   TASKS_PAGE_SIZE,
   QA_OUTCOME_OPTIONS,
@@ -16,9 +16,10 @@ import { useTaskBrowse } from "@/lib/use-task-browse";
 import { cn } from "@/lib/utils";
 import type { TaskBrowseItem } from "@/lib/types";
 import { formatCostUsd } from "@/lib/format";
-import { TaskCard, TaskDeliveryHistory, TaskEvidence } from "./task-card";
+import { TaskCard, TaskDeliveryHistory, TaskEvidence, TaskSortMetric } from "./task-card";
 import { TaskRunSummary } from "@/components/task-run-summary";
 import { TaskBrowseLink } from "./task-browse-link";
+import { TasksMatchCount } from "./tasks-client";
 import { TasksGridSkeleton } from "./tasks-grid-skeleton";
 
 function pageHref(sp: URLSearchParams, offset: number): string {
@@ -49,7 +50,7 @@ const TASK_COLUMNS = [
   },
   {
     label: "Trials",
-    render: (task: TaskBrowseItem) => <TaskRunSummary summary={task.run_summary} compact />,
+    render: (task: TaskBrowseItem) => <TaskRunSummary summary={task.run_summary} compact outcomesOnly />,
   },
   { label: "Agents", render: (task: TaskBrowseItem) => task.agent_count ?? 0 },
   {
@@ -100,10 +101,56 @@ export function RecentTasksResults({
   const offset = Math.max(Number(sp.get("offset") ?? "0") || 0, 0);
   const { data, error, isLoading, mutate } = useTaskBrowse(sp);
 
+  const toolbar = (
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="mr-auto text-sm text-muted-foreground"><TasksMatchCount /></span>
+        <TasksSelectionControls />
+        {view === "table" ? <details className="relative rounded-md border px-3 py-2 text-sm">
+          <summary className="cursor-pointer">Columns</summary>
+          <div className="bg-popover absolute right-0 z-20 mt-3 w-48 space-y-2 rounded-md border p-3 shadow-md">
+            {columns.map((column) => (
+              <label key={column} className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={visibleColumns.includes(column)}
+                  onChange={(event) =>
+                    updateTaskSearchParams((params) => {
+                      const current = new Set(
+                        params.has("columns")
+                          ? params.get("columns")!.split(",").filter(Boolean)
+                          : DEFAULT_COLUMNS
+                      );
+                      if (event.target.checked) current.add(column);
+                      else current.delete(column);
+                      params.set("columns", Array.from(current).join(","));
+                    }, { resetPage: false })
+                  }
+                />
+                {column}
+              </label>
+            ))}
+          </div>
+        </details> : null}
+        <select
+          aria-label="Task view"
+          className="border-input bg-background h-9 rounded-md border px-3 text-sm"
+          value={view}
+          onChange={(event) =>
+            updateTaskSearchParams((params) =>
+              params.set("view", event.target.value), { resetPage: false }
+            )
+          }
+        >
+          <option value="table">Table</option>
+          <option value="cards">Cards</option>
+        </select>
+      </div>
+  );
+
   if (!data) {
     if (error) {
       return (
-        <Alert variant="destructive">
+        <>{toolbar}<Alert variant="destructive">
           <AlertTitle>Failed to load tasks</AlertTitle>
           <AlertDescription>
             Check the API connection and try again.{" "}
@@ -115,10 +162,10 @@ export function RecentTasksResults({
               Retry
             </button>
           </AlertDescription>
-        </Alert>
+        </Alert></>
       );
     }
-    return <TasksGridSkeleton />;
+    return <>{toolbar}<TasksGridSkeleton /></>;
   }
 
   const items = data.items ?? [];
@@ -161,6 +208,7 @@ export function RecentTasksResults({
   if (items.length === 0) {
     return (
       <div className="space-y-4">
+        {toolbar}
         {errorBanner}
         {expansionNotice}
         <div
@@ -183,48 +231,9 @@ export function RecentTasksResults({
       className={cn("space-y-4 transition-opacity", isLoading && "opacity-60")}
     >
       {errorBanner}
+      {isLoading ? <p role="status" className="text-sm">Updating tasks…</p> : null}
       {expansionNotice}
-      <div className="flex flex-wrap justify-end gap-2">
-        {view === "table" ? <details className="relative rounded-md border px-3 py-2 text-sm">
-          <summary className="cursor-pointer">Columns</summary>
-          <div className="bg-popover absolute right-0 z-20 mt-3 w-48 space-y-2 rounded-md border p-3 shadow-md">
-            {columns.map((column) => (
-              <label key={column} className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={visibleColumns.includes(column)}
-                  onChange={(event) =>
-                    updateTaskSearchParams((params) => {
-                      const current = new Set(
-                        params.has("columns")
-                          ? params.get("columns")!.split(",").filter(Boolean)
-                          : DEFAULT_COLUMNS
-                      );
-                      if (event.target.checked) current.add(column);
-                      else current.delete(column);
-                      params.set("columns", Array.from(current).join(","));
-                    }, { resetPage: false })
-                  }
-                />
-                {column}
-              </label>
-            ))}
-          </div>
-        </details> : null}
-        <select
-          aria-label="Task view"
-          className="border-input bg-background h-9 rounded-md border px-3 text-sm"
-          value={view}
-          onChange={(event) =>
-            updateTaskSearchParams((params) =>
-              params.set("view", event.target.value), { resetPage: false }
-            )
-          }
-        >
-          <option value="table">Table</option>
-          <option value="cards">Cards</option>
-        </select>
-      </div>
+      {toolbar}
       {view === "table" ? (
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
@@ -257,8 +266,9 @@ export function RecentTasksResults({
                       <div className="text-muted-foreground text-xs">
                         v{task.current_version ?? "—"}
                       </div>
+                      <TaskSortMetric task={task} hidden={isLoading || Boolean(error)} />
                     </td>
-                    {shownColumns.map(column => <td key={column.label}>{column.render(task)}</td>)}
+                    {shownColumns.map(column => <td className="px-3 py-2" key={column.label}>{column.render(task)}</td>)}
                     <td>
                       <Button
                         variant="ghost"
@@ -279,7 +289,7 @@ export function RecentTasksResults({
                   {expanded === task.id ? (
                     <tr>
                       <td colSpan={3 + shownColumns.length} className="p-3">
-                        <TaskEvidence task={task} />
+                        <TaskEvidence task={task} expanded />
                       </td>
                     </tr>
                   ) : null}
@@ -289,9 +299,9 @@ export function RecentTasksResults({
           </table>
         </div>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(min(100%,320px),1fr))]">
           {items.map((task) => (
-            <TaskCard key={task.id} task={task} />
+            <TaskCard key={task.id} task={task} disabled={isLoading || Boolean(error)} />
           ))}
         </div>
       )}

@@ -898,6 +898,7 @@ def _task_metrics_subquery(
 # The column labels must match the ``add_columns`` labels in browse_tasks_core.
 _AGGREGATE_SORTS: dict[str, tuple[str, bool]] = {
     "cost_desc": ("cost_usd", True),
+    "cost_asc": ("cost_usd", False),
     "avg_score_desc": ("avg_reward", True),
     "avg_score_asc": ("avg_reward", False),
     "total_tokens_desc": ("total_tokens", True),
@@ -1518,6 +1519,10 @@ async def browse_tasks_core(
                 "validation_only": (model_total == 0) & (validation_total > 0),
                 "model_trials": model_total > 0,
                 "scored_model_trials": summary["model"]["scored"].as_integer() > 0,
+                "no_model_runs": model_total == 0,
+                "in_progress": (model_total > 0) & (summary["model"]["other_count"].as_integer() > 0),
+                "finished": (model_total > 0) & (summary["model"]["other_count"].as_integer() == 0),
+                "unknown": model_total.is_(None),
             }[run_coverage]
         )
 
@@ -2131,9 +2136,11 @@ async def browse_tasks_core(
     # familiar ordering. The metric columns exist on the subquery only when the
     # aggregate join was added above, hence the ``aggregate_sort_active`` guard.
     aggregate_order = []
+    sort_value = literal(None)
     if aggregate_sort_active:
         column_label, descending = _AGGREGATE_SORTS[sort]  # type: ignore[index]
         metric_column = ranked_tasks_subquery.c[column_label]
+        sort_value = metric_column
         aggregate_order.append(
             nulls_last(metric_column.desc() if descending else metric_column.asc())
         )
@@ -2142,6 +2149,7 @@ async def browse_tasks_core(
     if sort in _SUMMARY_SORTS:
         column_name, descending = _SUMMARY_SORTS[sort]
         summary_column = getattr(TaskBrowseSummaryModel, column_name)
+        sort_value = summary_column
         aggregate_order.append(
             nulls_last(summary_column.desc() if descending else summary_column.asc())
         )
@@ -2157,6 +2165,19 @@ async def browse_tasks_core(
         aggregate_order.append(
             nulls_last(metric.asc() if sort == "model_score_asc" else metric.desc())
         )
+
+    sort_field, _, direction = (sort or "").rpartition("_")
+    model_fields = {"model_pending": "other_count", "model_errors": "harness_count",
+                    "model_fail": "fail_count", "model_pass": "pass_count", "model_trials": "total"}
+    if sort_field in model_fields and direction in ("asc", "desc"):
+        sort_value = TaskBrowseSummaryModel.run_summary["model"][model_fields[sort_field]].as_integer()
+        aggregate_order.append(nulls_last(sort_value.asc() if direction == "asc" else sort_value.desc()))
+    identity_fields = {"name": ranked_tasks_subquery.c.name, "created": ranked_tasks_subquery.c.created_at,
+                       "last_run": TaskBrowseSummaryModel.last_run_at}
+    if sort_field in identity_fields and direction in ("asc", "desc"):
+        column = identity_fields[sort_field]
+        aggregate_order.append(nulls_last(column.asc() if direction == "asc" else column.desc()))
+    paged_rows = paged_rows.add_columns(sort_value.label("sort_value"), ranked_tasks_subquery.c.created_at)
 
     # The pinned author's tasks come before the sort itself: "mine first, then
     # everything else by the chosen order".
@@ -2208,7 +2229,7 @@ async def browse_tasks_core(
 
     experiments_by_task: dict[str, list[TaskBrowseExperiment]] = {}
     latest_trials_by_task: dict[str, list[TaskBrowseTrial]] = {}
-    cost_scope_active = sort == "cost_desc"
+    cost_scope_active = sort in ("cost_desc", "cost_asc")
     task_version_pairs = [
         (str(row["task_id"]), str(row["current_version_id"]))
         for row in visible_rows
@@ -2503,6 +2524,8 @@ async def browse_tasks_core(
     response = TaskBrowseResponse(
         items=[
             TaskBrowseItem(
+                sort_value=row["sort_value"],
+                created_at=row["created_at"],
                 run_summary=row["run_summary"],
                 id=str(row["task_id"]),
                 name=str(row["name"]),

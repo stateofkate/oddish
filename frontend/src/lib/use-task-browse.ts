@@ -52,6 +52,7 @@ export function browseKey(
     const value = searchParams.get(key);
     if (value) params.set(key, value);
   }
+  if (mode !== "count" && !params.has("sort")) params.set("sort", "last_run_desc");
   const offset = Math.max(Number(searchParams.get("offset") ?? "0") || 0, 0);
   if (mode === "page" && offset > 0) params.set("offset", String(offset));
   const prefix =
@@ -197,6 +198,7 @@ export function useTaskBrowseRevalidate(): () => Promise<unknown> {
 export function useTaskBrowseCount(searchParams: URLSearchParams): {
   total: number | null;
   isStale: boolean;
+  error?: Error;
 } {
   const { data, error, isLoading } = useSWR<TaskBrowseCountResponse, Error>(
     browseKey(searchParams, "count"),
@@ -210,5 +212,6 @@ export function useTaskBrowseCount(searchParams: URLSearchParams): {
   return {
     total: typeof data?.total === "number" ? data.total : null,
     isStale: isLoading || Boolean(error),
+    error,
   };
 }
