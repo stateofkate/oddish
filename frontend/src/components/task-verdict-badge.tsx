@@ -110,6 +110,9 @@ export function TaskVerdictBadge({
   error,
   action,
   mustFixCount = task.must_fix_count ?? 0,
+  version,
+  sourceLink,
+  selectedTrialId,
 }: {
   task: Task;
   variant: "card" | "inline" | "summary";
@@ -123,6 +126,10 @@ export function TaskVerdictBadge({
   action?: ReactNode;
   /** Required findings for the selected version, including run reviews. */
   mustFixCount?: number;
+  /** Version shown by the task pane; omitted by compact badges. */
+  version?: number | null;
+  sourceLink?: ReactNode;
+  selectedTrialId?: string | null;
 }) {
   const hasAny =
     mustFixCount > 0 ||
@@ -148,6 +155,20 @@ export function TaskVerdictBadge({
       </div>
     ) : null;
   const verdict = task.verdict ?? null;
+  const previousRejection =
+    task.review_version_matches === false &&
+    taskReviewStatus(task) === "no_verdict" &&
+    (verdict?.verdict === "reject" || verdict?.is_good === false);
+  const otherReview = Boolean(
+    selectedTrialId &&
+    verdict?._graded_by &&
+    selectedTrialId !== verdict._graded_by
+  );
+  const priorTaskRejection = p.isGood === false && otherReview;
+  const inlineTitle =
+    p.isGood === false && selectedTrialId
+      ? `${priorTaskRejection ? "Previous task review" : "Task review"}: Rejected${mustFixCount > 0 ? ` · ${mustFixCount} Must fix` : ""}`
+      : p.title;
   // An accepted or rejected verdict is final; disagreement goes through the
   // verdict feedback votes, not a rerun.
   const showRunButton =
@@ -181,7 +202,9 @@ export function TaskVerdictBadge({
                 ? `Verdict rejected · ${rejectionSource}`
                 : isRunning && mustFixCount === 0
                   ? "Queuing QA verdict…"
-                  : p.title}
+                  : variant === "inline"
+                    ? inlineTitle
+                    : p.title}
             </span>
             {mustFixCount === 0 && p.isGood !== null && verdict?.confidence ? (
               <span className="font-mono text-[10.5px] text-[color:var(--paper-ink-3)]">
@@ -205,6 +228,22 @@ export function TaskVerdictBadge({
           rejectionSource ? (
             <p className="mt-1 text-sm">{mustFixCount} Must fix</p>
           ) : null}
+          {variant === "inline" && (p.isGood !== null || previousRejection) && (
+            <div className="text-muted-foreground mt-1 space-y-1 text-xs">
+              {previousRejection ? (
+                <p className="text-red-600">
+                  Previous rejection · not confirmed for{version != null ? ` v${version}` : " this version"}.
+                </p>
+              ) : priorTaskRejection ? (
+                <p>This rejection is from an earlier review, not this trial.</p>
+              ) : (
+                <p>
+                  Applies to {version != null ? `task v${version}` : "this task version"}, not an individual run’s result.
+                </p>
+              )}
+              {sourceLink}
+            </div>
+          )}
           {rejectionDetail}
           {shownDetail && p.isGood !== false ? (
             <p

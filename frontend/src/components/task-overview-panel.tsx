@@ -26,8 +26,8 @@ import {
 } from "@/components/qa-report/types";
 import { FALLBACK_TOKEN, VERDICT_TOKENS } from "@/components/qa-report/tokens";
 import { TaskVerdictBadge } from "@/components/task-verdict-badge";
-import { defaultVersionElsewhere } from "@/lib/experiment-task-version";
 import { isActivePipelineStatus } from "@/lib/job-status";
+import { expandTrialParam } from "@/lib/trial-url";
 import type {
   AnalysisClassification,
   PreTrialFinding,
@@ -172,7 +172,9 @@ export function TaskOverviewPanel({
   className?: string;
 }) {
   const router = useRouter();
-  const selectedFinding = useSearchParams().get("finding");
+  const searchParams = useSearchParams();
+  const selectedFinding = searchParams.get("finding");
+  const selectedTrialId = expandTrialParam(searchParams.get("trial"), taskId);
   const versionKnown = version !== undefined;
   // The fetch waits for the version so it can scope server-side — a task
   // carries trials across many versions and experiments, and every full row
@@ -364,6 +366,8 @@ export function TaskOverviewPanel({
     trialId && taskId && !readOnly ? (
       <a
         href={`/tasks/${encodeURIComponent(taskId)}?trial=${encodeURIComponent(trialId)}`}
+        target="_blank"
+        rel="noopener noreferrer"
         className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 font-mono text-[10px] underline decoration-dotted underline-offset-2"
       >
         {label}
@@ -693,6 +697,14 @@ export function TaskOverviewPanel({
           <TaskVerdictBadge
             task={verdictTask}
             variant="inline"
+            version={version}
+            selectedTrialId={selectedTrialId}
+            sourceLink={analysisTrialLink(
+              verdictReportId,
+              verdictTask.verdict?.is_good === false || verdictTask.verdict?.verdict === "reject"
+                ? "View rejected review"
+                : "View source review (new tab)"
+            )}
             mustFixCount={mustFixCount}
             action={readOnly ? undefined : executionReviewAction}
             error={executionReviewError}
@@ -717,10 +729,6 @@ export function TaskOverviewPanel({
               }
             />
           ) : null}
-          {verdictTask.review_version_matches === true ||
-          defaultVersionElsewhere(verdictTask) == null
-            ? analysisTrialLink(verdictTask.verdict?._graded_by, "View QA run")
-            : null}
         </div>
       ) : null}
 

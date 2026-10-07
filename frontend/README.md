@@ -345,3 +345,5 @@ visible before the first agent message without opening an empty output section.
 Initializing follows current-attempt phase progress even when timing is absent;
 its duration still requires recorded timestamps. Pending, queued and retrying
 rows do not reuse stale initialization milestones or timing from an earlier run.
+
+The task Overview labels a rejection from a different review as “Previous task review: Rejected” when a trial is selected, including on the same task version. “View rejected review” links directly to the verdict’s `_graded_by` source; opening that source does not label it as a different review. Unmatched prior-version rejections remain explicitly unconfirmed for the selected version. Source-review and audit links open in a new tab so the original run remains available. This adds no history view or API request.

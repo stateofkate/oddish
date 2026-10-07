@@ -199,7 +199,7 @@ test("opening a trial drawer preserves acceptance before and after the panel res
     await expect(accepted).toHaveCount(2);
     await expect(explanation).toHaveCount(2);
     await expect(
-      drawer.getByRole("link", { name: "View QA run", exact: true })
+      drawer.getByRole("link", { name: "View source review (new tab)", exact: true })
     ).toHaveAttribute("href", "/tasks/task-a?trial=task-a-published-qa");
   } finally {
     releasePanel();
@@ -211,7 +211,7 @@ test("opening a trial drawer preserves acceptance before and after the panel res
   await expect(accepted).toHaveCount(2);
   await expect(explanation).toHaveCount(2);
   await expect(
-    drawer.getByRole("link", { name: "View QA run", exact: true })
+    drawer.getByRole("link", { name: "View source review (new tab)", exact: true })
   ).toHaveAttribute("href", "/tasks/task-a?trial=task-a-published-qa");
   await expect(page.getByText("Verdict queued", { exact: true })).toHaveCount(
     0
@@ -348,10 +348,54 @@ test("a newer report fetched by the drawer replaces the page verdict and keeps i
     page.getByText("Verdict accepted", { exact: true })
   ).toHaveCount(0);
   await expect(
-    drawer.getByText("Verdict rejected", { exact: true })
+    drawer.getByText("Previous task review: Rejected", { exact: true })
   ).toBeVisible();
   await expect(drawer.getByText("Fix 9.", { exact: true })).toBeVisible();
   await expect(
-    drawer.getByRole("link", { name: "View QA run", exact: true })
+    drawer.getByRole("link", { name: "View rejected review", exact: true })
   ).toHaveAttribute("href", "/tasks/task-a?trial=task-a-new-qa");
+});
+
+
+test("queued trial links its earlier rejection without replacing the current run", async ({ page, context }) => {
+  const sourceId = "task-a-42";
+  const queued = { ...tasks[0].trials![0], status: "queued", reward: null,
+    started_at: null, finished_at: null, analysis: null, analysis_status: null };
+  await context.route("**/api/tasks/task-a/open**", (route) => {
+    const open = openFor(tasks[0], 7);
+    open.task.verdict!._graded_by = sourceId;
+    open.trials = [queued as typeof open.trials[number]];
+    return route.fulfill({ json: open });
+  });
+  await context.route("**/api/tasks/task-a/panel**", async (route) => {
+    const panel = await (await route.fetch()).json();
+    panel.task.verdict._graded_by = sourceId;
+    return route.fulfill({ json: panel });
+  });
+  await context.route("**/api/trials/task-a-trial", (route) => route.fulfill({ json: queued }));
+  await context.route(`**/api/trials/${sourceId}`, (route) => route.fulfill({ json: {
+    ...tasks[0].trials![0], id: sourceId, name: sourceId,
+  } }));
+  await page.goto("/tasks/task-a?version=7&trial=task-a-trial&tab=summary");
+  const drawer = page.locator('[data-slot="resizable-drawer"]');
+  await expect(drawer.getByText("Previous task review: Rejected · 1 Must fix", { exact: true })).toBeVisible();
+  await expect(drawer.getByText("This rejection is from an earlier review, not this trial.")).toBeVisible();
+  await expect(drawer.getByText("Queued", { exact: true })).toBeVisible();
+  const source = drawer.getByRole("link", { name: "View rejected review" });
+  await expect(source).toHaveAttribute("target", "_blank");
+  await expect(source).toHaveAttribute("rel", "noopener noreferrer");
+  await expect(source).toHaveAttribute("href", /trial=task-a-42/);
+  await expect(drawer.getByRole("tab", { name: "Summary", exact: true })).toBeVisible();
+  await expect(drawer.getByRole("heading", { name: "Findings", exact: true })).toBeVisible();
+  const popupPromise = page.waitForEvent("popup");
+  await source.click();
+  const popup = await popupPromise;
+  await expect(popup).toHaveURL(/trial=task-a-42/);
+  await expect(popup.locator('[data-slot="resizable-drawer"]').getByText("Task review: Rejected · 1 Must fix", { exact: true })).toBeVisible();
+  await expect(popup.getByText("This rejection is from an earlier review, not this trial.")).toHaveCount(0);
+  await expect(page).toHaveURL(/trial=task-a-trial/);
+  await expect(drawer.getByText("Queued", { exact: true })).toBeVisible();
+  await popup.goto("/tasks/task-a?trial=42&tab=summary");
+  await expect(popup.locator('[data-slot="resizable-drawer"]').getByText("Task review: Rejected · 1 Must fix", { exact: true })).toBeVisible();
+  await popup.close();
 });

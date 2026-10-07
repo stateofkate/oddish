@@ -114,6 +114,9 @@ const badge: {
     variant: "card" | "inline" | "summary";
     mustFixCount?: number;
     rejectionSource?: "Pre-trial audit" | "Trial analysis";
+    version?: number | null;
+    sourceLink?: React.ReactNode;
+    selectedTrialId?: string | null;
   }>;
   present?: (
     task: Task,
@@ -771,4 +774,56 @@ test("an ongoing source audit preserves the published verdict in both displays",
   }
   const qa = { ...reviewed, verdict_status: "queued" };
   assert.equal(badge.present!(qa, "").title, "Verdict queued");
+});
+
+
+test("inline verdict distinguishes applicable rejection from unmatched previous evidence", () => {
+  for (const [matches, status] of [[true, "success"], [false, "success"], [false, "queued"], [false, "failed"]] as const) {
+    const html = renderToStaticMarkup(React.createElement(badge.Component!, {
+      task: { ...task, review_version_matches: matches, verdict_status: status,
+        verdict: { is_good: false, confidence: null, primary_issue: "Original rejection reason" } },
+      variant: "inline", version: 7,
+      sourceLink: React.createElement("a", { href: "/source", target: "_blank" }, "View source review (new tab)"),
+    }));
+    if (matches) {
+      assert.match(html, /Verdict rejected/);
+      assert.match(html, /Applies to task v7/);
+      assert.match(html, /Original rejection reason/);
+      assert.doesNotMatch(html, /Previous rejection/);
+    } else if (status === "success") {
+      assert.match(html, /No verdict yet/);
+      assert.match(html, /Previous rejection · not confirmed for v7/);
+      assert.match(html, /View source review/);
+      assert.doesNotMatch(html, /Original rejection reason|Applies to task/);
+    } else {
+      assert.doesNotMatch(html, /Previous rejection|Original rejection reason|Applies to task/);
+    }
+  }
+});
+
+
+test("earlier rejection is scoped to its review, even on the same version", () => {
+  for (const selectedTrialId of ["queued-run", "source-review", null]) {
+    const html = renderToStaticMarkup(React.createElement(badge.Component!, {
+      task: { ...task, verdict: { is_good: false, _graded_by: "source-review", primary_issue: "Bad verifier", confidence: null } },
+      variant: "inline", version: 7, selectedTrialId,
+    }));
+    if (selectedTrialId === "queued-run") {
+      assert.match(html, /Previous task review: Rejected/);
+      assert.match(html, /earlier review, not this trial/);
+    } else {
+      assert.doesNotMatch(html, /Previous task review|earlier review/);
+      assert.match(html, selectedTrialId ? /Task review: Rejected/ : /Verdict rejected/);
+    }
+    assert.match(html, /Bad verifier/);
+  }
+});
+
+test("missing provenance does not invent an earlier review", () => {
+  const html = renderToStaticMarkup(React.createElement(badge.Component!, {
+    task: { ...task, verdict: { is_good: false, confidence: null } },
+    variant: "inline", selectedTrialId: "queued-run", version: 7,
+  }));
+  assert.match(html, /Task review: Rejected/);
+  assert.doesNotMatch(html, /Previous task review|earlier review/);
 });

@@ -469,7 +469,7 @@ test.describe("real components with local fixture API", () => {
       drawer.getByText("No verdict yet", { exact: true })
     ).toBeVisible();
     await expect(drawer.getByText(/(for|audit) v7/)).toHaveCount(0);
-    await expect(drawer.getByText("View QA run")).toHaveCount(0);
+    await expect(drawer.getByText("View source review (new tab)")).toHaveCount(0);
     if (process.env.DRAWER_SCREENSHOT_PATH)
       await drawer.screenshot({ path: process.env.DRAWER_SCREENSHOT_PATH });
   });
@@ -508,7 +508,7 @@ test.describe("real components with local fixture API", () => {
       drawer.getByText("Keep the v4 regression checks.", { exact: true })
     ).toBeVisible();
     await expect(
-      drawer.getByRole("link", { name: "View QA run", exact: true })
+      drawer.getByRole("link", { name: "View source review (new tab)", exact: true })
     ).toHaveAttribute("href", "/tasks/task-a?trial=task-a-v4-qa");
     await expect(
       drawer.getByText("Verdict accepted", { exact: true })
@@ -1644,7 +1644,7 @@ test("overview links the audit and QA runs stored outside the experiment", async
     page.getByRole("link", { name: "View audit", exact: true })
   ).toHaveAttribute("href", "/tasks/task-a?trial=task-a-audit");
   await expect(
-    page.getByRole("link", { name: "View QA run", exact: true })
+    page.getByRole("link", { name: "View rejected review", exact: true })
   ).toHaveAttribute("href", "/tasks/task-a?trial=task-a-qa");
   if (process.env.SCREENSHOT_PATH)
     await page.screenshot({ path: process.env.SCREENSHOT_PATH });

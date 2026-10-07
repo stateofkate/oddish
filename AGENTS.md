@@ -3777,3 +3777,5 @@ replace earlier snapshots within the same trial attempt. The retained JSONB
 payload preserves these measurements through reload and terminal cleanup.
 `completed_activities=null` distinguishes legacy producers from new empty
 batches; no recursive envelope or new table is introduced.
+
+The task Overview labels a rejection from a different review as “Previous task review: Rejected” when a trial is selected, including on the same task version. “View rejected review” links directly to the verdict’s `_graded_by` source; opening that source does not label it as a different review. Unmatched prior-version rejections remain explicitly unconfirmed for the selected version. Source-review and audit links open in a new tab so the original run remains available. This adds no history view or API request.
