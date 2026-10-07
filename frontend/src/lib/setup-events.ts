@@ -22,19 +22,34 @@ export type EC2Health = {
   system_impaired_since: string | null;
 };
 
-/** Labels report the last AWS observation, not an inferred boot percentage. */
-export function ec2HealthLabel(health: EC2Health): string {
-  const parts: string[] = [];
-  if (health.instance_state) parts.push(`Instance ${health.instance_state.replaceAll("-", " ")}`);
-  for (const [name, status, reachability] of [
-    ["Instance", health.instance_status, health.instance_reachability],
-    ["System", health.system_status, health.system_reachability],
-  ]) {
+type EC2HealthKey = "instance_state" | "instance_status" | "system_status" | "instance_reachability" | "system_reachability";
+
+/** Current AWS facts, ordered by when each was first observed in this operation. */
+export function ec2HealthRows(step: SetupStep): Array<{
+  field: EC2HealthKey;
+  label: string;
+  observedAt: string;
+  secondsAfterStart: number | null;
+}> {
+  const health = step.ec2Health;
+  if (!health) return [];
+  const parts: Array<[EC2HealthKey, string]> = [];
+  if (health.instance_state) parts.push(["instance_state", `Instance ${health.instance_state.replaceAll("-", " ")}`]);
+  for (const [name, field, reachabilityField] of [
+    ["Instance", "instance_status", "instance_reachability"],
+    ["System", "system_status", "system_reachability"],
+  ] as const) {
+    const status = health[field];
     const value = status === "ok" ? "passed" : status === "impaired" ? "failed" : status === "insufficient-data" ? "pending" : status;
-    if (value && value !== "not-applicable") parts.push(`${name} health ${value}`);
-    if (reachability === "failed") parts.push(`${name} reachability failed`);
+    if (value && value !== "not-applicable") parts.push([field, `${name} health ${value}`]);
+    if (health[reachabilityField] === "failed") parts.push([reachabilityField, `${name} reachability failed`]);
   }
-  return parts.join(" · ");
+  return parts.map(([field, label]) => {
+    const observedAt = (step.ec2HealthHistory ?? [health])
+      .find(observation => observation[field] === health[field])?.observed_at ?? health.observed_at;
+    const seconds = (Date.parse(observedAt) - Date.parse(step.startedAt)) / 1000;
+    return { field, label, observedAt, secondsAfterStart: Number.isFinite(seconds) && seconds >= 0 ? seconds : null };
+  }).sort((a, b) => (a.secondsAfterStart ?? Infinity) - (b.secondsAfterStart ?? Infinity));
 }
 
 export interface LiveEventLike {
@@ -128,6 +143,7 @@ export interface SetupStep {
   activityKind?: "operation" | "supporting";
   hasCompletedActivities?: boolean;
   ec2Health?: EC2Health | null;
+  ec2HealthHistory?: EC2Health[];
 }
 
 export interface SetupState {
@@ -201,8 +217,14 @@ export function foldSetupEvents(events: readonly LiveEventLike[]): SetupState {
         errorType: error_type,
         ...detail,
       };
-      if (index < 0) steps.push(step);
-      else steps[index] = { ...step, ec2Health: step.ec2Health ?? steps[index].ec2Health, hasCompletedActivities: step.hasCompletedActivities || steps[index].hasCompletedActivities };
+      const previous = steps[index];
+      const revised = { ...step,
+        ec2Health: step.ec2Health ?? previous?.ec2Health,
+        ec2HealthHistory: [...(previous?.ec2HealthHistory ?? []), ...(step.ec2Health ? [step.ec2Health] : [])],
+        hasCompletedActivities: step.hasCompletedActivities || previous?.hasCompletedActivities,
+      };
+      if (index < 0) steps.push(revised);
+      else steps[index] = revised;
       continue;
     }
     if (status === "started") {

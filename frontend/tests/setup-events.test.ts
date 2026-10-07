@@ -219,10 +219,35 @@ test("AWS health updates replace one step, preserve its clock and final evidence
 });
 
 test("AWS labels distinguish host health and reachability without inventing progress", async () => {
-  const { ec2HealthLabel, setupStepLabel } = await import("../src/lib/setup-events.ts");
+  const { ec2HealthRows, setupStepLabel } = await import("../src/lib/setup-events.ts");
   const health = { observed_at: T0, instance_state: "running" as const, instance_status: "initializing" as const, system_status: "ok" as const, instance_reachability: "initializing" as const, system_reachability: "passed" as const, instance_impaired_since: null, system_impaired_since: null };
-  assert.equal(ec2HealthLabel(health), "Instance running · Instance health initializing · System health passed");
-  assert.equal(ec2HealthLabel({ ...health, instance_status: "impaired", instance_reachability: "failed" }), "Instance running · Instance health failed · Instance reachability failed · System health passed");
-  assert.equal(ec2HealthLabel({ ...health, instance_status: "insufficient-data", system_status: "not-applicable" }), "Instance running · Instance health pending");
+  const labels = (snapshot: import("../src/lib/setup-events.ts").EC2Health) => ec2HealthRows({ phase: "ec2.instance_status_ok", status: "success", startedAt: T0, durationSeconds: 0, errorType: null, ec2Health: snapshot }).map(row => row.label).join(" · ");
+  assert.equal(labels(health), "Instance running · Instance health initializing · System health passed");
+  assert.equal(labels({ ...health, instance_status: "impaired", instance_reachability: "failed" }), "Instance running · Instance health failed · Instance reachability failed · System health passed");
+  assert.equal(labels({ ...health, instance_status: "insufficient-data", system_status: "not-applicable" }), "Instance running · Instance health pending");
   assert.equal(setupStepLabel({ phase: "ec2.instance_status_ok", status: "started", startedAt: T0, durationSeconds: null, errorType: null }), "Wait for instance health check");
+});
+
+
+test("AWS observation times survive status updates, terminal repeats and another operation", async () => {
+  const { ec2HealthRows } = await import("../src/lib/setup-events.ts");
+  const initial = { observed_at: T0, instance_state: "running", instance_status: "initializing", system_status: "ok", instance_reachability: "initializing", system_reachability: "passed", instance_impaired_since: null, system_impaired_since: null };
+  const passed = { ...initial, observed_at: T1, instance_status: "ok", instance_reachability: "passed" };
+  const identity = { schema_version: 2, operation_id: "health", parent_operation_id: "root", provider: "ec2" };
+  const records = [
+    subphase(1, "ec2.instance_status_ok", "started", { ...identity, ec2_health: initial }),
+    subphase(2, "ec2.instance_status_ok", "started", { ...identity, ec2_health: passed }),
+    subphase(3, "ec2.instance_status_ok", "success", { ...identity, ec2_health: passed, duration_seconds: 89 }),
+    subphase(4, "ec2.instance_status_ok", "started", { ...identity, operation_id: "other", started_at: T1, ec2_health: passed }),
+  ];
+  const steps = foldSetupEvents(records).steps;
+  assert.deepEqual(ec2HealthRows(steps[0]).map(row => [row.label, row.observedAt, row.secondsAfterStart]), [
+    ["Instance running", T0, 0],
+    ["System health passed", T0, 0],
+    ["Instance health passed", T1, 88],
+  ]);
+  assert.equal(steps[0].durationSeconds, 89);
+  assert.deepEqual(ec2HealthRows(steps[1]).map(row => row.secondsAfterStart), [0, 0, 0]);
+  assert.deepEqual(ec2HealthRows({ ...steps[0], ec2Health: null }), []);
+  assert.ok(ec2HealthRows({ ...steps[0], startedAt: "invalid" }).every(row => row.secondsAfterStart === null));
 });

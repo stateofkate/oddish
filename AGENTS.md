@@ -3802,5 +3802,8 @@ start time; the terminal measurement retains the last observation. This additive
 field uses the existing retained JSONB and ephemeral bridge, with no migration.
 Summary and Live show the latest reported health in a collapsed-by-default
 disclosure under the existing secondary health-check row; its duration stays
-visible while the reported health is hidden. Missing evidence from older workers
-adds no invented status.
+visible while the reported health is hidden. Each health fact occupies its own
+row, ordered by its first retained AWS observation, with elapsed time from the
+health-check start. These are observed milestone times, not sequential operation
+durations; simultaneous observations retain equal times. Missing evidence from
+older workers adds no invented status.

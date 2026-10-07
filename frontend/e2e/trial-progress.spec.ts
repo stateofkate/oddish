@@ -722,18 +722,22 @@ for (const mobile of [false, true])
       let complete = false;
       const setupStart = operation(1, "root", null, "environment.setup", 5, 35, "setup", "started");
       const healthStart = operation(2, "health", "root", "ec2.instance_status_ok", 10, 30, "ready", "started");
+      const initialHealth = {
+        observed_at: at(15), instance_state: "running", instance_status: "initializing",
+        system_status: "ok", instance_reachability: "initializing", system_reachability: "passed",
+        instance_impaired_since: null, system_impaired_since: null,
+      };
       await page.route("**/api/**", route => {
         const path = new URL(route.request().url()).pathname;
-        const ec2_health = {
-          observed_at: at(complete ? 30 : 15), instance_state: "running", instance_status: healthStatus,
-          system_status: "ok", instance_reachability: healthStatus === "ok" ? "passed" : "initializing", system_reachability: "passed",
-          instance_impaired_since: null, system_impaired_since: null,
-        };
         const events = [setupStart, healthStart, { ...healthStart, source_seq: 3, event_key: "live:3", payload: {
-          ...healthStart.payload, status: complete ? "success" : "started", duration_seconds: complete ? 20 : null,
-          finished_at: complete ? at(30) : null, ec2_health,
+          ...healthStart.payload, ec2_health: initialHealth,
         } }];
-        if (complete) events.push(operation(4, "root", null, "environment.setup", 5, 35, "setup"));
+        if (healthStatus === "ok") events.push({ ...healthStart, source_seq: 4, event_key: "live:4", payload: {
+          ...healthStart.payload, status: complete ? "success" : "started", duration_seconds: complete ? 20 : null,
+          finished_at: complete ? at(30) : null,
+          ec2_health: { ...initialHealth, observed_at: at(20), instance_status: "ok", instance_reachability: "passed" },
+        } });
+        if (complete) events.push(operation(5, "root", null, "environment.setup", 5, 35, "setup"));
         return route.fulfill({ json: path.endsWith("/progress-history") ? { ...progressHistory, events }
           : path.endsWith("/live") ? { attempt: 1, events: [], next_seq: 0, usage: {}, done: false }
           : { ...progressTrial, agent: "claude-code", harbor_stage: complete ? "agent_running" : "environment_setup", phase_timing: {
@@ -751,7 +755,7 @@ for (const mobile of [false, true])
       await expect(label).toHaveCount(1);
       await expect(label).toContainText("Wait for instance health check");
       const healthToggle = label.getByRole("button", { name: "Wait for instance health check", exact: true });
-      const healthDetails = page.getByTitle("AWS status reported " + at(15), { exact: true });
+      const healthDetails = label.locator("../..").getByRole("list", { name: "Instance health observations", includeHidden: true });
       await expect(healthToggle).toHaveAttribute("aria-expanded", "false");
       await expect(healthDetails).toBeHidden();
       await label.locator("../..").screenshot({ path: `delivery-test-results/ec2-health-closed-${view.toLowerCase()}-${mobile ? "mobile" : "desktop"}.png` });
@@ -759,7 +763,13 @@ for (const mobile of [false, true])
       await page.keyboard.press("Enter");
       await expect(healthToggle).toHaveAttribute("aria-expanded", "true");
       await expect(healthDetails).toBeVisible();
-      await expect(healthDetails).toContainText("Instance running · Instance health initializing · System health passed");
+      await expect(healthDetails.getByRole("listitem")).toHaveCount(3);
+      await expect(healthDetails.getByText("Instance running", { exact: true }).locator("..")).toContainText("5.0s");
+      await expect(healthDetails.getByText("Instance health initializing", { exact: true }).locator("..")).toContainText("5.0s");
+      await expect(healthDetails.getByText("System health passed", { exact: true }).locator("..")).toContainText("5.0s");
+      const positions = await healthDetails.getByRole("listitem").evaluateAll(rows => rows.map(row => row.getBoundingClientRect().y));
+      expect(positions[1]).toBeGreaterThan(positions[0]);
+      expect(positions[2]).toBeGreaterThan(positions[1]);
       const row = label.locator("..");
       await expect(row.getByLabel("running", { exact: true })).toBeVisible();
       const initialSeconds = Number.parseFloat(await row.locator(":scope > span").last().innerText());
@@ -768,7 +778,9 @@ for (const mobile of [false, true])
       await row.locator("..").screenshot({ path: `delivery-test-results/ec2-health-initializing-${view.toLowerCase()}-${mobile ? "mobile" : "desktop"}.png` });
       healthStatus = "ok";
       await page.clock.runFor(6000);
-      await expect(healthDetails).toContainText("Instance health passed");
+      await expect(healthDetails.getByText("Instance health passed", { exact: true }).locator("..")).toContainText("10.0s");
+      await expect(healthDetails.getByText("Instance running", { exact: true }).locator("..")).toContainText("5.0s");
+      await expect(healthDetails.getByRole("listitem")).toHaveText(["Instance running5.0s", "System health passed5.0s", "Instance health passed10.0s"]);
       await expect(healthToggle).toHaveAttribute("aria-expanded", "true");
       await expect(label).toHaveCount(1);
       const updatedSeconds = Number.parseFloat(await row.locator(":scope > span").last().innerText());
@@ -777,7 +789,7 @@ for (const mobile of [false, true])
       await page.clock.runFor(6000);
       await expect(row.getByLabel("done", { exact: true })).toBeVisible();
       await expect(row).toContainText("20.0s");
-      const finalDetails = page.getByTitle("AWS status reported " + at(30), { exact: true });
+      const finalDetails = healthDetails;
       await expect(finalDetails).toContainText("System health passed");
       await expect(healthToggle).toHaveAttribute("aria-expanded", "true");
       await healthToggle.click();
@@ -795,4 +807,6 @@ for (const mobile of [false, true])
       await expect(healthToggle).toHaveAttribute("aria-expanded", "false");
       await expect(finalDetails).toBeHidden();
       await expect(row).toContainText("20.0s");
+      await healthToggle.click();
+      await expect(finalDetails.getByText("Instance health passed", { exact: true }).locator("..")).toContainText("10.0s");
     });

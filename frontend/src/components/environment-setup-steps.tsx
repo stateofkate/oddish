@@ -6,7 +6,7 @@ import { AlertCircle, Check, ChevronRight, Circle, Loader2 } from "lucide-react"
 import { formatDurationSec } from "@/lib/format";
 import {
   setupStepLabel,
-  ec2HealthLabel,
+  ec2HealthRows,
   secondarySetupSteps,
   type SetupState,
   type SetupStep,
@@ -31,7 +31,7 @@ function StepRow({ step, live }: { step: SetupStep; live: boolean }) {
   const seconds = live ? elapsed : step.durationSeconds;
   const [healthOpen, setHealthOpen] = useState(false);
   const healthId = useId();
-  const healthLabel = step.ec2Health ? ec2HealthLabel(step.ec2Health) : "";
+  const healthRows = ec2HealthRows(step);
   return (
     <>
     <div className="flex items-center gap-2 py-1 text-xs">
@@ -62,7 +62,7 @@ function StepRow({ step, live }: { step: SetupStep; live: boolean }) {
         )}
         title={step.phase}
       >
-        {healthLabel ? (
+        {healthRows.length ? (
           <button
             type="button"
             className="inline-flex max-w-full items-center gap-1 rounded text-left hover:text-foreground focus-visible:outline active:text-foreground"
@@ -90,14 +90,24 @@ function StepRow({ step, live }: { step: SetupStep; live: boolean }) {
         {seconds != null ? (seconds === 0 ? "0s" : formatDurationSec(seconds)) : "—"}
       </span>
     </div>
-    {healthLabel && (
+    {healthRows.length > 0 && (
       <div
         id={healthId}
         hidden={!healthOpen}
         className="text-muted-foreground pb-1 pl-5 font-mono text-xs break-words"
         title={`AWS status reported ${step.ec2Health?.observed_at}`}
       >
-        {healthLabel}
+        <p className="mb-1">Time from health-check start</p>
+        <ul aria-label="Instance health observations">
+          {healthRows.map(row => (
+            <li key={row.field} className="flex items-baseline justify-between gap-2 py-1">
+              <span>{row.label}</span>
+              <span className="shrink-0 tabular-nums" title={`First reported by AWS at ${row.observedAt}`}>
+                {row.secondsAfterStart == null ? "—" : row.secondsAfterStart === 0 ? "0s" : formatDurationSec(row.secondsAfterStart)}
+              </span>
+            </li>
+          ))}
+        </ul>
       </div>
     )}
     </>
