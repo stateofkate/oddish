@@ -311,3 +311,37 @@ status payload. A recent dispatcher report with `ok: false` warns and shows its
 last completed run; deferred reconciliation names phases left for another pass.
 Legacy payloads without these fields retain their previous rendering. These
 values are derived directly from the response, with no new polling or state.
+
+The trial drawer's Summary and Live tabs share retained setup history. `/api/trials/[trial_id]/progress-history` forwards the authorized
+backend read without caching. Missing history on older deployments is
+shown explicitly. Fixture coverage lives in `e2e/trial-progress.spec.ts` in the
+`effort` project of `playwright.delivery.config.ts`.
+
+Environment progress accepts both legacy phase pairs and v2 operation IDs.
+V2 pairs are matched within the trial attempt, preserve parent relationships,
+and do not reopen after a replayed start. Legacy events retain their phase-based pairing.
+The compact progress view shows each primary phase duration once, with setup
+operations expandable beneath Environment Setup. The original Live transcript
+header and output remain independent, with setup details above the output.
+Public read-only views retain their original conditional timeline. The whole
+Summary timeline can be minimized. Worker metadata is not part of the setup view. Unknown timing never implies successful completion.
+
+Secondary setup operations render by measured start time.
+Flat `completed_activities` snapshots fold by operation ID, including corrected
+wrapper durations; the new setup root is authoritative for its measured scope.
+The retained snapshot keeps supporting activities and their parent identity.
+The view never sums children into parent durations or displays a residual-time row.
+
+Measured progress reuses the standard `HarborStageTimeline`, `Card` and stage
+badge presentation. Additive stage state/duration overrides preserve measured
+outcomes while setup details remain collapsible inside the original row.
+Theme tokens and the original timeline indicators are unchanged.
+The environment list renders only direct secondary operations and legacy rootless
+phases with their measured inclusive durations. Body operations, deeper provider
+children and progress delivery remain retained data but are not rendered. Only the primary Environment Setup section is expandable.
+Timeline disclosures preserve explicit user toggles during live clock/history
+updates. Navigable stages retain their file targets, and live-stream errors are
+visible before the first agent message without opening an empty output section.
+Initializing follows current-attempt phase progress even when timing is absent;
+its duration still requires recorded timestamps. Pending, queued and retrying
+rows do not reuse stale initialization milestones or timing from an earlier run.

@@ -3681,3 +3681,55 @@ Changes to these models, migrations, token writers or cost SQL must run
 `tests/test_exact_token_counts.py` against PostgreSQL, covering live saves above
 32 bits, old/new worker overlap, task-page SQL, and repair/write races. A Python
 integer test alone does not exercise PostgreSQL bind types or arithmetic.
+
+## Retained environment setup history
+
+Apply core migration `trial_progress_001` before deploying the progress writer.
+`trial_progress_events` retains typed `env_subphase` and `env_info` facts in the
+same transaction as live ingestion, keyed by trial, trial attempt and live
+sequence. Live transcript purge and TTL cleanup do not delete these rows;
+physical trial deletion cascades. No historical steps are fabricated or backfilled.
+The additive `/trials/{trial_id}/progress-history` route applies the same org
+scope as trial detail and serves terminal trials. It returns newest attempts
+first, steps in source order, at most 5,000 events with `history_truncated` when
+the read or observed live sequence reaches that bound. `history_available=false`
+means no retained evidence, not that setup did not happen. Payloads use bounded
+Pydantic discriminated models; unrelated live event kinds retain their contract.
+This setup-only record does not imply complete runtime or heartbeat history.
+Setup events share transport sequence IDs with live transcript events, but do
+not consume the transcript's 5,000-event allowance. Transcript counters survive
+same-attempt tailer replacement and reset with a new attempt.
+For retained writes, the ingestion transaction locks the trial and verifies its
+current attempt before inserting; late old-attempt and future-attempt facts do
+not alter durable history. Invalid optional setup payloads are logged without
+including their contents and skipped without dropping live transcript writes.
+
+Trial drawer progress reads the authenticated
+`/trials/{id}/progress-history` proxy. Summary and Live share the same evidence
+view; setup history is grouped by attempt and remains readable after completion.
+The list and detail have separate SWR keys. A newer attempt or terminal list row
+wins over stale active detail, and triggers detail revalidation without copying
+partial list rows into its cache. Missing retained events remain explicit gaps.
+
+
+Environment setup events accept legacy v1 and additive v2 payloads. V2 retains
+operation/parent identity, category, actual Harbor provider, task-environment
+resource layer, strategy, operation retry count, and finish time. Cancellation
+is a terminal operation status; a missing terminal event remains incomplete.
+The existing `trial_progress_events` JSONB stores these fields without a migration.
+The ephemeral child bridge preserves the same contract as in-process execution.
+Provider identity comes from the retained Harbor subphase evidence.
+
+
+Environment progress instruments the default Harbor runtime. Hosted GKE stays
+on its existing stable pin and does not receive these setup substeps yet.
+
+Activity-aware setup producers piggyback bounded, flat `completed_activities`
+(maximum 128) on existing subphase events instead of adding transport calls.
+Completed measurements have typed terminal status, operation/parent IDs, an
+`activity_kind` distinguishing operation/supporting work, and required measured
+finish/duration. Corrected inclusive wrappers reuse their operation IDs; readers
+replace earlier snapshots within the same trial attempt. The retained JSONB
+payload preserves these measurements through reload and terminal cleanup.
+`completed_activities=null` distinguishes legacy producers from new empty
+batches; no recursive envelope or new table is introduced.

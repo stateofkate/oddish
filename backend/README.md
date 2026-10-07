@@ -1097,3 +1097,7 @@ to monitor startup; existing observability uses it as the service version.
 Trial settlement events include model, worker job ID, exception type and
 provider error code after the database commit, without credential values or raw
 exception messages. Missing error metadata stays null.
+
+`GET /trials/{trial_id}/progress-history` requires READ scope and the trial's
+organization. It returns retained setup facts even after live transcript cleanup;
+apply core migration `trial_progress_001` before deploying its ingestion writer.

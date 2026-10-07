@@ -71,6 +71,10 @@ import {
   feedbackRequestInit,
   type FeedbackRecord,
 } from "@/components/qa-report/types";
+import { reconcileTrialLifecycle } from "@/lib/trial-lifecycle";
+import { HarborStageTimeline } from "@/components/harbor-stage-timeline";
+import { HarborStageBadge } from "@/components/harbor-stage-badge";
+import { TrialProgress } from "@/components/trial-progress";
 import { TimingBreakdownBar } from "@/components/timing-breakdown-bar";
 import { CodeBlock } from "@/components/code-block";
 import type { Trial, Task } from "@/lib/types";
@@ -93,8 +97,6 @@ import {
   STATUS_GLYPH_BOX,
   type MatrixStatus,
 } from "@/lib/status-config";
-import { HarborStageTimeline } from "@/components/harbor-stage-timeline";
-import { HarborStageBadge } from "@/components/harbor-stage-badge";
 import { QueueKeyIcon } from "@/components/queue-key-icon";
 import { StatusIcon } from "@/components/status-icon";
 import {
@@ -854,6 +856,19 @@ export function TrialDetailPanel({
     loadTrialDetail && canonicalTrial === null && trialDetailError != null;
   const actionsReady = !loadTrialDetail || canonicalTrial !== null;
   const trial = canonicalTrial ?? selectedTrial;
+  const progressTrial = reconcileTrialLifecycle(canonicalTrial, selectedTrial);
+  // The table owns its list cache; detail owns a separate SWR key. A terminal
+  // list update must invalidate that detail even while its request is delayed.
+  const lifecycleSignal = selectedTrial
+    ? `${selectedTrial.id}:${selectedTrial.attempts}:${selectedTrial.status}:${selectedTrial.finished_at ?? ""}`
+    : null;
+  const lastLifecycleSignal = useRef<string | null>(null);
+  useEffect(() => {
+    if (!isOpen || !loadTrialDetail || !canonicalTrial || !lifecycleSignal) return;
+    if (lastLifecycleSignal.current === lifecycleSignal) return;
+    lastLifecycleSignal.current = lifecycleSignal;
+    if (reconcileTrialLifecycle(canonicalTrial, selectedTrial) !== canonicalTrial) void revalidateTrial();
+  }, [isOpen, loadTrialDetail, canonicalTrial, selectedTrial, lifecycleSignal, revalidateTrial]);
   const verifierSummary = embeddedCtrfSummary(trial?.result);
   // Only trials whose verifier published a robot playback manifest get the
   // Scene tab. Coding-agent trials have no descriptor or an ``absent`` one,
@@ -1776,8 +1791,7 @@ export function TrialDetailPanel({
                 />
               )}
 
-              {/* Execution Timeline - shows progress during running trials */}
-              {trial.harbor_stage && (
+              {readOnly ? trial.harbor_stage && (
                 <Card>
                   <CardHeader className="px-4 pt-2 pb-1">
                     <CardTitle className="text-muted-foreground flex items-center justify-between text-[11px] font-semibold tracking-wider uppercase">
@@ -1786,21 +1800,14 @@ export function TrialDetailPanel({
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="px-4 pb-2">
-                    <HarborStageTimeline
-                      currentStage={trial.harbor_stage}
-                      status={trial.status}
-                      isFailure={
-                        trial.status === "failed" ||
-                        Boolean(trial.error_message)
-                      }
-                      onStageClick={handleTimelineStageClick}
-                      phaseTiming={trial.phase_timing}
-                      startedAt={trial.started_at}
-                      finishedAt={trial.finished_at}
-                    />
+                    <HarborStageTimeline currentStage={trial.harbor_stage} status={trial.status}
+                      isFailure={trial.status === "failed" || Boolean(trial.error_message)}
+                      onStageClick={handleTimelineStageClick} phaseTiming={trial.phase_timing}
+                      startedAt={trial.started_at} finishedAt={trial.finished_at} />
                   </CardContent>
                 </Card>
-              )}
+              ) : <TrialProgress trial={progressTrial ?? trial} apiBaseUrl={apiBaseUrl}
+                onStageClick={handleTimelineStageClick} />}
 
               {trial.harbor_sha && (
                 <div className="text-muted-foreground px-4 py-1 text-[11px]">
@@ -1902,6 +1909,7 @@ export function TrialDetailPanel({
             <LiveTranscriptPanel
               key={trial.id}
               trialId={trial.id}
+              trial={progressTrial ?? trial}
               agent={trial.agent}
               apiBaseUrl={apiBaseUrl}
             />

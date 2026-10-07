@@ -104,6 +104,10 @@ from oddish.workers.harbor.runner import (
     run_harbor_trial_async,
 )
 from oddish.workers.harbor import live_tail, live_tail_db
+from oddish.workers.harbor.setup_events import (
+    SetupEventEmitter,
+    is_setup_only_event,
+)
 from oddish.workers.queue.db_helpers import _trial_session
 from oddish.workers.queue.shared import console
 from oddish.workers.queue.trial_steps import (
@@ -1120,9 +1124,14 @@ async def handle_harbor_event(
     worker_job_attempt: int | None = None,
     cost_state: SandboxCostState | None = None,
     sandbox_launch: SandboxLaunchContext | None = None,
+    setup_events: SetupEventEmitter | None = None,
 ) -> None:
     """Update a trial from Harbor lifecycle events."""
     event = hook_event.event
+    if setup_events is not None:
+        await setup_events.observe(hook_event)
+    if is_setup_only_event(event):
+        return
     live_tail_spawn: tuple[int, str, str | None, str | None, str | None] | None = None
     sandbox_transition: tuple[str, str, SpanResources] | None = None
     observed_at = getattr(hook_event, "timestamp", None)
@@ -1483,6 +1492,13 @@ async def _execute_trial(
                 worker_job_attempt=worker_job_attempt,
                 cost_state=cost_state,
                 sandbox_launch=sandbox_launch,
+                setup_events=SetupEventEmitter(
+                    trial_id=trial_id,
+                    attempt=prepared_trial.trial_attempt,
+                    persist=live_tail_db.persist_tick_to_database,
+                    org_id=prepared_trial.org_id,
+                    billed_user_id=prepared_trial.billed_user_id,
+                ),
             ),
             trial_id=trial_id,
             worker_job_id=worker_job_id,

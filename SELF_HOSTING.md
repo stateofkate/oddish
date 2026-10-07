@@ -428,3 +428,9 @@ upgrade head` before deploying the new feedback writers. It adds the nullable
 `feedback.report_trial_id` column and allows three separate report target names.
 Existing votes remain unchanged. Downgrade refuses to run while votes use the
 new targets, because changing their names would lose which report was reviewed.
+
+The `trial_progress_001` core migration must be applied before deploying retained
+setup history. It adds `trial_progress_events` without changing existing rows.
+Old setup steps already removed from the live table cannot be reconstructed.
+Rolling application code back can leave this additive table in place. An explicit
+Alembic downgrade drops the table and irreversibly removes retained setup history.

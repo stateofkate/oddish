@@ -1843,6 +1843,33 @@ class TrialEventModel(Base):
     )
 
 
+class TrialProgressEventModel(Base):
+    """Retained setup facts, independent of the temporary transcript lifecycle."""
+
+    __tablename__ = "trial_progress_events"
+    __table_args__ = (
+        CheckConstraint("attempt > 0", name="ck_progress_attempt"),
+        CheckConstraint("source_seq >= 0", name="ck_progress_seq"),
+        CheckConstraint("schema_version > 0", name="ck_progress_version"),
+        CheckConstraint("kind IN ('env_subphase', 'env_info')", name="ck_progress_kind"),
+        CheckConstraint("jsonb_typeof(payload) = 'object'", name="ck_progress_payload"),
+    )
+    trial_id: Mapped[str] = mapped_column(
+        String(160), ForeignKey("trials.id", ondelete="CASCADE"), primary_key=True
+    )
+    attempt: Mapped[int] = mapped_column(Integer, primary_key=True)
+    event_key: Mapped[str] = mapped_column(String(96), primary_key=True)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    source_seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    schema_version: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, server_default="1"
+    )
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()"), nullable=False
+    )
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+
+
 class ModelRequestPoolModel(Base):
     """Provider observations; one row per verified independent quota pool."""
 

@@ -1,11 +1,28 @@
-import { Check, Clock, AlertCircle } from "lucide-react";
+"use client";
+
+import { useState, type ReactNode } from "react";
+import { Check, Clock, AlertCircle, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { Trial } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 type PhaseTiming = NonNullable<Trial["phase_timing"]>;
 
+export type HarborStageId =
+  | "starting"
+  | "trial_started"
+  | "environment_setup"
+  | "agent_running"
+  | "verification"
+  | "completed";
+
+export type MeasuredStageState = "completed" | "active" | "failed" | "cancelled" | "not recorded";
+
 interface HarborStageTimelineProps {
+  stageStates?: Partial<Record<HarborStageId, MeasuredStageState>>;
+  stageDurations?: Partial<Record<HarborStageId, ReactNode>>;
+  collapsible?: boolean;
+  stageContent?: Partial<Record<HarborStageId, ReactNode>>;
   currentStage: string | null | undefined;
   status: string;
   isFailure?: boolean;
@@ -16,7 +33,7 @@ interface HarborStageTimelineProps {
 }
 
 interface StageInfo {
-  id: string;
+  id: HarborStageId;
   label: string;
 }
 
@@ -51,8 +68,7 @@ function getStageDuration(
   switch (stageId) {
     case "environment_setup": {
       const envSec = phaseTiming.environment_setup?.duration_sec ?? 0;
-      const setupSec = phaseTiming.agent_setup?.duration_sec ?? 0;
-      const total = envSec + setupSec;
+      const total = envSec + (phaseTiming.agent_setup?.duration_sec ?? 0);
       return total > 0 ? formatDuration(total) : null;
     }
     case "agent_running":
@@ -82,11 +98,12 @@ export function HarborStageTimeline({
   phaseTiming,
   startedAt,
   finishedAt,
+  stageContent,
+  stageStates,
+  stageDurations,
+  collapsible = false,
 }: HarborStageTimelineProps) {
-  if (!currentStage) {
-    return null;
-  }
-
+  if (!currentStage && !stageStates) return null;
   const currentIndex = HARBOR_STAGES.findIndex((s) => s.id === currentStage);
   const isFailed = status === "failed";
   const isCancelled = currentStage === "cancelled";
@@ -94,13 +111,13 @@ export function HarborStageTimeline({
   return (
     <div className="space-y-0">
       {HARBOR_STAGES.map((stage, index) => {
-        const isCompleted =
-          index < currentIndex ||
-          (index === currentIndex && currentStage === "completed");
-        const isCurrent =
+        const measured = stageStates?.[stage.id];
+        const isCompleted = measured ? measured === "completed" || measured === "failed" || measured === "cancelled" : index < currentIndex ||
+            (index === currentIndex && currentStage === "completed");
+        const isCurrent = measured ? measured === "active" :
           index === currentIndex && currentStage !== "completed";
         const isLast = index === HARBOR_STAGES.length - 1;
-        const isTerminalFailed = isFailure && currentStage === "completed";
+        const isTerminalFailed = measured ? measured === "failed" || measured === "cancelled" : isFailure && currentStage === "completed";
         const completedTone = isTerminalFailed
           ? "text-red-400"
           : "text-green-400";
@@ -109,21 +126,38 @@ export function HarborStageTimeline({
           : "bg-green-500/20 border-green-500";
         const completedLine = isTerminalFailed ? "bg-red-500" : "bg-green-500";
 
-        const duration =
-          isCompleted || isCurrent
+        const duration = stageDurations?.[stage.id] ?? (
+          !stageContent?.[stage.id] && (isCompleted || isCurrent)
             ? getStageDuration(stage.id, phaseTiming, startedAt, finishedAt)
-            : null;
+            : null);
 
-        const stageLabel =
+        const stageLabel = measured === "cancelled" && stage.id === "completed" ? "Cancelled" :
           isTerminalFailed && stage.id === "completed"
             ? "Completed (Failed)"
             : stage.label;
 
         return (
-          <div key={stage.id} className="flex gap-2">
+          <div
+            key={stage.id}
+            role="group"
+            aria-label={stage.label}
+            className="flex gap-2"
+          >
             {/* Left column: indicator + line */}
             <div className="flex flex-col items-center">
-              <div className="relative z-10 shrink-0">
+              <div
+                className="relative z-10 shrink-0"
+                role="img"
+                aria-label={`${stage.label}: ${
+                  measured ?? (isTerminalFailed || (isCurrent && isFailed)
+                    ? "failed"
+                    : isCompleted
+                      ? "completed"
+                      : isCurrent
+                        ? "active"
+                        : "not recorded")
+                }`}
+              >
                 {isCompleted ? (
                   <div
                     className={`flex h-5 w-5 items-center justify-center rounded-full border ${completedBg}`}
@@ -149,51 +183,62 @@ export function HarborStageTimeline({
 
               {!isLast && (
                 <div
-                  className={`h-6 w-0.5 ${isCompleted ? completedLine : "bg-muted"}`}
+                  className={`min-h-6 w-0.5 flex-1 ${isCompleted ? completedLine : "bg-muted"}`}
                 />
               )}
             </div>
 
             {/* Stage info */}
-            <div className="flex flex-1 items-baseline justify-between gap-2 pb-2.5">
-              {(isCompleted || isCurrent) && onStageClick ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={() => onStageClick(stage.id)}
-                  className={cn(
-                    "-mx-1.5 -my-0.5 h-auto px-1.5 py-0.5 text-left text-xs font-medium leading-normal hover:bg-muted hover:underline hover:underline-offset-2",
-                    isCompleted || isCurrent
-                      ? "text-foreground"
-                      : "text-muted-foreground",
-                  )}
-                >
-                  {stageLabel}
-                </Button>
-              ) : (
-                <p
-                  className={cn(
-                    "text-xs font-medium",
-                    isCompleted || isCurrent
-                      ? "text-foreground"
-                      : "text-muted-foreground",
-                  )}
-                >
-                  {stageLabel}
-                </p>
-              )}
+            <div className="min-w-0 flex-1 pb-2.5">
+              <StageDetails enabled={collapsible && Boolean(stageContent?.[stage.id])} open={isCurrent || stage.id === "environment_setup"} heading={
+              <div className="flex items-baseline justify-between gap-2">
+                {(isCompleted || isCurrent) && onStageClick && !(collapsible && stageContent?.[stage.id]) ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => onStageClick(stage.id)}
+                    className={cn(
+                      "-mx-1.5 -my-0.5 h-auto px-1.5 py-0.5 text-left text-xs font-medium leading-normal hover:bg-muted hover:underline hover:underline-offset-2",
+                      isCompleted || isCurrent
+                        ? "text-foreground"
+                        : "text-muted-foreground",
+                    )}
+                  >
+                    {stageLabel}
+                  </Button>
+                ) : (
+                  <p
+                    className={cn(
+                      "flex items-center gap-1 text-xs font-medium",
+                      isCompleted || isCurrent
+                        ? "text-foreground"
+                        : "text-muted-foreground",
+                    )}
+                  >
+                    {stageLabel}
+                    {collapsible && stageContent?.[stage.id] && (
+                      <ChevronRight aria-hidden="true" className="h-3 w-3 shrink-0 text-muted-foreground" />
+                    )}
+                  </p>
+                )}
 
-              {duration && (
-                <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
-                  {duration}
-                </span>
+                {duration && (
+                  <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
+                    {duration}
+                  </span>
+                )}
+              </div>
+              }>
+              {stageContent?.[stage.id] && (
+                <div className="mt-2 space-y-2">{stageContent[stage.id]}</div>
               )}
+              </StageDetails>
             </div>
           </div>
         );
       })}
 
-      {(isCancelled || currentStage === "cleanup") && (
+      {!stageStates && (isCancelled || currentStage === "cleanup") && (
         <div className="flex gap-2">
           <div className="relative z-10 shrink-0">
             <div
@@ -220,4 +265,15 @@ export function HarborStageTimeline({
       )}
     </div>
   );
+}
+
+function StageDetails({ enabled, open, heading, children }: { enabled: boolean; open: boolean; heading: ReactNode; children: ReactNode }) {
+  const [expanded, setExpanded] = useState<boolean | null>(null);
+  if (!enabled) return <>{heading}{children}</>;
+  return <details open={expanded ?? open} onToggle={event => setExpanded(event.currentTarget.open)} className="[&[open]>summary_svg]:rotate-90">
+    <summary className="flex cursor-pointer list-none items-center gap-1 rounded hover:bg-muted focus-visible:outline [&::-webkit-details-marker]:hidden">
+      <div className="min-w-0 flex-1">{heading}</div>
+    </summary>
+    {children}
+  </details>;
 }

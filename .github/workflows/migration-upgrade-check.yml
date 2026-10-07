@@ -102,6 +102,11 @@ jobs:
         working-directory: oddish
         run: ODDISH_TEST_DATABASE_URL="$ODDISH_DATABASE_URL" uv run pytest tests/test_probe_removal_migration.py -q
 
+      - name: Test retained setup history and upgrades from both deployed heads
+        if: steps.changes.outputs.run == 'true'
+        working-directory: oddish
+        run: ODDISH_TEST_DATABASE_URL="$ODDISH_DATABASE_URL" uv run pytest tests/test_progress_migration_join.py tests/test_progress_history.py -q
+
       - name: Test exact token counts with old workers and concurrent repairs
         if: steps.changes.outputs.run == 'true'
         working-directory: oddish

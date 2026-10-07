@@ -26,6 +26,7 @@ export default defineConfig({
     "qa-evals.spec.ts",
     "qa-feedback.spec.ts",
     "trajectory-rendering.spec.ts",
+    "trial-progress.spec.ts",
   ],
   fullyParallel: true,
   forbidOnly: !!process.env.CI,

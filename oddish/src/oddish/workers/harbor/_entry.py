@@ -120,6 +120,20 @@ def _serialize_result(result: Any) -> dict[str, Any] | None:
     return out or None
 
 
+def _serialize_setup(event: Any) -> dict[str, Any]:
+    """Setup progress fields the parent cannot read off a live environment."""
+    out: dict[str, Any] = {}
+    subphase = getattr(event, "subphase", None)
+    if subphase is not None and hasattr(subphase, "model_dump"):
+        out["subphase"] = subphase.model_dump(mode="json")
+    environment = getattr(event, "environment", None)
+    for name in ("instance_type", "region"):
+        value = getattr(environment, name, None)
+        if isinstance(value, str) and value:
+            out[f"environment_{name}"] = value
+    return out
+
+
 def _make_hook():
     async def _hook(event: Any) -> None:
         event_name = _event_name(event.event)
@@ -136,6 +150,7 @@ def _make_hook():
                         event, "environment_external_id", None
                     ),
                     "result": _serialize_result(getattr(event, "result", None)),
+                    **_serialize_setup(event),
                 }
             )
         except Exception:
@@ -273,6 +288,9 @@ async def _run(payload: dict[str, Any]) -> dict[str, Any]:
     try:
         for register in registers:
             getattr(job, register)(hook)
+        subphase_register = getattr(job, "on_environment_subphase", None)
+        if subphase_register is not None:
+            subphase_register(hook)
         if vertex_ai and vertex_ai.get("worker_path"):
             from oddish.workers.harbor.vertex_ai import agent_started_upload_hook
 

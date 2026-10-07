@@ -62,6 +62,8 @@ from oddish.core.trial_io import (
     read_trial_trajectory,
 )
 from oddish.core.trial_live import read_trial_live_for_id
+from oddish.core.progress_history import read_progress_history
+from oddish.progress import ProgressHistory
 from oddish.schemas import TrialRetryRequest
 from oddish.core.admin import (
     QueueHealthResponse,
@@ -908,6 +910,16 @@ async def retry_trial(
 # =============================================================================
 # Trial Artifact Endpoints
 # =============================================================================
+
+
+@api.get("/trials/{trial_id}/progress-history", response_model=ProgressHistory)
+async def get_trial_progress_history(
+    trial_id: str,
+) -> ProgressHistory:
+    async with get_read_session() as session:
+        return await read_progress_history(
+            session, trial_id=trial_id
+        )
 
 
 @api.get("/trials/{trial_id}/live")

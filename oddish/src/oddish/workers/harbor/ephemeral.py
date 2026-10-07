@@ -528,6 +528,15 @@ def _bridge_event(data: dict[str, Any], *, trial_id: str | None) -> SimpleNamesp
         environment_provider=data.get("environment_provider"),
         environment_external_id=data.get("environment_external_id"),
         result=result,
+        subphase=(
+            SimpleNamespace(**data["subphase"])
+            if isinstance(data.get("subphase"), dict)
+            else None
+        ),
+        # Plain fields, not ``environment``: a non-None environment means a
+        # live handle to the worker (it would start the transcript tailer).
+        environment_instance_type=data.get("environment_instance_type"),
+        environment_region=data.get("environment_region"),
     )
 
 

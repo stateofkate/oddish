@@ -540,3 +540,44 @@ async def test_the_tail_is_flushed_and_stopped_before_the_result_is_reported(
 
     monkeypatch.setattr(live_tail, "shutdown", _boom)
     await runner._finish_live_tail("trial-1")  # logged, never raised
+
+
+@pytest.mark.asyncio
+async def test_hook_writes_setup_progress_and_does_not_report_it_as_a_stage(
+    monkeypatch,
+):
+    from datetime import datetime, timezone
+
+    from harbor.models.environment_subphase import EnvironmentSubphase, SubphaseStatus
+
+    monkeypatch.setattr(live_tail, "_allocated_seqs", {})
+    monkeypatch.setattr(
+        hooks,
+        "write_status",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("not a stage")),
+    )
+    client = _Client()
+    persisted = []
+
+    async def persist(**kwargs):
+        persisted.append(kwargs)
+        return live_tail.PersistResult(flushed=len(kwargs["events"]))
+
+    on_event = hooks.make_hook_callback(client, SPEC, persist=persist)
+    await on_event(
+        SimpleNamespace(
+            event=TrialEvent.ENVIRONMENT_SUBPHASE,
+            subphase=EnvironmentSubphase(
+                phase="kubernetes.cluster_up",
+                status=SubphaseStatus.STARTED,
+                provider="ec2",
+                started_at=datetime(2026, 10, 5, tzinfo=timezone.utc),
+            ),
+        )
+    )
+
+    assert client.calls == []
+    assert [e["kind"] for call in persisted for e in call["events"]] == [
+        "env_subphase"
+    ]
+    assert persisted[0]["attempt"] == SPEC.trial_attempt

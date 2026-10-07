@@ -13,6 +13,7 @@ from sqlalchemy import delete, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from oddish.db import TrialEventModel, TrialModel
+from oddish.core.progress_history import retain_setup_events
 from oddish.db.connection import get_session
 from oddish.workers.console import console
 from oddish.workers.harbor.live_tail import PersistResult
@@ -32,6 +33,9 @@ async def persist_tick_to_database(
     checkpoint_written = False
     async with get_session() as session:
         if events:
+            await retain_setup_events(
+                session, trial_id=trial_id, attempt=attempt, events=events
+            )
             rows = [{"trial_id": trial_id, "attempt": attempt, **e} for e in events]
             await session.execute(
                 pg_insert(TrialEventModel).values(rows).on_conflict_do_nothing()

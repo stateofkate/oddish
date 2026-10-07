@@ -1,6 +1,6 @@
 {
   "lifecycle": {
-    "events": ["agent-end", "agent-start", "cancel", "end", "environment-provisioned", "environment-start", "start", "verification-start"],
+    "events": ["agent-end", "agent-start", "cancel", "end", "environment-provisioned", "environment-start", "environment-subphase", "start", "verification-start"],
     "summary": {
       "event": "end",
       "result": {

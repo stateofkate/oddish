@@ -18,6 +18,7 @@ from oddish.mon.client import (
 from oddish.mon.contract import AttemptSpec, summarize_hook_event
 from oddish.mon.status import write_status
 from oddish.workers.harbor import live_tail
+from oddish.workers.harbor.setup_events import SetupEventEmitter, is_setup_only_event
 
 logger = logging.getLogger(__name__)
 
@@ -77,9 +78,20 @@ def make_hook_callback(
 ):
     """``persist`` is where the live tail sends each tick (``seams.build``)."""
     reporter = reporter or LifecycleReporter(client)
+    setup_events = SetupEventEmitter(
+        trial_id=spec.trial_id,
+        attempt=spec.trial_attempt,
+        persist=persist,
+        org_id=spec.org_id,
+        billed_user_id=spec.billed_user_id,
+    )
 
     async def on_event(hook_event: Any) -> None:
         event = hook_event.event
+        await setup_events.observe(hook_event)
+        # Setup progress is live display only, not a lifecycle stage to report.
+        if is_setup_only_event(event):
+            return
         write_status(trial_id=spec.trial_id, phase=event.value)
         logger.info("harbor event: %s", event.value)
         # Sizing evidence at every phase boundary: the sandbox's own cgroup and

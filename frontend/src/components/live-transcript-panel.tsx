@@ -8,7 +8,9 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
-import { AgentElapsedTime, type AgentTiming } from "@/components/agent-elapsed-time";
+import type { Trial } from "@/lib/types";
+import { TrialProgress } from "@/components/trial-progress";
+import { AgentElapsedTime } from "@/components/agent-elapsed-time";
 import { Badge } from "@/components/ui/badge";
 import {
   StepHeader,
@@ -23,31 +25,17 @@ import {
   type CodeView,
 } from "@/lib/trajectory-view";
 import { HarborStageBadge } from "@/components/harbor-stage-badge";
-import { fetcher } from "@/lib/api";
 import { formatCostUsd } from "@/lib/format";
+import {
+  foldSetupEvents,
+  hasSetupInfo,
+  isSetupEvent,
+} from "@/lib/setup-events";
+import { useTrialLiveEvents, type LiveEvent } from "@/lib/use-trial-live-events";
 import { cn } from "@/lib/utils";
-
-interface LiveEvent {
-  seq: number;
-  kind: string;
-  payload: Record<string, unknown>;
-}
-
-interface LiveUsage {
-  input_tokens: number | null;
-  output_tokens: number | null;
-  cost_usd: number | null;
-}
-
-interface LiveResponse {
-  agent_timing?: AgentTiming | null;
-  attempt: number;
-  events: LiveEvent[];
-  next_seq: number;
-  usage: LiveUsage;
-  harbor_stage: string | null;
-  done: boolean;
-}
+import {
+  EnvironmentSetupSteps,
+} from "@/components/environment-setup-steps";
 
 interface LiveStep {
   key: number;
@@ -55,7 +43,6 @@ interface LiveStep {
   events: LiveEvent[];
 }
 
-const POLL_MS = 10_000;
 const SANITIZED_TITLE = "Unsafe control characters were rendered safely.";
 
 function agentNotice(agent: string | null | undefined): string | null {
@@ -378,68 +365,50 @@ function LiveStepContent({ step }: { step: LiveStep }) {
 
 export function LiveTranscriptPanel({
   trialId,
+  trial,
   agent,
   apiBaseUrl = "/api",
 }: {
   trialId: string;
+  trial?: Trial;
   agent?: string | null;
   apiBaseUrl?: string;
 }) {
-  const [events, setEvents] = useState<LiveEvent[]>([]);
-  const [last, setLast] = useState<LiveResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { events, last, error, restarts } = useTrialLiveEvents(trialId, {
+    apiBaseUrl,
+    resetKey: trial?.attempts,
+    stopWhen: data => data.done && data.events.length === 0,
+  });
   const [expanded, setExpanded] = useState<string[]>([]);
 
-  const attemptRef = useRef<number | null>(null);
-  const afterSeqRef = useRef(0);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const atBottomRef = useRef(true);
   const prevNewestRef = useRef<string | null>(null);
   const autoExpandedRef = useRef<string | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    if (restarts === 0) return;
+    prevNewestRef.current = null;
+    setExpanded([]);
+  }, [restarts]);
 
-    const poll = async () => {
-      try {
-        const params =
-          `after_seq=${afterSeqRef.current}` +
-          (attemptRef.current != null ? `&attempt=${attemptRef.current}` : "");
-        const data = await fetcher<LiveResponse>(
-          `${apiBaseUrl}/trials/${trialId}/live?${params}`
-        );
-        if (cancelled) return;
+  const transcript = useMemo(
+    () => events.filter((event) => !isSetupEvent(event)),
+    [events]
+  );
+  const setup = useMemo(() => foldSetupEvents(events), [events]);
+  const showSetup = hasSetupInfo(setup);
 
-        const restart =
-          attemptRef.current != null && data.attempt > attemptRef.current;
-        attemptRef.current = data.attempt;
-        afterSeqRef.current = data.next_seq;
-        if (restart) {
-          prevNewestRef.current = null;
-          setExpanded([]);
-          setEvents(data.events);
-        } else if (data.events.length) {
-          setEvents((prev) => [...prev, ...data.events]);
-        }
-        setLast(data);
-        setError(null);
-        timer = setTimeout(poll, data.events.length ? 0 : POLL_MS);
-      } catch (err) {
-        if (cancelled) return;
-        setError(err instanceof Error ? err.message : "Failed to load");
-        timer = setTimeout(poll, POLL_MS);
-      }
-    };
-
-    poll();
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, [trialId, apiBaseUrl]);
-
-  const steps = useMemo(() => groupSteps(events), [events]);
+  // Setup steps start open and collapse once, when agent output first arrives;
+  // after that the user's toggle wins.
+  const hasTranscript = transcript.length > 0;
+  const [setupOpen, setSetupOpen] = useState(!hasTranscript);
+  const [sawTranscript, setSawTranscript] = useState(hasTranscript);
+  if (hasTranscript !== sawTranscript) {
+    setSawTranscript(hasTranscript);
+    setSetupOpen(!hasTranscript);
+  }
+  const steps = useMemo(() => groupSteps(transcript), [transcript]);
   const numbered = useMemo(() => {
     let n = 0;
     return steps.map((step) => ({
@@ -470,10 +439,10 @@ export function LiveTranscriptPanel({
   }, [newest]);
 
   useEffect(() => {
-    if (atBottomRef.current && scrollRef.current) {
+    if (transcript.length && atBottomRef.current && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [events]);
+  }, [events, transcript.length]);
 
   const onAccordionAnimationEnd = (value: string) => {
     if (
@@ -516,13 +485,13 @@ export function LiveTranscriptPanel({
   };
 
   const usage = last?.usage;
+  const tokens = (usage?.input_tokens ?? 0) + (usage?.output_tokens ?? 0);
   const done = last?.done ?? false;
   const stage = last?.harbor_stage;
-  const tokens = (usage?.input_tokens ?? 0) + (usage?.output_tokens ?? 0);
   const notice = agentNotice(agent);
 
-  return (
-    <div className="flex h-full flex-col">
+  const header = (
+    <>
       <div className="border-border flex flex-wrap items-center gap-2 border-b px-4 py-2 text-xs">
         <span className="flex items-center gap-1.5 font-medium">
           <Radio
@@ -534,8 +503,14 @@ export function LiveTranscriptPanel({
           {done ? "Ended" : "Live"}
         </span>
         {stage && <HarborStageBadge stage={stage} />}
-        <span className="text-muted-foreground">{numbered.filter(item => item.num > 0).length} steps</span>
-        <AgentElapsedTime timing={last?.agent_timing} running={!done && stage === "agent_running"} agent={agent} />
+        <span className="text-muted-foreground">
+          {numbered.filter((item) => item.num > 0).length} steps
+        </span>
+        <AgentElapsedTime
+          timing={last?.agent_timing}
+          agent={agent}
+          running={!done && stage === "agent_running"}
+        />
         {usage?.cost_usd != null && (
           <span className="font-mono font-semibold tabular-nums">
             ~{formatCostUsd(usage.cost_usd)}
@@ -556,64 +531,108 @@ export function LiveTranscriptPanel({
           <span>{notice}</span>
         </div>
       )}
-      <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-auto">
-        {steps.length > 0 && (
-          <Accordion
-            type="multiple"
-            value={expanded}
-            onValueChange={onExpandedChange}
-          >
-            {numbered.map(({ step, num }) =>
-              step.kind === "summary" ? (
-                step.events[0] && (
-                  <div key={step.key} className="px-4 py-2">
-                    <LiveSummary payload={step.events[0].payload} />
-                  </div>
-                )
-              ) : (
-                <AccordionItem
-                  key={step.key}
-                  value={`live-${step.key}`}
-                  className="px-4"
-                >
-                  <AccordionTrigger className="min-w-0 py-2 hover:no-underline">
-                    <StepHeader
-                      index={num}
-                      source="agent"
-                      preview={stepPreview(step)}
-                      badges={stepBadges(step)}
-                    />
-                  </AccordionTrigger>
-                  <AccordionContent
-                    onAnimationEnd={() =>
-                      onAccordionAnimationEnd(`live-${step.key}`)
-                    }
-                  >
-                    <LiveStepContent step={step} />
-                  </AccordionContent>
-                </AccordionItem>
+    </>
+  );
+  const transcriptBody = (
+    <div role="region" aria-label="Agent output">
+      {steps.length > 0 && (
+        <Accordion
+          type="multiple"
+          value={expanded}
+          onValueChange={onExpandedChange}
+        >
+          {numbered.map(({ step, num }) =>
+            step.kind === "summary" ? (
+              step.events[0] && (
+                <div key={step.key} className="px-4 py-2">
+                  <LiveSummary payload={step.events[0].payload} />
+                </div>
               )
-            )}
-          </Accordion>
-        )}
-        {events.length === 0 && !error && (
-          <div className="text-muted-foreground flex items-center gap-2 px-4 py-6 text-xs">
-            {done ? (
-              <span>No live transcript for this trial.</span>
             ) : (
-              <>
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                <span>
-                  {last != null ? "Waiting for agent output…" : "Connecting…"}
-                </span>
-              </>
+              <AccordionItem
+                key={step.key}
+                value={`live-${step.key}`}
+                className="px-4"
+              >
+                <AccordionTrigger className="min-w-0 py-2 hover:no-underline">
+                  <StepHeader
+                    index={num}
+                    source="agent"
+                    preview={stepPreview(step)}
+                    badges={stepBadges(step)}
+                  />
+                </AccordionTrigger>
+                <AccordionContent
+                  onAnimationEnd={() =>
+                    onAccordionAnimationEnd(`live-${step.key}`)
+                  }
+                >
+                  <LiveStepContent step={step} />
+                </AccordionContent>
+              </AccordionItem>
+            )
+          )}
+        </Accordion>
+      )}
+      {transcript.length === 0 && !showSetup && !error && (
+        <div className="text-muted-foreground flex items-center gap-2 px-4 py-6 text-xs">
+          {done ? (
+            <span>No live transcript for this trial.</span>
+          ) : (
+            <>
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              <span>
+                {last != null
+                  ? last.agent_timing?.started_at
+                    ? "Waiting for agent output…"
+                    : "Agent start not yet recorded."
+                  : "Connecting…"}
+              </span>
+            </>
+          )}
+        </div>
+      )}
+      {error && (
+        <div role="alert" className="px-4 pt-2 text-xs text-red-500">
+          Live stream error: {error}
+        </div>
+      )}
+    </div>
+  );
+  return (
+    <div className="flex h-full flex-col">
+      {header}
+      <div
+        ref={scrollRef}
+        onScroll={onScroll}
+        role="region"
+        aria-label="Live trial"
+        className="flex-1 overflow-auto"
+      >
+        {trial ? (
+          <>
+            <TrialProgress trial={trial} apiBaseUrl={apiBaseUrl}
+              liveEvents={events} liveAttempt={last?.attempt}
+              liveAgentTiming={last?.agent_timing} environmentOnly />
+            {transcriptBody}
+          </>
+        ) : (
+          <>
+            {showSetup && !trial && (
+              <details
+                open={setupOpen}
+                onToggle={(event) => setSetupOpen(event.currentTarget.open)}
+                className="border-border border-b px-4 py-2"
+              >
+                <summary className="text-muted-foreground cursor-pointer text-xs">
+                  Environment setup · {setup.steps.length} steps
+                  {setup.current ? ` · ${setup.current.phase}` : ""}
+                </summary>
+                <EnvironmentSetupSteps state={setup} className="mt-2" />
+              </details>
             )}
-          </div>
-        )}
-        {error && (
-          <div className="px-4 pt-2 text-xs text-red-500">
-            Live stream error: {error}
-          </div>
+            {transcriptBody}
+          </>
         )}
       </div>
     </div>

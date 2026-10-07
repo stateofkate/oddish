@@ -23,6 +23,8 @@ from oddish.core.trial_io import (
     read_trial_trajectory,
 )
 from oddish.core.trial_live import read_trial_live_for_id
+from oddish.core.progress_history import read_progress_history
+from oddish.progress import ProgressHistory
 from oddish.core.trial_control import cancel_trials_by_id
 from oddish.core.playback import rebuild_trial_playback
 from oddish.core.ingest.trial_imports import (
@@ -369,6 +371,18 @@ async def delete_trial(
         "s3_keys_deleted": s3_keys_deleted,
         "modal_calls_cancelled": modal_cancelled,
     }
+
+
+@router.get("/trials/{trial_id}/progress-history", response_model=ProgressHistory)
+async def get_trial_progress_history(
+    trial_id: str,
+    auth: Annotated[AuthContext, Depends(require_auth)],
+) -> ProgressHistory:
+    auth.require_scope(APIKeyScope.READ)
+    async with get_read_session() as session:
+        return await read_progress_history(
+            session, trial_id=trial_id, org_id=auth.org_id
+        )
 
 
 @router.get("/trials/{trial_id}/live")

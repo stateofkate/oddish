@@ -15,6 +15,7 @@ export default defineConfig({
         "reasoning-effort.spec.ts",
         "experiment-agent-grouping.spec.ts",
         "ec2-rerun-command.spec.ts",
+        "trial-progress.spec.ts",
       ],
       timeout: 90_000,
       retries: process.env.CI ? 1 : 0,

@@ -1027,6 +1027,9 @@ class LiveTailer:
         self.offset = 0
         self.carry = b""
         self.seq = 0
+        # Transport sequences include setup facts; only transcript rows consume
+        # the agent output budget. Preserve this counter when replacing a tailer.
+        self.transcript_event_count = 0
         self.capped = False
         self.pending_events: list[dict[str, Any]] = []
         self._stop = asyncio.Event()
@@ -1163,7 +1166,7 @@ class LiveTailer:
             return
         for event in rendered:
             self.seq += 1
-            if self.seq > MAX_TRIAL_EVENTS:
+            if self.transcript_event_count >= MAX_TRIAL_EVENTS:
                 self.pending_events.append(
                     {
                         "seq": self.seq,
@@ -1178,6 +1181,7 @@ class LiveTailer:
                 )
                 self.capped = True
                 return
+            self.transcript_event_count += 1
             self.pending_events.append({"seq": self.seq, **event})
 
     async def _persist_tick(self) -> None:
@@ -1257,6 +1261,21 @@ class LiveTailer:
 
 
 _tailers: dict[str, tuple[LiveTailer, asyncio.Task]] = {}
+# Seqs handed to other writers of a trial's live events (setup events) before
+# its tailer starts: trial_id -> (attempt, last seq). The tailer continues after
+# them, because inserts skip conflicting seqs silently.
+_allocated_seqs: dict[str, tuple[int, int]] = {}
+
+
+def allocate_seq(trial_id: str, attempt: int) -> int:
+    """Reserve the next live-event seq for ``trial_id`` outside the tailer.
+
+    Only valid before the trial's tailer starts; a new attempt starts over.
+    """
+    previous = _allocated_seqs.get(trial_id)
+    seq = previous[1] + 1 if previous and previous[0] == attempt else 1
+    _allocated_seqs[trial_id] = (attempt, seq)
+    return seq
 
 
 def start(
@@ -1296,11 +1315,15 @@ def start(
         tailer._last_cost = old_tailer._last_cost
         if old_tailer.attempt == attempt:
             tailer.seq = old_tailer.seq
+            tailer.transcript_event_count = old_tailer.transcript_event_count
             tailer.capped = old_tailer.capped
             tailer.pending_events = list(old_tailer.pending_events)
             tailer.offset = old_tailer.offset
             tailer.carry = old_tailer.carry
             tailer.fold = old_tailer.fold
+    allocated = _allocated_seqs.get(trial_id)
+    if allocated and allocated[0] == attempt:
+        tailer.seq = max(tailer.seq, allocated[1])
     _tailers[trial_id] = (tailer, asyncio.create_task(tailer.run()))
 
 
@@ -1311,9 +1334,11 @@ def request_stop(trial_id: str) -> None:
 
 
 async def shutdown(trial_id: str, timeout_sec: float = 15.0) -> int | None:
+    allocated = _allocated_seqs.pop(trial_id, None)
     entry = _tailers.pop(trial_id, None)
     if not entry:
-        return None
+        # No tailer (e.g. an oracle run), but setup events may still need purging.
+        return allocated[0] if allocated else None
     tailer, task = entry
     tailer.request_stop()
     try:

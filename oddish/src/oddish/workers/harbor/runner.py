@@ -556,6 +556,27 @@ def _redact_trial_hook_event(
     return event.model_copy(update=updates)
 
 
+def _register_lifecycle_hooks(job: Any, callback: HookCallback) -> None:
+    """Subscribe ``callback`` to every Harbor lifecycle event the job offers.
+
+    ``on_environment_provisioned`` and ``on_environment_subphase`` exist only on
+    the abundant-ai fork; a Harbor without them simply does not emit those.
+    """
+    job.on_trial_started(callback)
+    provisioned = getattr(job, "on_environment_provisioned", None)
+    if provisioned is not None:
+        provisioned(callback)
+    job.on_environment_started(callback)
+    job.on_agent_started(callback)
+    job.on_agent_ended(callback)
+    job.on_verification_started(callback)
+    job.on_trial_ended(callback)
+    job.on_trial_cancelled(callback)
+    subphase = getattr(job, "on_environment_subphase", None)
+    if subphase is not None:
+        subphase(callback)
+
+
 def _redacting_hook_callback(
     callback: HookCallback | None,
     replacements: dict[str, str],
@@ -2676,15 +2697,7 @@ async def _run_harbor_trial_async_impl(
                         "environment-provisioned lifecycle hook"
                     )
                 if safe_hook_callback:
-                    job.on_trial_started(safe_hook_callback)
-                    if provisioned_hook is not None:
-                        provisioned_hook(safe_hook_callback)
-                    job.on_environment_started(safe_hook_callback)
-                    job.on_agent_started(safe_hook_callback)
-                    job.on_agent_ended(safe_hook_callback)
-                    job.on_verification_started(safe_hook_callback)
-                    job.on_trial_ended(safe_hook_callback)
-                    job.on_trial_cancelled(safe_hook_callback)
+                    _register_lifecycle_hooks(job, safe_hook_callback)
                 if vertex_ai is not None and vertex_ai.upload_hook is not None:
                     # Service-account mode: place the key file in the sandbox
                     # right before the agent phase, for every harness alike.
