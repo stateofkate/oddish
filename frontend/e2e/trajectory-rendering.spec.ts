@@ -119,7 +119,9 @@ test("live tool calls use the same command and output rendering", async ({
 
 
 test("agent elapsed time ticks between polls and stops at the recorded end", async ({ page }) => {
-  await page.clock.install({ time: new Date("2026-09-30T12:00:05Z") });
+  // Paused so only fastForward moves the timer; a running clock adds page-load seconds.
+  await page.clock.install({ time: new Date("2026-09-30T12:00:00Z") });
+  await page.clock.pauseAt(new Date("2026-09-30T12:00:05Z"));
   let ended = false;
   let requests = 0;
   await page.route("**/api/trials/trajectory-fixture/live?**", route => {
