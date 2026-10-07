@@ -56,6 +56,7 @@ def _claude_trial(**overrides):
     return _trial(
         agent="claude-code",
         model="anthropic/claude-opus-4-7",
+        environment="daytona",
         attempts=1,
         max_attempts=3,
         **overrides,
@@ -386,3 +387,30 @@ async def test_end_hook_keeps_a_real_zero(monkeypatch):
 
     assert trial.reward == 0.0
     assert trial.status == TrialStatus.SUCCESS
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reward", [0.0, 1.0])
+@pytest.mark.parametrize(
+    "message,http_status",
+    [
+        (
+            "You have reached your specified API usage limits. You will regain access on 2099-09-01 at 00:00 UTC.",
+            400,
+        ),
+        ("Request rejected", 403),
+        ("PermissionDeniedError: forbidden", None),
+    ],
+)
+async def test_end_hook_defers_terminal_provider_failures_to_settlement(
+    monkeypatch, reward, message, http_status
+):
+    trial = _claude_trial()
+    event = _end_event("RuntimeError", reward)
+    event.result.exception_info.exception_message = message
+    event.result.exception_info.http_status = http_status
+    await _handle_end(monkeypatch, trial, event)
+    assert trial.status == TrialStatus.RUNNING
+    assert trial.reward is None
+    assert trial.finished_at is None
+    assert trial.error_message == message

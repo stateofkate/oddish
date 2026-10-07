@@ -31,6 +31,7 @@ from oddish.core.harbor_artifacts import (  # noqa: E402
     THUNDER_CAPACITY_UNAVAILABLE_CODE,
 )
 from oddish.config import settings  # noqa: E402
+from oddish.workers.harbor.outcome import HarborOutcome
 from oddish.workers.jobs import handlers as handlers_module  # noqa: E402
 from oddish.workers.jobs.handlers import TrialJobHandler  # noqa: E402
 from oddish.workers.queue.worker_job_single_job import ClaimedWorkerJob  # noqa: E402
@@ -73,6 +74,16 @@ def _fake_get_session_factory(
 
 def _patch_run(monkeypatch, fn_name: str, *, result=None):
     """Install a no-op stub for the underlying ``run_*_job`` call."""
+    if fn_name == "run_trial_job" and isinstance(result, SimpleNamespace):
+        result = HarborOutcome(
+            reward=None,
+            error=None,
+            exit_code=1,
+            duration_sec=0,
+            job_result_path=None,
+            job_dir=None,
+            **vars(result),
+        )
     called = {"args": None, "kwargs": None}
 
     async def _stub(*args, **kwargs):
@@ -198,6 +209,45 @@ async def test_trial_handler_reroutes_typed_thunder_capacity_outcome(monkeypatch
     assert outcome.reroute.reason == THUNDER_CAPACITY_UNAVAILABLE_CODE
     assert outcome.reroute.retry_after_seconds == 20.0
     assert outcome.reroute.subject_attempt == 9
+
+
+@pytest.mark.parametrize("status", [TrialStatus.FAILED, TrialStatus.SUCCESS])
+@pytest.mark.asyncio
+async def test_terminal_trial_takes_precedence_over_capacity_reroute(monkeypatch, status):
+    monkeypatch.setattr(settings, "thunder_capacity_fallback", True)
+    monkeypatch.setattr(settings, "thunder_fallback_provider", "daytona")
+    trial_row = SimpleNamespace(
+        status=status,
+        environment="thunder",
+        error_message="Trial already settled",
+        attempts=1,
+    )
+    monkeypatch.setattr(
+        handlers_module, "get_session", _fake_get_session_factory(trial_row)
+    )
+    _patch_run(
+        monkeypatch,
+        "run_trial_job",
+        result=SimpleNamespace(
+            provider_error_code=THUNDER_CAPACITY_UNAVAILABLE_CODE,
+            retry_after_seconds=20.0,
+            http_status=503,
+            request_id="capacity-request",
+        ),
+    )
+
+    outcome = await TrialJobHandler().run(_trial_claim())
+
+    assert outcome.reroute is None
+    if status == TrialStatus.SUCCESS:
+        assert outcome.success is not None
+        assert outcome.failure is None
+    else:
+        assert outcome.failure is not None
+        assert outcome.failure.retryable is False
+        assert outcome.failure.error_message == "Trial already settled"
+        assert outcome.failure.provider_failure.provider_status_code == 503
+        assert outcome.failure.request_id == "capacity-request"
 
 
 @pytest.mark.asyncio
@@ -476,3 +526,39 @@ async def test_capacity_handoff_takes_precedence_over_attempt_budget(monkeypatch
 
     assert outcome.reroute is not None
     assert outcome.reroute.reason == THUNDER_CAPACITY_UNAVAILABLE_CODE
+
+
+@pytest.mark.asyncio
+async def test_trial_handler_threads_structured_provider_failure(monkeypatch):
+    trial_row = SimpleNamespace(
+        status=TrialStatus.RETRYING,
+        error_message="provider request failed",
+    )
+    harbor_outcome = HarborOutcome(
+        reward=None,
+        error="provider request failed",
+        exit_code=1,
+        duration_sec=1.0,
+        job_result_path=None,
+        job_dir=None,
+        exception_type="RateLimitError",
+        http_status=429,
+        request_id="request-123",
+        session_id="session-456",
+        retry_after_seconds=90.0,
+    )
+    monkeypatch.setattr(
+        handlers_module, "get_session", _fake_get_session_factory(trial_row)
+    )
+    _patch_run(monkeypatch, "run_trial_job", result=harbor_outcome)
+
+    outcome = await TrialJobHandler().run(_trial_claim())
+
+    assert outcome.failure is not None
+    assert outcome.failure.exception_type == "RateLimitError"
+    assert outcome.failure.request_id == "request-123"
+    assert outcome.failure.session_id == "session-456"
+    assert outcome.failure.retry_after_seconds == 90.0
+    assert outcome.failure.provider_failure is not None
+    assert outcome.failure.provider_failure.failure_class == "rate_limit"
+    assert outcome.failure.provider_failure.provider_status_code == 429

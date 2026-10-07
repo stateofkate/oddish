@@ -326,7 +326,7 @@ async def _locked_or_missing(session, model, subject_id: str):
 async def _mirror_stale_job_to_domain_row(session, row) -> str | None:
     """Mirror a reaped worker_jobs row's terminal state onto its domain row.
 
-    Returns the trial id when a TRIAL was mirrored FAILED (the caller triggers
+    Returns the trial id when a TRIAL is terminal (the caller triggers
     stage transitions), else None. Raises ``_DomainRowLocked`` when the domain
     row is locked by another writer.
     """
@@ -339,6 +339,41 @@ async def _mirror_stale_job_to_domain_row(session, row) -> str | None:
         trial = await _locked_or_missing(session, TrialModel, str(subject_id))
         if trial is None:
             return None
+        if trial.status in (TrialStatus.SUCCESS, TrialStatus.FAILED, TrialStatus.SKIPPED):
+            # Settlement can commit the terminal domain row before the worker
+            # records its worker_jobs outcome. If that process then dies, the
+            # stale reaper must retire the scheduler row instead of reviving
+            # the settled trial and making another provider request. The same
+            # rule applies when the stale job has exhausted its attempt budget.
+            terminal_error = trial.error_message or row["error_message"]
+            await session.execute(
+                text(
+                    """
+                    UPDATE worker_jobs
+                    SET    status = 'FAILED'::worker_job_status,
+                           error_message = :error_message,
+                           finished_at = COALESCE(finished_at, NOW()),
+                           next_retry_at = NULL,
+                           payload = payload - 'registry_auth_enc'
+                    WHERE  id = :job_id
+                      AND  status = CAST(:reaped_status AS worker_job_status)
+                    """
+                ),
+                {
+                    "job_id": row["id"],
+                    "error_message": terminal_error,
+                    "reaped_status": row["new_status"],
+                },
+            )
+            row["new_status"] = "FAILED"
+            row["error_message"] = terminal_error
+            trial.current_worker_id = None
+            trial.current_queue_slot = None
+            trial.stale_reaped_at = utcnow()
+            await refresh_task_browse_summaries(
+                session, [getattr(trial, "task_version_id", None)]
+            )
+            return str(trial.id)
         if row["new_status"] == "RETRYING":
             delay_seconds = calculate_trial_retry_delay_seconds(
                 attempts=int(row["attempts"]),
@@ -1314,7 +1349,7 @@ async def _reap_stale_worker_jobs(
     for stale_job_id, observed_attempt in stale_candidates:
         try:
             async with session.begin_nested():
-                row = (
+                row_result = (
                     (
                         await session.execute(
                             text(
@@ -1394,8 +1429,12 @@ async def _reap_stale_worker_jobs(
                     .mappings()
                     .one_or_none()
                 )
-                if row is None:
+                if row_result is None:
                     continue  # another actor already progressed this job
+                # The mirror may tighten RETRYING to FAILED after locking an
+                # already-terminal trial. A mutable copy lets the accounting
+                # below report the transition that actually committed.
+                row = dict(row_result)
 
                 committed_trial_id = await _mirror_stale_job_to_domain_row(session, row)
                 if row["new_status"] == "RETRYING" and row.get("external_id"):

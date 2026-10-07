@@ -12,8 +12,6 @@ the queue execution code.
 
 from __future__ import annotations
 
-from typing import Any
-
 from oddish.core.harbor_artifacts import THUNDER_CAPACITY_UNAVAILABLE_CODE
 from oddish.db import (
     TrialModel,
@@ -28,6 +26,8 @@ from oddish.registry_auth import (
 )
 from oddish.runtime.sandbox_lifecycle import DEFAULT_EXECUTION_LANE
 from oddish.workers.jobs.registry import JobOutcome
+from oddish.workers.harbor.outcome import HarborOutcome
+from oddish.workers.queue.provider_failures import classify_provider_failure
 from oddish.workers.queue.task_expand_handler import run_task_expand_job
 from oddish.workers.queue.thunder_fallback import (
     THUNDER_ATTEMPT_BUDGET_EXHAUSTED_REASON,
@@ -199,6 +199,31 @@ async def _monitor_routes(
     return route.monitor
 
 
+def _trial_failure(
+    message: str,
+    *,
+    retryable: bool,
+    harbor_outcome: HarborOutcome | None,
+) -> JobOutcome:
+    """Carry provider-owned Harbor facts across the worker outcome boundary."""
+    if harbor_outcome is None:
+        return JobOutcome.fail(message, retryable=retryable)
+    provider_failure = classify_provider_failure(
+        message,
+        http_status=harbor_outcome.http_status,
+        exception_type=harbor_outcome.exception_type,
+    )
+    return JobOutcome.fail(
+        message,
+        retryable=retryable,
+        retry_after_seconds=harbor_outcome.retry_after_seconds,
+        exception_type=harbor_outcome.exception_type,
+        request_id=harbor_outcome.request_id,
+        session_id=harbor_outcome.session_id,
+        provider_failure=provider_failure,
+    )
+
+
 class TrialJobHandler:
     kind = WorkerJobKind.TRIAL
 
@@ -247,7 +272,7 @@ class TrialJobHandler:
         return await self.outcome_for_settled_trial(job, harbor_outcome)
 
     async def outcome_for_settled_trial(
-        self, job: WorkerJobLike, harbor_outcome: Any
+        self, job: WorkerJobLike, harbor_outcome: HarborOutcome | None
     ) -> JobOutcome:
         """The worker-job outcome implied by the trial row after settlement.
 
@@ -259,6 +284,15 @@ class TrialJobHandler:
             trial = await session.get(TrialModel, trial_id)
             if trial is None:
                 return _fail_permanent(f"Trial {trial_id} vanished mid-run")
+            if trial.status == TrialStatus.SUCCESS:
+                return JobOutcome.ok()
+            if trial.status == TrialStatus.FAILED:
+                error_message = trial.error_message or f"Trial {trial_id} marked FAILED"
+                return _trial_failure(
+                    error_message,
+                    retryable=False,
+                    harbor_outcome=harbor_outcome,
+                )
             environment = getattr(trial, "environment", None)
             retry_after_seconds = (
                 harbor_outcome.retry_after_seconds
@@ -276,8 +310,6 @@ class TrialJobHandler:
                     retry_after_seconds=retry_after_seconds,
                     subject_attempt=trial.attempts,
                 )
-            if trial.status == TrialStatus.SUCCESS:
-                return JobOutcome.ok()
             if trial.status == TrialStatus.RETRYING:
                 error_message = (
                     trial.error_message or f"Trial {trial_id} marked RETRYING"
@@ -307,14 +339,11 @@ class TrialJobHandler:
                         subject_attempt=trial.attempts,
                         error_message=error_message,
                     )
-                return JobOutcome.fail(
+                return _trial_failure(
                     error_message,
                     retryable=True,
-                    retry_after_seconds=retry_after_seconds,
+                    harbor_outcome=harbor_outcome,
                 )
-            if trial.status == TrialStatus.FAILED:
-                error_message = trial.error_message or f"Trial {trial_id} marked FAILED"
-                return _fail_permanent(error_message)
             return _fail_retryable(
                 f"Trial {trial_id} left in non-terminal status {trial.status!r}"
             )

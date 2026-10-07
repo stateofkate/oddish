@@ -294,6 +294,32 @@ High-level flow:
    `trial_results` and the caller applies its own first-error rule across the
    whole list. The reward itself always survived the omission: it resolves from
    the job-level `stats.evals` block, which that summary keeps.
+   The trial handler carries Harbor's structured failure fields into the
+   worker-job outcome. Trial settlement classifies the error text together with
+   Harbor's HTTP status and exception type, so a structured permission denial
+   is terminal even when the message omits it. The worker checks settled SUCCESS
+   and FAILED rows before Thunder capacity fallback; a capacity code cannot
+   reopen a terminal trial. Non-trial worker kinds never infer provider failures
+   from generic error strings. A failure transition compares `attempts` with
+   the current `max_attempts` inside the same atomic `worker_jobs` update that
+   chooses `RETRYING` or `FAILED`. If trial settlement committed `SUCCESS`, `FAILED`, or `SKIPPED`
+   before its worker process died, stale-heartbeat cleanup treats that trial
+   row as authoritative and fails the stale worker job instead of clearing
+   `finished_at` and scheduling another provider request.
+   Failure recording also locks the owned worker job and then its trial in one
+   transaction before choosing retry or failure. A trial already SUCCESS,
+   FAILED, or SKIPPED cannot be retried by a later handler exception; the job
+   fails without changing the settled trial. The job update and trial mirror
+   commit together; retry and failure events are emitted only after commit.
+   The Harbor END hook applies the same terminal-provider classifier before
+   publishing any reward, leaving those failures for final settlement.
+   Missing analysis artifacts may retry verifier/layout
+   failures, but never override permission denials or future-dated usage caps;
+   those failures retain their provider message alongside the artifact error.
+   These terminal provider failures also discard any verifier reward, including
+   zero, before settlement chooses SUCCESS or synthesizes a timeout score.
+   The classifier's `is_terminal` policy owns both reward rejection and the
+   provider-specific retry decision, even without a recorded exception type.
 4. Trajectory analysis is **task-scoped** and runs as a trial: when every
    agent trial of a task is terminal and `run_analysis` is enabled, one QA trial (`trials.kind = 'qa'`)
    is created on the same task. Its agent classifies
@@ -745,6 +771,13 @@ holds the task lock. Keep the PostgreSQL concurrency regression in
   when replacement QA is queued and publishes only that pass's verdict
 - shared queue-slot leasing, per-queue-key concurrency limits, and
   per-user fairness on `TRIAL` claims
+- provider account-cap errors with a parsed future recovery time are terminal
+  for the current trial because workers reuse the same credential across
+  attempts. Ordinary HTTP 429 rate limits, low-credit responses, timeouts, and
+  provider availability errors retain the normal retry budget. Oddish does not
+  automatically fail over to another credential or model; that would change
+  credential selection, billing attribution, and the model that performs the
+  trial.
 - database-backed admin concurrency overrides; these take precedence over
   `ODDISH_MODEL_CONCURRENCY_OVERRIDES` and are read by both the dispatcher plan
   and each worker's slot acquisition. This is the supported way to change a

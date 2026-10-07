@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -55,9 +56,11 @@ class _FakeSavepoint:
 
 
 class _FakeSession:
-    def __init__(self, trial: SimpleNamespace) -> None:
+    def __init__(self, trial: SimpleNamespace, reaped_status: str = "RETRYING") -> None:
         self.trial = trial
+        self.reaped_status = reaped_status
         self.worker_job_retry_updates: list[dict[str, Any]] = []
+        self.worker_job_terminal_updates: list[dict[str, Any]] = []
 
     def begin_nested(self):
         return _FakeSavepoint()
@@ -72,7 +75,7 @@ class _FakeSession:
                     {
                         "id": "wj-1",
                         "kind": "TRIAL",
-                        "new_status": "RETRYING",
+                        "new_status": self.reaped_status,
                         "subject_table": "trials",
                         "subject_id": self.trial.id,
                         "attempts": 2,
@@ -83,6 +86,9 @@ class _FakeSession:
             )
         if "UPDATE worker_jobs" in sql and "available_after = :retry_at" in sql:
             self.worker_job_retry_updates.append(params or {})
+            return _FakeResult(rowcount=1)
+        if "status = 'FAILED'::worker_job_status" in sql:
+            self.worker_job_terminal_updates.append(params or {})
             return _FakeResult(rowcount=1)
         if sql.lstrip().startswith("SELECT") and "FROM trials" in sql:
             # The mirror's FOR UPDATE SKIP LOCKED trial load.
@@ -157,3 +163,152 @@ async def test_stale_trial_retry_cleanup_schedules_backoff(monkeypatch):
     assert trial.finished_at is None
     assert trial.current_worker_id is None
     assert trial.current_queue_slot is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status", [TrialStatus.SUCCESS, TrialStatus.FAILED, TrialStatus.SKIPPED]
+)
+@pytest.mark.parametrize("reaped_status", ["RETRYING", "FAILED"])
+async def test_stale_cleanup_preserves_settled_trial(status, reaped_status):
+    finished_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    provider_error = (
+        "API Error: 400 You have reached your specified API usage limits. "
+        "You will regain access on 2099-09-01 at 00:00 UTC."
+    )
+    trial = SimpleNamespace(
+        id="trial-terminal",
+        status=status,
+        error_message=provider_error,
+        next_retry_at=None,
+        finished_at=finished_at,
+        current_worker_id="worker-1",
+        current_queue_slot=3,
+        stale_reaped_at=None,
+    )
+    session = _FakeSession(trial, reaped_status)
+
+    (
+        retried,
+        failed,
+        reaped_trial_ids,
+        worker_targets,
+        reap_errors,
+        releases,
+    ) = await cleanup._reap_stale_worker_jobs(
+        session,
+        stale_after_minutes=15,
+    )
+
+    assert (retried, failed, reap_errors) == (0, 1, 0)
+    assert releases == []
+    assert reaped_trial_ids == ["trial-terminal"]
+    assert worker_targets == set()
+    assert session.worker_job_retry_updates == []
+    assert session.worker_job_terminal_updates == [
+        {
+            "job_id": "wj-1",
+            "error_message": provider_error,
+            "reaped_status": reaped_status,
+        }
+    ]
+    assert trial.status == status
+    assert trial.error_message == provider_error
+    assert trial.finished_at == finished_at
+    assert trial.next_retry_at is None
+    assert trial.current_worker_id is None
+    assert trial.current_queue_slot is None
+
+
+@pytest.mark.skipif(
+    not os.environ.get("ODDISH_DATABASE_URL"), reason="disposable PostgreSQL required"
+)
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status", [TrialStatus.SUCCESS, TrialStatus.FAILED, TrialStatus.SKIPPED]
+)
+@pytest.mark.parametrize("exhausted", [False, True])
+async def test_stale_cleanup_preserves_committed_terminal_trial(status, exhausted):
+    from uuid import uuid4
+    from sqlalchemy import delete
+    from oddish.db import (
+        TaskModel,
+        ExperimentModel,
+        WorkerJobModel,
+        WorkerJobKind,
+        WorkerJobStatus,
+        get_session,
+    )
+
+    key = "settled-reap-" + uuid4().hex[:12]
+    finished_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    error = "recorded terminal outcome"
+    async with get_session() as session:
+        session.add(ExperimentModel(id=key, name=key))
+        await session.flush()
+        session.add(TaskModel(id=key, name=key, user="tester", task_path="s3://test/task"))
+        await session.flush()
+        session.add(
+            TrialModel(
+                id=key,
+                name=key,
+                task_id=key,
+                experiment_id=key,
+                agent="codex",
+                provider="openai",
+                queue_key="test",
+                model="test",
+                status=status,
+                attempts=1,
+                max_attempts=1 if exhausted else 3,
+                finished_at=finished_at,
+                error_message=error,
+                reward=1.0 if status == TrialStatus.SUCCESS else None,
+                current_worker_id="stopped-worker",
+                current_queue_slot=1,
+            )
+        )
+        session.add(
+            WorkerJobModel(
+                id=key,
+                kind=WorkerJobKind.TRIAL,
+                status=WorkerJobStatus.RUNNING,
+                subject_table="trials",
+                subject_id=key,
+                queue_key="test",
+                attempts=1,
+                max_attempts=1 if exhausted else 3,
+                heartbeat_at=finished_at,
+                started_at=finished_at,
+                current_worker_id="stopped-worker",
+                current_queue_slot=1,
+                payload={"registry_auth_enc": "must-be-retired"},
+            )
+        )
+    try:
+        async with get_session() as session:
+            _, _, trial_ids, _, errors, _ = await cleanup._reap_stale_worker_jobs(
+                session, stale_after_minutes=15
+            )
+            assert errors == 0
+            assert key in trial_ids
+        async with get_session() as session:
+            trial = await session.get(TrialModel, key)
+            job = await session.get(WorkerJobModel, key)
+            assert trial.status == status
+            assert trial.finished_at == finished_at
+            assert trial.error_message == error
+            assert trial.reward == (1.0 if status == TrialStatus.SUCCESS else None)
+            assert trial.next_retry_at is None
+            assert job.status == WorkerJobStatus.FAILED
+            assert job.next_retry_at is None
+            assert job.finished_at is not None
+            assert "registry_auth_enc" not in job.payload
+    finally:
+        async with get_session() as session:
+            await session.execute(
+                delete(WorkerJobModel).where(WorkerJobModel.id == key)
+            )
+            await session.execute(delete(TrialModel).where(TrialModel.id == key))
+            await session.execute(delete(TaskModel).where(TaskModel.id == key))
+            await session.execute(delete(ExperimentModel).where(ExperimentModel.id == key))

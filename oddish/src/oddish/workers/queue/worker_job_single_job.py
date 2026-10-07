@@ -18,7 +18,6 @@ import asyncio
 import json
 import logging
 import random
-import re
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import nullcontext
@@ -36,6 +35,8 @@ from oddish.costs.recorder import (
 )
 from oddish.db import WorkerJobKind, WorkerJobStatus, connect_with_retry, get_session
 from oddish.observability import (
+    log_error,
+    log_warning,
     TRACE_CONTEXT_PAYLOAD_KEY,
     ThunderHandoffOutcome,
     record_worker_job_trace_outcome,
@@ -55,6 +56,10 @@ from oddish.workers.jobs.registry import (
     JobReroute,
     NoHandlerRegisteredError,
     get_handler,
+)
+from oddish.workers.queue.provider_failures import (
+    ProviderFailureClassification,
+    classify_provider_failure,
 )
 from oddish.workers.queue.resource_rollout import COHORT_SQL, load_rollout
 from oddish.workers.queue.sandbox_capacity import SANDBOX_CAPACITY_LEASE_SECONDS
@@ -126,21 +131,6 @@ TRIAL_RATE_LIMIT_RETRY_BASE_DELAY_SECONDS = 300.0
 TRIAL_RETRY_MAX_DELAY_SECONDS = 1800.0
 TRIAL_RETRY_JITTER_FRACTION = 0.25
 
-_RATE_LIMIT_RE = re.compile(
-    r"\b("
-    r"429|"
-    r"too many requests|"
-    r"rate[\s_-]*limit(?:ed|s|ing)?|"
-    r"ratelimit(?:ed|s|ing)?|"
-    r"quota(?: exceeded)?|"
-    r"resource[_\s-]*exhausted|"
-    r"requests per minute|"
-    r"tokens per minute|"
-    r"throttl(?:ed|ing)?"
-    r")\b",
-    re.IGNORECASE,
-)
-
 
 def _ensure_handlers_registered() -> None:
     """Register built-in handlers lazily on first claim.
@@ -166,10 +156,18 @@ __all__ = [
 ]
 
 
-def classify_retry_reason(error_message: str | None) -> str:
+def classify_retry_reason(
+    error_message: str | None,
+    provider_failure: ProviderFailureClassification | None = None,
+) -> str:
     """Return a coarse retry reason for scheduling/telemetry."""
-    if error_message and _RATE_LIMIT_RE.search(error_message):
+    failure_class = (
+        provider_failure or classify_provider_failure(error_message)
+    ).failure_class
+    if failure_class == "rate_limit":
         return "rate_limit"
+    if failure_class == "provider_usage_limit":
+        return "provider_usage_limit"
     return "transient"
 
 
@@ -179,6 +177,7 @@ def calculate_trial_retry_delay_seconds(
     error_message: str | None,
     jitter: float | None = None,
     retry_after_seconds: float | None = None,
+    provider_failure: ProviderFailureClassification | None = None,
 ) -> float:
     """Return bounded exponential trial retry delay with multiplicative jitter.
 
@@ -187,10 +186,10 @@ def calculate_trial_retry_delay_seconds(
     start at a higher base because immediately retrying usually makes the
     provider-side contention worse.
     """
-    retry_reason = classify_retry_reason(error_message)
+    retry_reason = classify_retry_reason(error_message, provider_failure)
     base_delay = (
         TRIAL_RATE_LIMIT_RETRY_BASE_DELAY_SECONDS
-        if retry_reason == "rate_limit"
+        if retry_reason in {"rate_limit", "provider_usage_limit"}
         else TRIAL_RETRY_BASE_DELAY_SECONDS
     )
     exponential_delay = base_delay * (2 ** max(attempts - 1, 0))
@@ -1137,6 +1136,9 @@ async def record_outcome(
     kind: WorkerJobKind | None = None,
     subject_table: str | None = None,
     subject_id: str | None = None,
+    queue_key: str | None = None,
+    execution_lane: str | None = None,
+    harbor_variant_id: str | None = None,
 ) -> WorkerJobStatus | None:
     connection = await _open_connection()
     try:
@@ -1167,6 +1169,9 @@ async def record_outcome(
                 kind=kind,
                 subject_table=subject_table,
                 subject_id=subject_id,
+                queue_key=queue_key,
+                execution_lane=execution_lane,
+                harbor_variant_id=harbor_variant_id,
             )
         if outcome.success is not None:
             import json
@@ -1208,6 +1213,9 @@ async def record_outcome(
             kind=kind,
             subject_table=subject_table,
             subject_id=subject_id,
+            queue_key=queue_key,
+            execution_lane=execution_lane,
+            harbor_variant_id=harbor_variant_id,
         )
     finally:
         await connection.close()
@@ -1261,6 +1269,9 @@ async def _record_reroute_or_fallback(
     kind: WorkerJobKind | None,
     subject_table: str | None,
     subject_id: str | None,
+    queue_key: str | None = None,
+    execution_lane: str | None = None,
+    harbor_variant_id: str | None = None,
 ) -> WorkerJobStatus | None:
     """Persist a handoff, or the attempt's ordinary disposition if declined.
 
@@ -1307,6 +1318,9 @@ async def _record_reroute_or_fallback(
             kind=kind,
             subject_table=subject_table,
             subject_id=subject_id,
+            queue_key=queue_key,
+            execution_lane=execution_lane,
+            harbor_variant_id=harbor_variant_id,
         )
     return await _settle_rejected_reroute(
         connection,
@@ -1329,143 +1343,228 @@ async def _record_failure_outcome(
     kind: WorkerJobKind | None,
     subject_table: str | None,
     subject_id: str | None,
+    queue_key: str | None = None,
+    execution_lane: str | None = None,
+    harbor_variant_id: str | None = None,
 ) -> WorkerJobStatus | None:
-    # Decide against the CURRENT row, not the claim-time snapshot: an
-    # operator capping max_attempts (or a reaper racing) mid-attempt must
-    # bind at this decision, or a surgically-capped trial schedules yet
-    # another attempt from the worker's stale in-memory values.
-    current = await connection.fetchrow(
-        "SELECT attempts, max_attempts FROM worker_jobs WHERE id = $1",
-        job_id,
+    provider_failure = failure.provider_failure
+    provider_attributes = {
+        "failure_class": (
+            provider_failure.failure_class if provider_failure is not None else None
+        ),
+        "provider_status_code": (
+            provider_failure.provider_status_code
+            if provider_failure is not None
+            else None
+        ),
+        "recovery_at": (
+            provider_failure.recovery_at.isoformat()
+            if provider_failure is not None and provider_failure.recovery_at is not None
+            else None
+        ),
+        "error_summary": (
+            provider_failure.error_summary if provider_failure is not None else None
+        ),
+        "exception_type": failure.exception_type,
+        "provider_request_id": failure.request_id,
+        "provider_session_id": failure.session_id,
+    }
+    transition_attributes = {
+        "worker_job_id": job_id,
+        "worker_job_kind": kind.value if kind is not None else None,
+        "subject_table": subject_table,
+        "subject_id": subject_id,
+        "trial_id": subject_id if subject_table == "trials" else None,
+        "queue_key": queue_key,
+        "execution_lane": execution_lane,
+        "harbor_variant_id": harbor_variant_id,
+    }
+    event_tags = (
+        ("worker-job", "provider-failure")
+        if provider_failure is not None and provider_failure.failure_class != "unknown"
+        else ("worker-job",)
     )
-    if current is not None:
-        attempts = int(current["attempts"])
-        max_attempts = int(current["max_attempts"])
-    retry = failure.retryable and attempts < max_attempts
-    if retry:
-        retry_at: datetime | None = None
-        retry_reason = classify_retry_reason(failure.error_message)
-        delay_seconds: float | None = None
-        if kind == WorkerJobKind.TRIAL:
-            delay_seconds = calculate_trial_retry_delay_seconds(
-                attempts=attempts,
-                error_message=failure.error_message,
-                retry_after_seconds=failure.retry_after_seconds,
-            )
-            retry_at = datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)
+    retry_reason = (
+        classify_retry_reason(failure.error_message, provider_failure)
+        if kind == WorkerJobKind.TRIAL
+        else "transient"
+    )
+    delay_seconds: float | None = None
+    retry_at: datetime | None = None
+    if failure.retryable and kind == WorkerJobKind.TRIAL:
+        delay_seconds = calculate_trial_retry_delay_seconds(
+            attempts=attempts,
+            error_message=failure.error_message,
+            retry_after_seconds=failure.retry_after_seconds,
+            provider_failure=provider_failure,
+        )
+        retry_at = datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)
 
-        # RETRYING is a scheduling state, not a terminal one. Leave
-        # finished_at NULL so the claim SQL can clear it on the
-        # next attempt without special-casing; the duration query
-        # already filters to SUCCESS/FAILED so it doesn't observe
-        # RETRYING rows either way.
-        command = await connection.execute(
+    is_trial = kind == WorkerJobKind.TRIAL and subject_table == "trials" and bool(subject_id)
+    async with connection.transaction() if is_trial else nullcontext():
+        retryable = failure.retryable
+        if is_trial:
+            # Match the handoff lock order: worker job, then trial. Keep both
+            # locked until the job transition and its trial mirror commit.
+            owned_job = await connection.fetchval(
+                """
+                SELECT id FROM worker_jobs
+                WHERE id = $1 AND status = 'RUNNING'::worker_job_status
+                  AND current_worker_id = $2
+                FOR UPDATE
+                """,
+                job_id,
+                worker_id,
+            )
+            if owned_job is None:
+                return None
+            trial_status = await connection.fetchval(
+                "SELECT status::text FROM trials WHERE id = $1 FOR UPDATE",
+                subject_id,
+            )
+            if trial_status in {"SUCCESS", "FAILED", "SKIPPED"}:
+                retryable = False
+
+        # The retry-cap decision and transition share one row lock. If an
+        # operator lowers max_attempts while the attempt runs, this CASE reads
+        # that current value at UPDATE time instead of racing a prior SELECT.
+        current = await connection.fetchrow(
             """
             UPDATE worker_jobs
-            SET    status = 'RETRYING',
+            SET    status = CASE
+                       WHEN $5::boolean AND attempts < max_attempts
+                           THEN 'RETRYING'::worker_job_status
+                       ELSE 'FAILED'::worker_job_status
+                   END,
                    error_message = $2,
-                   next_retry_at = $3,
-                   available_after = COALESCE($3::timestamptz, NOW()),
+                   next_retry_at = CASE
+                       WHEN $5::boolean AND attempts < max_attempts THEN $3::timestamptz
+                       ELSE NULL
+                   END,
+                   available_after = CASE
+                       WHEN $5::boolean AND attempts < max_attempts
+                           THEN COALESCE($3::timestamptz, NOW())
+                       ELSE available_after
+                   END,
+                   finished_at = CASE
+                       WHEN $5::boolean AND attempts < max_attempts THEN NULL
+                       ELSE NOW()
+                   END,
+                   payload = CASE
+                       WHEN $5::boolean AND attempts < max_attempts THEN payload
+                       ELSE payload - 'registry_auth_enc'
+                   END,
                    current_worker_id = NULL,
                    current_queue_slot = NULL,
                    modal_function_call_id = NULL,
-                   -- The retry starts UNLINKED (mirrors the reaper's retry
-                   -- transition): a carried-over handle can point at a pod
-                   -- that still exists, which blinds the orphan sweeper's
-                   -- live-unlinked guard while the next attempt's pod is
-                   -- unreferenced. This worker's own teardown already ran.
-                   external_id = NULL,
-                   provider = NULL
+                   external_id = CASE
+                       WHEN $5::boolean AND attempts < max_attempts THEN NULL
+                       ELSE external_id
+                   END,
+                   provider = CASE
+                       WHEN $5::boolean AND attempts < max_attempts THEN NULL
+                       ELSE provider
+                   END
             WHERE  id = $1
               AND  status = 'RUNNING'::worker_job_status
               AND  current_worker_id = $4
+            RETURNING status::text AS status, attempts, max_attempts
             """,
             job_id,
             failure.error_message,
             retry_at,
             worker_id,
+            retryable,
         )
-        if not _updated_one(command):
+        if current is None:
             console.print(
-                f"[yellow]worker_job {job_id} retry outcome ignored; row is no longer RUNNING[/yellow]"
+                f"[yellow]worker_job {job_id} outcome ignored; row is no longer RUNNING[/yellow]"
             )
             return None
-        if (
-            kind == WorkerJobKind.TRIAL
-            and subject_table == "trials"
-            and subject_id
-            and retry_at is not None
-        ):
+
+        attempts = int(current["attempts"])
+        max_attempts = int(current["max_attempts"])
+        persisted_status = WorkerJobStatus(current["status"])
+        if persisted_status == WorkerJobStatus.RETRYING:
+            if is_trial and retry_at is not None:
+                await connection.execute(
+                    """
+                    UPDATE trials
+                    SET    status = 'RETRYING',
+                           error_message = $2,
+                           next_retry_at = $3,
+                           current_worker_id = NULL,
+                           current_queue_slot = NULL,
+                           heartbeat_at = NOW()
+                    WHERE  id = $1
+                      AND  status::text NOT IN ('SUCCESS', 'FAILED', 'SKIPPED')
+                      AND  deleted_at IS NULL
+                      AND  superseded_by_trial_id IS NULL
+                    """,
+                    subject_id,
+                    failure.error_message,
+                    retry_at,
+                )
+        elif is_trial:
+            # Ordinary settlement may have left the trial RETRYING (it still had
+            # trial-level budget) while the job's own budget just ran out, or a
+            # declined attempt-budget handoff landed here after that settlement.
+            # No job remains to run it, so mirror the terminal outcome onto the
+            # trial; a trial already settled SUCCESS or FAILED is left alone.
             await connection.execute(
                 """
                 UPDATE trials
-                SET    status = 'RETRYING',
+                SET    status = 'FAILED',
                        error_message = $2,
-                       next_retry_at = $3,
+                       finished_at = NOW(),
+                       next_retry_at = NULL,
                        current_worker_id = NULL,
                        current_queue_slot = NULL,
                        heartbeat_at = NOW()
                 WHERE  id = $1
+                  AND  status::text = 'RETRYING'
                   AND  deleted_at IS NULL
                   AND  superseded_by_trial_id IS NULL
                 """,
                 subject_id,
                 failure.error_message,
-                retry_at,
             )
+
+    # Publish transition events only after the transaction commits.
+    if persisted_status == WorkerJobStatus.RETRYING:
         console.print(
-            f"metric=worker_job_retry_requeued id={job_id} "
-            f"attempts={attempts}/{max_attempts} "
-            f"retry_reason={retry_reason} "
-            f"retry_delay_seconds={delay_seconds or 0:.2f}"
+            f"[yellow]worker_job {job_id} -> RETRYING "
+            f"({attempts}/{max_attempts}, retry in "
+            f"{delay_seconds or 0:.2f}s)[/yellow]"
         )
-        return WorkerJobStatus.RETRYING
-    command = await connection.execute(
-        """
-        UPDATE worker_jobs
-        SET    status = 'FAILED',
-               error_message = $2,
-               finished_at = NOW(),
-               next_retry_at = NULL,
-               payload = payload - 'registry_auth_enc'
-        WHERE  id = $1
-          AND  status = 'RUNNING'::worker_job_status
-          AND  current_worker_id = $3
-        """,
-        job_id,
-        failure.error_message,
-        worker_id,
-    )
-    if not _updated_one(command):
+        log_warning(
+            "Worker job scheduled for retry",
+            tags=event_tags,
+            metric="worker_job_retry_scheduled",
+            retry_reason=retry_reason,
+            retry_delay_seconds=delay_seconds or 0.0,
+            retry_at=retry_at.isoformat() if retry_at is not None else None,
+            attempt=attempts,
+            max_attempts=max_attempts,
+            **transition_attributes,
+            **provider_attributes,
+        )
+    else:
         console.print(
-            f"[yellow]worker_job {job_id} failure outcome ignored; row is no longer RUNNING[/yellow]"
+            f"[red]worker_job {job_id} -> FAILED ({attempts}/{max_attempts})[/red]"
         )
-        return None
-    if kind == WorkerJobKind.TRIAL and subject_table == "trials" and subject_id:
-        # Ordinary settlement may have left the trial RETRYING (it still had
-        # trial-level budget) while the job's own budget just ran out, or a
-        # declined attempt-budget handoff landed here after that settlement.
-        # No job remains to run it, so mirror the terminal outcome onto the
-        # trial; a trial already settled SUCCESS or FAILED is left alone.
-        await connection.execute(
-            """
-            UPDATE trials
-            SET    status = 'FAILED',
-                   error_message = $2,
-                   finished_at = NOW(),
-                   next_retry_at = NULL,
-                   current_worker_id = NULL,
-                   current_queue_slot = NULL,
-                   heartbeat_at = NOW()
-            WHERE  id = $1
-              AND  status::text = 'RETRYING'
-              AND  deleted_at IS NULL
-              AND  superseded_by_trial_id IS NULL
-            """,
-            subject_id,
-            failure.error_message,
+        log_error(
+            "Worker job failed",
+            tags=event_tags,
+            metric="worker_job_failed",
+            terminal=True,
+            retryable_requested=failure.retryable,
+            attempt=attempts,
+            max_attempts=max_attempts,
+            **transition_attributes,
+            **provider_attributes,
         )
-    return WorkerJobStatus.FAILED
+    return persisted_status
 
 
 async def run_single_worker_job(
@@ -1639,6 +1738,9 @@ async def run_single_worker_job(
             kind=job.kind,
             subject_table=job.subject_table,
             subject_id=job.subject_id,
+            queue_key=job.queue_key,
+            execution_lane=job.execution_lane,
+            harbor_variant_id=job.harbor_variant_id,
         )
         record_worker_job_trace_outcome(
             attempt_span,

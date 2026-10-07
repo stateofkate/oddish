@@ -17,7 +17,8 @@ from __future__ import annotations
 import asyncio
 import sys
 import types
-from dataclasses import asdict
+from contextlib import contextmanager
+from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -46,6 +47,9 @@ from oddish.workers.queue.thunder_fallback import (  # noqa: E402
     THUNDER_ATTEMPT_BUDGET_EXHAUSTED_REASON,
 )
 from oddish.workers.queue import worker_job_single_job  # noqa: E402
+from oddish.workers.queue.provider_failures import (  # noqa: E402
+    classify_provider_failure,
+)
 from oddish.workers.queue.worker_job_single_job import (  # noqa: E402
     ClaimedWorkerJob,
     _CLAIM_WORKER_JOB_SQL,
@@ -143,7 +147,7 @@ async def test_enqueue_builds_row_with_expected_fields():
     assert row.payload == {"trial_id": "t-1"}
     assert row.org_id == "org-abc"
     assert row.available_after is not None
-    assert row.id  # auto-generated
+    # ID defaults run on a real database flush; test_worker_job_identity covers them.
 
 
 @pytest.mark.asyncio
@@ -337,20 +341,47 @@ def test_trial_retry_backoff_honors_harbor_retry_after_hint():
 
 
 class _FakeConnection:
-    def __init__(self, *, update_result: str = "UPDATE 1") -> None:
+    def __init__(
+        self,
+        *,
+        update_result: str = "UPDATE 1",
+        attempts: int = 1,
+        max_attempts: int = 3,
+    ) -> None:
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
         self.closed = False
         self.update_result = update_result
+        self.attempts = attempts
+        self.max_attempts = max_attempts
+
+    def transaction(self):
+        return _FakeTransaction()
+
+    async def fetchval(self, sql, *args):
+        if "FROM worker_jobs" in sql:
+            return args[0] if self.update_result == "UPDATE 1" else None
+        assert "FROM trials" in sql
+        return "RETRYING"
 
     async def execute(self, sql: str, *args: Any) -> str:
         self.calls.append((sql, args))
         return self.update_result
 
-    async def fetchrow(self, sql: str, *args: Any) -> None:
-        # The retry decision re-reads the current row; None exercises the
-        # snapshot fallback so these tests keep their original semantics.
+    async def fetchrow(self, sql: str, *args: Any) -> dict[str, Any] | None:
         self.calls.append((sql, args))
-        return None
+        if self.update_result == "UPDATE 0":
+            return None
+        retryable = bool(args[4])
+        status = (
+            WorkerJobStatus.RETRYING
+            if retryable and self.attempts < self.max_attempts
+            else WorkerJobStatus.FAILED
+        )
+        return {
+            "status": status.value,
+            "attempts": self.attempts,
+            "max_attempts": self.max_attempts,
+        }
 
     async def close(self) -> None:
         self.closed = True
@@ -443,8 +474,28 @@ class _RerouteConnection:
     def transaction(self):
         return self.transaction_state
 
+    async def fetchval(self, sql, *args):
+        if "FROM worker_jobs" in sql:
+            return (
+                self.job["id"]
+                if self.job["status"] == "RUNNING"
+                and self.job["current_worker_id"] == args[1]
+                else None
+            )
+        assert "FROM trials" in sql
+        return self.trial["status"]
+
     async def fetchrow(self, sql: str, *args: Any):
         self.calls.append((sql, args))
+        if "UPDATE worker_jobs" in sql:
+            assert "RETURNING status::text AS status" in sql
+            if (
+                self.job["status"] != "RUNNING"
+                or self.job["current_worker_id"] != args[3]
+            ):
+                return None
+            retry = args[4] and self.job["attempts"] < self.job["max_attempts"]
+            return {**self.job, "status": "RETRYING" if retry else "FAILED"}
         if "FROM worker_jobs" in sql:
             return self.job
         if "FROM trials" in sql:
@@ -885,11 +936,17 @@ async def test_record_outcome_rolls_back_if_atomic_reroute_update_loses_ownershi
     assert connection.closed is True
 
 
+CLAUDE_USAGE_CAP_ERROR = (
+    "API Error: 400 You have reached your specified API usage limits. "
+    "You will regain access on 2099-09-01 at 00:00 UTC."
+)
+
+
 @pytest.mark.asyncio
 async def test_record_outcome_requeues_trial_with_backoff_and_mirrors_next_retry(
     monkeypatch,
 ):
-    connection = _FakeConnection()
+    connection = _FakeConnection(attempts=2, max_attempts=6)
 
     async def fake_open_connection():
         return connection
@@ -912,22 +969,19 @@ async def test_record_outcome_requeues_trial_with_backoff_and_mirrors_next_retry
 
     assert status == WorkerJobStatus.RETRYING
     assert connection.closed is True
-    assert len(connection.calls) == 3
+    assert len(connection.calls) == 2
 
-    # The retry decision re-reads the current row before choosing.
-    reread_sql, reread_args = connection.calls[0]
-    assert "SELECT attempts, max_attempts" in reread_sql
-    assert reread_args == ("wj-1",)
-
-    worker_sql, worker_args = connection.calls[1]
-    assert "status = 'RETRYING'" in worker_sql
+    worker_sql, worker_args = connection.calls[0]
+    assert "UPDATE worker_jobs" in worker_sql
+    assert "status = CASE" in worker_sql
+    assert "attempts < max_attempts" in worker_sql
+    assert "RETURNING status::text AS status, attempts, max_attempts" in worker_sql
     # The retry row must start UNLINKED: a kept handle can point at a pod that
     # still exists, blinding the orphan sweeper's live-unlinked guard while the
     # next attempt's pod is still unreferenced.
-    assert "external_id = NULL" in worker_sql
-    assert "provider = NULL" in worker_sql
-    assert "next_retry_at = $3" in worker_sql
-    assert "available_after = COALESCE($3::timestamptz, NOW())" in worker_sql
+    assert "external_id = CASE" in worker_sql
+    assert "provider = CASE" in worker_sql
+    assert "THEN COALESCE($3::timestamptz, NOW())" in worker_sql
     assert worker_args[0] == "wj-1"
     assert worker_args[1] == "HTTP 503 from agent"
 
@@ -935,7 +989,7 @@ async def test_record_outcome_requeues_trial_with_backoff_and_mirrors_next_retry
     assert retry_at is not None
     assert before + timedelta(seconds=60) <= retry_at <= after + timedelta(seconds=60)
 
-    trial_sql, trial_args = connection.calls[2]
+    trial_sql, trial_args = connection.calls[1]
     assert "UPDATE trials" in trial_sql
     assert "status = 'RETRYING'" in trial_sql
     assert "error_message = $2" in trial_sql
@@ -960,7 +1014,7 @@ async def test_record_outcome_terminal_failure_settles_a_retrying_trial(
     # budget; when the job's own budget is spent here, nothing remains to run
     # that trial, so the terminal outcome must reach the trial row too. A
     # trial already settled SUCCESS or FAILED is left alone by the predicate.
-    connection = _FakeConnection()
+    connection = _FakeConnection(attempts=6, max_attempts=6)
 
     async def fake_open_connection():
         return connection
@@ -981,7 +1035,7 @@ async def test_record_outcome_terminal_failure_settles_a_retrying_trial(
     assert status == WorkerJobStatus.FAILED
     updates = [(sql, args) for sql, args in connection.calls if "UPDATE " in sql]
     assert "UPDATE worker_jobs" in updates[0][0]
-    assert "status = 'FAILED'" in updates[0][0]
+    assert "ELSE 'FAILED'::worker_job_status" in updates[0][0]
     trial_updates = [(sql, args) for sql, args in updates if "UPDATE trials" in sql]
     if expect_trial_failed:
         assert len(trial_updates) == 1
@@ -1037,6 +1091,232 @@ async def test_record_outcome_returns_success_only_when_guarded_update_changes_r
     assert rejected_connection.closed is True
 
 
+@pytest.mark.asyncio
+async def test_retry_transition_emits_structured_usage_limit_warning(monkeypatch):
+    connection = _FakeConnection()
+    warnings: list[tuple[str, dict[str, Any]]] = []
+    errors: list[tuple[str, dict[str, Any]]] = []
+
+    async def fake_open_connection():
+        return connection
+
+    def capture_warning(message, **attributes):
+        assert len(connection.calls) == 2
+        warnings.append((message, attributes))
+
+    monkeypatch.setattr(worker_job_single_job, "_open_connection", fake_open_connection)
+    monkeypatch.setattr(worker_job_single_job.random, "uniform", lambda _a, _b: 0.0)
+    monkeypatch.setattr(
+        worker_job_single_job,
+        "log_warning",
+        capture_warning,
+    )
+    monkeypatch.setattr(
+        worker_job_single_job,
+        "log_error",
+        lambda message, **attributes: errors.append((message, attributes)),
+    )
+    recorded = await worker_job_single_job.record_outcome(
+        job_id="wj-usage-cap",
+        worker_id="worker-1",
+        outcome=JobOutcome.fail(
+            CLAUDE_USAGE_CAP_ERROR,
+            retryable=True,
+            provider_failure=classify_provider_failure(CLAUDE_USAGE_CAP_ERROR),
+        ),
+        attempts=1,
+        max_attempts=3,
+        kind=WorkerJobKind.TRIAL,
+        subject_table="trials",
+        subject_id="trial-usage-cap",
+        queue_key="anthropic/claude-sonnet-4-6",
+        execution_lane="default",
+        harbor_variant_id="default",
+    )
+
+    assert recorded == WorkerJobStatus.RETRYING
+    assert errors == []
+    assert len(warnings) == 1
+    message, attributes = warnings[0]
+    assert message == "Worker job scheduled for retry"
+    assert attributes["metric"] == "worker_job_retry_scheduled"
+    assert attributes["failure_class"] == "provider_usage_limit"
+    assert attributes["provider_status_code"] == 400
+    assert attributes["recovery_at"] == "2099-09-01T00:00:00+00:00"
+    assert attributes["attempt"] == 1
+    assert attributes["max_attempts"] == 3
+    assert attributes["trial_id"] == "trial-usage-cap"
+    assert attributes["retry_reason"] == "provider_usage_limit"
+    assert attributes["retry_delay_seconds"] == 300.0
+    assert attributes["retry_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_terminal_transition_emits_structured_error(monkeypatch):
+    connection = _FakeConnection()
+    warnings = []
+    errors: list[tuple[str, dict[str, Any]]] = []
+
+    async def fake_open_connection():
+        return connection
+
+    def capture_error(message, **attributes):
+        assert len(connection.calls) == 2
+        assert "UPDATE trials" in connection.calls[-1][0]
+        errors.append((message, attributes))
+
+    monkeypatch.setattr(worker_job_single_job, "_open_connection", fake_open_connection)
+    monkeypatch.setattr(
+        worker_job_single_job,
+        "log_warning",
+        lambda message, **attributes: warnings.append((message, attributes)),
+    )
+    monkeypatch.setattr(
+        worker_job_single_job,
+        "log_error",
+        capture_error,
+    )
+
+    recorded = await worker_job_single_job.record_outcome(
+        job_id="wj-failed",
+        worker_id="worker-1",
+        outcome=JobOutcome.fail(
+            CLAUDE_USAGE_CAP_ERROR,
+            retryable=False,
+            provider_failure=classify_provider_failure(CLAUDE_USAGE_CAP_ERROR),
+        ),
+        attempts=1,
+        max_attempts=3,
+        kind=WorkerJobKind.TRIAL,
+        subject_table="trials",
+        subject_id="trial-failed",
+        queue_key="anthropic/claude-sonnet-4-6",
+        execution_lane="default",
+        harbor_variant_id="default",
+    )
+
+    assert recorded == WorkerJobStatus.FAILED
+    assert warnings == []
+    assert len(errors) == 1
+    message, attributes = errors[0]
+    assert message == "Worker job failed"
+    assert attributes["metric"] == "worker_job_failed"
+    assert attributes["terminal"] is True
+    assert attributes["retryable_requested"] is False
+    assert attributes["failure_class"] == "provider_usage_limit"
+    assert attributes["provider_status_code"] == 400
+    assert attributes["recovery_at"] == "2099-09-01T00:00:00+00:00"
+    assert attributes["attempt"] == 1
+    assert attributes["max_attempts"] == 3
+
+
+@pytest.mark.asyncio
+async def test_non_trial_timeout_is_not_tagged_as_provider_failure(monkeypatch):
+    connection = _FakeConnection()
+    warnings: list[tuple[str, dict[str, Any]]] = []
+
+    async def fake_open_connection():
+        return connection
+
+    monkeypatch.setattr(worker_job_single_job, "_open_connection", fake_open_connection)
+    monkeypatch.setattr(
+        worker_job_single_job,
+        "log_warning",
+        lambda message, **attributes: warnings.append((message, attributes)),
+    )
+
+    recorded = await worker_job_single_job.record_outcome(
+        job_id="wj-task-expand",
+        worker_id="worker-1",
+        outcome=JobOutcome.fail(
+            "task bundle upload failed with HTTP 429", retryable=True
+        ),
+        attempts=1,
+        max_attempts=3,
+        kind=WorkerJobKind.TASK_EXPAND,
+        subject_table="tasks",
+        subject_id="task-1",
+    )
+
+    assert recorded == WorkerJobStatus.RETRYING
+    assert len(warnings) == 1
+    _, attributes = warnings[0]
+    assert attributes["tags"] == ("worker-job",)
+    assert attributes["failure_class"] is None
+    assert attributes["provider_status_code"] is None
+    assert attributes["retry_reason"] == "transient"
+
+
+@pytest.mark.asyncio
+async def test_lost_outcome_ownership_emits_no_transition_event(monkeypatch):
+    connection = _FakeConnection(update_result="UPDATE 0")
+    events = []
+
+    async def fake_open_connection():
+        return connection
+
+    monkeypatch.setattr(worker_job_single_job, "_open_connection", fake_open_connection)
+    monkeypatch.setattr(
+        worker_job_single_job,
+        "log_warning",
+        lambda message, **attributes: events.append((message, attributes)),
+    )
+    monkeypatch.setattr(
+        worker_job_single_job,
+        "log_error",
+        lambda message, **attributes: events.append((message, attributes)),
+    )
+
+    recorded = await worker_job_single_job.record_outcome(
+        job_id="wj-lost",
+        worker_id="worker-1",
+        outcome=JobOutcome.fail("HTTP 503", retryable=True),
+        attempts=1,
+        max_attempts=3,
+        kind=WorkerJobKind.TRIAL,
+        subject_table="trials",
+        subject_id="trial-lost",
+    )
+
+    assert recorded is None
+    assert events == []
+
+
+@pytest.mark.asyncio
+async def test_success_transition_emits_no_failure_event(monkeypatch):
+    connection = _FakeConnection()
+    events = []
+
+    async def fake_open_connection():
+        return connection
+
+    monkeypatch.setattr(worker_job_single_job, "_open_connection", fake_open_connection)
+    monkeypatch.setattr(
+        worker_job_single_job,
+        "log_warning",
+        lambda message, **attributes: events.append((message, attributes)),
+    )
+    monkeypatch.setattr(
+        worker_job_single_job,
+        "log_error",
+        lambda message, **attributes: events.append((message, attributes)),
+    )
+
+    recorded = await worker_job_single_job.record_outcome(
+        job_id="wj-success",
+        worker_id="worker-1",
+        outcome=JobOutcome.ok(),
+        attempts=1,
+        max_attempts=3,
+        kind=WorkerJobKind.TRIAL,
+        subject_table="trials",
+        subject_id="trial-success",
+    )
+
+    assert recorded == WorkerJobStatus.SUCCESS
+    assert events == []
+
+
 # ---------------------------------------------------------------------------
 # run_single_worker_job: dispatch + outcome recording
 # ---------------------------------------------------------------------------
@@ -1069,6 +1349,9 @@ def _capture_record_outcome(monkeypatch):
         kind=None,
         subject_table=None,
         subject_id=None,
+        queue_key=None,
+        execution_lane=None,
+        harbor_variant_id=None,
     ):
         captured.append(
             {
@@ -1080,6 +1363,9 @@ def _capture_record_outcome(monkeypatch):
                 "kind": kind,
                 "subject_table": subject_table,
                 "subject_id": subject_id,
+                "queue_key": queue_key,
+                "execution_lane": execution_lane,
+                "harbor_variant_id": harbor_variant_id,
             }
         )
         if outcome.success is not None:
@@ -1164,6 +1450,94 @@ async def test_run_single_worker_job_records_success(monkeypatch):
     assert metric_calls[0]["kind"] == WorkerJobKind.TRIAL
     assert metric_calls[0]["outcome"] == WorkerJobStatus.SUCCESS
     assert metric_calls[0]["duration_seconds"] == 5.0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("retryable", [True, False], ids=["retry", "terminal"])
+async def test_run_single_worker_job_logs_claimed_identifiers(monkeypatch, retryable):
+    job = replace(
+        _make_claimed(kind=WorkerJobKind.TRIAL),
+        queue_key="anthropic/claude-sonnet-4-6",
+        execution_lane="modal_trial",
+        harbor_variant_id="harbor-custom",
+    )
+    register(
+        _FakeHandler(
+            job.kind,
+            outcome=JobOutcome.fail(
+                CLAUDE_USAGE_CAP_ERROR,
+                retryable=retryable,
+                provider_failure=classify_provider_failure(CLAUDE_USAGE_CAP_ERROR),
+            ),
+        )
+    )
+    _install_fake_claim(monkeypatch, job)
+    connection = _FakeConnection()
+    events: list[dict[str, Any]] = []
+
+    async def fake_open_connection():
+        return connection
+
+    async def skip_cost_span(*args, **kwargs):
+        pass
+
+    monkeypatch.setattr(worker_job_single_job, "open_worker_span", skip_cost_span)
+    monkeypatch.setattr(worker_job_single_job, "close_worker_span", skip_cost_span)
+    monkeypatch.setattr(worker_job_single_job, "_open_connection", fake_open_connection)
+    for log_method in ("log_warning", "log_error"):
+        monkeypatch.setattr(
+            worker_job_single_job,
+            log_method,
+            lambda message, **attributes: events.append(attributes),
+        )
+
+    assert await worker_job_single_job.run_single_worker_job(
+        job.queue_key, worker_id="w-1", queue_slot=0, harbor_variant_id=None
+    )
+
+    assert len(events) == 1
+    assert events[0]["metric"] == (
+        "worker_job_retry_scheduled" if retryable else "worker_job_failed"
+    )
+    assert events[0]["queue_key"] == job.queue_key
+    assert events[0]["execution_lane"] == job.execution_lane
+    assert events[0]["harbor_variant_id"] == job.harbor_variant_id
+
+
+@pytest.mark.asyncio
+async def test_run_single_worker_job_opens_attempt_span_with_claimed_identifiers(
+    monkeypatch,
+):
+    job = _make_claimed(kind=WorkerJobKind.TRIAL, attempts=2, max_attempts=4)
+    handler = _FakeHandler(job.kind, outcome=JobOutcome.ok())
+    register(handler)
+    _install_fake_claim(monkeypatch, job)
+    _capture_record_outcome(monkeypatch)
+    spans: list[tuple[str, dict[str, Any]]] = []
+
+    @contextmanager
+    def capture_span(parent, **attributes):
+        spans.append((parent, attributes))
+        yield
+
+    monkeypatch.setattr(worker_job_single_job, "worker_job_trace", capture_span)
+
+    await worker_job_single_job.run_single_worker_job(
+        "default", worker_id="worker-1", queue_slot=0
+    )
+
+    assert spans == [
+        (
+            None,
+            {
+                "job_id": "wj-1",
+                "kind": "TRIAL",
+                "attempt": 2,
+                "subject_table": "trials",
+                "subject_id": "t-1",
+            },
+        )
+    ]
 
 
 @pytest.mark.asyncio
@@ -1576,7 +1950,9 @@ async def test_declined_settled_handoff_records_the_ordinary_retry(
     assert updates, "a declined settled handoff must still record the attempt"
     job_sql, job_args = updates[0]
     assert "UPDATE worker_jobs" in job_sql
-    assert f"status = '{expected_status.value}'" in job_sql
+    assert "status = CASE" in job_sql
+    assert "attempts < max_attempts" in job_sql
+    assert job_args[4] is True
     assert job_args[1] == "agent timed out on thunder"
     set_clause = job_sql.split("SET", 1)[1].split("WHERE", 1)[0]
     assert "execution_lane =" not in set_clause
@@ -1750,7 +2126,7 @@ async def test_run_single_worker_job_marks_the_callers_handoff_record(monkeypatc
     _install_fake_claim(monkeypatch, job)
     monkeypatch.setattr(
         worker_job_single_job,
-        "_record_outcome",
+        "record_outcome",
         _record_handoff_as(WorkerJobStatus.RUNNING),
     )
     handoff = worker_job_single_job.WorkerHandoff()
@@ -1770,7 +2146,7 @@ async def test_a_handoff_that_lost_the_row_is_not_marked(monkeypatch):
     register(_FakeHandler(job.kind, outcome=JobOutcome.handed_off()))
     _install_fake_claim(monkeypatch, job)
     monkeypatch.setattr(
-        worker_job_single_job, "_record_outcome", _record_handoff_as(None)
+        worker_job_single_job, "record_outcome", _record_handoff_as(None)
     )
     handoff = worker_job_single_job.WorkerHandoff()
 

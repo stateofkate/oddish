@@ -109,6 +109,7 @@ from oddish.workers.harbor.setup_events import (
     is_setup_only_event,
 )
 from oddish.workers.queue.db_helpers import _trial_session
+from oddish.workers.queue.provider_failures import classify_provider_failure
 from oddish.workers.queue.shared import console
 from oddish.workers.queue.trial_steps import (
     PreparedTrialRun,
@@ -270,16 +271,34 @@ _NON_HARBOR_RETRYABLE_EXCEPTION_TYPES = {
 }
 
 
-def _is_non_retryable_outcome(trial: object, outcome: HarborOutcome | None) -> bool:
-    if outcome is None or outcome.exception_type is None:
+def _is_non_retryable_outcome(
+    trial: object,
+    outcome: HarborOutcome | None,
+    *,
+    analysis_artifact_error: str | None = None,
+) -> bool:
+    if outcome is None:
         return False
-    if outcome.exception_type in _NON_HARBOR_RETRYABLE_EXCEPTION_TYPES:
-        return True
-    harbor_config = getattr(trial, "harbor_config", None)
-    retry = harbor_config.get("retry") if isinstance(harbor_config, dict) else None
-    return not RetryConfig.model_validate(retry or {}).should_retry(
-        outcome.exception_type
+    if outcome.exception_type is not None:
+        if outcome.exception_type in _NON_HARBOR_RETRYABLE_EXCEPTION_TYPES:
+            return True
+        harbor_config = getattr(trial, "harbor_config", None)
+        retry = harbor_config.get("retry") if isinstance(harbor_config, dict) else None
+        # Missing analysis artifacts can retry verifier/layout failures, but
+        # cannot override recorded provider failures or Oddish control errors.
+        if (
+            not analysis_artifact_error or invalidates_score(outcome.exception_type)
+        ) and not RetryConfig.model_validate(retry or {}).should_retry(
+            outcome.exception_type
+        ):
+            return True
+
+    provider_failure = classify_provider_failure(
+        outcome.error,
+        http_status=outcome.http_status,
+        exception_type=outcome.exception_type,
     )
+    return provider_failure.is_terminal
 
 
 def _is_thunder_capacity_hook_error(
@@ -758,29 +777,36 @@ async def _store_trial_results(
 
         if outcome:
             is_timeout = _is_agent_timeout_error_message(outcome.error)
-            has_non_retryable_oddish_failure = (
-                outcome.exception_type in _NON_HARBOR_RETRYABLE_EXCEPTION_TYPES
+            provider_failure = classify_provider_failure(
+                outcome.error,
+                http_status=outcome.http_status,
+                exception_type=outcome.exception_type,
             )
             analysis_artifact_error = (
                 artifact_upload_error if is_analysis_kind(trial.kind) else None
+            )
+            non_retryable = _is_non_retryable_outcome(
+                trial, outcome, analysis_artifact_error=analysis_artifact_error
             )
             # Analysis importers read their required result from durable storage.
             # A verifier reward is not a successful analysis run when that
             # artifact never reached storage: keep the trial on the normal retry
             # path instead of publishing an unrecoverable SUCCESS row.
             derived_reward = None if analysis_artifact_error else outcome.reward
-            # Recorded provider failures invalidate the verifier reward even
-            # after partial agent work. Drop it and use the existing scoreless
-            # path: the error surfaces, and Harbor's RetryConfig -- read below
-            # by ``_is_non_retryable_outcome`` -- decides retry or fail.
+            # Recorded provider exceptions and terminal provider rejections
+            # invalidate the reward even after partial agent work. Classifier
+            # evidence may be only an HTTP status or CLI message, without a
+            # score-invalidating exception type. Drop the reward before the
+            # success and timeout-zero paths so retry policy can take effect.
             if (
                 invalidates_score(outcome.exception_type)
-                and not outcome.expected_boundary_kill
-            ):
+                or provider_failure.is_terminal
+            ) and not outcome.expected_boundary_kill:
                 if derived_reward is not None:
                     console.print(
                         f"[yellow]Trial {trial_id} discarding verifier "
-                        f"reward={derived_reward}: {outcome.exception_type} "
+                        f"reward={derived_reward}: "
+                        f"{outcome.exception_type or provider_failure.failure_class} "
                         "invalidates the score under provider-failure policy[/yellow]"
                     )
                 derived_reward = None
@@ -804,10 +830,21 @@ async def _store_trial_results(
 
             trial.reward = derived_reward
             if outcome.error and not outcome.expected_boundary_kill and (
-                not analysis_artifact_error or invalidates_score(outcome.exception_type)
+                not analysis_artifact_error
+                or invalidates_score(outcome.exception_type)
+                or non_retryable
             ):
                 trial.error_message = "\n".join(
-                    filter(None, [outcome.error, analysis_artifact_error, lost_artifacts])
+                    filter(
+                        None,
+                        [
+                            provider_failure.error_summary
+                            if provider_failure.failure_class == "provider_usage_limit"
+                            else outcome.error,
+                            analysis_artifact_error,
+                            lost_artifacts,
+                        ],
+                    )
                 )
             elif analysis_artifact_error:
                 trial.error_message = analysis_artifact_error
@@ -879,19 +916,14 @@ async def _store_trial_results(
                     console.print(
                         f"[red]Trial {trial_id} FAILED (Modal image build)[/red]"
                     )
-                # A freshly uploaded analysis layout that cannot be read is an
-                # Oddish settlement failure. Give it the trial's durable retry
-                # budget even when Harbor classified the underlying verifier
-                # failure as terminal. Oddish-only control failures still fail
-                # closed because another sandbox cannot repair them.
-                elif _is_non_retryable_outcome(trial, outcome) and (
-                    not analysis_artifact_error or has_non_retryable_oddish_failure
-                    or invalidates_score(outcome.exception_type)
-                ):
+                elif non_retryable:
                     trial.status = TrialStatus.FAILED
                     trial.finished_at = utcnow()
+                    failure_reason = (
+                        outcome.exception_type or provider_failure.failure_class
+                    )
                     console.print(
-                        f"[red]Trial {trial_id} FAILED ({outcome.exception_type}; "
+                        f"[red]Trial {trial_id} FAILED ({failure_reason}; "
                         "non-retryable)[/red]"
                     )
                 elif trial.attempts < trial.max_attempts:
@@ -1342,7 +1374,15 @@ async def handle_harbor_event(
                             or "Unknown error"
                         )
                         is_agent_timeout = _is_agent_timeout_exception(exc_info)
-                        if invalidates_score(getattr(exc_info, "exception_type", None)):
+                        provider_failure = classify_provider_failure(
+                            error_msg,
+                            http_status=getattr(exc_info, "http_status", None),
+                            exception_type=getattr(exc_info, "exception_type", None),
+                        )
+                        if (
+                            invalidates_score(getattr(exc_info, "exception_type", None))
+                            or provider_failure.is_terminal
+                        ):
                             # Apply settlement's provider-failure scoring rule,
                             # including failures after partial agent work.
                             # The row deliberately stays non-terminal. Settlement
@@ -2299,4 +2339,6 @@ async def run_trial_job(
             )
         elif job_scoped_bundle is not None and worker_job_id:
             await _revoke_job_credentials(worker_job_id, trial_id)
-    return execution.outcome if execution is not None and not trial_terminal else None
+    # The worker-job adapter needs Harbor's structured exception/status/request
+    # facts even when this settlement made the domain row terminal.
+    return execution.outcome if execution is not None else None
