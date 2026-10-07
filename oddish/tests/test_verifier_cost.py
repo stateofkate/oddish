@@ -519,3 +519,132 @@ async def test_record_swallows_unexpected_errors(tmp_path: Path) -> None:
             )
             == 0
         )
+
+
+def test_loop_sums_recheck_run(tmp_path: Path) -> None:
+    """SWE-M re-runs CUA under ``recheck/``; both runs bill the verifier key."""
+    ux = tmp_path / "verifier" / "ux"
+    _write_atif(ux / "trajectory.json", cost=2.25, prompt=700, completion=80)
+    _write_atif(ux / "recheck" / "trajectory.json", cost=0.5, prompt=100, completion=20)
+    (ux / "cua_judge_report.json").write_text(
+        json.dumps({"verifier_model": "anthropic/claude-opus-5-5", "verdicts": []}),
+        encoding="utf-8",
+    )
+    loop = next(d for d in build_verifier_cost_drafts(tmp_path) if d.component == COMPONENT_LOOP)
+    assert loop.cost_usd == pytest.approx(2.75)
+    assert loop.cost_source == COST_NATIVE
+    assert loop.input_tokens == 800
+    assert loop.output_tokens == 100
+
+
+def test_loop_mixed_native_and_estimated_is_estimated(tmp_path: Path) -> None:
+    from oddish.model_pricing import estimate_cost_usd
+
+    ux = tmp_path / "verifier" / "ux"
+    _write_atif(ux / "trajectory.json", cost=1.0)
+    (ux / "recheck").mkdir(parents=True)
+    (ux / "recheck" / "trajectory.json").write_text(
+        json.dumps(
+            {
+                "final_metrics": {
+                    "total_prompt_tokens": 1000,
+                    "total_completion_tokens": 10,
+                    "total_cached_tokens": 900,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (ux / "cua_judge_report.json").write_text(
+        json.dumps({"verifier_model": "anthropic/claude-opus-5-5", "verdicts": []}),
+        encoding="utf-8",
+    )
+    loop = next(d for d in build_verifier_cost_drafts(tmp_path) if d.component == COMPONENT_LOOP)
+    recheck = estimate_cost_usd("anthropic/claude-opus-5-5", 1000, 10, 900, 100)
+    assert recheck is not None
+    assert loop.cost_source == COST_ESTIMATED
+    assert loop.cost_usd == pytest.approx(1.0 + recheck)
+
+
+def test_claude_estimate_bills_uncached_input_as_cache_writes(tmp_path: Path) -> None:
+    """ATIF prompt tokens include reads and writes; Claude CUA writes every turn."""
+    from oddish.model_pricing import estimate_cost_usd
+
+    ux = tmp_path / "verifier" / "ux"
+    ux.mkdir(parents=True)
+    (ux / "trajectory.json").write_text(
+        json.dumps(
+            {
+                "agent": {"model_name": "anthropic/claude-opus-5-5"},
+                "final_metrics": {
+                    "total_prompt_tokens": 212131,
+                    "total_completion_tokens": 2486,
+                    "total_cached_tokens": 190669,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    loop = build_verifier_cost_drafts(tmp_path)[0]
+    assert loop.cache_write_tokens == 212131 - 190669
+    assert loop.cost_usd == estimate_cost_usd(
+        "anthropic/claude-opus-5-5", 212131, 2486, 190669, 212131 - 190669
+    )
+    assert loop.cost_usd > estimate_cost_usd(  # type: ignore[operator]
+        "anthropic/claude-opus-5-5", 212131, 2486, 190669, 0
+    )
+
+
+def test_non_claude_estimate_does_not_infer_cache_writes(tmp_path: Path) -> None:
+    ux = tmp_path / "verifier" / "ux"
+    ux.mkdir(parents=True)
+    (ux / "trajectory.json").write_text(
+        json.dumps(
+            {
+                "agent": {"model_name": "openai/gpt-5.4-mini"},
+                "final_metrics": {
+                    "total_prompt_tokens": 1000,
+                    "total_completion_tokens": 10,
+                    "total_cached_tokens": 900,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    loop = build_verifier_cost_drafts(tmp_path)[0]
+    assert loop.cache_write_tokens is None
+
+
+def test_loop_flags_partial_total_when_a_run_is_unpriced(tmp_path: Path) -> None:
+    """A recheck with usage but no price must not read as a settled total."""
+    ux = tmp_path / "verifier" / "ux"
+    _write_atif(ux / "trajectory.json", cost=1.0)
+    (ux / "recheck").mkdir(parents=True)
+    (ux / "recheck" / "trajectory.json").write_text(
+        json.dumps(
+            {
+                "final_metrics": {
+                    "total_prompt_tokens": 1000,
+                    "total_completion_tokens": 10,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (ux / "cua_judge_report.json").write_text(
+        json.dumps({"verifier_model": "unknown/unpriced-model", "verdicts": []}),
+        encoding="utf-8",
+    )
+    loop = next(d for d in build_verifier_cost_drafts(tmp_path) if d.component == COMPONENT_LOOP)
+    assert loop.cost_usd == pytest.approx(1.0)
+    assert loop.unpriced_reason == "missing_usage"
+
+
+def test_loop_flags_partial_total_when_a_trajectory_is_unreadable(tmp_path: Path) -> None:
+    ux = tmp_path / "verifier" / "ux"
+    _write_atif(ux / "trajectory.json", cost=1.0)
+    (ux / "recheck").mkdir(parents=True)
+    (ux / "recheck" / "trajectory.json").write_text("{not json", encoding="utf-8")
+    loop = build_verifier_cost_drafts(tmp_path)[0]
+    assert loop.cost_usd == pytest.approx(1.0)
+    assert loop.unpriced_reason == "missing_trajectory"

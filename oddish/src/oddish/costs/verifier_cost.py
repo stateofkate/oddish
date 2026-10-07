@@ -84,6 +84,9 @@ class CuaArtifactBundle:
 
     verifier_dir: Path
     trajectory_path: Path | None
+    # Every CUA run under ``verifier_dir``: the main run first, then nested
+    # re-runs such as SWE-M's ``recheck/``. All of them bill the verifier key.
+    trajectory_paths: tuple[Path, ...]
     judge_report_path: Path | None
     judge_report: dict[str, Any] | None
     loop_model: str | None
@@ -213,6 +216,21 @@ def find_cua_artifact_dirs(job_dir: Path) -> list[Path]:
     return found
 
 
+def find_cua_trajectories(verifier_dir: Path) -> tuple[Path, ...]:
+    """The top-level trajectory first, then any nested re-run trajectories."""
+    found: list[Path] = []
+    for name in _TRAJECTORY_NAMES:
+        top = verifier_dir / name
+        if top.is_file():
+            found.append(top)
+        try:
+            nested = sorted(verifier_dir.rglob(name))
+        except OSError:
+            nested = []
+        found.extend(p for p in nested if p.is_file() and p not in found)
+    return tuple(found)
+
+
 def resolve_cua_bundle(job_dir: Path, task_path: Path | None = None) -> CuaArtifactBundle | None:
     """Locate CUA artifacts under a Harbor job directory."""
     dirs = find_cua_artifact_dirs(job_dir)
@@ -234,6 +252,7 @@ def resolve_cua_bundle(job_dir: Path, task_path: Path | None = None) -> CuaArtif
         if candidate.is_file():
             traj_path = candidate
             break
+    traj_paths = find_cua_trajectories(verifier_dir)
 
     loop_model = None
     judge_model = None
@@ -260,6 +279,7 @@ def resolve_cua_bundle(job_dir: Path, task_path: Path | None = None) -> CuaArtif
     return CuaArtifactBundle(
         verifier_dir=verifier_dir,
         trajectory_path=traj_path,
+        trajectory_paths=traj_paths,
         judge_report_path=judge_path,
         judge_report=judge_report,
         loop_model=loop_model,
@@ -378,59 +398,101 @@ def _loop_draft(
     )
 
 
+def _infer_cache_writes(
+    route: str,
+    input_tokens: int | None,
+    cache_read_tokens: int | None,
+    cache_write_tokens: int | None,
+) -> int | None:
+    """Uncached Claude input is a cache write when the trajectory omits writes.
+
+    The CUA loop puts a cache breakpoint on the newest message every turn, so
+    on Claude every prompt token that is not a cache read is written to the
+    cache and billed at the write rate. litellm's own per-step costs confirm
+    it. ATIF ``prompt_tokens`` already includes both reads and writes.
+    """
+    if cache_write_tokens is not None or input_tokens is None:
+        return cache_write_tokens
+    if route not in (ROUTE_ANTHROPIC, ROUTE_BEDROCK):
+        return cache_write_tokens
+    return max(0, input_tokens - (cache_read_tokens or 0))
+
+
+@dataclass(frozen=True)
+class _LoopRun:
+    input_tokens: int | None
+    output_tokens: int | None
+    cache_read_tokens: int | None
+    cache_write_tokens: int | None
+    cost_usd: float | None
+    native: bool
+
+
+def _price_loop_run(model: str | None, route: str, path: Path) -> _LoopRun | None:
+    data = _load_json(path)
+    if not data:
+        return None
+    inp, out, cache, cache_write, cost = _metrics_from_atif(data)
+    if cost is not None and cost > 0:
+        return _LoopRun(inp, out, cache, cache_write, cost, native=True)
+    cache_write = _infer_cache_writes(route, inp, cache, cache_write)
+    estimated = estimate_cost_usd(model, inp, out, cache, cache_write)
+    return _LoopRun(inp, out, cache, cache_write, estimated, native=False)
+
+
+def _sum_optional(values: list[int | None]) -> int | None:
+    present = [v for v in values if v is not None]
+    return sum(present) if present else None
+
+
 def draft_loop_cost(bundle: CuaArtifactBundle) -> VerifierCostDraft:
+    """One ``cua_loop`` row covering every CUA run in the bundle."""
     model = bundle.loop_model
     route = infer_verifier_route(model)
     key_hash = _key_hash_for_route(route)
-    if bundle.trajectory_path is None or not bundle.trajectory_path.is_file():
+    runs = [
+        run
+        for path in bundle.trajectory_paths
+        if (run := _price_loop_run(model, route, path)) is not None
+    ]
+    if not runs:
         return _loop_draft(
             model=model,
             route=route,
             key_hash=key_hash,
             unpriced_reason=UNPRICED_MISSING_TRAJECTORY,
         )
-    data = _load_json(bundle.trajectory_path)
-    if not data:
+    tokens = {
+        "input_tokens": _sum_optional([r.input_tokens for r in runs]),
+        "output_tokens": _sum_optional([r.output_tokens for r in runs]),
+        "cache_read_tokens": _sum_optional([r.cache_read_tokens for r in runs]),
+        "cache_write_tokens": _sum_optional([r.cache_write_tokens for r in runs]),
+    }
+    priced = [r.cost_usd for r in runs if r.cost_usd is not None]
+    if not priced:
         return _loop_draft(
             model=model,
             route=route,
             key_hash=key_hash,
-            unpriced_reason=UNPRICED_MISSING_TRAJECTORY,
+            unpriced_reason=UNPRICED_MISSING_USAGE,
+            **tokens,
         )
-    inp, out, cache, cache_write, cost = _metrics_from_atif(data)
-    if cost is not None and cost > 0:
-        return _loop_draft(
-            model=model,
-            route=route,
-            key_hash=key_hash,
-            input_tokens=inp,
-            output_tokens=out,
-            cache_read_tokens=cache,
-            cache_write_tokens=cache_write,
-            cost_usd=cost,
-            cost_source=COST_NATIVE,
-        )
-    estimated = estimate_cost_usd(model, inp, out, cache, cache_write)
-    if estimated is not None:
-        return _loop_draft(
-            model=model,
-            route=route,
-            key_hash=key_hash,
-            input_tokens=inp,
-            output_tokens=out,
-            cache_read_tokens=cache,
-            cache_write_tokens=cache_write,
-            cost_usd=estimated,
-        )
+    # Keep the dollars we could price, but flag the row when any run is
+    # missing so a partial total never reads as a complete one.
+    unpriced_reason = None
+    if len(runs) < len(bundle.trajectory_paths):
+        unpriced_reason = UNPRICED_MISSING_TRAJECTORY
+    elif len(priced) < len(runs):
+        unpriced_reason = UNPRICED_MISSING_USAGE
+    all_native = all(r.native for r in runs)
     return _loop_draft(
         model=model,
         route=route,
         key_hash=key_hash,
-        input_tokens=inp,
-        output_tokens=out,
-        cache_read_tokens=cache,
-        cache_write_tokens=cache_write,
-        unpriced_reason=UNPRICED_MISSING_USAGE,
+        cost_usd=sum(priced),
+        cost_source=COST_NATIVE if all_native else COST_ESTIMATED,
+        unpriced_reason=unpriced_reason,
+        **tokens,
     )
 
 
@@ -660,6 +722,8 @@ _BACKFILL_ARTIFACT_CANDIDATES = (
     ("verifier/cua_judge_report.json", "cua_judge_report.json"),
     ("verifier/ux/trajectory.json", "trajectory.json"),
     ("verifier/trajectory.json", "trajectory.json"),
+    ("verifier/ux/recheck/trajectory.json", "recheck/trajectory.json"),
+    ("verifier/recheck/trajectory.json", "recheck/trajectory.json"),
 )
 
 _ATTEMPT_PREFIX = re.compile(r"^(?P<root>.*/)attempt-(?P<n>[1-9]\d*)$")
@@ -849,7 +913,9 @@ async def _backfill_one_trial(session: AsyncSession, trial: Any, storage: Any) -
                     if is_missing_object(exc):
                         continue
                     raise
-                (verifier_dir / local_name).write_bytes(body)
+                local_path = verifier_dir / local_name
+                local_path.parent.mkdir(parents=True, exist_ok=True)
+                local_path.write_bytes(body)
                 found_any = True
             if not found_any:
                 n = await upsert_verifier_cost_rows(
