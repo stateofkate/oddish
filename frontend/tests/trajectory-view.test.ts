@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   outputViews,
   stepText,
+  stepMessage,
   stepTitle,
   stepView,
   taggedContext,
@@ -250,7 +251,7 @@ test("headers name commands first, then prose", () => {
   assert.equal(stepTitle(step({})), null);
 });
 
-test("full reasoning is the primary text and a distinct message stays in details", () => {
+test("reasoning and distinct agent messages are available inline", () => {
   const reasoning =
     "I need to check the first rule before changing the result.\n\n" +
     "The rule controls the shared route. ".repeat(12) +
@@ -261,7 +262,8 @@ test("full reasoning is the primary text and a distinct message stays in details
   });
   assert.equal(stepText(saved), reasoning);
   assert.ok(stepText(saved)!.length > 200);
-  assert.equal(stepView(saved).showMessage, true);
+  assert.equal(stepMessage(saved), "I will check the rule.");
+  assert.equal(stepView(saved).showMessage, false);
 });
 
 test("assistant messages are the fallback and do not repeat in details", () => {
@@ -274,12 +276,13 @@ test("assistant messages are the fallback and do not repeat in details", () => {
   );
 });
 
-test("a message that repeats reasoning appears only once", () => {
+test("both recorded fields remain available when their text matches", () => {
   const saved = step({
     message: "  Check the rule.\n",
     reasoning_content: "Check the rule.",
   });
   assert.equal(stepText(saved), "Check the rule.");
+  assert.equal(stepMessage(saved), "  Check the rule.\n");
   assert.equal(stepView(saved).showMessage, false);
 });
 

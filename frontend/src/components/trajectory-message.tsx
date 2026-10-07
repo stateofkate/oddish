@@ -11,24 +11,29 @@ function Markdown({ text }: { text: string }) {
 
 /** Agent or user text: tagged context as a labeled section, a complete JSON
  *  document as indented JSON, anything else as Markdown. */
-export function MessageText({ text }: { text: string }) {
+export function MessageText({
+  text,
+  type,
+}: {
+  text: string;
+  type?: "reasoning" | "message";
+}) {
   const context = useMemo(() => taggedContext(text), [text]);
   const json = useMemo(
     () => (context ? null : indentedJson(text)),
     [context, text]
   );
   if (!text.trim()) return null;
-  if (json)
-    return (
-      <CodeBlock
-        code={json}
-        copyText={text}
-        language="json"
-        collapseAfter={20}
-      />
-    );
-  if (!context) return <Markdown text={text} />;
-  return (
+  const content = json ? (
+    <CodeBlock
+      code={json}
+      copyText={text}
+      language="json"
+      collapseAfter={20}
+    />
+  ) : !context ? (
+    <Markdown text={text} />
+  ) : (
     <section className="bg-muted/30 min-w-0 rounded-md border px-3 py-2">
       <h5 className="text-muted-foreground mb-1.5 text-[11px] font-medium tracking-wide uppercase">
         {context.label}
@@ -47,4 +52,12 @@ export function MessageText({ text }: { text: string }) {
       )}
     </section>
   );
+  return type ? (
+    <div className="flex gap-2">
+      <span role="img" aria-label={type === "reasoning" ? "Reasoning" : "Agent message"}>
+        {type === "reasoning" ? "💭:" : "🤖:"}
+      </span>
+      <div className="min-w-0">{content}</div>
+    </div>
+  ) : content;
 }

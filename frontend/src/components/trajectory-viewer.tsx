@@ -49,6 +49,7 @@ import {
   stepRejection,
   stepTitle,
   stepText,
+  stepMessage,
   stepView,
 } from "@/lib/trajectory-view";
 import {
@@ -604,13 +605,11 @@ function StepContent({
   apiBaseUrl: string;
 }) {
   const view = useMemo(() => stepView(step), [step]);
-  const text = stepText(step);
-  const message =
-    text && text.trim() === contentText(step.message).trim()
-      ? Array.isArray(step.message)
-        ? step.message.filter((part) => part.type !== "text")
-        : null
-      : step.message;
+  const message = step.source === "agent"
+    ? Array.isArray(step.message)
+      ? step.message.filter((part) => part.type !== "text")
+      : null
+    : step.message;
   const renderImage = (source: ImageSource) => (
     <ContentRenderer
       content={[{ type: "image", source }]}
@@ -638,12 +637,12 @@ function StepContent({
         />
       )}
 
-      {step.source !== "agent" && step.reasoning_content && (
+      {step.source !== "agent" && step.reasoning_content?.trim() && (
         <div className="border-l-2 border-blue-500/40 pl-3">
           <h5 className="text-muted-foreground mb-1 text-xs font-medium">
             Reasoning
           </h5>
-          <MessageText text={step.reasoning_content} />
+          <MessageText text={step.reasoning_content} type="reasoning" />
         </div>
       )}
 
@@ -1103,41 +1102,56 @@ export function TrajectoryViewer({
                       {group.gist}
                     </p>
                   )}
-                  {group.steps.map(({ step, idx }) => (
-                    <AccordionItem
-                      key={step.step_id}
-                      value={`step-${idx}`}
-                      ref={(el: HTMLDivElement | null) => {
-                        stepRefs.current[idx] = el;
-                      }}
-                    >
-                      <AccordionTrigger className="min-w-0 py-3 hover:no-underline">
-                        <StepTrigger
-                          step={step}
-                          durationMs={
-                            idx > 0 ? (stepDurations[idx] ?? null) : null
-                          }
-                          startTimestamp={
-                            trajectory.steps[0]?.timestamp ?? null
-                          }
-                        />
-                      </AccordionTrigger>
-                      {stepText(step) && (
-                        <div className="min-w-0 pb-4 text-sm [content-visibility:auto] [contain-intrinsic-size:auto_80px]">
-                          <MessageText text={stepText(step)!} />
-                        </div>
-                      )}
-                      <AccordionContent>
-                        {expandedStepKeys.has(`step-${idx}`) ? (
-                          <StepContent
+                  {group.steps.map(({ step, idx }) => {
+                    const reasoning = step.source === "agent" && step.reasoning_content?.trim()
+                      ? step.reasoning_content
+                      : null;
+                    const message = stepMessage(step);
+                    return (
+                      <AccordionItem
+                        key={step.step_id}
+                        value={`step-${idx}`}
+                        ref={(el: HTMLDivElement | null) => {
+                          stepRefs.current[idx] = el;
+                        }}
+                      >
+                        <AccordionTrigger className="min-w-0 py-3 hover:no-underline">
+                          <StepTrigger
                             step={step}
-                            trialId={trialId}
-                            apiBaseUrl={apiBaseUrl}
+                            durationMs={
+                              idx > 0 ? (stepDurations[idx] ?? null) : null
+                            }
+                            startTimestamp={
+                              trajectory.steps[0]?.timestamp ?? null
+                            }
                           />
-                        ) : null}
-                      </AccordionContent>
-                    </AccordionItem>
-                  ))}
+                        </AccordionTrigger>
+                        {(reasoning || message) && (
+                          <div className="min-w-0 space-y-3 text-sm [content-visibility:auto] [contain-intrinsic-size:auto_80px]">
+                            {reasoning && (
+                              <div className="pb-4">
+                                <MessageText text={reasoning} type="reasoning" />
+                              </div>
+                            )}
+                            {message && (
+                              <div className="pb-4">
+                                <MessageText text={message} type="message" />
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        <AccordionContent>
+                          {expandedStepKeys.has(`step-${idx}`) ? (
+                            <StepContent
+                              step={step}
+                              trialId={trialId}
+                              apiBaseUrl={apiBaseUrl}
+                            />
+                          ) : null}
+                        </AccordionContent>
+                      </AccordionItem>
+                    );
+                  })}
                 </div>
               ))}
             </Accordion>

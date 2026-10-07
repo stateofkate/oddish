@@ -298,7 +298,14 @@ function messageText(step: TrajectoryStep): string | null {
   return message;
 }
 
-/** Full agent prose shown outside the step's command and output details. */
+/** Agent message shown inline, excluding synthetic markers and rejected text. */
+export function stepMessage(step: TrajectoryStep): string | null {
+  return step.source === "agent" && !stepRejection(step)
+    ? messageText(step)
+    : null;
+}
+
+/** Preferred agent text for the collapsed header. */
 export function stepText(step: TrajectoryStep): string | null {
   if (step.source !== "agent") return null;
   if (step.reasoning_content?.trim()) return step.reasoning_content;
@@ -308,7 +315,7 @@ export function stepText(step: TrajectoryStep): string | null {
 
 export interface StepView {
   rejection: ReturnType<typeof stepRejection>;
-  /** Keep distinct message text and images in details; omit text shown inline. */
+  /** Keep user/system messages and agent images in details. */
   showMessage: boolean;
   tools: ToolView[];
   /** Outputs whose `source_call_id` matches no call in this step. */
@@ -337,7 +344,6 @@ export function stepView(step: TrajectoryStep): StepView {
         .filter((result) => !ids.has(result.source_call_id ?? ""))
         .flatMap((result) => outputViews(result.content).outputs);
   const message = messageText(step);
-  const primary = stepText(step);
   const hasImages =
     Array.isArray(step.message) &&
     step.message.some((part) => part.type === "image");
@@ -345,7 +351,7 @@ export function stepView(step: TrajectoryStep): StepView {
     rejection,
     showMessage:
       !rejection &&
-      (hasImages || (message != null && message.trim() !== primary?.trim())),
+      (hasImages || (step.source !== "agent" && message != null)),
     tools,
     unlinked,
   };

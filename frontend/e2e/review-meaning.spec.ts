@@ -1018,6 +1018,8 @@ test.describe("real components with local fixture API", () => {
         "/api/tasks/task-a/qa/pre-trial",
         "/api/tasks/task-a/qa/retry",
       ]);
+    // Reruns trigger background reads; finish their handlers before teardown.
+    await page.unrouteAll({ behavior: "wait" });
   });
 
   test("delivery inventory and focused row restore from URL", async ({

@@ -449,8 +449,8 @@ loads. Trial controls prefetch that resource on pointer or keyboard intent, and
 the drawer owns its SWR cache entry and passes the authoritative trial to the QA
 card, so one trial must never produce parallel detail requests. Drawers open on
 Summary and fetch trajectory and summary resources independently only after
-explicit user or URL intent. Agent steps show their full reasoning in the main
-view. When reasoning is absent, they show the agent message. Step headers omit
+explicit user or URL intent. Agent steps show nonempty reasoning and agent messages independently in the main
+view, prefixed with 💭 and 🤖 respectively. Both remain visible when both fields exist. Step headers omit
 the agent and model names that the trial already shows. Tool calls, output, raw
 JSON, images, and user or system messages mount only while the step details are
 expanded. The visible agent text is not repeated in those details. Trajectory
