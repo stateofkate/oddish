@@ -56,7 +56,11 @@ def setup_event_from_hook(hook_event: TrialHookEvent) -> SetupPayload | None:
         if subphase is None:
             return None
         activities = getattr(subphase, "completed_activities", None)
+        health = getattr(subphase, "ec2_health", None)
         return EnvSubphasePayload(
+            ec2_health=health.model_dump(mode="json")
+            if isinstance(health, BaseModel)
+            else health,
             completed_activities=(
                 [
                     item.model_dump(mode="json")

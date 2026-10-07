@@ -119,6 +119,7 @@ for (const mobile of [false, true])
     ).not.toBeVisible();
     await expect(environment.getByTitle("docker.image_build")).toHaveCount(0);
     await expect(environment.getByLabel("Expand all steps")).toHaveCount(0);
+    await expect(environment.getByRole("list", { name: "Environment setup steps" }).getByRole("button")).toHaveCount(0);
     for (const name of ["Initializing", "Agent Running", "Verification"]) {
       const phase = progress.getByRole("group", { name, exact: true });
       await expect(phase.locator("summary")).toHaveCount(0);
@@ -711,3 +712,87 @@ test("Live drains completed transcript pages before stopping", async ({ page }) 
   await expect(page.getByRole("region", { name: "Agent output" }).getByText("Final page retained", { exact: true }).last()).toBeVisible();
   await expect.poll(() => cursors.includes(501)).toBe(true);
 });
+
+for (const mobile of [false, true])
+  for (const view of ["Summary", "Live"])
+    test(`EC2 health updates one existing row in ${view} (${mobile ? "mobile" : "desktop"})`, async ({ page }) => {
+      await page.setViewportSize({ width: mobile ? 390 : 1280, height: 1000 });
+      await page.clock.install({ time: new Date(at(15)) });
+      let healthStatus = "initializing";
+      let complete = false;
+      const setupStart = operation(1, "root", null, "environment.setup", 5, 35, "setup", "started");
+      const healthStart = operation(2, "health", "root", "ec2.instance_status_ok", 10, 30, "ready", "started");
+      await page.route("**/api/**", route => {
+        const path = new URL(route.request().url()).pathname;
+        const ec2_health = {
+          observed_at: at(complete ? 30 : 15), instance_state: "running", instance_status: healthStatus,
+          system_status: "ok", instance_reachability: healthStatus === "ok" ? "passed" : "initializing", system_reachability: "passed",
+          instance_impaired_since: null, system_impaired_since: null,
+        };
+        const events = [setupStart, healthStart, { ...healthStart, source_seq: 3, event_key: "live:3", payload: {
+          ...healthStart.payload, status: complete ? "success" : "started", duration_seconds: complete ? 20 : null,
+          finished_at: complete ? at(30) : null, ec2_health,
+        } }];
+        if (complete) events.push(operation(4, "root", null, "environment.setup", 5, 35, "setup"));
+        return route.fulfill({ json: path.endsWith("/progress-history") ? { ...progressHistory, events }
+          : path.endsWith("/live") ? { attempt: 1, events: [], next_seq: 0, usage: {}, done: false }
+          : { ...progressTrial, agent: "claude-code", harbor_stage: complete ? "agent_running" : "environment_setup", phase_timing: {
+            environment_setup: complete ? timing(5, 35) : { started_at: at(5) },
+          } }
+        });
+      });
+      await page.goto("/progress");
+      if (view === "Live") await page.getByRole("tab", { name: "Live", exact: true }).click();
+      const label = page.getByTitle("ec2.instance_status_ok", { exact: true });
+      const disclosure = page.locator("summary").filter({ hasText: /^Environment Setup/ }).first();
+      await expect(label).toBeAttached();
+      if (await disclosure.locator("..").getAttribute("open") === null) await disclosure.click();
+      await expect(label).toBeVisible();
+      await expect(label).toHaveCount(1);
+      await expect(label).toContainText("Wait for instance health check");
+      const healthToggle = label.getByRole("button", { name: "Wait for instance health check", exact: true });
+      const healthDetails = page.getByTitle("AWS status reported " + at(15), { exact: true });
+      await expect(healthToggle).toHaveAttribute("aria-expanded", "false");
+      await expect(healthDetails).toBeHidden();
+      await label.locator("../..").screenshot({ path: `delivery-test-results/ec2-health-closed-${view.toLowerCase()}-${mobile ? "mobile" : "desktop"}.png` });
+      await healthToggle.focus();
+      await page.keyboard.press("Enter");
+      await expect(healthToggle).toHaveAttribute("aria-expanded", "true");
+      await expect(healthDetails).toBeVisible();
+      await expect(healthDetails).toContainText("Instance running · Instance health initializing · System health passed");
+      const row = label.locator("..");
+      await expect(row.getByLabel("running", { exact: true })).toBeVisible();
+      const initialSeconds = Number.parseFloat(await row.locator(":scope > span").last().innerText());
+      expect(initialSeconds).toBeGreaterThanOrEqual(5);
+      expect(initialSeconds).toBeLessThan(10);
+      await row.locator("..").screenshot({ path: `delivery-test-results/ec2-health-initializing-${view.toLowerCase()}-${mobile ? "mobile" : "desktop"}.png` });
+      healthStatus = "ok";
+      await page.clock.runFor(6000);
+      await expect(healthDetails).toContainText("Instance health passed");
+      await expect(healthToggle).toHaveAttribute("aria-expanded", "true");
+      await expect(label).toHaveCount(1);
+      const updatedSeconds = Number.parseFloat(await row.locator(":scope > span").last().innerText());
+      expect(updatedSeconds).toBeGreaterThan(initialSeconds + 5);
+      complete = true;
+      await page.clock.runFor(6000);
+      await expect(row.getByLabel("done", { exact: true })).toBeVisible();
+      await expect(row).toContainText("20.0s");
+      const finalDetails = page.getByTitle("AWS status reported " + at(30), { exact: true });
+      await expect(finalDetails).toContainText("System health passed");
+      await expect(healthToggle).toHaveAttribute("aria-expanded", "true");
+      await healthToggle.click();
+      await expect(finalDetails).toBeHidden();
+      await expect(row).toContainText("20.0s");
+      await healthToggle.click();
+      await expect(finalDetails).toBeVisible();
+      const bounds = await row.boundingBox();
+      expect(bounds).not.toBeNull();
+      expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(mobile ? 390 : 1280);
+      await row.locator("..").screenshot({ path: `delivery-test-results/ec2-health-${view.toLowerCase()}-${mobile ? "mobile" : "desktop"}.png` });
+      await page.reload();
+      if (view === "Live") await page.getByRole("tab", { name: "Live", exact: true }).click();
+      await expect(label).toBeVisible();
+      await expect(healthToggle).toHaveAttribute("aria-expanded", "false");
+      await expect(finalDetails).toBeHidden();
+      await expect(row).toContainText("20.0s");
+    });

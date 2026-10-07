@@ -2,11 +2,40 @@
  * Environment setup progress from the trial's live events.
  *
  * The worker writes `env_subphase` rows (one per Harbor setup step start and
- * end) and one `env_info` row (where the trial runs) before the agent starts.
+ * end, plus changed AWS health observations) and one `env_info` row (where the trial runs) before the agent starts.
  * See oddish/src/oddish/workers/harbor/setup_events.py for the payloads.
  */
 
 export type SetupStepStatus = "started" | "success" | "error" | "cancelled";
+
+type HealthStatus = "ok" | "impaired" | "insufficient-data" | "not-applicable" | "initializing";
+type ReachabilityStatus = "passed" | "failed" | "insufficient-data" | "initializing";
+
+export type EC2Health = {
+  observed_at: string;
+  instance_state: "pending" | "running" | "shutting-down" | "terminated" | "stopping" | "stopped" | null;
+  instance_status: HealthStatus | null;
+  system_status: HealthStatus | null;
+  instance_reachability: ReachabilityStatus | null;
+  system_reachability: ReachabilityStatus | null;
+  instance_impaired_since: string | null;
+  system_impaired_since: string | null;
+};
+
+/** Labels report the last AWS observation, not an inferred boot percentage. */
+export function ec2HealthLabel(health: EC2Health): string {
+  const parts: string[] = [];
+  if (health.instance_state) parts.push(`Instance ${health.instance_state.replaceAll("-", " ")}`);
+  for (const [name, status, reachability] of [
+    ["Instance", health.instance_status, health.instance_reachability],
+    ["System", health.system_status, health.system_reachability],
+  ]) {
+    const value = status === "ok" ? "passed" : status === "impaired" ? "failed" : status === "insufficient-data" ? "pending" : status;
+    if (value && value !== "not-applicable") parts.push(`${name} health ${value}`);
+    if (reachability === "failed") parts.push(`${name} reachability failed`);
+  }
+  return parts.join(" · ");
+}
 
 export interface LiveEventLike {
   seq: number;
@@ -53,6 +82,7 @@ export type CompletedEnvironmentActivity = EnvironmentActivity & {
 };
 
 export type EnvSubphasePayload = EnvironmentActivity & {
+  ec2_health?: EC2Health | null;
   completed_activities?: CompletedEnvironmentActivity[] | null;
 };
 
@@ -97,6 +127,7 @@ export interface SetupStep {
   operationAttempt?: number;
   activityKind?: "operation" | "supporting";
   hasCompletedActivities?: boolean;
+  ec2Health?: EC2Health | null;
 }
 
 export interface SetupState {
@@ -140,6 +171,7 @@ export function foldSetupEvents(events: readonly LiveEventLike[]): SetupState {
     const { phase, status, started_at, duration_seconds, error_type } =
       event.payload;
     const detail = {
+      ec2Health: event.payload.ec2_health,
       operationId: event.payload.operation_id,
       parentOperationId: event.payload.parent_operation_id,
       category: event.payload.category,
@@ -170,7 +202,7 @@ export function foldSetupEvents(events: readonly LiveEventLike[]): SetupState {
         ...detail,
       };
       if (index < 0) steps.push(step);
-      else steps[index] = { ...step, hasCompletedActivities: step.hasCompletedActivities || steps[index].hasCompletedActivities };
+      else steps[index] = { ...step, ec2Health: step.ec2Health ?? steps[index].ec2Health, hasCompletedActivities: step.hasCompletedActivities || steps[index].hasCompletedActivities };
       continue;
     }
     if (status === "started") {
@@ -217,6 +249,7 @@ export function setupStepLabel(step: SetupStep): string {
   const phase = body ? step.phase.slice(0, -".operation".length) : step.phase;
   const operation = phase.split(".").at(-1) ?? phase;
   const labels: Record<string, string> = {
+    instance_status_ok: "Wait for instance health check",
     docker_ready: "Docker ready",
     start_docker_daemon: "Start Docker service",
     install_egress_ca: "Install network certificates",

@@ -3793,3 +3793,14 @@ payload preserves these measurements through reload and terminal cleanup.
 batches; no recursive envelope or new table is introduced.
 
 The task Overview labels a rejection from a different review as “Previous task review: Rejected” when a trial is selected, including on the same task version. “View rejected review” links directly to the verdict’s `_graded_by` source; opening that source does not label it as a different review. Unmatched prior-version rejections remain explicitly unconfirmed for the selected version. Source-review and audit links open in a new tab so the original run remains available. This adds no history view or API request.
+
+EC2 setup operations optionally retain a strongly typed `ec2_health` snapshot
+from the existing `DescribeInstanceStatus` waiter responses: observation time,
+instance lifecycle state, instance/system health, reachability, and AWS impairment
+timestamps when supplied. Changed snapshots revise the same operation ID and
+start time; the terminal measurement retains the last observation. This additive
+field uses the existing retained JSONB and ephemeral bridge, with no migration.
+Summary and Live show the latest reported health in a collapsed-by-default
+disclosure under the existing secondary health-check row; its duration stays
+visible while the reported health is hidden. Missing evidence from older workers
+adds no invented status.

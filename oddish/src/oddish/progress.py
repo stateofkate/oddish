@@ -34,6 +34,30 @@ class SetupCategory(StrEnum):
     OTHER = "other"
 
 
+HealthStatus = Literal[
+    "ok", "impaired", "insufficient-data", "not-applicable", "initializing"
+]
+ReachabilityStatus = Literal["passed", "failed", "insufficient-data", "initializing"]
+
+
+class EC2Health(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    observed_at: datetime
+    instance_state: (
+        Literal[
+            "pending", "running", "shutting-down", "terminated", "stopping", "stopped"
+        ]
+        | None
+    ) = None
+    instance_status: HealthStatus | None = None
+    system_status: HealthStatus | None = None
+    instance_reachability: ReachabilityStatus | None = None
+    system_reachability: ReachabilityStatus | None = None
+    instance_impaired_since: datetime | None = None
+    system_impaired_since: datetime | None = None
+
+
 class SetupOperation(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -75,6 +99,7 @@ class CompletedEnvironmentActivity(SetupOperation):
 
 
 class EnvSubphasePayload(SetupOperation):
+    ec2_health: EC2Health | None = None
     kind: Literal[SetupEventKind.ENV_SUBPHASE] = SetupEventKind.ENV_SUBPHASE
     # None means a legacy producer; [] means the activity-aware producer had
     # no completed measurements to attach to this notification.

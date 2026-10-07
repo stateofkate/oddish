@@ -197,3 +197,32 @@ test("secondary setup projection excludes all tertiary activity without changing
   assert.equal(secondarySetupSteps(state)[0].durationSeconds, 88);
   assert.equal(state.steps.length, 7);
 });
+
+test("AWS health updates replace one step, preserve its clock and final evidence", () => {
+  const health = { observed_at: T1, instance_state: "running", instance_status: "initializing", system_status: "ok", instance_reachability: "initializing", system_reachability: "passed", instance_impaired_since: null, system_impaired_since: null };
+  const identity = { schema_version: 2, operation_id: "health", parent_operation_id: "root", provider: "ec2" };
+  const initial = subphase(1, "ec2.instance_status_ok", "started", identity);
+  const update = subphase(2, "ec2.instance_status_ok", "started", { ...identity, ec2_health: health });
+  const state = foldSetupEvents([initial, update]);
+  assert.equal(state.steps.length, 1);
+  assert.equal(state.current?.startedAt, T0);
+  assert.equal(state.current?.ec2Health?.instance_status, "initializing");
+  const healthy = { ...health, instance_status: "ok", instance_reachability: "passed" };
+  const terminal = subphase(3, "ec2.instance_status_ok", "success", { ...identity, duration_seconds: 120, ec2_health: healthy });
+  const final = foldSetupEvents([initial, update, terminal, update]);
+  assert.equal(final.steps.length, 1);
+  assert.equal(final.current, null);
+  assert.equal(final.steps[0].durationSeconds, 120);
+  assert.equal(final.steps[0].ec2Health?.instance_status, "ok");
+  // A completion measurement without a health field must not erase evidence.
+  assert.deepEqual(foldSetupEvents([initial, update, subphase(3, "ec2.instance_status_ok", "error", identity)]).steps[0].ec2Health, health);
+});
+
+test("AWS labels distinguish host health and reachability without inventing progress", async () => {
+  const { ec2HealthLabel, setupStepLabel } = await import("../src/lib/setup-events.ts");
+  const health = { observed_at: T0, instance_state: "running" as const, instance_status: "initializing" as const, system_status: "ok" as const, instance_reachability: "initializing" as const, system_reachability: "passed" as const, instance_impaired_since: null, system_impaired_since: null };
+  assert.equal(ec2HealthLabel(health), "Instance running · Instance health initializing · System health passed");
+  assert.equal(ec2HealthLabel({ ...health, instance_status: "impaired", instance_reachability: "failed" }), "Instance running · Instance health failed · Instance reachability failed · System health passed");
+  assert.equal(ec2HealthLabel({ ...health, instance_status: "insufficient-data", system_status: "not-applicable" }), "Instance running · Instance health pending");
+  assert.equal(setupStepLabel({ phase: "ec2.instance_status_ok", status: "started", startedAt: T0, durationSeconds: null, errorType: null }), "Wait for instance health check");
+});

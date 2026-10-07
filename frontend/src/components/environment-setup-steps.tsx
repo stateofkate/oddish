@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { AlertCircle, Check, Circle, Loader2 } from "lucide-react";
+import { useEffect, useId, useState } from "react";
+import { AlertCircle, Check, ChevronRight, Circle, Loader2 } from "lucide-react";
 
 import { formatDurationSec } from "@/lib/format";
 import {
   setupStepLabel,
+  ec2HealthLabel,
   secondarySetupSteps,
   type SetupState,
   type SetupStep,
@@ -28,7 +29,11 @@ function useElapsedSeconds(startedAt: string | null): number | null {
 function StepRow({ step, live }: { step: SetupStep; live: boolean }) {
   const elapsed = useElapsedSeconds(live ? step.startedAt : null);
   const seconds = live ? elapsed : step.durationSeconds;
+  const [healthOpen, setHealthOpen] = useState(false);
+  const healthId = useId();
+  const healthLabel = step.ec2Health ? ec2HealthLabel(step.ec2Health) : "";
   return (
+    <>
     <div className="flex items-center gap-2 py-1 text-xs">
       {step.status === "success" ? (
         <Check className="text-paper-pass h-3 w-3 shrink-0" aria-label="done" />
@@ -57,7 +62,18 @@ function StepRow({ step, live }: { step: SetupStep; live: boolean }) {
         )}
         title={step.phase}
       >
-        {setupStepLabel(step)}
+        {healthLabel ? (
+          <button
+            type="button"
+            className="inline-flex max-w-full items-center gap-1 rounded text-left hover:text-foreground focus-visible:outline active:text-foreground"
+            aria-expanded={healthOpen}
+            aria-controls={healthId}
+            onClick={() => setHealthOpen(open => !open)}
+          >
+            <span className="truncate">{setupStepLabel(step)}</span>
+            <ChevronRight aria-hidden="true" className={cn("h-3 w-3 shrink-0", healthOpen && "rotate-90")} />
+          </button>
+        ) : setupStepLabel(step)}
         {!live && step.status === "started" && (
           <span className="text-muted-foreground ml-2">End not recorded</span>
         )}
@@ -74,6 +90,17 @@ function StepRow({ step, live }: { step: SetupStep; live: boolean }) {
         {seconds != null ? (seconds === 0 ? "0s" : formatDurationSec(seconds)) : "—"}
       </span>
     </div>
+    {healthLabel && (
+      <div
+        id={healthId}
+        hidden={!healthOpen}
+        className="text-muted-foreground pb-1 pl-5 font-mono text-xs break-words"
+        title={`AWS status reported ${step.ec2Health?.observed_at}`}
+      >
+        {healthLabel}
+      </div>
+    )}
+    </>
   );
 }
 

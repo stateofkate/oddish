@@ -492,3 +492,61 @@ async def test_setup_bound_does_not_exhaust_transcript_budget(monkeypatch) -> No
         assert persist.rows[-1]["kind"] == "summary"
     finally:
         await live_tail.shutdown(trial_id, timeout_sec=1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bridge", [False, True])
+async def test_ec2_health_is_typed_and_retained_for_native_and_ephemeral_hooks(bridge):
+    from harbor.models.ec2_health import EC2Health
+    from oddish.progress import EnvSubphasePayload, ProgressEvent
+
+    event = subphase_event(phase="ec2.instance_status_ok")
+    event.subphase.schema_version = 2
+    event.subphase.operation_id = "health-wait"
+    event.subphase.ec2_health = EC2Health(
+        observed_at=STARTED_AT,
+        instance_state="running",
+        instance_status="initializing",
+        system_status="ok",
+    )
+    if bridge:
+        from oddish.workers.harbor._entry import _serialize_setup
+        from oddish.workers.harbor.ephemeral import _bridge_event
+
+        event = _bridge_event(
+            {"event": "environment-subphase", **_serialize_setup(event)}, trial_id="t1"
+        )
+    persist = RecordingPersist()
+    writer = emitter(persist)
+    await writer.observe(event)
+    payload = EnvSubphasePayload.model_validate(persist.rows[0]["payload"])
+    assert payload.ec2_health.instance_status == "initializing"
+    assert payload.ec2_health.system_status == "ok"
+    assert payload.ec2_health.observed_at == STARTED_AT
+    retained = ProgressEvent(
+        attempt=1,
+        event_key="live:1",
+        kind="env_subphase",
+        source_seq=1,
+        schema_version=2,
+        recorded_at=STARTED_AT,
+        payload=payload,
+    )
+    assert (
+        ProgressEvent.model_validate_json(retained.model_dump_json()).payload == payload
+    )
+    assert payload.operation_id == "health-wait"
+    assert payload.started_at == STARTED_AT
+
+
+@pytest.mark.asyncio
+async def test_invalid_health_payload_does_not_interrupt_trial():
+    event = subphase_event(phase="ec2.instance_status_ok")
+    event.subphase = SimpleNamespace(**event.subphase.model_dump(mode="json"))
+    event.subphase.ec2_health = {
+        "observed_at": STARTED_AT.isoformat(),
+        "instance_status": "invented",
+    }
+    persist = RecordingPersist()
+    assert await emitter(persist).observe(event) is None
+    assert persist.rows == []
