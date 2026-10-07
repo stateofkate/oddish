@@ -391,13 +391,16 @@ worker and the API/cleanup process when testing blue. The same endpoint must
 be used for submitted Archil trials: recovery cleanup uses these process
 settings, while normal Harbor teardown uses its per-trial client.
 
-To spread Archil trials across regions, set `ARCHIL_REGIONS` to `region=weight`
-pairs (for example `aws-us-west-2=60,aws-us-east-1=40`) on the worker and the
+Otherwise set `ARCHIL_REGIONS` to `region=weight` pairs (`aws-us-east-1=1` for
+one region, `aws-us-west-2=60,aws-us-east-1=40` to split) on the worker and the
 API/cleanup process, with one `ARCHIL_API_KEY_<REGION>` per listed region
 (`ARCHIL_API_KEY_AWS_US_EAST_1`), since Archil keys are per region.
-`ARCHIL_BASE_URL` overrides it. `ARCHIL_MAX_THROTTLE_WAIT` (seconds; 120 on
+`ARCHIL_MAX_THROTTLE_WAIT` (seconds; 120 on
 hosted deployments, 10 in the SDK otherwise) sets how long sandbox create,
 start and resume wait for capacity.
+`ARCHIL_FORWARD_ZONES` (`region=zone` pairs naming each region fleet's sandbox
+port domain, for example `aws-us-east-1=prod-aws-us-east-1-green.archil.app`)
+is where Harbor forwards Muse Code and tbh model calls for pause draining.
 
 Archil request draining is enabled by default. Set `drain_on_pause=false` to
 disable it. `drain_on_pause_hosts` adds hostname globs for custom model gateways;

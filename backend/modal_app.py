@@ -926,12 +926,13 @@ ENV_VARS = {
         "ODDISH_ARCHIL_TRAFFIC_PERCENT",
         LOCAL_DOTENV_VARS.get("ODDISH_ARCHIL_TRAFFIC_PERCENT", "0"),
     ),
-    # Harbor picks each Archil trial's region by these weights, with each
-    # region's ARCHIL_API_KEY_<REGION> from the runtime secret; empty means the
-    # single region from ARCHIL_REGION. The SDK waits this many seconds for
-    # capacity on sandbox create, start and resume before raising its 503.
-    "ARCHIL_REGIONS": _deploy_value("ARCHIL_REGIONS", os.environ, LOCAL_DOTENV_VARS)
+    # region=zone sandbox port domains Harbor forwards Muse/tbh model calls under.
+    "ARCHIL_FORWARD_ZONES": _deploy_value(
+        "ARCHIL_FORWARD_ZONES", os.environ, LOCAL_DOTENV_VARS
+    )
     or "",
+    # The SDK waits this many seconds for capacity on sandbox create, start and
+    # resume before raising its 503.
     "ARCHIL_MAX_THROTTLE_WAIT": _deploy_value(
         "ARCHIL_MAX_THROTTLE_WAIT", os.environ, LOCAL_DOTENV_VARS
     )
@@ -1036,7 +1037,7 @@ runtime_secrets.append(
                 "ODDISH_RELEASE",
                 "ODDISH_HARBOR_ENVIRONMENT",
                 "ODDISH_ARCHIL_TRAFFIC_PERCENT",
-                "ARCHIL_REGIONS",
+                "ARCHIL_FORWARD_ZONES",
                 "ARCHIL_MAX_THROTTLE_WAIT",
                 "ODDISH_MODAL_WORKER_CPU",
                 "ODDISH_MODAL_WORKER_MEMORY_MB",

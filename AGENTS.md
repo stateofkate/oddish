@@ -2482,6 +2482,12 @@ a flag's `0` or `false` value as a secret corrupts trajectories and analysis res
 Archil's `drain_on_pause` option configures `network.egress.drain_on_pause`
 in Harbor and is enabled by default in Oddish. Model hosts and worker/agent gateway
 hostnames are selected before sandbox creation and kept across phase changes.
+Draining needs the harness to either trust the egress CA or accept a new base
+URL. Muse Code and tbh trust only their bundled roots, so for them Oddish sets
+`forward_hosts` (Meta's service plus any configured endpoint) instead: Harbor
+points their endpoint at a forward name under the region's zone (Muse through
+its settings, tbh through `--base-url`) and drains only that name. Every other
+harness drains through the CA.
 The runtime gates new selected requests, drains admitted responses for up to
 ten minutes after pause is requested, then snapshots. This is not a request
 lifetime limit; stop does not drain. Matching is by hostname on HTTP/HTTPS
@@ -2495,18 +2501,23 @@ client, while out-of-band cleanup reconstructs its client from process settings.
 Do not mix endpoint overrides in one preview's Archil jobs.
 
 Production splits Archil trials across regions. `ARCHIL_REGIONS`
-(`region=weight` pairs, set in `.github/workflows/modal-deploy.yml`) makes
+(`region=weight` pairs, set in `oddish-prod`, so an edit reroutes new workers
+without a deploy) makes
 Harbor pick each trial's region by weight, and Archil API keys are per region:
 each listed region reads `ARCHIL_API_KEY_<REGION>` (for example
 `ARCHIL_API_KEY_AWS_US_EAST_1`) from `oddish-prod`. Harbor fails a trial whose
 region has a positive weight but no key. Recovery cleanup looks the sandbox up
 in every listed region that has a key, so a drained region stays listed at
-weight 0 until its sandboxes are gone. `ARCHIL_BASE_URL` or an unset
-`ARCHIL_REGIONS` means the single region from `ARCHIL_REGION` and
-`ARCHIL_API_KEY`. `ARCHIL_MAX_THROTTLE_WAIT` (default 120 seconds) is how long
+weight 0 until its sandboxes are gone. `ARCHIL_REGIONS` is required; only a
+test fleet's `ARCHIL_BASE_URL` replaces it, with that fleet's `ARCHIL_REGION`
+and `ARCHIL_API_KEY`. `ARCHIL_MAX_THROTTLE_WAIT` (default 120 seconds) is how long
 the Archil SDK waits out a region with no capacity on sandbox create, start and
-resume before the attempt fails. The deployment pins both values in the image
-and final runtime secret.
+resume before the attempt fails. `ARCHIL_FORWARD_ZONES` (`region=zone` pairs,
+set in `.github/workflows/modal-deploy.yml`) names each region's sandbox port
+domain, under which Harbor forwards Muse and tbh endpoints for pause draining.
+The deployment pins `ARCHIL_MAX_THROTTLE_WAIT` and
+`ARCHIL_FORWARD_ZONES` in the image and final runtime secret, but never
+`ARCHIL_REGIONS`: a pinned value would shadow `oddish-prod`.
 
 PR previews can override these three process settings using the repository
 Actions secret `ARCHIL_PREVIEW_<PR number>`, a JSON object containing exactly

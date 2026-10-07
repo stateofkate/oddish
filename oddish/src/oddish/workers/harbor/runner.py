@@ -93,6 +93,7 @@ from .model_hosts import (
     gateway_hosts_from_env,
     gemini_cli_transport_hosts,
     outbound_hosts_for_model,
+    trusts_only_bundled_roots,
 )
 from .redaction import redact_exact_text, redact_exact_value
 from .restricted_network import (
@@ -1148,10 +1149,11 @@ def declare_pause_drain_hosts(
     agent_config: HarborAgentConfig,
     *agent_envs: Mapping[str, str] | None,
 ) -> None:
-    """Add every model base URL the agent was handed to the pause drain hosts.
+    """Declare the model hosts the agent was handed for pause draining.
 
-    The env sources are not merged: when two of them name different hosts
-    under one key, both hosts are declared.
+    Muse Code and tbh get them as ``forward_hosts`` (no egress CA); others as
+    ``drain_on_pause_hosts``. Env sources are not merged: when two name
+    different hosts under one key, both are declared.
     """
     if environment_config.type != EnvironmentType.ARCHIL:
         return
@@ -1160,6 +1162,24 @@ def declare_pause_drain_hosts(
         name="drain_on_pause",
         default=False,
     ):
+        return
+    if trusts_only_bundled_roots(
+        agent_name=agent_config.name, import_path=agent_config.import_path
+    ):
+        environment_config.kwargs["forward_hosts"] = list(
+            dict.fromkeys(
+                host
+                for env in (None, *agent_envs)
+                for host in agent_runtime_hosts(
+                    agent_name=agent_config.name,
+                    import_path=agent_config.import_path,
+                    agent_kwargs=agent_config.kwargs,
+                    agent_env=env,
+                )
+                # Forward names exist only for hostnames; an IP stays undrained.
+                if not _is_ip_address(host)
+            )
+        )
         return
     hosts = [
         host
@@ -1305,14 +1325,18 @@ def _kube_chart_task_agent_hosts(task_path: Path) -> list[str]:
     return normalize_allowed_hosts(raw_hosts)
 
 
+def _is_ip_address(host: str) -> bool:
+    try:
+        ip_address(host)
+    except ValueError:
+        return False
+    return True
+
+
 def _validate_kube_chart_agent_hosts(hosts: list[str]) -> list[str]:
     """Reject Harbor policy shapes the DNS/SNI chart cannot represent."""
     for host in hosts:
-        try:
-            is_ip_address = ip_address(host) is not None
-        except ValueError:
-            is_ip_address = False
-        if "*" in host or "/" in host or is_ip_address:
+        if "*" in host or "/" in host or _is_ip_address(host):
             raise RestrictedNetworkProfileError(
                 "The .oddish-agent-egress-hosts Helm contract supports only "
                 f"exact DNS hostnames; the resolved agent policy contains {host!r}. "

@@ -44,6 +44,8 @@ jobs:
       # buildtest/staging-sampling-20260923.
       # Thunder has no secret in the staging Modal environment; keep it off.
       ODDISH_THUNDER_ENABLED: "false"
+      # As in production.
+      ARCHIL_FORWARD_ZONES: "aws-us-east-1=prod-aws-us-east-1-green.archil.app,aws-us-west-2=prod-aws-us-west-2-green.archil.app,aws-eu-west-1=prod-aws-eu-west-1-green.archil.app"
       # Numinous GPU lane (#1412). Disabled here too (preview-only). Separate
       # flag from ODDISH_NUMINOUS_ENABLED; set to "1" to route GPU trials to
       # Numinous ahead of Modal.

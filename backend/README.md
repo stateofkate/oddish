@@ -554,14 +554,18 @@ cannot override it. Set `40` and redeploy to restore the prior rollout, or
 saved trials and their retries retain their provider policy.
 
 `ARCHIL_REGIONS` (for example `aws-us-west-2=60,aws-us-east-1=40`) spreads
-Archil trials across regions by weight; production sets it in
-`.github/workflows/modal-deploy.yml`. Each region with a positive weight needs
-`ARCHIL_API_KEY_<REGION>` (`ARCHIL_API_KEY_AWS_US_EAST_1`) in `oddish-prod`;
+Archil trials across regions by weight; production reads it from
+`oddish-prod`, so an edit reaches new workers without a deploy. Each region
+with a positive weight needs `ARCHIL_API_KEY_<REGION>`
+(`ARCHIL_API_KEY_AWS_US_EAST_1`) in `oddish-prod`;
 Harbor fails a trial whose region has no key. Keep a drained region listed at
 `0` with its key until its sandboxes are gone, so recovery cleanup can still
 reach them.
 `ARCHIL_MAX_THROTTLE_WAIT` (default `120`) sets how many seconds the Archil SDK
 waits for capacity before a sandbox create, start or resume fails.
+`ARCHIL_FORWARD_ZONES` (`region=zone`, set in `.github/workflows/modal-deploy.yml`)
+names each region's sandbox port domain, where Harbor forwards Muse Code and
+tbh model calls.
 
 Archil's existing retry policy still moves a trial to Modal after two failed
 attempts. Thunder's existing retry policy is also unchanged. Neither can launch

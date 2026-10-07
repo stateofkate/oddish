@@ -51,8 +51,8 @@ def test_unset_archil_traffic_percent_defaults_to_zero() -> None:
         assert _baked_value(env) == ["modal", "0", "0"]
 
 
-_REGION_NAMES = ("ARCHIL_REGIONS", "ARCHIL_MAX_THROTTLE_WAIT")
-_REGION_CODE = """
+_ARCHIL_NAMES = ("ARCHIL_REGIONS", "ARCHIL_FORWARD_ZONES", "ARCHIL_MAX_THROTTLE_WAIT")
+_ARCHIL_CODE = """
 import json
 import sys
 import modal
@@ -66,19 +66,19 @@ import modal_app
 pin = next(values for values in captured if "ODDISH_HARBOR_ENVIRONMENT" in values)
 names = sys.argv[1:]
 print(json.dumps({
-    "image": [modal_app.ENV_VARS[name] for name in names],
-    "pinned": [pin[name] for name in names],
+    "image": [modal_app.ENV_VARS.get(name) for name in names],
+    "pinned": [pin.get(name) for name in names],
 }))
 """
 
 
-def _region_settings(**overrides: str) -> dict[str, object]:
+def _archil_settings(**overrides: str) -> dict[str, object]:
     env = {**os.environ}
-    for name in _REGION_NAMES:
+    for name in _ARCHIL_NAMES:
         env.pop(name, None)
     env.update(overrides)
     result = subprocess.run(
-        [sys.executable, "-c", _REGION_CODE, *_REGION_NAMES],
+        [sys.executable, "-c", _ARCHIL_CODE, *_ARCHIL_NAMES],
         cwd=Path(modal_app.__file__).parent,
         env=env,
         capture_output=True,
@@ -88,15 +88,17 @@ def _region_settings(**overrides: str) -> dict[str, object]:
     return json.loads(result.stdout.splitlines()[-1])
 
 
-def test_archil_regions_and_capacity_wait_are_baked_from_the_deploy() -> None:
-    if any(name in modal_app.LOCAL_DOTENV_VARS for name in _REGION_NAMES):
+def test_forward_zones_and_capacity_wait_are_baked_but_regions_are_not() -> None:
+    if any(name in modal_app.LOCAL_DOTENV_VARS for name in _ARCHIL_NAMES):
         return
-    single = _region_settings()
-    multi = _region_settings(
+    unset = _archil_settings()
+    deployed = _archil_settings(
         ARCHIL_REGIONS="aws-us-west-2=60,aws-us-east-1=40",
+        ARCHIL_FORWARD_ZONES="aws-us-east-1=prod-aws-us-east-1-green.archil.app",
         ARCHIL_MAX_THROTTLE_WAIT="300",
     )
 
-    assert single["image"] == single["pinned"] == ["", "120"]
-    expected = ["aws-us-west-2=60,aws-us-east-1=40", "300"]
-    assert multi["image"] == multi["pinned"] == expected
+    assert unset["image"] == unset["pinned"] == [None, "", "120"]
+    # Baking ARCHIL_REGIONS would shadow oddish-prod, where it is edited live.
+    expected = [None, "aws-us-east-1=prod-aws-us-east-1-green.archil.app", "300"]
+    assert deployed["image"] == deployed["pinned"] == expected

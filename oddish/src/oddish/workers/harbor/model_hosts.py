@@ -411,6 +411,26 @@ def _default_host(url: str) -> str | None:
     return _host_from_url(url)
 
 
+# Harnesses that trust only their bundled TLS roots: pause draining cannot
+# decrypt their calls with the egress CA, so their endpoint is forwarded.
+_BUNDLED_ROOTS_AGENTS = frozenset({"muse-code", "tbh"})
+
+
+def _runtime_agent_key(agent_name: str | None, import_path: str | None) -> str:
+    key = (agent_name or "").strip().lower()
+    if not key and import_path:
+        # Oddish wrappers null the name and set an import path instead.
+        key = import_path.rsplit(":", 1)[-1].strip().lower()
+        key = _CLASS_BASENAME_RUNTIME_KEYS.get(key, key)
+    return key
+
+
+def trusts_only_bundled_roots(
+    *, agent_name: str | None, import_path: str | None = None
+) -> bool:
+    return _runtime_agent_key(agent_name, import_path) in _BUNDLED_ROOTS_AGENTS
+
+
 def agent_runtime_hosts(
     *,
     agent_name: str | None,
@@ -428,11 +448,7 @@ def agent_runtime_hosts(
     default, so pointing at a staging endpoint cannot silently drop the
     production one a fallback might still use.
     """
-    key = (agent_name or "").strip().lower()
-    if not key and import_path:
-        # Oddish wrappers null the name and set an import path instead.
-        key = import_path.rsplit(":", 1)[-1].strip().lower()
-        key = _CLASS_BASENAME_RUNTIME_KEYS.get(key, key)
+    key = _runtime_agent_key(agent_name, import_path)
     hosts = list(_AGENT_RUNTIME_HOSTS.get(key, ()))
     if not hosts:
         return []
@@ -455,8 +471,11 @@ def agent_runtime_hosts(
             None,
         )
     if isinstance(override, str):
-        host = _host_from_url(override)
-        if host:
+        try:
+            override = resolve_env_vars({"url": override})["url"]
+        except ValueError:  # an unset ${VAR} names no host
+            override = None
+        if host := _host_from_url(override):
             hosts.append(host)
     return list(dict.fromkeys(hosts))
 

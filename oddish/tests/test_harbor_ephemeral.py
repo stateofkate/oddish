@@ -1872,7 +1872,7 @@ def test_payload_declares_gateway_hosts_for_pause_draining(monkeypatch):
 
 @pytest.mark.parametrize("agent", ["muse-code", "tbh"])
 @pytest.mark.parametrize("enabled", [True, False])
-def test_payload_declares_pause_drain_kwargs_base_url(monkeypatch, agent, enabled):
+def test_payload_forwards_bundled_roots_kwargs_base_url(monkeypatch, agent, enabled):
     for key in (*KNOWN_TRANSPORT_BASE_URL_KEYS, *TBH_BASE_URL_KEYS):
         monkeypatch.delenv(key, raising=False)
     resolved = EnvironmentConfig(
@@ -1891,7 +1891,7 @@ def test_payload_declares_pause_drain_kwargs_base_url(monkeypatch, agent, enable
         },
     )
 
-    hosts = payload["environment_config"]["kwargs"]["drain_on_pause_hosts"]
-    assert "manual.test" in hosts
-    assert ("kwargs-gateway.test" in hosts) is enabled
-    assert resolved.kwargs["drain_on_pause_hosts"] == ["manual.test"]
+    kwargs = payload["environment_config"]["kwargs"]
+    assert kwargs["drain_on_pause_hosts"] == ["manual.test"]
+    assert ("kwargs-gateway.test" in kwargs.get("forward_hosts", [])) is enabled
+    assert "forward_hosts" not in resolved.kwargs

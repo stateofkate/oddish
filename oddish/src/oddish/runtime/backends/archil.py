@@ -66,25 +66,25 @@ class ArchilBackend:
         yield None
 
 
-def _cleanup_targets() -> list[dict[str, str | None]]:
+def _cleanup_targets() -> list[dict[str, str]]:
     """Client settings for every region a trial's sandbox may be in.
 
     Harbor places each trial in a region from ``ARCHIL_REGIONS`` with that
-    region's key. An endpoint override, or no weights, means the one region
-    the SDK resolves from ``ARCHIL_REGION`` and ``ARCHIL_API_KEY``.
+    region's key. A test fleet's ``ARCHIL_BASE_URL`` is the one target, with
+    the SDK resolving its ``ARCHIL_REGION`` and ``ARCHIL_API_KEY``.
     """
-    base_url = os.environ.get("ARCHIL_BASE_URL")
-    if not base_url:
-        from harbor.environments.archil import region_key_var, region_weights
+    if base_url := os.environ.get("ARCHIL_BASE_URL"):
+        return [{"base_url": base_url}]
+    from harbor.environments.archil import region_key_var, region_weights
 
-        targets: list[dict[str, str | None]] = [
-            {"region": region, "api_key": key}
-            for region in region_weights()
-            if (key := os.environ.get(region_key_var(region)))
-        ]
-        if targets:
-            return targets
-    return [{"base_url": base_url}]
+    targets: list[dict[str, str]] = [
+        {"region": region, "api_key": key}
+        for region in region_weights()
+        if (key := os.environ.get(region_key_var(region)))
+    ]
+    if not targets:
+        raise ValueError("ARCHIL_REGIONS lists no region with an API key")
+    return targets
 
 
 _: ExecutionBackend = ArchilBackend()

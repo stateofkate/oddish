@@ -74,6 +74,9 @@ def test_archil_teardown_stops_deletes_and_closes(monkeypatch) -> None:
 
 def test_archil_teardown_treats_missing_sandbox_as_done(monkeypatch) -> None:
     calls: dict[str, object] = {}
+    monkeypatch.setenv(
+        "ARCHIL_BASE_URL", "https://control.blue.us-east-1.aws.test.archil.com"
+    )
 
     class _NotFoundError(Exception):
         status = 404

@@ -6424,6 +6424,8 @@ def test_pause_drain_hosts_follow_the_agent_base_urls(no_ambient_gateways):
         "kwargs-extra-env.test",
         "muse-gateway.test",
     ]
+    # Harbor drops its own drain hosts whenever this key is present.
+    assert "forward_hosts" not in environment_config.kwargs
 
 
 @pytest.mark.parametrize(
@@ -6466,7 +6468,7 @@ def test_pause_drain_hosts_include_the_worker_environment(
 
 @pytest.mark.parametrize("agent", ["muse-code", "tbh"])
 @pytest.mark.parametrize("enabled", [True, False])
-def test_runner_declares_pause_drain_kwargs_base_url(
+def test_runner_forwards_bundled_roots_kwargs_base_url(
     monkeypatch, tmp_path, no_ambient_gateways, agent, enabled
 ):
     task_path = tmp_path / "task"
@@ -6504,9 +6506,45 @@ def test_runner_declares_pause_drain_kwargs_base_url(
     )
 
     assert outcome.error is None
-    hosts = seen["environment_kwargs"]["drain_on_pause_hosts"]
-    assert "manual.test" in hosts
-    assert ("kwargs-gateway.test" in hosts) is enabled
+    kwargs = seen["environment_kwargs"]
+    assert kwargs["drain_on_pause_hosts"] == ["manual.test"]
+    forwarded = kwargs.get("forward_hosts", [])
+    assert ("kwargs-gateway.test" in forwarded) is enabled
+
+
+@pytest.mark.parametrize(
+    "agent_config",
+    [
+        HarborAgentConfig(name="muse-code"),
+        HarborAgentConfig(import_path="harbor.agents.installed.muse_code:MuseCode"),
+        HarborAgentConfig(name="tbh"),
+    ],
+)
+def test_bundled_roots_agents_forward_their_endpoint_instead_of_using_the_ca(
+    monkeypatch, no_ambient_gateways, agent_config
+):
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://foundry.openai.azure.com/v1")
+    environment_config = HarborEnvironmentConfig(
+        type=EnvironmentType.ARCHIL, kwargs={"drain_on_pause": True}
+    )
+
+    monkeypatch.setenv("MUSE_GW", "https://muse-gw.test/v1")
+    harbor_runner.declare_pause_drain_hosts(
+        environment_config,
+        agent_config,
+        {"MUSE_CODE_BASE_URL": "${MUSE_GW}"},
+        {"MUSE_CODE_BASE_URL": "http://10.0.0.8/v1", "TBH_BASE_URL": "http://10.0.0.8"},
+        {"TBH_BASE_URL": "https://tbh-gw.test/v1"},
+        os.environ,
+    )
+
+    assert "drain_on_pause_hosts" not in environment_config.kwargs
+    forwarded = environment_config.kwargs["forward_hosts"]
+    assert forwarded[0] == "api.meta.ai"
+    assert "foundry.openai.azure.com" not in forwarded
+    assert ("muse-gw.test" in forwarded) is (agent_config.name != "tbh")
+    assert ("tbh-gw.test" in forwarded) is (agent_config.name == "tbh")
+    assert "10.0.0.8" not in forwarded
 
 
 def test_muse_code_environment_hosts_cover_install_and_meta_service():

@@ -81,6 +81,8 @@ jobs:
       ODDISH_THUNDER_ENABLED: "true"
       ODDISH_THUNDER_SECRET_NAME: "oddish-thunder"
       ODDISH_THUNDER_MAX_CAPACITY: "128"
+      # As in pr-preview.yml.
+      ARCHIL_FORWARD_ZONES: "aws-us-east-1=prod-aws-us-east-1-green.archil.app,aws-us-west-2=prod-aws-us-west-2-green.archil.app,aws-eu-west-1=prod-aws-eu-west-1-green.archil.app"
       # Let one model fill the preview worker pool during load tests.
       ODDISH_DEFAULT_MODEL_CONCURRENCY: "300"
       ODDISH_MODEL_CONCURRENCY_OVERRIDES: "{}"
