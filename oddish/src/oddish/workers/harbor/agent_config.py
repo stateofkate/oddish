@@ -579,17 +579,18 @@ def _apply_meta_mini_swe_agent(agent_config: AgentConfig) -> None:
 
 
 def _apply_meta_model_reasoning_policy(agent_config: AgentConfig) -> None:
-    """Run every Meta model, on any key route, at the harness's top effort."""
+    """Run every Meta model, on any key route, at xhigh reasoning effort."""
     if not (
         is_meta_model(agent_config.model_name)
         or is_meta_public_model(agent_config.model_name)
     ):
         return
 
-    # tbh's --reasoning-effort has no "max"; "ultra" is its highest value.
-    is_tbh = (agent_config.name or "").strip().lower() == "tbh"
+    # xhigh, not max: Meta's API rejects "max" for some models (for example
+    # straw-110_evals_ext accepts only minimal..xhigh), and every Meta harness
+    # (muse-code, tbh, mini-swe-agent) accepts xhigh.
     kwargs = dict(agent_config.kwargs or {})
-    kwargs["reasoning_effort"] = "ultra" if is_tbh else "max"
+    kwargs["reasoning_effort"] = "xhigh"
     agent_config.kwargs = kwargs
 
 

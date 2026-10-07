@@ -3122,7 +3122,7 @@ def test_build_agent_config_keeps_the_internal_meta_route(monkeypatch, agent):
         "meta-public-2/goofy_glacier135",
     ],
 )
-def test_build_agent_config_forces_max_reasoning_for_meta_models(
+def test_build_agent_config_forces_xhigh_reasoning_for_meta_models(
     monkeypatch, agent, model
 ):
     monkeypatch.setattr(harbor_runner.settings, "openai_provider", "openai")
@@ -3138,8 +3138,7 @@ def test_build_agent_config_forces_max_reasoning_for_meta_models(
         },
     )
 
-    expected = "ultra" if agent == "tbh" else "max"
-    assert agent_config.kwargs["reasoning_effort"] == expected
+    assert agent_config.kwargs["reasoning_effort"] == "xhigh"
     assert agent_config.kwargs["keep"] == "value"
 
 
