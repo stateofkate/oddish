@@ -53,8 +53,8 @@ const NO_ANSWER: Record<QAEvalOutcome, string> = {
 
 const PICK_BOX = "mt-0.5 h-3.5 w-3.5";
 
-/** One replay: the source trial (its drawer, ready to label), what the
- * golden expects and what QA said. With `pick`, a box picks the trial for a
+/** One replay: the replay trial (the tested model's classification), what
+ * the golden expects and what QA said. With `pick`, a box picks the trial for a
  * rerun. */
 function CaseRow({
   c,
@@ -81,16 +81,15 @@ function CaseRow({
       )}
       <span className="pt-0.5">{OUTCOME_ICON[c.outcome]}</span>
       <span className="min-w-0">
-        {/* Named by the trial its golden keys on; a copy opens as itself,
-            the trial this deployment has. */}
+        {/* Named by the trial its golden keys on; opens the replay. */}
         <TrialLink
           taskId={c.task_id}
-          trialId={c.source_trial_id}
+          trialId={c.qa_eval_trial_id}
           className="block truncate font-mono text-xs hover:underline"
           title={
             copy
-              ? `copy of ${c.original_trial_id}: ${c.source_trial_id}`
-              : c.source_trial_id
+              ? `replay ${c.qa_eval_trial_id} of copy ${c.source_trial_id} of ${c.original_trial_id}`
+              : `replay ${c.qa_eval_trial_id} of ${c.source_trial_id}`
           }
         >
           {c.original_trial_id}
