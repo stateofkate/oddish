@@ -143,13 +143,16 @@ test("organization changes never overwrite either organization's picks", async (
   ).toEqual([["other-task", { cost: null, estimated: false }]]);
 });
 
-test("adding to an existing delivery uses one request for all picks", async ({
+for (const success of [true, false]) {
+test(`adding to an existing delivery retains a readable ${success ? "confirmation" : "error"}`, async ({
   page,
-}) => {
+}, testInfo) => {
   const requests: string[][] = [];
   await page.route("**/api/deliveries/existing/tasks", async (route) => {
     requests.push(route.request().postDataJSON().task_ids);
-    await route.fulfill({ json: { added: ids.length } });
+    await route.fulfill(success
+      ? { json: { added: ids.length } }
+      : { status: 400, json: { detail: "Delivery is finalized." } });
   });
   await page.getByRole("button", { name: "Add 1,201 to delivery" }).click();
   await page
@@ -160,11 +163,26 @@ test("adding to an existing delivery uses one request for all picks", async ({
   await page
     .getByRole("button", { name: "Add 1,201 tasks", exact: true })
     .click();
-  await expect(
-    page.getByRole("button", { name: "Clear selection", exact: true })
-  ).toHaveCount(0);
+  if (!success) {
+    await expect(page.getByRole("dialog").getByRole("alert")).toHaveText("Delivery is finalized.");
+    await page.getByRole("dialog").getByRole("button", { name: "Close", exact: true }).click();
+  }
+  const notice = page.getByTestId("tasks-selection-bar").getByRole(success ? "status" : "alert");
+  await expect(notice).toContainText(success ? "Added 1201 of 1201 to Existing" : "Delivery is finalized.");
+  await expect(notice).toBeInViewport();
+  await expect(notice).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   expect(requests).toEqual([ids]);
+  if (!success) {
+    await expect(page.getByText("1,201 selected", { exact: true })).toBeVisible();
+    return;
+  }
+  await expect(
+    page.getByRole("button", { name: "Selection actions", exact: true })
+  ).toHaveCount(0);
+  await expect(notice.getByRole("link", { name: "Open the board" })).toHaveAttribute("href", "/deliveries/existing");
+  await page.screenshot({ path: testInfo.outputPath("delivery-confirmation.png") });
 });
+}
 
 test("filter presets and delivery context survive clearing filters", async ({
   page,
@@ -195,6 +213,7 @@ test("filter presets and delivery context survive clearing filters", async ({
 test("reviewing selection exposes picks outside the current empty results", async ({
   page,
 }) => {
+  await page.getByRole("button", { name: "Selection actions" }).click();
   await page.getByRole("button", { name: "Review selection" }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
   await expect(
@@ -237,6 +256,102 @@ const task = {
   user_tags: [],
   deliveries: [],
 };
+
+test("sort and delivery dialogs preserve the scrolled sticky filters", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.route("**/api/tasks/browse?*", route => route.fulfill({ json: {
+    items: Array.from({ length: 24 }, (_, i) => ({ ...task, id: `visible-${i}`, name: `Task ${i}` })),
+    offset: 0, has_more: false,
+  } }));
+  await page.goto("/picker?view=cards");
+  await expect(page.getByRole("link", { name: "Task 23", exact: true })).toBeAttached();
+  await page.evaluate(() => window.scrollTo(0, 800));
+  const filters = page.getByTestId("tasks-filters");
+  await expect.poll(() => filters.evaluate(el => el.getBoundingClientRect().top)).toBe(96);
+  const scroll = await page.evaluate(() => window.scrollY);
+  const bounds = await filters.boundingBox();
+  await page.getByRole("combobox", { name: "Sort tasks" }).click();
+  await expect(page.getByRole("listbox")).toBeInViewport();
+  expect(await filters.boundingBox()).toEqual(bounds);
+  expect(await page.evaluate(() => window.scrollY)).toBe(scroll);
+  await page.mouse.move(1200, 600);
+  await page.mouse.wheel(0, 500);
+  await page.getByRole("option", { name: "Execution errors", exact: true }).click();
+  await expect.poll(() => new URL(page.url()).searchParams.get("sort")).toBe("model_errors_desc");
+  expect(await filters.boundingBox()).toEqual(bounds);
+
+  await page.screenshot({ path: testInfo.outputPath("scrolled-selection-tray.png") });
+  const beforeDialog = await page.evaluate(() => window.scrollY);
+  await page.getByRole("button", { name: "Add 1,201 to delivery" }).click();
+  await expect(page.getByRole("dialog")).toBeInViewport();
+  expect(await filters.boundingBox()).toEqual(bounds);
+  await page.getByRole("combobox", { name: "Delivery batch" }).click();
+  await page.getByRole("option", { name: "Existing · No lab · 0 tasks", exact: true }).click();
+  await page.mouse.move(1200, 600);
+  await page.mouse.wheel(0, 500);
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toBeHidden();
+  expect(await page.evaluate(() => window.scrollY)).toBe(beforeDialog);
+  await page.mouse.wheel(0, 300);
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(beforeDialog);
+});
+
+for (const [width, height] of [[1440, 900], [768, 600]]) {
+  test(`filter footer remains clickable above the selection tray at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height });
+    await page.route("**/api/tasks/browse?*", route => route.fulfill({ json: {
+      items: Array.from({ length: 24 }, (_, i) => ({ ...task, id: `visible-${i}`, name: `Task ${i}` })),
+      offset: 0, has_more: false,
+    } }));
+    await page.goto("/picker?view=cards");
+    await expect(page.getByRole("link", { name: "Task 23", exact: true })).toBeAttached();
+    await page.evaluate(() => window.scrollTo(0, 800));
+    const filters = page.getByTestId("tasks-filters");
+    await expect.poll(() => filters.evaluate(el => el.getBoundingClientRect().top)).toBe(96);
+    await filters.evaluate(el => { el.scrollTop = el.scrollHeight; });
+    const tray = (await page.getByTestId("tasks-selection-bar").boundingBox())!;
+    for (const name of ["Saved views", "Copy view link"]) {
+      const button = page.getByRole("button", { name, exact: true });
+      const bounds = (await button.boundingBox())!;
+      expect(bounds.y + bounds.height).toBeLessThan(tray.y);
+      await button.click({ trial: true });
+    }
+    await page.getByRole("button", { name: "Saved views", exact: true }).click();
+    await expect(page.getByText("No saved filters yet.")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await page.evaluate(() => {
+      Object.defineProperty(navigator, "clipboard", { value: { writeText: async () => {} } });
+    });
+    await page.getByRole("button", { name: "Copy view link", exact: true }).click();
+    await expect(page.getByRole("status")).toHaveText("View link copied");
+    await page.screenshot({ path: testInfo.outputPath("filter-footer-above-tray.png") });
+  });
+}
+
+for (const width of [1440, 375]) {
+  test(`selection tray stays compact at the bottom left at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.route("**/api/tasks/browse?*", route => route.fulfill({ json: {
+      items: [task], offset: 0, has_more: false,
+    } }));
+    await page.goto("/picker?view=cards");
+    const tray = page.getByTestId("tasks-selection-bar");
+    await expect(tray).toBeInViewport();
+    const bounds = (await tray.boundingBox())!;
+    expect(bounds.x).toBe(16);
+    expect(bounds.y + bounds.height).toBe(884);
+    expect(bounds.width).toBeLessThanOrEqual(Math.min(420, width - 32));
+    expect(bounds.height).toBeLessThan(100);
+    await page.getByRole("button", { name: "Selection actions" }).click();
+    await expect(page.getByRole("button", { name: "Review selection" })).toBeInViewport();
+    await page.getByRole("button", { name: "Clear selection", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Selection actions" })).toHaveCount(0);
+    await expect.poll(() => page.evaluate(key => localStorage.getItem(key), storageKey)).toBe(null);
+    await page.getByRole("checkbox", { name: "Select Queue recovery", exact: true }).check();
+    await expect(page.getByRole("button", { name: "Selection actions" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Review selection" })).toHaveCount(0);
+  });
+}
 
 test("delivery picker preserves trial counts and only adds to its named destination", async ({
   page,
@@ -574,6 +689,7 @@ test("exact selection sharing stores IDs independently of current filters", asyn
     saved = route.request().postDataJSON();
     await route.fulfill({ json: { ...saved, id: "saved-selection" } });
   });
+  await page.getByRole("button", { name: "Selection actions" }).click();
   await page
     .getByRole("button", { name: "Share selection", exact: true })
     .click();

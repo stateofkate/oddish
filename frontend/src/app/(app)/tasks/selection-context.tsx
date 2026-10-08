@@ -13,7 +13,8 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import useSWR from "swr";
-import { PackagePlus } from "lucide-react";
+import { MoreHorizontal, PackagePlus } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import {
@@ -302,8 +303,7 @@ export function TasksSelectionControls() {
 
 type Notice = { tone: "info" | "error"; text: ReactNode };
 
-// Pinned above the results: select the page or the whole filter set, see
-// what is ticked, and hand the picks to a delivery in one action. Only
+// Compact selection tray: review picks and hand them to a delivery. Only
 // admins can create or fill deliveries (the API requires it), so everyone
 // else gets the selection without the button.
 export function SelectionBar() {
@@ -321,6 +321,7 @@ export function SelectionBar() {
   const [newOpen, setNewOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [actionsOpen, setActionsOpen] = useState(false);
   const [targetId, setTargetId] = useState("");
   const { data: deliveries, error: deliveriesError, mutate: reloadDeliveries } = useSWR<DeliveryListItem[]>(
     menuOpen ? "/api/deliveries" : null,
@@ -376,7 +377,7 @@ export function SelectionBar() {
   return (
     <div className="space-y-2" data-testid="tasks-selection-bar">
       {totals.count > 0 ? (
-        <div className="bg-muted/40 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border border-[#6f88b4]/20 px-3 py-2 text-xs">
+        <div className="bg-background flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2 text-xs shadow-lg">
           <span className="font-medium tabular-nums">
             {totals.count.toLocaleString()} selected
           </span>
@@ -386,19 +387,9 @@ export function SelectionBar() {
               {formatCostUsd(totals.cost)}
             </span>
           ) : null}
-          <Button variant="ghost" size="sm" onClick={() => setReviewOpen(true)}>
-            Review selection
-          </Button>
-          <SavedFiltersMenu
-            key={Array.from(selection.keys()).join(",")}
-            selectedIds={Array.from(selection.keys())}
-          />
-          <Button variant="ghost" size="sm" disabled={busy} onClick={clear}>
-            Clear selection
-          </Button>
           {deliveryId && isOrgAdminRole(orgRole) ? (
             <Button
-              className="ml-auto"
+              className="h-auto min-h-8 min-w-0 whitespace-normal"
               size="sm"
               disabled={busy || !delivery || !!deliveryError}
               onClick={() => delivery && void addToExisting(delivery)}
@@ -409,7 +400,7 @@ export function SelectionBar() {
           ) : null}
           {!deliveryId && isOrgAdminRole(orgRole) ? (
             <>
-              <Button size="sm" className="ml-auto" disabled={busy} onClick={() => setMenuOpen(true)}><PackagePlus className="mr-2 h-4 w-4" />Add {totals.count.toLocaleString()} to delivery</Button>
+              <Button size="sm" aria-label={`Add ${totals.count.toLocaleString()} to delivery`} disabled={busy} onClick={() => setMenuOpen(true)}><PackagePlus className="mr-2 h-4 w-4" />Add to delivery</Button>
               <Dialog open={menuOpen} onOpenChange={open => { if (!busy) setMenuOpen(open); }}>
                 <DialogContent className="w-[calc(100%-2rem)] grid-cols-[minmax(0,1fr)]">
                   <DialogHeader>
@@ -448,13 +439,30 @@ export function SelectionBar() {
               </Dialog>
             </>
           ) : null}
+          <Popover open={actionsOpen} onOpenChange={setActionsOpen}>
+            <PopoverTrigger asChild>
+              <Button variant="ghost" size="sm" aria-label="Selection actions"><MoreHorizontal className="h-4 w-4" /></Button>
+            </PopoverTrigger>
+            <PopoverContent side="top" align="start" className="flex w-auto flex-col items-stretch gap-1 p-1">
+              <Button variant="ghost" size="sm" onClick={() => { setActionsOpen(false); setReviewOpen(true); }}>
+                Review selection
+              </Button>
+              <SavedFiltersMenu
+                key={Array.from(selection.keys()).join(",")}
+                selectedIds={Array.from(selection.keys())}
+              />
+              <Button variant="ghost" size="sm" disabled={busy} onClick={() => { setActionsOpen(false); clear(); }}>
+                Clear selection
+              </Button>
+            </PopoverContent>
+          </Popover>
         </div>
       ) : null}
       {notice && !newOpen ? (
         <p
           role={notice.tone === "error" ? "alert" : "status"}
           className={cn(
-            "text-xs",
+            "max-w-sm rounded-lg border bg-background px-3 py-2 text-xs break-words shadow-lg",
             notice.tone === "error"
               ? "text-destructive"
               : "text-muted-foreground"

@@ -377,9 +377,10 @@
     overscroll-behavior-y: none;
     scrollbar-gutter: stable;
   }
-  /* Drawers only mount while open. Lock the page, including wheel gestures
-     over the backdrop, until the last drawer closes or unmounts. */
-  html:has([data-slot="resizable-drawer"]) {
+  /* Lock the document for drawers and Radix overlays without making the
+     body a new scroll container for sticky navigation and filters. */
+  html:has([data-slot="resizable-drawer"]),
+  html:has(body[data-scroll-locked]) {
     overflow-y: hidden !important;
   }
   body {
@@ -424,6 +425,7 @@
    * 0-2-1 so we always win regardless of document order.
    */
   body[data-scroll-locked][data-scroll-locked] {
+    overflow: clip !important;
     margin-right: 0 !important;
     padding-right: 0 !important;
   }

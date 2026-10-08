@@ -988,17 +988,16 @@ test.describe("real components with local fixture API", () => {
       task.verdict = null;
       task.verdict_error = "QA run failed.";
     };
-    await page.route(/\/api\/tasks\/task-a\/open(?:\?|$)/, async (route) => {
-      const open = await (await route.fetch()).json();
-      fail(open.task);
-      await route.fulfill({ json: open });
-    });
-    await page.route(/\/api\/tasks\/task-a\/panel(?:\?|$)/, async (route) => {
-      const panel = await (await route.fetch()).json();
-      fail(panel.task);
-      panel.version.pre_trial_status = "failed";
-      await route.fulfill({ json: panel });
-    });
+    // Load v7 before intercepting requests, so background refreshes cannot
+    // leave route.fetch() running when the handlers are removed.
+    const [open, panel] = await Promise.all(["open", "panel"].map(async endpoint =>
+      (await page.request.get(`/api/tasks/task-a/${endpoint}?version=7`)).json()
+    ));
+    fail(open.task);
+    fail(panel.task);
+    panel.version.pre_trial_status = "failed";
+    await page.route(/\/api\/tasks\/task-a\/open(?:\?|$)/, route => route.fulfill({ json: open }));
+    await page.route(/\/api\/tasks\/task-a\/panel(?:\?|$)/, route => route.fulfill({ json: panel }));
     await page.goto(findingHref("task-a", 7, records[0].finding!));
     const source = page.getByRole("button", {
       name: "Run pre-trial audit v7",
@@ -1629,16 +1628,13 @@ test("overview links the audit and QA runs stored outside the experiment", async
   page,
 }) => {
   test.skip(process.env.E2E_REVIEW_FIXTURES !== "1");
-  await page.route(/\/api\/tasks\/task-a\/open(?:\?|$)/, async (route) => {
-    const open = await (await route.fetch()).json();
-    open.task.verdict = { ...open.task.verdict, _graded_by: "task-a-qa" };
-    await route.fulfill({ json: open });
-  });
-  await page.route(/\/api\/tasks\/task-a\/panel(?:\?|$)/, async (route) => {
-    const data = await (await route.fetch()).json();
-    data.version.pre_trial_trial_id = "task-a-audit";
-    await route.fulfill({ json: data });
-  });
+  const [open, panel] = await Promise.all(["open", "panel"].map(async endpoint =>
+    (await page.request.get(`/api/tasks/task-a/${endpoint}?version=7`)).json()
+  ));
+  open.task.verdict = { ...open.task.verdict, _graded_by: "task-a-qa" };
+  panel.version.pre_trial_trial_id = "task-a-audit";
+  await page.route(/\/api\/tasks\/task-a\/open(?:\?|$)/, route => route.fulfill({ json: open }));
+  await page.route(/\/api\/tasks\/task-a\/panel(?:\?|$)/, route => route.fulfill({ json: panel }));
   await page.goto("/tasks/task-a?version=7&drawer=task&taskPane=overview");
   await expect(
     page.getByRole("link", { name: "View audit", exact: true })

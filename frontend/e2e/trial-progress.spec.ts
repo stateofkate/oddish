@@ -731,13 +731,11 @@ for (const mobile of [false, true])
         const path = new URL(route.request().url()).pathname;
         const events = [setupStart, healthStart, { ...healthStart, source_seq: 3, event_key: "live:3", payload: {
           ...healthStart.payload, ec2_health: initialHealth,
-        } }];
-        if (healthStatus === "ok") events.push({ ...healthStart, source_seq: 4, event_key: "live:4", payload: {
+        } }, ...(healthStatus === "ok" ? [{ ...healthStart, source_seq: 4, event_key: "live:4", payload: {
           ...healthStart.payload, status: complete ? "success" : "started", duration_seconds: complete ? 20 : null,
           finished_at: complete ? at(30) : null,
           ec2_health: { ...initialHealth, observed_at: at(20), instance_status: "ok", instance_reachability: "passed" },
-        } });
-        if (complete) events.push(operation(5, "root", null, "environment.setup", 5, 35, "setup"));
+        } }] : []), ...(complete ? [operation(5, "root", null, "environment.setup", 5, 35, "setup")] : [])];
         return route.fulfill({ json: path.endsWith("/progress-history") ? { ...progressHistory, events }
           : path.endsWith("/live") ? { attempt: 1, events: [], next_seq: 0, usage: {}, done: false }
           : { ...progressTrial, agent: "claude-code", harbor_stage: complete ? "agent_running" : "environment_setup", phase_timing: {
