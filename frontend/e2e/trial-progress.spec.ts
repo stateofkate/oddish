@@ -564,6 +564,20 @@ for (const [stage, label, phaseName] of [
   }
 }
 
+test("failure during agent setup marks Agent Running failed", async ({ page }) => {
+  await mock(page, {
+    ...ended, status: "failed", harbor_stage: "agent_setup",
+    phase_timing: { environment_setup: timing(5, 35), agent_setup: { started_at: at(35) } },
+  }, { ...history, events: [] });
+  await page.goto("/progress");
+  const progress = page.getByRole("region", { name: "Trial progress" });
+  await expect(progress.getByRole("img", { name: "Environment Setup: completed", exact: true })).toBeVisible();
+  await expect(progress.getByRole("img", { name: "Agent Running: failed", exact: true })).toBeVisible();
+  await expect(progress.getByRole("img", { name: "Verification: not recorded", exact: true })).toBeVisible();
+  await expect(progress.getByRole("timer")).toHaveCount(0);
+  await progress.screenshot({ path: "delivery-test-results/agent-setup-failure.png" });
+});
+
 test("failure before environment does not establish the Trial Started milestone", async ({ page }) => {
   await mock(page, { ...ended, status: "failed", phase_timing: null }, { ...history, events: [] });
   await page.goto("/progress");

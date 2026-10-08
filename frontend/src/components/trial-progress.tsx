@@ -206,8 +206,8 @@ export function TrialProgress({
         })}
       </>
     ) : undefined;
-  const measuredState = (stage: HarborStageId, timing?: AgentTiming | null, running = false, completed = false): MeasuredStageState =>
-    trial.status === "failed" && trial.harbor_stage === stage ? "failed" : (completed || timing?.finished_at) ? "completed" : running ? "active" : "not recorded";
+  const measuredState = (stages: string[], timing?: AgentTiming | null, running = false, completed = false): MeasuredStageState =>
+    trial.status === "failed" && stages.includes(trial.harbor_stage ?? "") ? "failed" : (completed || timing?.finished_at) ? "completed" : running ? "active" : "not recorded";
   const executionStarted = !awaitingAttempt && Boolean(
     environment?.started_at || agent?.started_at || phaseTiming?.verifier?.started_at ||
     ["trial_started", "environment_setup", "agent_setup", "agent_running", "verification", "cleanup"].includes(trial.harbor_stage ?? "") ||
@@ -254,9 +254,9 @@ export function TrialProgress({
             stageStates={{
               starting: executionStarted ? "completed" : initializingRunning ? "active" : "not recorded",
               trial_started: executionStarted ? "completed" : "not recorded",
-              environment_setup: root?.status === "cancelled" ? "cancelled" : root?.status === "error" ? "failed" : measuredState("environment_setup", environment, envRunning, environmentCompleted),
-              agent_running: measuredState("agent_running", agent, agentRunning, agentCompleted),
-              verification: measuredState("verification", verifier, executing && trial.harbor_stage === "verification", verifierCompleted),
+              environment_setup: root?.status === "cancelled" ? "cancelled" : root?.status === "error" ? "failed" : measuredState(["environment_setup"], environment, envRunning, environmentCompleted),
+              agent_running: measuredState(["agent_setup", "agent_running"], agent, agentRunning, agentCompleted),
+              verification: measuredState(["verification"], verifier, executing && trial.harbor_stage === "verification", verifierCompleted),
               completed: active ? "not recorded" : trial.harbor_stage === "cancelled" ? "cancelled" : trial.status === "failed" ? "failed" : trial.finished_at ? "completed" : "not recorded",
             }}
             stageDurations={{
