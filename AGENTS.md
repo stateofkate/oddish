@@ -78,6 +78,8 @@ references is evidence to investigate, not proof that a file is useless.
 
 ## CLI delivery selection
 
+How staff pick tasks for a delivery, on the Tasks page and with the CLI: `docs/staff/delivery.md` (published to docs.abundant.dev). Selection starts from the `registry-main` tag.
+
 `delivery qa rerun` captures the board's task IDs and current version IDs, then
 submits four concurrent `POST /tasks/{task_id}/qa/full` requests with
 `expected_version_id`. The core checks that version under the task lock, returning

@@ -366,6 +366,8 @@ list rather than relying on this page.
 
 ### Find tasks for delivery
 
+Step-by-step delivery preparation: [docs/staff/delivery.md](staff/delivery.md).
+
 The same lab, QA, author, and numeric filters used by the Tasks page are
 available in `oddish ls`. Lab names can be mapped customers or imported labels.
 Repeated `--delivered-to` values match any listed lab; `--not-delivered-to`

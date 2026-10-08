@@ -1,0 +1,31 @@
+{
+  "repository": "abundant-ai/oddish",
+  "collection": "operations",
+  "reviewedCommit": "staging 5cc793a3 plus this branch (docs/staff-delivery-guide)",
+  "skill": "abundant-ai/abundant-docs skills/repo-docs at 7405de0",
+  "pages": [
+    {
+      "slug": "delivery",
+      "status": "tested",
+      "sources": [
+        "oddish/src/oddish/cli/ls.py (--tag, --qa-outcome, --not-delivered-to, --created-within, --limit, --offset, --ids, --count)",
+        "oddish/src/oddish/cli/delivery.py (customers, create, add, show, ready, signoff, finalize, _task_selection)",
+        "oddish/src/oddish/core/endpoints/tasks_query.py (qa_outcome case, _delivery_record_exists)",
+        "frontend/src/app/(app)/tasks/tasks-filters.tsx (Review, Delivery history, Additional filters, Tags, Sort)",
+        "frontend/src/app/(app)/tasks/selection-context.tsx (Select all N matching tasks, Add to delivery, Delivery batch, New delivery…, Add N tasks)",
+        "frontend/src/lib/org-path.ts (/orgs/{slug}/tasks)",
+        ".github/scripts/registry/sync.py (registry repos, hourly tagging)"
+      ],
+      "claims": [
+        "CLI steps 1-4 run against production 8 Oct 2026: 781 matching, 34 created within 7d, 25-row page, ids file with truncated=false",
+        "oddish delivery customers lists GDM, Internal QA, Nvidia, TML",
+        "accepted means an accepted QA verdict on the current version",
+        "no record covers imported history and finalized Oddish deliveries only"
+      ],
+      "gaps": [
+        "delivery create/add/signoff/finalize not run (they write production data)",
+        "Tasks page steps checked against source, not clicked in a browser"
+      ]
+    }
+  ]
+}
