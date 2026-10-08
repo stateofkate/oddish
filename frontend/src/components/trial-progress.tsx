@@ -33,6 +33,12 @@ function elapsed(start?: string | null, end?: string | null) {
   const seconds = (Date.parse(end ?? "") - Date.parse(start ?? "")) / 1000;
   return Number.isFinite(seconds) && seconds >= 0 ? seconds : null;
 }
+// Use the next phase boundary only when this phase has no recorded finish.
+function concludeAtNextStart(timing: AgentTiming | null | undefined, nextStart?: string | null) {
+  if (!timing?.started_at || timing.finished_at || elapsed(timing.started_at, nextStart) == null)
+    return timing;
+  return { ...timing, finished_at: nextStart, duration_sec: timing.duration_sec ?? elapsed(timing.started_at, nextStart)! };
+}
 function Duration({
   timing,
   running = false,
@@ -139,19 +145,33 @@ export function TrialProgress({
     finished_at: root.finishedAt,
     duration_sec: root.durationSeconds,
   } : null;
-  const environment = root?.hasCompletedActivities
+  const recordedEnvironment = root?.hasCompletedActivities
     ? rootTiming
     : phaseTiming?.environment_setup ?? rootTiming;
-  const agent =
+  const recordedAgent =
     awaitingAttempt ? null : liveAttempt === trial.attempts
       ? (liveAgentTiming ?? phaseTiming?.agent_execution)
       : phaseTiming?.agent_execution;
+  const verifier = concludeAtNextStart(phaseTiming?.verifier, trial.status === "success" ? trial.finished_at : null);
+  const agent = concludeAtNextStart(recordedAgent, verifier?.started_at);
+  const environment = concludeAtNextStart(recordedEnvironment,
+    phaseTiming?.agent_setup?.started_at ?? agent?.started_at ?? verifier?.started_at);
+  // Advancing past setup proves completion even when older workers omit timings.
+  const environmentCompleted = !awaitingAttempt && Boolean(
+    root?.status === "success" || environment?.finished_at || phaseTiming?.agent_setup?.started_at || agent?.started_at ||
+    phaseTiming?.verifier?.started_at ||
+    ["agent_setup", "agent_running", "verification", "cleanup"].includes(trial.harbor_stage ?? "") ||
+    (trial.harbor_stage === "completed" && trial.status === "success")
+  );
+  const trialCompleted = !awaitingAttempt && trial.harbor_stage === "completed" && trial.status === "success";
+  const agentCompleted = !awaitingAttempt && Boolean(verifier?.started_at || ["verification", "cleanup"].includes(trial.harbor_stage ?? "") || trialCompleted);
+  const verifierCompleted = Boolean(verifier?.started_at && ["cleanup", "completed"].includes(trial.harbor_stage ?? ""));
   const envRunning =
     executing &&
-    !environment?.finished_at &&
+    !environmentCompleted &&
     (!root || root.status === "started") &&
     !agent?.started_at &&
-    Boolean(environment?.started_at || setup.current);
+    Boolean(environment?.started_at || setup.current || trial.harbor_stage === "environment_setup");
   const priorAttempts = [...new Set(retained.map((event) => event.attempt))]
     .filter((attempt) => attempt !== trial.attempts)
     .sort((a, b) => b - a);
@@ -181,16 +201,16 @@ export function TrialProgress({
         })}
       </>
     ) : undefined;
-  const measuredState = (stage: HarborStageId, timing?: AgentTiming | null, running = false): MeasuredStageState =>
-    trial.status === "failed" && trial.harbor_stage === stage ? "failed" : timing?.finished_at ? "completed" : running ? "active" : "not recorded";
+  const measuredState = (stage: HarborStageId, timing?: AgentTiming | null, running = false, completed = false): MeasuredStageState =>
+    trial.status === "failed" && trial.harbor_stage === stage ? "failed" : (completed || timing?.finished_at) ? "completed" : running ? "active" : "not recorded";
   const executionStarted = !awaitingAttempt && Boolean(
     environment?.started_at || agent?.started_at || phaseTiming?.verifier?.started_at ||
-    ["trial_started", "environment_setup", "agent_running", "verification"].includes(trial.harbor_stage ?? "") ||
+    ["trial_started", "environment_setup", "agent_setup", "agent_running", "verification", "cleanup"].includes(trial.harbor_stage ?? "") ||
     (trial.harbor_stage === "completed" && trial.status === "success")
   );
   const initializingRunning = trial.status === "running" && !executionStarted &&
     (!trial.harbor_stage || trial.harbor_stage === "starting");
-  // Status can advance without timing; never invent an endpoint for its duration.
+  // Without a recorded next boundary, stage progress alone cannot supply a duration.
   const initializing = awaitingAttempt ? null : { started_at: trial.started_at, finished_at: environment?.started_at, duration_sec: elapsed(trial.started_at, environment?.started_at) };
   if (environmentOnly) return (
     <details open={timelineOpen} onToggle={event => setTimelineOpen(event.currentTarget.open)} className="border-border border-b px-4 py-2">
@@ -229,16 +249,16 @@ export function TrialProgress({
             stageStates={{
               starting: executionStarted ? "completed" : initializingRunning ? "active" : "not recorded",
               trial_started: executionStarted ? "completed" : "not recorded",
-              environment_setup: root?.status === "cancelled" ? "cancelled" : root?.status === "error" ? "failed" : measuredState("environment_setup", environment, envRunning),
-              agent_running: measuredState("agent_running", agent, executing && trial.harbor_stage === "agent_running"),
-              verification: measuredState("verification", phaseTiming?.verifier, executing && trial.harbor_stage === "verification"),
+              environment_setup: root?.status === "cancelled" ? "cancelled" : root?.status === "error" ? "failed" : measuredState("environment_setup", environment, envRunning, environmentCompleted),
+              agent_running: measuredState("agent_running", agent, executing && trial.harbor_stage === "agent_running", agentCompleted),
+              verification: measuredState("verification", verifier, executing && trial.harbor_stage === "verification", verifierCompleted),
               completed: active ? "not recorded" : trial.harbor_stage === "cancelled" ? "cancelled" : trial.status === "failed" ? "failed" : trial.finished_at ? "completed" : "not recorded",
             }}
             stageDurations={{
               starting: <Duration timing={initializing} running={initializingRunning} />,
               environment_setup: <Duration timing={environment} running={envRunning} />,
               agent_running: <Duration timing={agent} running={executing && trial.harbor_stage === "agent_running"} />,
-              verification: <Duration timing={phaseTiming?.verifier} running={executing && trial.harbor_stage === "verification"} />,
+              verification: <Duration timing={verifier} running={executing && trial.harbor_stage === "verification"} />,
             }}
             stageContent={{
               environment_setup: setupDetails,

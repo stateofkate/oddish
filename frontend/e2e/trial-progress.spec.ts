@@ -810,3 +810,103 @@ for (const mobile of [false, true])
       await healthToggle.click();
       await expect(finalDetails.getByText("Instance health passed", { exact: true }).locator("..")).toContainText("10.0s");
     });
+
+
+for (const [stage, status, expected] of [
+  ["environment_setup", "running", "active"],
+  ["agent_setup", "running", "completed"],
+  ["agent_running", "running", "completed"],
+  ["verification", "running", "completed"],
+  ["cleanup", "running", "completed"],
+  ["cleanup", "failed", "completed"],
+  ["completed", "success", "completed"],
+  ["agent_running", "failed", "completed"],
+  ["environment_setup", "failed", "failed"],
+  ["completed", "failed", "not recorded"],
+]) {
+  test(`legacy Archil setup uses stage evidence without inventing timing (${stage}, ${status})`, async ({ page }) => {
+    await mock(page, { ...progressTrial, environment: "archil", harbor_stage: stage, status, phase_timing: null }, { ...history, events: [] });
+    await page.goto("/progress");
+    const phase = page.getByRole("group", { name: "Environment Setup", exact: true });
+    await expect(phase.getByRole("img")).toHaveAttribute("aria-label", `Environment Setup: ${expected}`);
+    await expect(phase.getByRole("timer")).toHaveCount(0);
+    await expect(phase.locator(".tabular-nums").filter({ hasText: /\S/ })).toHaveCount(0);
+    await expect(phase.locator("summary")).toHaveCount(0);
+    if (stage === "agent_running" && status === "running") {
+      await expect(page.getByRole("img", { name: "Agent Running: active", exact: true })).toBeVisible();
+      await page.getByRole("region", { name: "Trial progress" }).screenshot({ path: "delivery-test-results/archil-legacy-completion.png" });
+    }
+  });
+}
+
+for (const [name, phases, expectedEnvironment, expectedAgent, expectedVerifier] of [
+  ["next phase starts", { environment_setup: { started_at: at(5) }, agent_execution: { started_at: at(35) }, verifier: { started_at: at(55) } }, "30.0s", "20.0s", "15.0s"],
+  ["explicit finishes win", { environment_setup: timing(5, 25), agent_execution: timing(35, 45), verifier: timing(55, 60) }, "20.0s", "10.0s", "5.0s"],
+  ["agent setup is next", { environment_setup: { started_at: at(5) }, agent_setup: timing(25, 35), agent_execution: timing(35, 55), verifier: timing(55, 65) }, "20.0s", "20.0s", "10.0s"],
+  ["recorded duration wins", { environment_setup: { started_at: at(5), duration_sec: 12 }, agent_execution: timing(35, 55), verifier: timing(55, 65) }, "12.0s", "20.0s", "10.0s"],
+  ["invalid boundary stays untimed", { environment_setup: { started_at: at(40) }, agent_execution: timing(35, 55), verifier: timing(55, 65) }, "", "20.0s", "10.0s"],
+] as const) {
+  test(`previous phases conclude at next starts (${name})`, async ({ page }) => {
+    await mock(page, { ...ended, phase_timing: phases }, { ...history, events: [] });
+    await page.goto("/progress");
+    for (const [label, duration] of [["Environment Setup", expectedEnvironment], ["Agent Running", expectedAgent], ["Verification", expectedVerifier]]) {
+      const phase = page.getByRole("group", { name: label, exact: true });
+      await expect(phase.getByRole("timer")).toHaveCount(0);
+      await expect(phase.locator(".tabular-nums").first()).toHaveText(duration);
+    }
+    await page.clock.install();
+    await page.clock.runFor(60000);
+    await expect(page.getByRole("group", { name: "Environment Setup", exact: true }).locator(".tabular-nums").first()).toHaveText(expectedEnvironment);
+  });
+}
+
+test("environment timer stops when the live agent phase starts", async ({ page }) => {
+  await page.clock.install({ time: new Date(at(50)) });
+  await mock(page, { ...progressTrial, harbor_stage: "agent_running", phase_timing: { environment_setup: { started_at: at(5) }, agent_execution: { started_at: at(35) } } }, { ...history, events: [] });
+  await page.goto("/progress");
+  const environment = page.getByRole("group", { name: "Environment Setup", exact: true });
+  await expect(environment.getByRole("img")).toHaveAttribute("aria-label", "Environment Setup: completed");
+  await expect(environment.locator(".tabular-nums").first()).toHaveText("30.0s");
+  await expect(environment.getByRole("timer")).toHaveCount(0);
+  const agentTimer = page.getByRole("group", { name: "Agent Running", exact: true }).getByRole("timer");
+  const previousSeconds = Number.parseFloat(await agentTimer.innerText());
+  expect(previousSeconds).toBeGreaterThanOrEqual(15);
+  await page.clock.runFor(6000);
+  await expect(environment.locator(".tabular-nums").first()).toHaveText("30.0s");
+  await expect.poll(async () => Number.parseFloat(await agentTimer.innerText())).toBeGreaterThanOrEqual(previousSeconds + 5);
+});
+
+for (const [stage, status] of [["verification", "running"], ["cleanup", "running"], ["completed", "success"]]) {
+  test(`later stage concludes preceding untimed phases (${stage})`, async ({ page }) => {
+    await mock(page, { ...progressTrial, harbor_stage: stage, status, phase_timing: null }, { ...history, events: [] });
+    await page.goto("/progress");
+    const labels = ["Initializing", "Trial Started", "Environment Setup", "Agent Running"];
+    for (const label of labels) {
+      const phase = page.getByRole("group", { name: label, exact: true });
+      await expect(phase.getByRole("img")).toHaveAttribute("aria-label", `${label}: completed`);
+      await expect(phase.locator(".tabular-nums").filter({ hasText: /\S/ })).toHaveCount(0);
+    }
+    if (stage !== "verification") await expect(page.getByRole("img", { name: "Verification: not recorded", exact: true })).toBeVisible();
+  });
+}
+
+for (const [stage, status, expected] of [["cleanup", "running", "completed"], ["cleanup", "failed", "completed"], ["completed", "failed", "completed"], ["verification", "failed", "failed"]]) {
+  test(`recorded verification start retains its state after ${stage}/${status}`, async ({ page }) => {
+    await mock(page, { ...progressTrial, harbor_stage: stage, status, phase_timing: { verifier: { started_at: at(45) } } }, { ...history, events: [] });
+    await page.goto("/progress");
+    const verification = page.getByRole("group", { name: "Verification", exact: true });
+    await expect(verification.getByRole("img")).toHaveAttribute("aria-label", `Verification: ${expected}`);
+    await expect(verification.locator(".tabular-nums").first()).toHaveText("");
+  });
+}
+
+for (const reward of [0, 1]) {
+  test(`terminal reward does not imply recorded verification (${reward})`, async ({ page }) => {
+    await mock(page, { ...ended, reward, phase_timing: { environment_setup: timing(5, 25), agent_execution: timing(35, 45) } }, { ...history, events: [] });
+    await page.goto("/progress");
+    const verification = page.getByRole("group", { name: "Verification", exact: true });
+    await expect(verification.getByRole("img")).toHaveAttribute("aria-label", "Verification: not recorded");
+    await expect(verification.locator(".tabular-nums").first()).toHaveText("");
+    await expect(page.getByRole("img", { name: "Completed: completed", exact: true })).toBeVisible();
+  });
+}
