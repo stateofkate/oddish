@@ -113,8 +113,10 @@ from dashboard_attribution import resolve_experiments_author, resolve_search_aut
 from oddish.core.dashboard import UNRESOLVED_EXPERIMENTS_OWNER
 from oddish.core.endpoints.tasks_query import BROWSE_IDS_LIMIT
 from oddish.core.tasks import (
+    add_task_aliases_core,
     complete_task_upload,
     initialize_task_upload,
+    list_task_aliases_core,
 )
 from oddish.core.model_display_names import canonical_model_key
 from oddish.db import (
@@ -155,6 +157,7 @@ from oddish.schemas import (
     TaskBrowseIdsResponse,
     TaskBrowseResponse,
     TaskBatchCancelRequest,
+    TaskAliasesRequest,
     TaskBatchDeleteRequest,
     TaskDetailResponse,
     TaskPanelResponse,
@@ -1512,6 +1515,39 @@ async def restore_tasks(
         await session.commit()
     if not payload.dry_run:
         invalidate_dashboard_cache(org_id=auth.org_id)
+    return result | {"dry_run": payload.dry_run}
+
+
+@router.get("/task-aliases")
+async def list_task_aliases(
+    prefix: str,
+    auth: Annotated[AuthContext, Depends(require_admin)],
+) -> dict:
+    """Live task aliases starting with ``prefix``, as ``{name: task_id}``."""
+    async with get_session() as session:
+        aliases = await list_task_aliases_core(
+            session, prefix=prefix, org_id=auth.org_id
+        )
+    return {"aliases": aliases}
+
+
+@router.post("/task-aliases")
+async def add_task_aliases(
+    payload: TaskAliasesRequest,
+    auth: Annotated[AuthContext, Depends(require_admin)],
+) -> dict:
+    """Add up to 500 aliases, names an upload resolves to their task.
+
+    Dry run by default: set ``dry_run`` false to add them.
+    """
+    async with get_session() as session:
+        result = await add_task_aliases_core(
+            session,
+            aliases=payload.aliases,
+            org_id=auth.org_id,
+            dry_run=payload.dry_run,
+        )
+        await session.commit()
     return result | {"dry_run": payload.dry_run}
 
 

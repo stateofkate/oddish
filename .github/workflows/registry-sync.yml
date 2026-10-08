@@ -1,0 +1,72 @@
+name: Registry Sync
+# Every hour: upload each task folder merged to a registry repo's main since
+# the last sync, and tag its task `registry-main`. The repos and the logic
+# live in .github/scripts/registry/sync.py; each folder's task is a task alias
+# in Oddish (GET/POST /task-aliases). Does nothing until the
+# REGISTRY_SYNC_API_URL, REGISTRY_SYNC_API_KEY and REGISTRY_READ_TOKEN secrets
+# are set, so setting them picks when it starts and which Oddish it writes to.
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: "Only this repo, e.g. abundant-ai/harbor-lh"
+        default: ""
+      base:
+        description: "Re-sync every task folder changed since this main commit"
+        default: ""
+      dry_run:
+        description: "List each changed folder and its task; upload and tag nothing"
+        type: boolean
+        default: false
+
+concurrency:
+  group: registry-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    # The first run catches up every folder changed since the maps were built.
+    timeout-minutes: 350
+    permissions:
+      contents: read
+      # Reads the previous run's state artifact.
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      STATE_FILE: /tmp/registry-sync-state/registry-sync-state.json
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+
+      # State is {repo: last synced main commit}, carried between runs as an
+      # artifact. A missing artifact falls back to each map's built_from.
+      - name: Restore last synced commits
+        run: |
+          set -euo pipefail
+          for id in $(gh run list --workflow registry-sync.yml --status completed --limit 30 \
+              --json databaseId -q '.[].databaseId'); do
+            gh run download "$id" -n registry-sync-state -D "$(dirname "$STATE_FILE")" 2>/dev/null \
+              && { echo "state from run $id"; cat "$STATE_FILE"; break; }
+          done
+
+      - name: Upload and tag changed task folders
+        env:
+          ODDISH_API_URL: ${{ secrets.REGISTRY_SYNC_API_URL }}
+          ODDISH_API_KEY: ${{ secrets.REGISTRY_SYNC_API_KEY }}
+          REGISTRY_READ_TOKEN: ${{ secrets.REGISTRY_READ_TOKEN }}
+          ONLY_REPO: ${{ inputs.repo }}
+          BASE: ${{ inputs.base }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: uv run --project oddish --no-dev python .github/scripts/registry/sync.py
+
+      - name: Save last synced commits
+        if: always() && inputs.dry_run != true
+        uses: actions/upload-artifact@v4
+        with:
+          name: registry-sync-state
+          path: ${{ env.STATE_FILE }}
+          if-no-files-found: ignore
+          retention-days: 90

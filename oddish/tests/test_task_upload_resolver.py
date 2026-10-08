@@ -251,3 +251,61 @@ async def test_live_name_wins_over_a_content_match(session, init_upload):
     assert result.matched_by is None
     assert result.content_unchanged is False
     assert result.version == 2
+
+
+@pytest.mark.asyncio
+async def test_added_alias_resolves_uploads_and_reports_each_name(session, init_upload):
+    system_io = await _task(session, "system-io-1a2b3c4d", "system-io")
+    other = await _task(session, "other-5e6f7a8b", "other")
+    deleted = await _task(session, "deleted-0c0d0e0f", "deleted")
+    deleted.deleted_at = datetime(2026, 10, 5, tzinfo=timezone.utc)
+    session.add(_alias(other, "taken"))
+    await session.flush()
+    aliases = {
+        "harbor-lh~tasks~sysio": system_io.id,
+        "taken": system_io.id,
+        "gone": deleted.id,
+    }
+
+    preview = await tasks.add_task_aliases_core(
+        session, aliases=aliases, org_id=ORG, dry_run=True
+    )
+    before = await init_upload("harbor-lh~tasks~sysio")
+
+    applied = await tasks.add_task_aliases_core(
+        session, aliases=aliases, org_id=ORG, dry_run=False
+    )
+    again = await tasks.add_task_aliases_core(
+        session, aliases=aliases, org_id=ORG, dry_run=False
+    )
+    result = await init_upload("harbor-lh~tasks~sysio")
+
+    expected = {
+        "created": ["harbor-lh~tasks~sysio"],
+        "existing": [],
+        "conflicts": ["taken"],
+        "missing_tasks": ["gone"],
+    }
+    assert preview == applied == expected
+    assert before.existing_task is False
+    assert again["created"] == [] and again["existing"] == ["harbor-lh~tasks~sysio"]
+    assert (result.task_id, result.matched_by) == (system_io.id, "alias")
+
+
+@pytest.mark.asyncio
+async def test_list_aliases_matches_the_prefix_literally(session):
+    task = await _task(session, "system-io-1a2b3c4d", "system-io")
+    now = datetime(2026, 10, 5, tzinfo=timezone.utc)
+    session.add_all(
+        [
+            _alias(task, "smithy~a_b"),
+            _alias(task, "smithy~axb"),
+            _alias(task, "smithy~a_old", valid_until=now),
+            _alias(task, "smithy~a_other", org_id=OTHER_ORG),
+        ]
+    )
+    await session.flush()
+
+    assert await tasks.list_task_aliases_core(
+        session, prefix="smithy~a_", org_id=ORG
+    ) == {"smithy~a_b": task.id}

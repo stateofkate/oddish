@@ -1560,6 +1560,15 @@ class TaskBatchDeleteRequest(BaseModel):
     )
 
 
+class TaskAliasesRequest(BaseModel):
+    aliases: dict[str, str] = Field(
+        min_length=1, max_length=500, description="Alias name -> task ID"
+    )
+    dry_run: bool = Field(
+        default=True, description="Report what would change without changing anything"
+    )
+
+
 class TaskBatchCancelRequest(BaseModel):
     task_ids: list[str] = Field(
         default_factory=list,

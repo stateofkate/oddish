@@ -5,6 +5,7 @@ from pathlib import Path
 
 from fastapi import HTTPException
 from sqlalchemy import and_, func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from oddish.config import settings
@@ -88,6 +89,87 @@ async def _resolve_upload_task(
     if task is not None:
         return task, "task_id"
     return None, None
+
+
+def _live_aliases(org_id: str, *where):
+    return select(TaskAliasModel.name, TaskAliasModel.task_id).where(
+        TaskAliasModel.org_id == org_id,
+        TaskAliasModel.valid_until.is_(None),
+        TaskAliasModel.retracted_at.is_(None),
+        *where,
+    )
+
+
+async def list_task_aliases_core(
+    session: AsyncSession, *, prefix: str, org_id: str
+) -> dict[str, str]:
+    """Live aliases starting with ``prefix``, as ``{name: task_id}``."""
+    query = _live_aliases(
+        org_id, TaskAliasModel.name.startswith(prefix, autoescape=True)
+    )
+    return dict((await session.execute(query)).tuples().all())
+
+
+async def add_task_aliases_core(
+    session: AsyncSession,
+    *,
+    aliases: dict[str, str],
+    org_id: str,
+    source: str = "registry",
+    dry_run: bool = True,
+) -> dict[str, list[str]]:
+    """Give tasks extra names that :func:`_resolve_upload_task` resolves.
+
+    Each name lands in ``created``, ``existing`` (already this task's),
+    ``conflicts`` (a live alias for another task) or ``missing_tasks`` (the
+    task is not live in this org). ``dry_run`` reports and changes nothing.
+    """
+    live = set(
+        await session.scalars(
+            select(TaskModel.id).where(
+                TaskModel.id.in_(set(aliases.values())), TaskModel.org_id == org_id
+            )
+        )
+    )
+    current = dict(
+        (await session.execute(_live_aliases(org_id, TaskAliasModel.name.in_(aliases))))
+        .tuples()
+        .all()
+    )
+    result: dict[str, list[str]] = {
+        "created": [],
+        "existing": [],
+        "conflicts": [],
+        "missing_tasks": [],
+    }
+    for name, task_id in aliases.items():
+        if task_id not in live:
+            result["missing_tasks"].append(name)
+        elif name not in current:
+            result["created"].append(name)
+        elif current[name] == task_id:
+            result["existing"].append(name)
+        else:
+            result["conflicts"].append(name)
+    if result["created"] and not dry_run:
+        # A concurrent insert of the same name loses to uq_task_aliases_org_name_live.
+        await session.execute(
+            pg_insert(TaskAliasModel)
+            .values(
+                [
+                    {
+                        "id": uuid.uuid4().hex,
+                        "org_id": org_id,
+                        "task_id": aliases[name],
+                        "name": name,
+                        "source": source,
+                    }
+                    for name in result["created"]
+                ]
+            )
+            .on_conflict_do_nothing()
+        )
+    return result
 
 
 async def _find_task_by_current_content(
