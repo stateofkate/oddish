@@ -3847,3 +3847,9 @@ Their version/content identity must use `task_version_fingerprints`, never the
 uploader-supplied hash. Explicitly filter deleted reviews and subjects; enforce
 org membership and source-trial ownership in the API. Storage migration
 `task_reviews_001` is additive; schema details are in docs/task-review-storage.md.
+
+Internal reviews are hosted-only under `/tasks/{task_id}/versions/{version_id}/reviews`.
+Strict Pydantic writes reject caller-supplied identities and stale content/revisions.
+The version and fingerprint are locked in publication order during writes; it must match the version's current
+client-hash provenance. Ratings use compare-and-swap revisions and comment POSTs
+use org/reviewer-scoped request UUIDs. No review data is added to share responses.

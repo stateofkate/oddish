@@ -1112,3 +1112,13 @@ Backend migration `task_reviews_001` adds version/content-bound rating and comme
 storage only; it enables no routes or notifications. See
 [`docs/task-review-storage.md`](../docs/task-review-storage.md) for columns,
 constraints, deletion policy and the required API tenant checks.
+
+Task review routes require a signed-in Clerk member. `GET /tasks/{task_id}/versions/{version_id}/reviews`
+returns the verified content identity, mean rating, own rating/revision, up to 100
+recent reviewers and a cursor-paginated comment list. `PUT .../rating` writes or
+clears the caller's rating with `expected_revision` (0 for first creation).
+`POST .../comments` uses a UUID `client_request_id` for idempotency; `PATCH .../comments/{id}`
+edits or soft-deletes with an expected revision. Writes require the content hash
+and algorithm returned by GET. A changed or unpublished fingerprint rejects the
+write. Comment ownership or org-admin status is required for edits. API keys and
+public shares cannot access these routes. No notification is sent by these routes yet.

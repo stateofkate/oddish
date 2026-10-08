@@ -330,12 +330,14 @@ def create_app() -> FastAPI:
         tasks,
         trials,
         ui_layouts,
+        task_reviews,
     )
 
     api.include_router(dashboard.router)
     api.include_router(orgs.router)
     api.include_router(notifications.router)
     api.include_router(ui_layouts.router)
+    api.include_router(task_reviews.router)
     api.include_router(api_keys.router)
     api.include_router(byok.router)
     api.include_router(monitor.router)
