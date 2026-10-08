@@ -77,6 +77,11 @@ and `--trial-finished-within 24h|7d|30d|90d` filter trial completion dates.
 and trial values. `--delivery-history` shows lab, batch, date, and source;
 `--json` includes each task's `deliveries`. No record is not proof of no shipment.
 
+Select delivery tasks from `--tag registry-main`: the tasks whose files are on
+`main` in harbor-lh, harbor-forge-v2, harbor-forge-archive, smithy, or
+sre-world. The hourly Registry Sync workflow uploads folders merged there and
+tags them. Untagged tasks are older copies or uploads that never reached `main`.
+
 
 Task run coverage is available in both the Tasks page and `oddish ls`:
 
@@ -88,7 +93,7 @@ oddish ls --run-coverage validation_only --pin-author me
 # Review recorded model results and inspect complete summaries/experiment IDs.
 oddish ls --run-coverage model_trials --qa-outcome unreviewed --json
 # Select for a customer; delivery readiness is checked by the delivery itself.
-oddish ls --run-coverage scored_model_trials --not-delivered-to GDM --ids --json > selection.json
+oddish ls --tag registry-main --run-coverage scored_model_trials --not-delivered-to GDM --ids --json > selection.json
 ```
 
 `--run-coverage` accepts `any`, `no_trials`, `validation_only`, `model_trials`,

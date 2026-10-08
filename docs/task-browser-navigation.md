@@ -14,6 +14,7 @@ navigate directly without opening dropdowns. Parameters compose with one another
 | Review outcome | `qa_outcomes=unreviewed,outdated` | `--qa-outcome unreviewed --qa-outcome outdated` |
 | Model | `models=openai/gpt-5` | `--model openai/gpt-5` |
 | Sort | `sort=model_score_desc` | `--sort model_score_desc` |
+| Registry tasks (on a registry repo's `main`) | `tags=registry-main` | `--tag registry-main` |
 | No recorded delivery to customer | `not_delivered_to=GDM` | `--not-delivered-to GDM` |
 | Page | `offset=24` | `--offset 24` |
 | Exact saved task set | `selection_id=ID` | `--selection-id ID` |
@@ -51,7 +52,7 @@ launches runs, changes reviews, or adds tasks to a delivery. Those operations
 use explicit CLI commands or authenticated button actions. For example:
 
 ```sh
-oddish ls --run-coverage scored_model_trials --not-delivered-to GDM --ids --json > selection.json
+oddish ls --tag registry-main --run-coverage scored_model_trials --not-delivered-to GDM --ids --json > selection.json
 oddish delivery add DELIVERY_ID --tasks-file selection.json
 ```
 

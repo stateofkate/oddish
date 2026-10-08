@@ -346,7 +346,7 @@ oddish ls --run-coverage validation_only --pin-author me
 # Review recorded model results and inspect complete summaries/experiment IDs.
 oddish ls --run-coverage model_trials --qa-outcome unreviewed --json
 # Select for a customer; delivery readiness is checked by the delivery itself.
-oddish ls --run-coverage scored_model_trials --not-delivered-to GDM --ids --json > selection.json
+oddish ls --tag registry-main --run-coverage scored_model_trials --not-delivered-to GDM --ids --json > selection.json
 ```
 
 `--run-coverage` accepts `any`, `no_trials`, `validation_only`, `model_trials`,
@@ -373,8 +373,14 @@ excludes tasks with a record for any listed lab. `--never-delivered` means no
 record exists; `--has-delivery` requires a record. Missing history does not
 prove that a task was never shipped.
 
+Select delivery tasks from `--tag registry-main`: the tasks whose files are on
+`main` in harbor-lh, harbor-forge-v2, harbor-forge-archive, smithy, or
+sre-world. The hourly Registry Sync workflow uploads folders merged there and
+tags them. Untagged tasks are older copies or uploads that never reached `main`.
+
 ```bash
 oddish ls --filter-options
+oddish ls --tag registry-main --not-delivered-to GDM --count
 oddish ls --delivered-to xai --not-delivered-to GDM --delivery-history
 oddish ls --category swe --qa-outcome accepted --steps-p50-min 100 --agent-count-min 3
 oddish ls --author me --sort total_trials_desc
