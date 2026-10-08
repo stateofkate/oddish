@@ -190,7 +190,7 @@ export function HarborStageTimeline({
 
             {/* Stage info */}
             <div className="min-w-0 flex-1 pb-2.5">
-              <StageDetails enabled={collapsible && Boolean(stageContent?.[stage.id])} open={isCurrent || stage.id === "environment_setup"} heading={
+              <StageDetails completed={stage.id === "environment_setup" && isCompleted} enabled={collapsible && Boolean(stageContent?.[stage.id])} open={isCurrent || (stage.id === "environment_setup" && !isCompleted)} heading={
               <div className="flex items-baseline justify-between gap-2">
                 {(isCompleted || isCurrent) && onStageClick && !(collapsible && stageContent?.[stage.id]) ? (
                   <Button
@@ -267,10 +267,10 @@ export function HarborStageTimeline({
   );
 }
 
-function StageDetails({ enabled, open, heading, children }: { enabled: boolean; open: boolean; heading: ReactNode; children: ReactNode }) {
-  const [expanded, setExpanded] = useState<boolean | null>(null);
+function StageDetails({ enabled, open, completed, heading, children }: { enabled: boolean; open: boolean; completed: boolean; heading: ReactNode; children: ReactNode }) {
+  const [selection, setSelection] = useState<{ completed: boolean; expanded: boolean } | null>(null);
   if (!enabled) return <>{heading}{children}</>;
-  return <details open={expanded ?? open} onToggle={event => setExpanded(event.currentTarget.open)} className="[&[open]>summary_svg]:rotate-90">
+  return <details open={selection?.completed === completed ? selection.expanded : open} onToggle={event => setSelection({ completed, expanded: event.currentTarget.open })} className="[&[open]>summary_svg]:rotate-90">
     <summary className="flex cursor-pointer list-none items-center gap-1 rounded hover:bg-muted focus-visible:outline [&::-webkit-details-marker]:hidden">
       <div className="min-w-0 flex-1">{heading}</div>
     </summary>

@@ -108,6 +108,8 @@ for (const mobile of [false, true])
       name: "Environment Setup",
       exact: true,
     });
+    await expect(environment.locator("details")).not.toHaveAttribute("open", "");
+    await environment.locator("summary").click();
     await expect(environment.getByText("30.0s", { exact: true })).toHaveCount(
       1
     );
@@ -183,6 +185,7 @@ for (const status of ["success", "error", "cancelled"] as const)
     await page.goto("/progress");
     await page.reload();
     const progress = page.getByRole("region", { name: "Trial progress" });
+    await progress.getByRole("group", { name: "Environment Setup", exact: true }).locator("summary").click();
     await expect(progress.getByTitle("docker.compose_build")).toBeVisible();
     await expect(
       progress
@@ -209,6 +212,7 @@ test("legacy history omits timing diagnostics while incomplete steps stay explic
   );
   await page.goto("/progress");
   const progress = page.getByRole("region", { name: "Trial progress" });
+  await progress.getByRole("group", { name: "Environment Setup", exact: true }).locator("summary").click();
   await expect(progress.getByTitle("kubernetes.helm_install")).toBeVisible();
   await expect(
     progress.getByText("End not recorded", { exact: true })
@@ -443,6 +447,7 @@ for (const outcome of ["success", "cancelled", "active-completed"]) {
     await mock(page, trial, records);
     await page.goto("/progress");
     const phase = page.getByRole("group", { name: "Environment Setup", exact: true });
+    await phase.locator("summary").click();
     await expect(phase.getByTitle("docker.stage_files")).toBeVisible();
     await expect(phase.getByRole("img", { name: /^Environment Setup:/ })).toHaveAttribute("aria-label", `Environment Setup: ${outcome === "cancelled" ? "cancelled" : "completed"}`);
     await expect(phase.getByRole("timer")).toHaveCount(0);
@@ -478,6 +483,7 @@ for (const mobile of [false, true]) {
     await page.goto("/progress");
     const progress = page.getByRole("region", { name: "Trial progress" });
     const environment = progress.getByRole("group", { name: "Environment Setup", exact: true });
+    await environment.locator("summary").click();
     const rows = environment.getByRole("list", { name: "Environment setup steps", exact: true }).locator(":scope > li");
     await expect(rows).toHaveCount(3);
     await expect(environment.getByTitle("progress.delivery.finished")).toHaveCount(0);
@@ -612,7 +618,7 @@ test("timeline and phase disclosures preserve toggles across clock and history u
   const progress = page.getByRole("region", { name: "Trial progress" });
   const environment = progress.getByRole("group", { name: "Environment Setup", exact: true }).locator("details");
   await expect(progress.getByRole("group", { name: "Agent Running", exact: true }).locator("details")).toHaveCount(0);
-  await environment.locator("summary").click();
+  await expect(environment).not.toHaveAttribute("open", "");
   const reads = historyReads;
   await page.clock.runFor(11_000);
   await expect.poll(() => historyReads).toBeGreaterThan(reads);
@@ -801,6 +807,10 @@ for (const mobile of [false, true])
       expect(updatedSeconds).toBeGreaterThan(initialSeconds + 5);
       complete = true;
       await page.clock.runFor(6000);
+      if (view === "Summary") {
+        await expect(disclosure.locator("..")).not.toHaveAttribute("open", "");
+        await disclosure.click();
+      }
       await expect(row.getByLabel("done", { exact: true })).toBeVisible();
       await expect(row).toContainText("20.0s");
       const finalDetails = healthDetails;
@@ -817,6 +827,7 @@ for (const mobile of [false, true])
       await row.locator("..").screenshot({ path: `delivery-test-results/ec2-health-${view.toLowerCase()}-${mobile ? "mobile" : "desktop"}.png` });
       await page.reload();
       if (view === "Live") await page.getByRole("tab", { name: "Live", exact: true }).click();
+      if (view === "Summary") await disclosure.click();
       await expect(label).toBeVisible();
       await expect(healthToggle).toHaveAttribute("aria-expanded", "false");
       await expect(finalDetails).toBeHidden();
@@ -947,3 +958,30 @@ for (const status of ["running", "failed"]) {
     await expect(verification.locator(".tabular-nums").first()).toHaveText("");
   });
 }
+
+test("environment collapses on completion and can be reopened", async ({ page }) => {
+  await page.clock.install();
+  let complete = false;
+  await page.route("**/api/**", route => {
+    const path = new URL(route.request().url()).pathname;
+    return route.fulfill({ json: path.endsWith("/progress-history")
+      ? (complete ? history : progressHistory)
+      : path.endsWith("/live") ? { attempt: 1, events: [], next_seq: 0, usage: {}, done: complete }
+      : complete ? ended : { ...progressTrial, harbor_stage: "environment_setup", phase_timing: { environment_setup: { started_at: at(5) } } }
+    });
+  });
+  await page.goto("/progress");
+  const environment = page.getByRole("group", { name: "Environment Setup", exact: true }).locator("details");
+  await expect(environment).toHaveAttribute("open", "");
+  await environment.locator("summary").click();
+  await expect(environment).not.toHaveAttribute("open", "");
+  await environment.locator("summary").click();
+  await expect(environment).toHaveAttribute("open", "");
+  complete = true;
+  await page.clock.runFor(11_000);
+  await expect(environment).not.toHaveAttribute("open", "");
+  await environment.locator("summary").click();
+  await page.clock.runFor(11_000);
+  await expect(environment).toHaveAttribute("open", "");
+  await expect(environment.getByRole("list", { name: "Environment setup steps" })).toBeVisible();
+});
