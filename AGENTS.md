@@ -1367,6 +1367,11 @@ production setting takes effect only after promotion to `main` and deployment.
 Restore sample 40 to undo this increase, or 0 to disable monitor routing;
 these routing settings do not cancel already-running monitor attempts.
 
+The monitor sandbox is always a Modal VM. A Modal trial whose Harbor environment
+kwargs set `modal_vm_runtime` to false (`oddish run --modal-gvisor`) asked for
+Modal's gVisor sandbox, so `_monitor_blocker` keeps it on the worker
+(`reason=modal-gvisor`), where Harbor's Modal environment starts that sandbox.
+
 Monitor heartbeats renew `worker_jobs.heartbeat_at` and the bound sandbox capacity
 lease in one transaction, fenced by worker ID and attempt number. Only after
 that commit do they update the secondary `trials.heartbeat_at` copy. A locked

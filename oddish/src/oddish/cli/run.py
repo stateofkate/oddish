@@ -310,6 +310,20 @@ def _map_batch_sweep_results(
     return results_by_index, total_trials, failed_targets, quota_blocked
 
 
+def _modal_gvisor_environment_kwargs(environment_kwargs: list[str] | None) -> list[str]:
+    """The --environment-kwarg list for --modal-gvisor: Harbor's Modal
+    environment starts the gVisor sandbox when modal_vm_runtime is false."""
+    if any(
+        kwarg.split("=", 1)[0].strip() == "modal_vm_runtime"
+        for kwarg in environment_kwargs or []
+    ):
+        raise typer.BadParameter(
+            "--modal-gvisor sets modal_vm_runtime itself; drop the "
+            "modal_vm_runtime environment kwarg."
+        )
+    return [*(environment_kwargs or []), "modal_vm_runtime=false"]
+
+
 def run(
     path: Annotated[
         Optional[Path],
@@ -450,6 +464,18 @@ def run(
         typer.Option(
             "--no-archil",
             help="Run on Modal, bypassing the Archil rollout (implies --env modal).",
+        ),
+    ] = False,
+    modal_gvisor: Annotated[
+        bool,
+        typer.Option(
+            "--modal-gvisor",
+            help=(
+                "Run on Modal's default gVisor sandbox instead of a Modal VM "
+                "(implies --no-archil). Sets the Harbor environment kwarg "
+                "modal_vm_runtime=false; these trials run through Harbor's "
+                "Modal environment on the worker."
+            ),
         ),
     ] = False,
     priority: Annotated[
@@ -1021,6 +1047,9 @@ def run(
     if not experiment_id and not existing_task_ids:
         experiment_id = generate_experiment_name()
 
+    if modal_gvisor:
+        environment_kwargs = _modal_gvisor_environment_kwargs(environment_kwargs)
+        no_archil = True
     if no_archil:
         environment = EnvironmentType.MODAL
     if environment is None and not existing_task_ids and not is_modal_api:

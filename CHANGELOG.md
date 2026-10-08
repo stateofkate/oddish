@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `oddish run --modal-gvisor` runs Modal trials in Modal's default gVisor
+  sandbox instead of a Modal VM. It sets the Harbor environment kwarg
+  `modal_vm_runtime=false`, implies `--no-archil`, and keeps those trials on
+  the worker, because the monitor sandbox is always a VM.
 - Google Vertex AI is a first-class model provider: `--model vertex_ai/<model>`
   (aliases `vertex/`, `vertex-ai/`, `google-vertex/`) runs Gemini models and
   Anthropic Claude models on Vertex with their own queue bucket, provider,

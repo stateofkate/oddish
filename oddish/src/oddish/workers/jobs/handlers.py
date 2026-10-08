@@ -78,6 +78,8 @@ async def _monitor_blocker(trial_id: str) -> str | None:
 
     if (trial.environment or settings.harbor_environment) == "daytona":
         return "disabled-environment"
+    if _requests_modal_gvisor(trial, settings.harbor_environment):
+        return "modal-gvisor"
     # A trial runs on the provider it asked for. No starter for it: the worker.
     from oddish.workers.launcher.launch import control_plane_url
     from oddish.workers.launcher.providers.base import provider_for_environment
@@ -90,6 +92,21 @@ async def _monitor_blocker(trial_id: str) -> str | None:
         return None if control_plane_url() else "no-control-plane-url"
     except Exception:  # noqa: BLE001 - not configured is not an error here
         return "no-control-plane-url"
+
+
+def _requests_modal_gvisor(trial, default_environment: str | None) -> bool:
+    """A Modal trial whose Harbor environment kwargs set ``modal_vm_runtime``
+    to false asked for Modal's default gVisor sandbox. The monitor sandbox is
+    always a Modal VM, so only the worker, which starts the task sandbox
+    through Harbor's Modal environment, can honor it."""
+    if (trial.environment or default_environment) != "modal":
+        return False
+    environment = (getattr(trial, "harbor_config", None) or {}).get("environment")
+    value = ((environment or {}).get("kwargs") or {}).get("modal_vm_runtime")
+    if isinstance(value, str):
+        return value.strip().lower() in ("false", "0", "no", "off")
+    # CLI/API kwargs are JSON-coerced, so "modal_vm_runtime=0" arrives as int 0.
+    return value is False or (type(value) is int and value == 0)
 
 
 async def _monitor_can_drive(trial_id: str) -> bool:

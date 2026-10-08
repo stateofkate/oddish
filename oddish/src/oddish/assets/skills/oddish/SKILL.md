@@ -193,3 +193,8 @@ Daytona is disabled. Use `oddish run <task> --env modal` for CPU tasks or
 `--env modal`. Keep GPU counts/types in the task configuration. Daytona selections
 are rejected, including saved selections on retries; resubmit with a supported
 provider. There is no automatic replacement for a Daytona request.
+
+Modal CPU trials run in a Modal VM by default. `oddish run --modal-gvisor` runs
+them in Modal's default gVisor sandbox instead (it implies `--no-archil`, which
+keeps a submission on Modal rather than the Archil rollout). Use it only for tasks
+built to run under gVisor.
