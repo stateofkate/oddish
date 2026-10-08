@@ -241,6 +241,47 @@ def _build_job_config(payload: dict[str, Any]):
     return JobConfig(**kwargs)
 
 
+HARBOR_RUNTIME_FILE = "harbor-runtime.json"
+
+
+def _harbor_runtime() -> dict[str, Any]:
+    """Which Harbor this child imported: its version and, for a git install,
+    the source URL and commit pip recorded (PEP 610 ``direct_url.json``)."""
+    from importlib import metadata
+
+    harbor = importlib.import_module("harbor")
+    runtime: dict[str, Any] = {"module_path": str(Path(harbor.__file__).parent)}
+    try:
+        dist = metadata.distribution("harbor")
+    except metadata.PackageNotFoundError:
+        return runtime
+    runtime["version"] = dist.version
+    try:
+        direct = json.loads(dist.read_text("direct_url.json") or "{}")
+    except json.JSONDecodeError:
+        direct = {}
+    if direct.get("url"):
+        runtime["source"] = direct["url"]
+    commit = (direct.get("vcs_info") or {}).get("commit_id")
+    if commit:
+        runtime["commit"] = commit
+    return runtime
+
+
+def _write_harbor_runtime(job_dir: Path, trial_names: list[str]) -> None:
+    """Best effort: a missing record must never fail the trial."""
+    try:
+        text = json.dumps(_harbor_runtime(), indent=2) + "\n"
+        for name in trial_names:
+            trial_dir = job_dir / name
+            if trial_dir.is_dir():
+                (trial_dir / HARBOR_RUNTIME_FILE).write_text(text)
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).warning(
+            "could not record the Harbor runtime", exc_info=True
+        )
+
+
 async def _run(payload: dict[str, Any]) -> dict[str, Any]:
     from oddish.core.harbor_artifacts import write_trial_selection_manifest
 
@@ -304,14 +345,13 @@ async def _run(payload: dict[str, Any]) -> dict[str, Any]:
             patch_module.reset_ec2_provisioned_callback(legacy_provisioned_token)
     duration = time.time() - start
     job_result_path = job_dir / "result.json"
+    trial_names = [
+        trial_result.trial_name
+        for trial_result in getattr(job_result, "trial_results", [])
+    ]
+    _write_harbor_runtime(job_dir, trial_names)
     if job_result_path.exists():
-        write_trial_selection_manifest(
-            job_result_path,
-            [
-                trial_result.trial_name
-                for trial_result in getattr(job_result, "trial_results", [])
-            ],
-        )
+        write_trial_selection_manifest(job_result_path, trial_names)
     return {
         "job_dir": str(job_dir),
         "job_result_path": str(job_result_path) if job_result_path.exists() else None,

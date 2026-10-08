@@ -102,7 +102,7 @@ Options
 - `--agent`, `-a TEXT` - Agent name for simple single-agent runs (defaults to `claude-code`)
 - `--model`, `-m TEXT` - Model override for the selected agent. The CLI sends it as typed; the server resolves the provider and rejects a Fireworks or DeepSeek id that is not in its curated catalog, naming the known ids (for example `fireworks/deepseek-v4-flash` is rejected in favor of `fireworks/deepseek-v4-flash-0731`)
 - `--allow-unknown-model` - Submit a Fireworks or DeepSeek model id that is not in the curated catalog (per agent in a sweep config: `allow_unknown_model: true`)
-- `--harbor TEXT` - Override the Harbor source/ref for this run (`main`, a tag/SHA, `org/repo@ref`, or a git URL@ref); defaults to the locked fork commit (env: `ODDISH_HARBOR`)
+- `--harbor TEXT` - Override the Harbor source/ref for this run (`main`, a tag/SHA, `org/repo@ref`, or a git URL@ref); defaults to the locked fork commit (env: `ODDISH_HARBOR`). Pinned trials run on the worker, so the pin's provider code (for example Modal's) is what runs; each trial's files include `harbor-runtime.json` with the Harbor version and commit that ran
 - `--n-trials INTEGER` - Number of trials per task
 - `--max-trial-attempts INTEGER` - Override the maximum Oddish attempts per trial, including the initial run
 - `--task-name`, `-t TEXT` - Include task glob filter; can be passed multiple times

@@ -1367,6 +1367,14 @@ production setting takes effect only after promotion to `main` and deployment.
 Restore sample 40 to undo this increase, or 0 to disable monitor routing;
 these routing settings do not cancel already-running monitor attempts.
 
+A trial pinned to a non-default Harbor (`harbor_config.variant_id` other than
+`default`, e.g. `ephemeral` from `--harbor org/repo@sha`) stays on the worker
+(`reason=harbor-variant=<id>`). The monitor runs Harbor's Docker environment inside
+its VM, so a pin's provider code (for example `environments/modal.py`) would never
+run there; the worker runs the pinned Harbor with the trial's own environment. The
+ephemeral child writes `harbor-runtime.json` (version, source, commit) into each
+trial directory, so uploaded trial files show which Harbor actually ran.
+
 The monitor sandbox is always a Modal VM. A Modal trial whose Harbor environment
 kwargs set `modal_vm_runtime` to false (`oddish run --modal-gvisor`) asked for
 Modal's gVisor sandbox, so `_monitor_blocker` keeps it on the worker

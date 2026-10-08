@@ -78,6 +78,12 @@ async def _monitor_blocker(trial_id: str) -> str | None:
 
     if (trial.environment or settings.harbor_environment) == "daytona":
         return "disabled-environment"
+    variant = (getattr(trial, "harbor_config", None) or {}).get("variant_id")
+    if variant and variant != "default":
+        # The monitor drives the pinned Harbor's Docker environment inside its
+        # VM, so a pin's provider code (e.g. environments/modal.py) would never
+        # run there. The worker runs the pin with the trial's own environment.
+        return f"harbor-variant={variant}"
     if _requests_modal_gvisor(trial, settings.harbor_environment):
         return "modal-gvisor"
     # A trial runs on the provider it asked for. No starter for it: the worker.

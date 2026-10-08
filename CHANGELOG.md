@@ -8,6 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Trials pinned with `--harbor org/repo@sha` now run the pinned Harbor with
+  their own environment. On the monitor they ran it with the monitor's local
+  Docker environment, so a pin's Modal changes never executed on first attempts.
+  Pinned trials now stay on the worker, and each pinned trial's files include
+  `harbor-runtime.json` naming the Harbor version and commit that ran.
+
 ### Added
 
 - `oddish run --modal-gvisor` runs Modal trials in Modal's default gVisor
