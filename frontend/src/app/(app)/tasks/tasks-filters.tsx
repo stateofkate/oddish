@@ -291,7 +291,7 @@ export function TasksFilters({
       .join(", ");
   };
   return (
-    <aside aria-label="Task filters" data-testid="tasks-filters" className="min-w-0 space-y-5 rounded-xl border bg-card/50 p-4 md:sticky md:top-24 md:max-h-[calc(100vh-7rem)] md:overflow-y-auto md:pb-32">
+    <aside aria-label="Task filters" data-testid="tasks-filters" className="min-w-0 space-y-5 rounded-xl border bg-card/50 p-4 md:sticky md:top-[calc(var(--preview-banner-h,0px)+3.5rem+var(--tasks-header-h,0px)+0.5rem)] md:max-h-[calc(100vh-var(--preview-banner-h,0px)-3.5rem-var(--tasks-header-h,0px)-1rem)] md:overflow-y-auto">
         <div className="relative min-w-0">
           <Input
             value={searchQuery}

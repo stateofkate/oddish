@@ -170,7 +170,6 @@ test(`adding to an existing delivery retains a readable ${success ? "confirmatio
   const notice = page.getByTestId("tasks-selection-bar").getByRole(success ? "status" : "alert");
   await expect(notice).toContainText(success ? "Added 1201 of 1201 to Existing" : "Delivery is finalized.");
   await expect(notice).toBeInViewport();
-  await expect(notice).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   expect(requests).toEqual([ids]);
   if (!success) {
     await expect(page.getByText("1,201 selected", { exact: true })).toBeVisible();
@@ -267,7 +266,8 @@ test("sort and delivery dialogs preserve the scrolled sticky filters", async ({ 
   await expect(page.getByRole("link", { name: "Task 23", exact: true })).toBeAttached();
   await page.evaluate(() => window.scrollTo(0, 800));
   const filters = page.getByTestId("tasks-filters");
-  await expect.poll(() => filters.evaluate(el => el.getBoundingClientRect().top)).toBe(96);
+  const headerBottom = await page.getByTestId("tasks-header").evaluate(el => el.getBoundingClientRect().bottom);
+  await expect.poll(() => filters.evaluate(el => el.getBoundingClientRect().top)).toBe(headerBottom + 8);
   const scroll = await page.evaluate(() => window.scrollY);
   const bounds = await filters.boundingBox();
   await page.getByRole("combobox", { name: "Sort tasks" }).click();
@@ -297,7 +297,7 @@ test("sort and delivery dialogs preserve the scrolled sticky filters", async ({ 
 });
 
 for (const [width, height] of [[1440, 900], [768, 600]]) {
-  test(`filter footer remains clickable above the selection tray at ${width}px`, async ({ page }, testInfo) => {
+  test(`header stays pinned and filter footer stays clickable at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height });
     await page.route("**/api/tasks/browse?*", route => route.fulfill({ json: {
       items: Array.from({ length: 24 }, (_, i) => ({ ...task, id: `visible-${i}`, name: `Task ${i}` })),
@@ -306,14 +306,24 @@ for (const [width, height] of [[1440, 900], [768, 600]]) {
     await page.goto("/picker?view=cards");
     await expect(page.getByRole("link", { name: "Task 23", exact: true })).toBeAttached();
     await page.evaluate(() => window.scrollTo(0, 800));
+    const header = page.getByTestId("tasks-header");
+    await expect.poll(() => header.evaluate(el => el.getBoundingClientRect().top)).toBe(56);
+    await expect(header.getByRole("heading", { name: "Tasks" })).toBeInViewport();
+    await expect(header.getByTestId("tasks-selection-bar")).toBeInViewport();
+    // Nothing from the grid may peek out above the pinned header.
+    const cover = await header.evaluate(el => {
+      const style = getComputedStyle(el, "::before");
+      return { height: style.height, background: style.backgroundColor, top: el.getBoundingClientRect().top };
+    });
+    expect(cover.height).toBe(`${cover.top}px`);
+    expect(cover.background).not.toBe("rgba(0, 0, 0, 0)");
+    const headerBottom = await header.evaluate(el => el.getBoundingClientRect().bottom);
     const filters = page.getByTestId("tasks-filters");
-    await expect.poll(() => filters.evaluate(el => el.getBoundingClientRect().top)).toBe(96);
+    await expect.poll(() => filters.evaluate(el => el.getBoundingClientRect().top)).toBe(headerBottom + 8);
     await filters.evaluate(el => { el.scrollTop = el.scrollHeight; });
-    const tray = (await page.getByTestId("tasks-selection-bar").boundingBox())!;
     for (const name of ["Saved views", "Copy view link"]) {
       const button = page.getByRole("button", { name, exact: true });
-      const bounds = (await button.boundingBox())!;
-      expect(bounds.y + bounds.height).toBeLessThan(tray.y);
+      await expect(button).toBeInViewport();
       await button.click({ trial: true });
     }
     await page.getByRole("button", { name: "Saved views", exact: true }).click();
@@ -329,18 +339,16 @@ for (const [width, height] of [[1440, 900], [768, 600]]) {
 }
 
 for (const width of [1440, 375]) {
-  test(`selection tray stays compact at the bottom left at ${width}px`, async ({ page }) => {
+  test(`selection tray sits in the tasks header at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await page.route("**/api/tasks/browse?*", route => route.fulfill({ json: {
       items: [task], offset: 0, has_more: false,
     } }));
     await page.goto("/picker?view=cards");
-    const tray = page.getByTestId("tasks-selection-bar");
+    const tray = page.getByTestId("tasks-header").getByTestId("tasks-selection-bar");
     await expect(tray).toBeInViewport();
     const bounds = (await tray.boundingBox())!;
-    expect(bounds.x).toBe(16);
-    expect(bounds.y + bounds.height).toBe(884);
-    expect(bounds.width).toBeLessThanOrEqual(Math.min(420, width - 32));
+    expect(bounds.width).toBeLessThanOrEqual(width - 24);
     expect(bounds.height).toBeLessThan(100);
     await page.getByRole("button", { name: "Selection actions" }).click();
     await expect(page.getByRole("button", { name: "Review selection" })).toBeInViewport();

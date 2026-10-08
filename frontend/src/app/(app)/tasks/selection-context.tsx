@@ -377,7 +377,7 @@ export function SelectionBar() {
   return (
     <div className="space-y-2" data-testid="tasks-selection-bar">
       {totals.count > 0 ? (
-        <div className="bg-background flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2 text-xs shadow-lg">
+        <div className="bg-background flex flex-wrap items-center gap-2 rounded-lg border px-3 py-1 text-xs">
           <span className="font-medium tabular-nums">
             {totals.count.toLocaleString()} selected
           </span>
@@ -443,7 +443,7 @@ export function SelectionBar() {
             <PopoverTrigger asChild>
               <Button variant="ghost" size="sm" aria-label="Selection actions"><MoreHorizontal className="h-4 w-4" /></Button>
             </PopoverTrigger>
-            <PopoverContent side="top" align="start" className="flex w-auto flex-col items-stretch gap-1 p-1">
+            <PopoverContent side="bottom" align="end" className="flex w-auto flex-col items-stretch gap-1 p-1">
               <Button variant="ghost" size="sm" onClick={() => { setActionsOpen(false); setReviewOpen(true); }}>
                 Review selection
               </Button>
@@ -462,7 +462,7 @@ export function SelectionBar() {
         <p
           role={notice.tone === "error" ? "alert" : "status"}
           className={cn(
-            "max-w-sm rounded-lg border bg-background px-3 py-2 text-xs break-words shadow-lg",
+            "max-w-sm text-xs break-words",
             notice.tone === "error"
               ? "text-destructive"
               : "text-muted-foreground"

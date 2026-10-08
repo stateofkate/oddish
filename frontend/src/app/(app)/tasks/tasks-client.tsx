@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ImportDialog } from "@/components/import-dialog";
-import { useSelection } from "./selection-context";
+import { SelectionBar, useSelection } from "./selection-context";
 import {
   useTaskBrowseCount,
   useTaskBrowseRevalidate,
@@ -16,34 +16,58 @@ import { cn } from "@/lib/utils";
 const AUTO_REFRESH_KEY = "oddish.tasks.autoRefresh";
 const REFRESH_MS = 60000;
 
+// Stays pinned under the nav while the grid scrolls; the ::before strip fills
+// the space up to the viewport top so no card shows above it. Its height is published
+// as --tasks-header-h so the sticky filter sidebar can sit right below it.
 export function TasksHeader() {
   const { deliveryId, delivery, deliveryError } = useSelection();
+  const ref = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const root = document.documentElement;
+    const observer = new ResizeObserver(() =>
+      root.style.setProperty("--tasks-header-h", `${el.offsetHeight}px`)
+    );
+    observer.observe(el);
+    return () => {
+      observer.disconnect();
+      root.style.removeProperty("--tasks-header-h");
+    };
+  }, []);
   return (
-    <header className="flex flex-wrap items-start justify-between gap-3">
-      <div>
-        {deliveryId ? (
-          <Link
-            href={`/deliveries/${encodeURIComponent(deliveryId)}`}
-            className="text-muted-foreground mb-2 block text-sm"
-          >
-            ← Back to delivery
-          </Link>
-        ) : null}
-        <h1 className="text-2xl font-semibold">
-          {deliveryId
-            ? `Add tasks${delivery ? ` to ${delivery.name}` : ""}`
-            : "Tasks"}
-        </h1>
-        {delivery?.customer_name ? (
-          <p className="text-muted-foreground text-sm">
-            {delivery.customer_name}
-          </p>
-        ) : null}
-        {deliveryError ? (
-          <p role="alert" className="text-destructive text-sm">
-            {deliveryError}
-          </p>
-        ) : null}
+    <header
+      ref={ref}
+      data-testid="tasks-header"
+      className="bg-background before:bg-background sticky top-[calc(var(--preview-banner-h,0px)+3.5rem)] z-30 -mx-3 before:pointer-events-none before:absolute before:inset-x-0 before:bottom-full before:h-[calc(var(--preview-banner-h,0px)+3.5rem)] before:content-[''] flex flex-wrap items-start justify-between gap-3 px-3 py-3 sm:-mx-4 sm:px-4"
+    >
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <div>
+          {deliveryId ? (
+            <Link
+              href={`/deliveries/${encodeURIComponent(deliveryId)}`}
+              className="text-muted-foreground mb-2 block text-sm"
+            >
+              ← Back to delivery
+            </Link>
+          ) : null}
+          <h1 className="text-2xl font-semibold">
+            {deliveryId
+              ? `Add tasks${delivery ? ` to ${delivery.name}` : ""}`
+              : "Tasks"}
+          </h1>
+          {delivery?.customer_name ? (
+            <p className="text-muted-foreground text-sm">
+              {delivery.customer_name}
+            </p>
+          ) : null}
+          {deliveryError ? (
+            <p role="alert" className="text-destructive text-sm">
+              {deliveryError}
+            </p>
+          ) : null}
+        </div>
+        <SelectionBar />
       </div>
       <TasksToolbar showImport={!deliveryId} />
     </header>

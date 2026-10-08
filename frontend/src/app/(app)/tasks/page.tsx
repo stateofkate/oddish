@@ -6,10 +6,7 @@ import { clearTaskFilters, setTaskFilters, updateTaskSearchParams } from "@/lib/
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { TasksHeader } from "./tasks-client";
 import { TasksFilters } from "./tasks-filters";
-import {
-  SelectionBar,
-  SelectionProvider,
-} from "./selection-context";
+import { SelectionProvider } from "./selection-context";
 import { RecentTasksResults } from "./recent-tasks-results";
 
 export const dynamic = "force-dynamic";
@@ -69,7 +66,7 @@ export default function TasksPage() {
   return (
     <SelectionProvider>
       <TooltipProvider>
-        <div className="space-y-5 pb-24" data-testid="tasks-browser">
+        <div className="space-y-2" data-testid="tasks-browser">
           <TasksHeader />
           <div className="grid items-start gap-6 md:grid-cols-[280px_minmax(0,1fr)]">
           <TasksFilters
@@ -85,9 +82,6 @@ export default function TasksPage() {
             onClearFilters={clearFilters}
           />
           <div className="min-w-0"><RecentTasksResults onClearFilters={clearFilters} /></div>
-          </div>
-          <div className="fixed bottom-4 left-4 z-40 w-max max-w-[calc(100vw-2rem)]">
-            <SelectionBar />
           </div>
         </div>
       </TooltipProvider>
