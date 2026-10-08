@@ -3,6 +3,7 @@ const port = process.env.REVIEW_TEST_PORT ?? "3207";
 export default defineConfig({
   testDir: "e2e",
   testMatch: [
+    "task-reviews.spec.ts",
     "robot-recording.spec.ts",
     "qa-evals.spec.ts",
     "qa-feedback.spec.ts",

@@ -1,5 +1,6 @@
 "use client";
 
+import { TaskReviewDialog } from "@/components/task-review-dialog";
 import { TaskRunSummary } from "@/components/task-run-summary";
 
 import { experimentModelLabel } from "@/lib/experiment-agent-grouping";
@@ -228,10 +229,12 @@ function TaskDetailHeader({
   task,
   onOpenTaskFiles,
   tagEditor,
+  reviewButton,
 }: {
   task: Task;
   onOpenTaskFiles: () => void;
   tagEditor?: React.ReactNode;
+  reviewButton?: React.ReactNode;
 }) {
   return (
     <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
@@ -316,6 +319,7 @@ function TaskDetailHeader({
             </a>
           );
         })()}
+        {reviewButton}
         <Link href="/tasks">
           <Button
             type="button"
@@ -1148,6 +1152,7 @@ export function TaskDetailClient({
       <div className="space-y-4">
         <TaskDetailHeader
           task={task}
+          reviewButton={!isBrowseSnapshot && selectedVersionId ? <TaskReviewDialog taskId={task.id} taskName={task.name} versions={versions} selectedVersionId={selectedVersionId} /> : null}
           onOpenTaskFiles={handleOpenTaskFiles}
           tagEditor={
             <TagEditor

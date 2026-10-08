@@ -3857,3 +3857,9 @@ use org/reviewer-scoped request UUIDs. No review data is added to share response
 The authenticated Next.js review proxies preserve the hosted task/version review
 routes, content snapshots, revision checks, and comment cursors. The dashboard
 uses the same API paths in direct mode; no public share route exposes reviews.
+
+The signed-in task detail header opens internal reviews in a version-selectable
+modal. Reviews load only on opening; each version has an independent SWR key.
+Rating writes use the current revision and comments keep a request UUID across
+retries. Conflicts preserve the draft and request a reload. Public task and
+trial surfaces do not mount this control.

@@ -9,6 +9,7 @@ export default defineConfig({
   testDir: "e2e",
   // Uses its own local app, with controlled responses and no Clerk credentials.
   testIgnore: [
+    "task-reviews.spec.ts",
     "robot-recording.spec.ts",
     "dashboard-member-filter.spec.ts",
     "member-picker.spec.ts",
