@@ -167,7 +167,9 @@ export function TrialProgress({
   );
   const trialCompleted = !awaitingAttempt && trial.harbor_stage === "completed" && trial.status === "success";
   const agentCompleted = !awaitingAttempt && Boolean(verifier?.started_at || ["verification", "cleanup"].includes(trial.harbor_stage ?? "") || trialCompleted);
-  const verifierCompleted = Boolean(verifier?.started_at && ["cleanup", "completed"].includes(trial.harbor_stage ?? ""));
+  // Successful legacy trials conclude verification even without timing.
+  const verifierCompleted = !awaitingAttempt && Boolean(trialCompleted ||
+    (verifier?.started_at && ["cleanup", "completed"].includes(trial.harbor_stage ?? "")));
   const agentRunning = executing && ["agent_setup", "agent_running"].includes(trial.harbor_stage ?? "");
   const envRunning =
     executing &&

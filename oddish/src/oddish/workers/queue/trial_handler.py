@@ -1344,11 +1344,29 @@ async def handle_harbor_event(
                 )
                 console.print(f"[cyan]Trial {trial_id} agent started[/cyan]")
             elif event == TrialEvent.VERIFICATION_START:
+                timing = dict(trial.phase_timing or {})
+                if not (timing.get("verifier") or {}).get("started_at"):
+                    timing["verifier"] = {"started_at": observed_at.isoformat()}
+                    trial.phase_timing = timing
                 trial.harbor_stage = "verification"
                 console.print(
                     f"[dim cyan]Trial {trial_id} verification started[/dim cyan]"
                 )
             elif event == TrialEvent.END:
+                # Retain the display boundary before final results arrive.
+                timing = dict(trial.phase_timing or {})
+                phase = timing.get("verifier") or {}
+                if phase.get("started_at") and not phase.get("finished_at"):
+                    start = datetime.fromisoformat(phase["started_at"])
+                    if start.tzinfo is None:
+                        start = start.replace(tzinfo=timezone.utc)
+                    if observed_at >= start:
+                        timing["verifier"] = {
+                            **phase,
+                            "finished_at": observed_at.isoformat(),
+                            "duration_sec": (observed_at - start).total_seconds(),
+                        }
+                        trial.phase_timing = timing
                 trial.harbor_stage = "completed"
 
                 extracted_reward = None

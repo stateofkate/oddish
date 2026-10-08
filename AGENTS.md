@@ -3807,3 +3807,12 @@ row, ordered by its first retained AWS observation, with elapsed time from the
 health-check start. These are observed milestone times, not sequential operation
 durations; simultaneous observations retain equal times. Missing evidence from
 older workers adds no invented status.
+
+Verification lifecycle events retain their existing start timestamp in
+`trials.phase_timing.verifier` before result-file settlement. When no explicit
+finish exists, END records the next boundary for the timeline duration. Final
+Harbor phase timing still takes precedence; scoring and execution are unchanged.
+The timeline also retains legacy completion for successful trials when verifier
+timing is absent, leaving the duration blank rather than inventing one. END alone
+does not prove verification ran on failed or unsettled trials. Queue/retry
+rows do not inherit completion from the preceding attempt.

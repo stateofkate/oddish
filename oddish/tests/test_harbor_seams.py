@@ -139,3 +139,76 @@ async def test_agent_clock_uses_lifecycle_boundaries_and_ignores_replays(monkeyp
         "duration_sec": 65,
     }
     assert trial.phase_timing["environment_setup"] == {"duration_sec": 45}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reward", [0.0, 1.0])
+async def test_verification_clock_is_retained_before_result_upload(monkeypatch, reward):
+    from datetime import datetime, timedelta, timezone
+
+    trial = SimpleNamespace(
+        attempts=1, superseded_by_trial_id=None, error_message=None,
+        status=trial_handler.TrialStatus.RUNNING, max_attempts=1,
+        phase_timing={"agent_execution": {"duration_sec": 1.1}}, environment="modal",
+    )
+
+    @asynccontextmanager
+    async def trial_session(*args, **kwargs):
+        yield SimpleNamespace(), trial
+
+    monkeypatch.setattr(trial_handler, "_trial_session", trial_session)
+    start = datetime(2026, 10, 7, 20, 53, 14, tzinfo=timezone.utc)
+
+    async def emit(event, seconds, result=None):
+        await trial_handler.handle_harbor_event(SimpleNamespace(
+            event=event, timestamp=start + timedelta(seconds=seconds),
+            environment=None, environment_provider=None, environment_external_id=None,
+            result=result,
+        ), trial_id="trial-1")
+
+    await emit(TrialEvent.VERIFICATION_START, 0)
+    await emit(TrialEvent.VERIFICATION_START, 2)
+    assert trial.phase_timing["verifier"] == {"started_at": start.isoformat()}
+    result = SimpleNamespace(
+        verifier_result=SimpleNamespace(rewards={"reward": reward}), exception_info=None,
+    )
+    await emit(TrialEvent.END, 2933, result)
+    assert trial.phase_timing["verifier"] == {
+        "started_at": start.isoformat(),
+        "finished_at": (start + timedelta(seconds=2933)).isoformat(),
+        "duration_sec": 2933,
+    }
+    assert trial.phase_timing["agent_execution"] == {"duration_sec": 1.1}
+    assert trial.status == trial_handler.TrialStatus.SUCCESS
+    assert trial.reward == reward
+    assert trial.harbor_stage == "completed"
+    await emit(TrialEvent.END, 2940, result)
+    assert trial.phase_timing["verifier"]["duration_sec"] == 2933
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("verifier", [None, {
+    "started_at": "2026-10-07T20:53:14+00:00",
+    "finished_at": "2026-10-07T21:00:00+00:00",
+    "duration_sec": 406,
+}])
+async def test_verification_end_preserves_recorded_or_absent_timing(monkeypatch, verifier):
+    from datetime import datetime, timezone
+
+    trial = SimpleNamespace(
+        attempts=1, superseded_by_trial_id=None, error_message=None,
+        status=trial_handler.TrialStatus.RUNNING, max_attempts=1,
+        phase_timing={"verifier": verifier} if verifier else {}, environment="modal",
+    )
+
+    @asynccontextmanager
+    async def trial_session(*args, **kwargs):
+        yield SimpleNamespace(), trial
+
+    monkeypatch.setattr(trial_handler, "_trial_session", trial_session)
+    await trial_handler.handle_harbor_event(SimpleNamespace(
+        event=TrialEvent.END, timestamp=datetime(2026, 10, 7, 21, 42, 7, tzinfo=timezone.utc),
+        environment=None, environment_provider=None, environment_external_id=None,
+        result=None,
+    ), trial_id="trial-1")
+    assert trial.phase_timing == ({"verifier": verifier} if verifier else {})

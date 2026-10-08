@@ -886,7 +886,7 @@ for (const [stage, status] of [["verification", "running"], ["cleanup", "running
       await expect(phase.getByRole("img")).toHaveAttribute("aria-label", `${label}: completed`);
       await expect(phase.locator(".tabular-nums").filter({ hasText: /\S/ })).toHaveCount(0);
     }
-    if (stage !== "verification") await expect(page.getByRole("img", { name: "Verification: not recorded", exact: true })).toBeVisible();
+    if (stage === "completed") await expect(page.getByRole("img", { name: "Verification: completed", exact: true })).toBeVisible();
   });
 }
 
@@ -901,12 +901,35 @@ for (const [stage, status, expected] of [["cleanup", "running", "completed"], ["
 }
 
 for (const reward of [0, 1]) {
-  test(`terminal reward does not imply recorded verification (${reward})`, async ({ page }) => {
+  test(`legacy completed trial concludes verification without inventing timing (${reward})`, async ({ page }) => {
     await mock(page, { ...ended, reward, phase_timing: { environment_setup: timing(5, 25), agent_execution: timing(35, 45) } }, { ...history, events: [] });
+    await page.goto("/progress");
+    const verification = page.getByRole("group", { name: "Verification", exact: true });
+    await expect(verification.getByRole("img")).toHaveAttribute("aria-label", "Verification: completed");
+    await expect(verification.locator(".tabular-nums").first()).toHaveText("");
+    await expect(page.getByRole("img", { name: "Completed: completed", exact: true })).toBeVisible();
+    await page.screenshot({ path: `/tmp/verification-legacy-${reward}.png` });
+  });
+}
+
+for (const reward of [0, 1]) {
+  test(`retained verification clock displays completed without result files (${reward})`, async ({ page }) => {
+    await mock(page, { ...ended, reward, finished_at: at(2988), phase_timing: { agent_execution: timing(35, 45), verifier: timing(55, 2988) } }, { ...history, events: [] });
+    await page.goto("/progress");
+    const verification = page.getByRole("group", { name: "Verification", exact: true });
+    await expect(verification.getByRole("img")).toHaveAttribute("aria-label", "Verification: completed");
+    await expect(verification.locator(".tabular-nums").first()).toHaveText(formatDurationSec(2933));
+    await expect(verification.getByRole("timer")).toHaveCount(0);
+    await page.screenshot({ path: `/tmp/verification-display-${reward}.png` });
+  });
+}
+
+for (const status of ["running", "failed"]) {
+  test(`END without verification evidence does not complete verification (${status})`, async ({ page }) => {
+    await mock(page, { ...ended, status, phase_timing: { agent_execution: timing(35, 45) } }, { ...history, events: [] });
     await page.goto("/progress");
     const verification = page.getByRole("group", { name: "Verification", exact: true });
     await expect(verification.getByRole("img")).toHaveAttribute("aria-label", "Verification: not recorded");
     await expect(verification.locator(".tabular-nums").first()).toHaveText("");
-    await expect(page.getByRole("img", { name: "Completed: completed", exact: true })).toBeVisible();
   });
 }
