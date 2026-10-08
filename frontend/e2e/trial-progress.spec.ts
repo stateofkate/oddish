@@ -438,7 +438,7 @@ for (const outcome of ["success", "cancelled", "active-completed"]) {
       { ...operation(4, "incomplete", "root", "docker.stage_files", 20, 25, "stage", "started"), payload: { ...operation(4, "incomplete", "root", "docker.stage_files", 20, 25, "stage", "started").payload, finished_at: null, duration_seconds: null } },
     ] };
     const trial = outcome === "active-completed"
-      ? { ...ended, status: "running", harbor_stage: "agent_setup", finished_at: null, phase_timing: { environment_setup: timing(5, 35) } }
+      ? { ...ended, status: "running", harbor_stage: "agent_setup", finished_at: null, phase_timing: { environment_setup: timing(5, 35), agent_setup: timing(35, 40) } }
       : ended;
     await mock(page, trial, records);
     await page.goto("/progress");
@@ -448,6 +448,8 @@ for (const outcome of ["success", "cancelled", "active-completed"]) {
     await expect(phase.getByRole("timer")).toHaveCount(0);
     await expect(phase.getByText("End not recorded", { exact: true })).toBeVisible();
     await expect(phase.locator(".animate-spin")).toHaveCount(0);
+    if (outcome === "active-completed")
+      await expect(page.getByRole("img", { name: "Agent Running: active", exact: true })).toBeVisible();
   });
 }
 
