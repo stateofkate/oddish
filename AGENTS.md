@@ -2837,9 +2837,9 @@ Harbor variant dependencies are installed before source; the later editable
 Oddish install uses `--no-deps` so it cannot replace that variant.
 
 PR preview deploys and manual preview resets set
-`ODDISH_MODAL_WORKER_MAX_CONTAINERS=400`, allowing each worker function up to
-400 concurrent Modal containers for Archil testing.
-`ODDISH_MODAL_MAX_WORKERS_PER_POLL=400` lets the dispatcher launch up to 400
+`ODDISH_MODAL_WORKER_MAX_CONTAINERS=25`, allowing each worker function up to
+25 concurrent Modal containers.
+`ODDISH_MODAL_MAX_WORKERS_PER_POLL=25` lets the dispatcher launch up to 25
 workers in one pass. Previews also set
 `ODDISH_DEFAULT_MODEL_CONCURRENCY=400` and
 `ODDISH_MODEL_CONCURRENCY_OVERRIDES={}` so the inherited 256-trial model
