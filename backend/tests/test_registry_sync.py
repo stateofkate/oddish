@@ -259,3 +259,41 @@ def test_new_folders_with_another_tasks_files_get_their_own_task(registry):
     assert failed == []
     assert oddish.aliases["r~tasks~added"] == "added-0000aaaa"
     assert oddish.aliases["r~tasks~plain"] == "plain-0000aaaa"
+
+
+def test_folders_are_checked_out_one_batch_at_a_time(registry, tmp_path, monkeypatch):
+    repo, built_from, head = registry
+    monkeypatch.setattr(sync, "BATCH", 1)
+    monkeypatch.setattr(sync, "REPOS", {"abundant-ai/registry": built_from})
+    monkeypatch.setattr(
+        sync,
+        "checkout",
+        lambda name, dest: (
+            subprocess.run(["git", "clone", "-q", str(repo), str(dest)], check=True),
+            _git(dest, "rev-parse", "origin/main"),
+        )[1],
+    )
+    for name, value in {
+        "ODDISH_API_URL": "http://oddish",
+        "ODDISH_API_KEY": "k",
+        "REGISTRY_READ_TOKEN": "t",
+        "STATE_FILE": str(tmp_path / "state.json"),
+    }.items():
+        monkeypatch.setenv(name, value)
+    oddish, on_disk = Oddish(), []
+
+    def upload(src):
+        on_disk.append(sorted(p.name for p in src.parent.iterdir() if p.is_dir()))
+        return oddish.upload(src)
+
+    import oddish.cli.api as api
+    import oddish.cli.config as config
+
+    monkeypatch.setattr(api, "upload_task", lambda url, src, **kw: upload(src))
+    monkeypatch.setattr(config, "get_auth_headers", lambda *a: {})
+    monkeypatch.setattr(sync.httpx, "Client", lambda **kw: oddish.client())
+
+    sync.main()
+
+    assert [name for name, _ in oddish.uploads] == ["added", "plain", "renamed-folder"]
+    assert on_disk == [["added"], ["plain"], ["renamed-folder"]]

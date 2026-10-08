@@ -32,6 +32,9 @@ from pathlib import Path
 import httpx
 
 TAG = "registry-main"
+# Folders checked out at once. 532 harbor-lh folders with Git LFS files filled a
+# runner's ~14 GB disk; LFS keeps every file twice (cache and checkout).
+BATCH = 50
 # Registry repos and the main commit their aliases were loaded from.
 REPOS = {
     "abundant-ai/harbor-forge-archive": "c49f8effe9d1b97792622f32b4221287f15ffbb8",
@@ -187,6 +190,13 @@ def checkout(repo_name: str, dest: Path) -> str:
     return git(dest, "rev-parse", "origin/main").strip()
 
 
+def git_error(exc: Exception) -> str:
+    if not isinstance(exc, subprocess.CalledProcessError):
+        return str(exc)
+    step = exc.cmd[3] if exc.cmd[1] == "-C" else exc.cmd[1]
+    return f"git {step} exited {exc.returncode}: {(exc.stderr or '').strip()}"
+
+
 def materialize(repo: Path, head: str, folders: list[str]) -> None:
     """Check out only ``folders`` at ``head``, with their Git LFS files.
 
@@ -249,27 +259,34 @@ def main() -> None:
                 print(
                     f"{name}: {len(folders)} task folders changed in {base[:12]}..{head[:12]}"
                 )
-                if folders and not dry_run:
-                    materialize(repo, head, folders)
             except (subprocess.CalledProcessError, RuntimeError) as exc:
-                if isinstance(exc, subprocess.CalledProcessError):
-                    step = exc.cmd[3] if exc.cmd[1] == "-C" else exc.cmd[1]
-                    exc = f"git {step} exited {exc.returncode}: {(exc.stderr or '').strip()}"
-                print(f"::error::{name}: {exc}")
+                print(f"::error::{name}: {git_error(exc)}")
                 failed_repos.append(name)
                 continue
             # ponytail: sequential; after the first catch-up a run sees a few folders.
-            failed = sync_folders(
-                repo,
-                folders,
-                alias_prefix(name),
-                client,
-                tag_id,
-                lambda src, **kw: upload_task(
-                    api, src, register=True, quiet=True, **kw
-                ),
-                dry_run,
-            )
+            failed = []
+            for i in range(0, len(folders), BATCH):
+                batch = folders[i : i + BATCH]
+                if not dry_run:
+                    try:
+                        # Replaces the previous batch's folders in the checkout.
+                        materialize(repo, head, batch)
+                    except subprocess.CalledProcessError as exc:
+                        print(f"::error::{name}: {git_error(exc)}")
+                        failed += batch
+                        continue
+                failed += sync_folders(
+                    repo,
+                    batch,
+                    alias_prefix(name),
+                    client,
+                    tag_id,
+                    lambda src, **kw: upload_task(
+                        api, src, register=True, quiet=True, **kw
+                    ),
+                    dry_run,
+                )
+                shutil.rmtree(repo / ".git" / "lfs" / "objects", ignore_errors=True)
             if failed:
                 failed_repos.append(name)
             if failed or dry_run:
