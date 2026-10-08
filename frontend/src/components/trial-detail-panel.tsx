@@ -1542,7 +1542,8 @@ export function TrialDetailPanel({
                 </div>
               </CardContent>
             </Card>
-            {(trial.cost_usd != null ||
+            {((!readOnly && trial.total_steps != null) ||
+              trial.cost_usd != null ||
               trial.input_tokens != null ||
               trial.output_tokens != null ||
               // A trial can be QA'd without the agent ever reporting a cost;
@@ -1588,12 +1589,22 @@ export function TrialDetailPanel({
                       />
                       <VerifierCostSuffix costUsd={trial.verifier_cost_usd} />
                     </div>
-                    {(trial.input_tokens != null ||
+                    {((!readOnly && trial.total_steps != null) ||
+                      trial.input_tokens != null ||
                       trial.output_tokens != null) && (
                       <div className="text-muted-foreground mt-1 font-mono text-[9px] leading-none">
-                        {formatTokenCount(
-                          (trial.input_tokens ?? 0) + (trial.output_tokens ?? 0)
-                        )}
+                        {(!readOnly && trial.total_steps != null) &&
+                          `${trial.total_steps.toLocaleString()} steps`}
+                        {(!readOnly && trial.total_steps != null) &&
+                          (trial.input_tokens != null ||
+                            trial.output_tokens != null) &&
+                          " · "}
+                        {(trial.input_tokens != null ||
+                          trial.output_tokens != null) &&
+                          formatTokenCount(
+                            (trial.input_tokens ?? 0) +
+                              (trial.output_tokens ?? 0)
+                          )}
                       </div>
                     )}
                   </div>

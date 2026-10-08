@@ -4,6 +4,9 @@ from sqlalchemy import literal_column, text
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql import JSONB
 
+from oddish.core.baseline_gate import baseline_agent_clause
+from oddish.core.task_browse_metrics import trial_bucket_label
+from oddish.db import TrialModel
 from oddish.reasoning_effort import reasoning_effort_expression
 
 _EFFORT_SQL = str(
@@ -11,6 +14,18 @@ _EFFORT_SQL = str(
         dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
     )
 )
+
+# Match browser outcome semantics, including scored agent timeouts but excluding
+# infrastructure failures. The fixed table alias belongs to AGGREGATE_SQL.
+_EFFORT_COHORT_SQL = str(
+    (
+        ~baseline_agent_clause(TrialModel.agent)
+        & trial_bucket_label().in_(("pass", "partial", "fail", "scoreless"))
+    ).compile(
+        dialect=postgresql.dialect(paramstyle="named"),
+        compile_kwargs={"literal_binds": True},
+    )
+).replace("trials.", "tr.")
 
 # Shared by bounded task reads. A stored verdict is task-scoped, so source
 # provenance must be checked before presenting it on a selected version.
@@ -225,7 +240,8 @@ AGGREGATE_SQL = text(f"""
       SELECT tr.task_version_id, tr.billed_user_id,
         tr.agent, tr.provider, tr.model, {_EFFORT_SQL} AS reasoning_effort, tr.status, tr.reward,
         tr.experiment_id, tr.created_at, tr.started_at, tr.finished_at,
-        tr.cost_usd,
+        tr.cost_usd, tr.total_steps,
+        ({_EFFORT_COHORT_SQL}) AS effort_eligible,
         COALESCE(tr.input_tokens_exact, tr.input_tokens::bigint) AS input_tokens,
         COALESCE(tr.output_tokens_exact, tr.output_tokens::bigint) AS output_tokens,
         COALESCE(tr.cache_tokens_exact, tr.cache_tokens::bigint) AS cache_tokens,
@@ -265,6 +281,15 @@ AGGREGATE_SQL = text(f"""
                    + GREATEST(COALESCE(tr.output_tokens, 0), 0)), 0) AS token_count,
         count(*) FILTER (WHERE tr.input_tokens IS NOT NULL
                            OR tr.output_tokens IS NOT NULL) AS token_trial_count,
+        count(*) FILTER (WHERE tr.effort_eligible) AS effort_completed_trials,
+        COALESCE(sum(tr.total_steps) FILTER (WHERE tr.effort_eligible
+          AND tr.total_steps >= 0), 0) AS effort_steps_sum,
+        count(*) FILTER (WHERE tr.effort_eligible
+          AND tr.total_steps >= 0) AS effort_steps_trial_count,
+        COALESCE(sum(tr.input_tokens + tr.output_tokens) FILTER (WHERE tr.effort_eligible
+          AND tr.input_tokens >= 0 AND tr.output_tokens >= 0), 0) AS effort_tokens_sum,
+        count(*) FILTER (WHERE tr.effort_eligible
+          AND tr.input_tokens >= 0 AND tr.output_tokens >= 0) AS effort_tokens_trial_count,
         COALESCE(sum(tr.cost_usd) FILTER (WHERE tr.cost_usd IS NOT NULL), 0.0) AS native_cost,
         count(tr.cost_usd) AS native_count,
         count(*) FILTER (WHERE tr.has_estimatable_tokens) AS estimated_count,

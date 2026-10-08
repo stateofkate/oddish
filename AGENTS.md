@@ -3816,3 +3816,13 @@ The timeline also retains legacy completion for successful trials when verifier
 timing is absent, leaving the duration blank rather than inventing one. END alone
 does not prove verification ran on failed or unsettled trials. Queue/retry
 rows do not inherit completion from the preceding attempt.
+
+## Selected-version effort metrics
+
+Task-open's selected version includes `effort`: completed model trial count,
+step/token sums and separate measurement counts. The existing bounded aggregate
+uses the browser's outcome classification to exclude infrastructure failures and
+baseline agents; QA, deleted, superseded and combine-copy trials stay excluded.
+Token averages require both exact input and output counts; cache input is already
+included. Missing measurements are not zero. These read-time metrics require no
+new table or backfill and appear only in the internal task-detail summary.

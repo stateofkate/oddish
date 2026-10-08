@@ -546,13 +546,16 @@ def test_task_open_queries_encode_detail_eligible_population():
     assert "tr.task_version_id = CAST(:version_id AS text)" in aggregate_sql
     assert "JOIN experiments e ON e.id = tr.experiment_id" in aggregate_sql
     assert "SELECT tr.*" not in aggregate_sql
+    # Error text is inspected for cohort classification, never projected.
+    from oddish.core.endpoints.task_open_queries import _EFFORT_COHORT_SQL
+    projected_sql = aggregate_sql.replace(_EFFORT_COHORT_SQL, "effort_cohort")
     for heavy_column in (
         "tr.result",
         "tr.analysis",
         "tr.trajectory_summary",
         "tr.error_message",
     ):
-        assert heavy_column not in aggregate_sql.replace("tr.result -> '_playback' AS playback", "playback")
+        assert heavy_column not in projected_sql.replace("tr.result -> '_playback' AS playback", "playback")
     assert "AS duration_sum_seconds" in aggregate_sql
     assert "AS duration_trial_count" in aggregate_sql
     assert "tr.finished_at >= tr.started_at" in aggregate_sql

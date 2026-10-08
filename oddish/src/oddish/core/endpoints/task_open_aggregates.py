@@ -130,6 +130,12 @@ def fold_task_open_groups(
         if selected is None or not row["is_selected"]:
             continue
 
+        for field in type(selected.effort).model_fields:
+            setattr(
+                selected.effort,
+                field,
+                getattr(selected.effort, field) + int(row.get(f"effort_{field}") or 0),
+            )
         _add_counts(selected, row)
         _add_cost(selected, row, billed=False)
         if row["is_billed"]:

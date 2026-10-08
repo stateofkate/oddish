@@ -1,9 +1,10 @@
-import type { TaskRunSummary as RunSummary } from "@/lib/types";
+import type { TaskRunSummary as RunSummary, TaskEffortSummary } from "@/lib/types";
 import { STATUS_CONFIG } from "@/lib/status-config";
 
 /** Exact selected-version results. Preview strips never determine these totals. */
-export function TaskRunSummary({ summary, compact = false, outcomesOnly = false }: {
+export function TaskRunSummary({ summary, compact = false, outcomesOnly = false, effort }: {
   summary?: RunSummary | null;
+  effort?: TaskEffortSummary;
   compact?: boolean;
   outcomesOnly?: boolean;
 }) {
@@ -32,6 +33,26 @@ export function TaskRunSummary({ summary, compact = false, outcomesOnly = false 
             {!model ? "Run summary unavailable" : model.total ? `${model.scored} scored / ${model.total} model trials` : "No model trials"}
           </span>
         </div>
+        {effort && (
+          <div
+            className="text-muted-foreground font-mono text-xs"
+            title={`Completed model trials on this version; excludes oracle/NOP, QA and infrastructure failures. Steps recorded on ${effort.steps_trial_count}/${effort.completed_trials}; input and output tokens on ${effort.tokens_trial_count}/${effort.completed_trials}.`}
+          >
+            Avg steps{" "}
+            {effort.steps_trial_count
+              ? Math.round(
+                  effort.steps_sum / effort.steps_trial_count
+                ).toLocaleString()
+              : "—"}
+            {" · "}Avg tokens{" "}
+            {effort.tokens_trial_count
+              ? new Intl.NumberFormat("en", {
+                  notation: "compact",
+                  maximumFractionDigits: 1,
+                }).format(effort.tokens_sum / effort.tokens_trial_count)
+              : "—"}
+          </div>
+        )}
         {(!compact || outcomesOnly) && model ? (
           <div className="flex min-h-4 flex-wrap gap-x-3 gap-y-1">
             {outcomes.filter(([status, count]) => count > 0 || (outcomesOnly && ["pass", "fail", "harness-error", "pending"].includes(status))).map(([status, count]) => (

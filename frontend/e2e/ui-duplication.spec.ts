@@ -399,3 +399,32 @@ test("queued trial links its earlier rejection without replacing the current run
   await expect(popup.locator('[data-slot="resizable-drawer"]').getByText("Task review: Rejected · 1 Must fix", { exact: true })).toBeVisible();
   await popup.close();
 });
+
+test("task effort shows one selected-version average with measurement coverage", async ({ page }) => {
+  await page.route("**/api/tasks/task-a/open**", (route) => {
+    const open = openFor(tasks[0], 7);
+    open.selected_version!.effort = {
+      completed_trials: 3, steps_sum: 30, steps_trial_count: 2,
+      tokens_sum: 5_714_326_685, tokens_trial_count: 2,
+    };
+    return route.fulfill({ json: open });
+  });
+  await page.goto("/tasks/task-a?version=7");
+  const effort = page.getByText("Avg steps 15 · Avg tokens 2.9B", { exact: true });
+  await expect(effort).toHaveCount(1);
+  await expect(effort).toBeVisible();
+  await expect(effort).toHaveAttribute("title", /Steps recorded on 2\/3; input and output tokens on 2\/3/);
+});
+
+test("task effort keeps unknown measurements distinct from recorded zeros", async ({ page }) => {
+  await page.route("**/api/tasks/task-a/open**", (route) => {
+    const open = openFor(tasks[0], 7);
+    open.selected_version!.effort = {
+      completed_trials: 1, steps_sum: 0, steps_trial_count: 1,
+      tokens_sum: 0, tokens_trial_count: 0,
+    };
+    return route.fulfill({ json: open });
+  });
+  await page.goto("/tasks/task-a?version=7");
+  await expect(page.getByText("Avg steps 0 · Avg tokens —", { exact: true })).toBeVisible();
+});

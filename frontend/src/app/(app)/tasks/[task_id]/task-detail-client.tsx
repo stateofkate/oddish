@@ -1271,7 +1271,7 @@ export function TaskDetailClient({
               {versionSummary.trialCount}
             </span>
           </KpiTile>
-          <TaskRunSummary summary={selectedVersion?.run_summary} />
+          <TaskRunSummary summary={selectedVersion?.run_summary} effort={selectedVersion?.effort} />
           <KpiTile
             label="Last run"
             hint={

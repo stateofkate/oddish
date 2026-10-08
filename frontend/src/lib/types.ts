@@ -616,6 +616,14 @@ export interface TaskOpenAgentModelSummary {
   duration_trial_count: number;
 }
 
+export interface TaskEffortSummary {
+  completed_trials: number;
+  steps_sum: number;
+  steps_trial_count: number;
+  tokens_sum: number;
+  tokens_trial_count: number;
+}
+
 export interface TaskOpenVersionSummary extends Omit<
   TaskVersionSummary,
   | "pre_trial_findings"
@@ -627,6 +635,7 @@ export interface TaskOpenVersionSummary extends Omit<
   must_fix_count?: number;
   pre_trial_must_fix_count?: number;
   agent_models: TaskOpenAgentModelSummary[];
+  effort?: TaskEffortSummary;
   run_summary?: TaskRunSummary | null;
 }
 
