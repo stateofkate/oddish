@@ -1,6 +1,10 @@
 """Remove old Neon previews for closed PRs and stop their remaining apps.
 
-Open PRs keep their data at every age. Unknown PR state keeps all resources.
+Open PRs keep their data at every age, but an open PR's app is stopped once
+the PR sits untouched for IDLE_APP_DAYS: a running app holds a connection that
+keeps its Neon endpoint awake, and too many awake endpoints fail every new
+preview. The PR's next push redeploys the app on the same data.
+Unknown PR state keeps all resources.
 Stop an app only after its GKE teardown succeeds; delete its database last.
 """
 
@@ -68,7 +72,7 @@ def list_previews(client: NeonClient, parent: dict) -> dict:
         seen.add(cursor)
 
 
-def pr_state(pr_number: str) -> str:
+def pr_state(pr_number: str) -> tuple[str, datetime | None]:
     request = Request(
         f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/pulls/{pr_number}",
         headers={
@@ -81,9 +85,10 @@ def pr_state(pr_number: str) -> str:
         with urlopen(request, timeout=20) as response:
             result = json.load(response)
         state = result.get("state")
-        return state if state in {"open", "closed"} else "unknown"
-    except (HTTPError, URLError, TimeoutError, ValueError, AttributeError):
-        return "unknown"
+        updated = datetime.fromisoformat(result["updated_at"].replace("Z", "+00:00"))
+        return (state if state in {"open", "closed"} else "unknown"), updated
+    except (HTTPError, URLError, TimeoutError, ValueError, AttributeError, KeyError):
+        return "unknown", None
 
 
 def deployed_apps(environment: str) -> set[str]:
@@ -126,11 +131,20 @@ def stop_app(app: str, environment: str) -> None:
     )
 
 
-def prune(client: NeonClient, *, environment: str, age_days: int, dry_run: bool) -> int:
+def prune(
+    client: NeonClient,
+    *,
+    environment: str,
+    age_days: int,
+    idle_app_days: int,
+    dry_run: bool,
+) -> int:
     parent = validate_main(client.find_branch("main"))
     branches = list_previews(client, parent)
     apps = deployed_apps(environment)
-    cutoff = datetime.now(timezone.utc) - timedelta(days=age_days)
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=age_days)
+    idle_cutoff = now - timedelta(days=idle_app_days)
     numbers = {name[3:] for name in branches} | {
         app[len("oddish-pr-") :] for app in apps
     }
@@ -138,7 +152,20 @@ def prune(client: NeonClient, *, environment: str, age_days: int, dry_run: bool)
     for number in sorted(numbers, key=int):
         name = f"pr-{number}"
         app = f"oddish-{name}"
-        state = pr_state(number)
+        state, updated = pr_state(number)
+        if state == "open" and app in apps and updated and updated < idle_cutoff:
+            if dry_run:
+                print(
+                    f"DRY RUN: would stop {app}; open PR idle since {updated:%Y-%m-%d}."
+                )
+                continue
+            try:
+                stop_app(app, environment)
+                print(f"Stopped {app}; open PR idle since {updated:%Y-%m-%d}.")
+            except subprocess.CalledProcessError as exc:
+                print(f"::error::Could not stop {app}: {exc}", file=sys.stderr)
+                failed = True
+            continue
         if state != "closed":
             print(f"Keep {name}: PR state is {state}.")
             continue
@@ -164,7 +191,7 @@ def prune(client: NeonClient, *, environment: str, age_days: int, dry_run: bool)
             validate_preview(current, parent, name)
             if current["id"] != branch["id"] or created_at(current) >= cutoff:
                 raise NeonError("Preview changed during cleanup; keep its database.")
-            if pr_state(number) != "closed":
+            if pr_state(number)[0] != "closed":
                 print(f"Keep Neon {name}: PR state changed during cleanup.")
                 continue
             client.request("DELETE", f"/branches/{branch['id']}")
@@ -191,8 +218,10 @@ def main() -> int:
             if not os.environ.get(key):
                 raise NeonError(f"Set {key} before running preview cleanup.")
         raw_age = os.environ.get("MAX_AGE_DAYS", "7")
-        if not raw_age.isascii() or not raw_age.isdecimal():
-            raise NeonError("MAX_AGE_DAYS must be a whole number of days.")
+        raw_idle = os.environ.get("IDLE_APP_DAYS", "2")
+        for key, raw in (("MAX_AGE_DAYS", raw_age), ("IDLE_APP_DAYS", raw_idle)):
+            if not raw.isascii() or not raw.isdecimal():
+                raise NeonError(f"{key} must be a whole number of days.")
         dry_run = os.environ.get("DRY_RUN", "false")
         if dry_run not in {"true", "false"}:
             raise NeonError("DRY_RUN must be true or false.")
@@ -200,6 +229,7 @@ def main() -> int:
             NeonClient(os.environ["NEON_PROJECT_ID"], os.environ["NEON_API_KEY"]),
             environment=os.environ.get("MODAL_ENVIRONMENT", "preview"),
             age_days=int(raw_age),
+            idle_app_days=int(raw_idle),
             dry_run=dry_run == "true",
         )
     except (

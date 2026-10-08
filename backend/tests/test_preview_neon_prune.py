@@ -61,6 +61,7 @@ def _run(
     dry_run=False,
     stop_fails=False,
     current=None,
+    updated=None,
 ):
     order = []
     client = Client(branches, order)
@@ -68,7 +69,10 @@ def _run(
         client.current.update(current)
     monkeypatch.setattr(prune, "deployed_apps", lambda _: set(apps or []))
     states = iter(state) if isinstance(state, list) else None
-    monkeypatch.setattr(prune, "pr_state", lambda _: next(states) if states else state)
+    updated = updated or datetime.now(timezone.utc)
+    monkeypatch.setattr(
+        prune, "pr_state", lambda _: (next(states) if states else state, updated)
+    )
 
     def stop(app, env):
         order.append(("stop", app))
@@ -76,7 +80,9 @@ def _run(
             raise subprocess.CalledProcessError(1, ["gke-teardown"])
 
     monkeypatch.setattr(prune, "stop_app", stop)
-    code = prune.prune(client, environment="preview", age_days=7, dry_run=dry_run)
+    code = prune.prune(
+        client, environment="preview", age_days=7, idle_app_days=2, dry_run=dry_run
+    )
     return code, order
 
 
@@ -88,6 +94,18 @@ def test_open_or_unknown_pr_keeps_app_even_when_database_old_or_absent(
     code, order = _run(monkeypatch, branches, state=state, apps=["oddish-pr-42"])
     assert code == 0
     assert order == []
+
+
+def test_idle_open_pr_stops_app_but_keeps_database(monkeypatch):
+    code, order = _run(
+        monkeypatch,
+        [_branch(42, 100)],
+        state="open",
+        apps=["oddish-pr-42"],
+        updated=datetime.now(timezone.utc) - timedelta(days=3),
+    )
+    assert code == 0
+    assert order == [("stop", "oddish-pr-42")]
 
 
 def test_closed_old_branch_is_deleted_after_app_cleanup(monkeypatch):
@@ -196,12 +214,17 @@ def test_modal_json_keys_keep_app_stop_before_database_delete(
         "run",
         lambda args, **kwargs: subprocess.CompletedProcess(args, 0, json.dumps([app])),
     )
-    monkeypatch.setattr(prune, "pr_state", lambda _: "closed")
+    monkeypatch.setattr(prune, "pr_state", lambda _: ("closed", None))
     order = []
     monkeypatch.setattr(prune, "stop_app", lambda app, env: order.append(("stop", app)))
     client = Client([_branch(42)], order)
 
-    assert prune.prune(client, environment="preview", age_days=7, dry_run=False) == 0
+    assert (
+        prune.prune(
+            client, environment="preview", age_days=7, idle_app_days=2, dry_run=False
+        )
+        == 0
+    )
     assert order == [
         ("stop", "oddish-pr-42"),
         ("GET", "/branches/br-preview-42"),
@@ -219,7 +242,9 @@ def test_invalid_modal_entries_block_all_cleanup(monkeypatch, apps):
     order = []
     client = Client([_branch(42)], order)
     with pytest.raises(prune.NeonError, match="invalid app entry"):
-        prune.prune(client, environment="preview", age_days=7, dry_run=False)
+        prune.prune(
+            client, environment="preview", age_days=7, idle_app_days=2, dry_run=False
+        )
     assert order == []
 
 

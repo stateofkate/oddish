@@ -1,6 +1,8 @@
 name: Preview Prune
 
-# Open PRs keep their preview data at every age. Closed PR apps stop only
+# Open PRs keep their preview data at every age; an open PR untouched for
+# idle_app_days has its app stopped (its next push redeploys it), so idle apps
+# stop holding Neon endpoints awake. Closed PR apps stop only
 # after GKE teardown; their old Neon branches are deleted last. Unknown PR
 # state keeps all resources. Legacy Supabase cleanup is manual only.
 
@@ -12,6 +14,9 @@ on:
       max_age_days:
         description: "Delete Neon branches older than this many days only when their PR is closed"
         default: "7"
+      idle_app_days:
+        description: "Stop an open PR's app when the PR has been untouched this many days"
+        default: "2"
       dry_run:
         description: "Log what would be deleted/stopped without doing it"
         type: boolean
@@ -44,10 +49,11 @@ jobs:
       MODAL_ENVIRONMENT: preview
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       MAX_AGE_DAYS: ${{ inputs.max_age_days || '7' }}
+      IDLE_APP_DAYS: ${{ inputs.idle_app_days || '2' }}
       DRY_RUN: ${{ inputs.dry_run || false }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Prune closed PR apps and old Neon branches
+      - name: Prune closed and idle PR apps and old Neon branches
         run: "$GITHUB_WORKSPACE/.github/scripts/preview/prune_stale_preview_apps.sh"
