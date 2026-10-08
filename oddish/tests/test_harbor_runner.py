@@ -2986,6 +2986,22 @@ def test_public_meta_key_in_a_sandbox_env_without_the_internal_key(monkeypatch):
     assert resolved["META_API_KEY"] == "sandbox-public-key"
 
 
+def test_tbh_meta_first_event_timeout_default_and_override():
+    agent_config = harbor_runner._build_agent_config(
+        agent="tbh", model="meta/straw-110_evals_ext", raw_harbor_config={}
+    )
+    assert agent_config.env["TBH_STREAM_FIRST_EVENT_TIMEOUT_SECS"] == "900"
+
+    agent_config = harbor_runner._build_agent_config(
+        agent="tbh",
+        model="meta/straw-110_evals_ext",
+        raw_harbor_config={
+            "agent_config": {"env": {"TBH_STREAM_FIRST_EVENT_TIMEOUT_SECS": "60"}}
+        },
+    )
+    assert agent_config.env["TBH_STREAM_FIRST_EVENT_TIMEOUT_SECS"] == "60"
+
+
 def test_public_meta_bundle_env_keeps_the_public_key(monkeypatch):
     # With job-scoped tokens on, the worker passes the bundle as extra env,
     # which the builder applies after the binding.

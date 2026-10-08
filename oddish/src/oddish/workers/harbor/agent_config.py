@@ -593,6 +593,13 @@ def _apply_meta_model_reasoning_policy(agent_config: AgentConfig) -> None:
     kwargs["reasoning_effort"] = "xhigh"
     agent_config.kwargs = kwargs
 
+    # Meta sends no stream event until reasoning ends, and a hard planning turn
+    # at xhigh can think past tbh's default 180s first-event limit; tbh then
+    # retries the identical request and fails the trial. Other harnesses ignore it.
+    env = dict(agent_config.env or {})
+    env.setdefault("TBH_STREAM_FIRST_EVENT_TIMEOUT_SECS", "900")
+    agent_config.env = env
+
 
 # The names the Meta harnesses authenticate with. muse-code and tbh read
 # META_API_KEY (tbh during setup, for ``tbh auth set``). The route's public-key
