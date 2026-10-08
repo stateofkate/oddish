@@ -78,6 +78,7 @@ from oddish.schemas import (
     TaskBrowseItem,
     TaskBrowseResponse,
     TaskBrowseTrial,
+    TaskEffortSummary,
     TaskStatusResponse,
     UserTagRef,
 )
@@ -2102,6 +2103,7 @@ async def browse_tasks_core(
             ranked_tasks_subquery.c.author_rank,
             TaskBrowseSummaryModel.last_run_at,
             TaskBrowseSummaryModel.run_summary,
+            TaskBrowseSummaryModel.effort,
             TaskBrowseSummaryModel.total_trials,
             TaskBrowseSummaryModel.completed_trials,
             TaskBrowseSummaryModel.failed_trials,
@@ -2153,6 +2155,17 @@ async def browse_tasks_core(
         aggregate_order.append(
             nulls_last(summary_column.desc() if descending else summary_column.asc())
         )
+
+    # The same per-version snapshot supplies ordering and displayed averages.
+    effort_sort = (sort or "").removesuffix("_asc").removesuffix("_desc")
+    if effort_sort in ("avg_steps", "avg_tokens") and sort.endswith(("_asc", "_desc")):
+        measurement = effort_sort.removeprefix("avg_")
+        effort = TaskBrowseSummaryModel.effort
+        metric = effort[f"{measurement}_sum"].as_float() / func.nullif(
+            effort[f"{measurement}_trial_count"].as_integer(), 0
+        )
+        sort_value = metric
+        aggregate_order.append(nulls_last(metric.asc() if sort.endswith("_asc") else metric.desc()))
 
     if sort in ("model_score_asc", "model_score_desc", "last_model_activity_desc"):
         model = TaskBrowseSummaryModel.run_summary["model"]
@@ -2524,6 +2537,7 @@ async def browse_tasks_core(
     response = TaskBrowseResponse(
         items=[
             TaskBrowseItem(
+                effort=TaskEffortSummary.model_validate(row["effort"] or {}),
                 sort_value=row["sort_value"],
                 created_at=row["created_at"],
                 run_summary=row["run_summary"],

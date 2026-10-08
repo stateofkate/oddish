@@ -67,8 +67,10 @@ async def test_upgrade_from_either_deployed_head(prior_head):
                 "UPDATE task_version_fingerprints SET instruction_hash = 'abc'"
             )
 
-        await alembic("upgrade", "head")
-        await alembic("upgrade", "head")  # Deploy retries must be harmless.
+        # This deliberately minimal schema covers the branch join, not later
+        # migrations on unrelated tables. Full-schema upgrades run separately.
+        await alembic("upgrade", "progress_hash_merge_001")
+        await alembic("upgrade", "progress_hash_merge_001")  # Deploy retries must be harmless.
         assert (
             await conn.fetchval("SELECT version_num FROM alembic_version_oddish")
             == "progress_hash_merge_001"

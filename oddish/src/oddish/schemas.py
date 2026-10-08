@@ -2065,7 +2065,22 @@ class TaskRunSummary(BaseModel):
     nop: TaskRunGroup = Field(default_factory=TaskRunGroup)
 
 
+class TaskEffortSummary(BaseModel):
+    """Recorded effort of completed model trials on the selected version.
+
+    Token totals require both input and output; cache tokens are already part
+    of input. Each measurement has its own denominator; missing is not zero.
+    """
+
+    completed_trials: int = Field(default=0, ge=0)
+    steps_sum: int = Field(default=0, ge=0)
+    steps_trial_count: int = Field(default=0, ge=0)
+    tokens_sum: int = Field(default=0, ge=0)
+    tokens_trial_count: int = Field(default=0, ge=0)
+
+
 class TaskBrowseItem(BaseModel):
+    effort: TaskEffortSummary = Field(default_factory=TaskEffortSummary)
     sort_value: float | None = None
     created_at: datetime | None = None
     run_summary: TaskRunSummary | None = None
@@ -2354,20 +2369,6 @@ class TaskOpenAgentModelSummary(BaseModel):
     last_run_at: datetime | None = None
     duration_sum_seconds: float = 0.0
     duration_trial_count: int = 0
-
-
-class TaskEffortSummary(BaseModel):
-    """Recorded effort of completed model trials on the selected version.
-
-    Token totals require both input and output; cache tokens are already part
-    of input. Each measurement has its own denominator; missing is not zero.
-    """
-
-    completed_trials: int = Field(default=0, ge=0)
-    steps_sum: int = Field(default=0, ge=0)
-    steps_trial_count: int = Field(default=0, ge=0)
-    tokens_sum: int = Field(default=0, ge=0)
-    tokens_trial_count: int = Field(default=0, ge=0)
 
 
 class TaskOpenVersionSummary(TaskVersionRollup):

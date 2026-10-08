@@ -13,7 +13,8 @@ from oddish.core.task_browse_metrics import (
     trial_bucket_label,
     run_summary_columns,
 )
-from oddish.schemas import TaskRunSummary
+from oddish.core.task_effort import task_effort_columns
+from oddish.schemas import TaskEffortSummary, TaskRunSummary
 from oddish.db import (
     TaskBrowseSummaryModel,
     TaskVersionModel,
@@ -43,6 +44,7 @@ _SUMMARY_FIELDS = (
     "agent_count",
     "cost_breakdown",
     "run_summary",
+    "effort",
 )
 
 
@@ -70,6 +72,7 @@ def _empty_summary(task_id: str, version_id: str) -> dict:
         "agent_count": 0,
         "cost_breakdown": [],
         "run_summary": TaskRunSummary().model_dump(mode="json"),
+        "effort": TaskEffortSummary().model_dump(mode="json"),
     }
 
 
@@ -141,6 +144,7 @@ async def refresh_task_browse_summaries(
         select(
             TrialModel.task_version_id,
             *run_summary_columns(),
+            *task_effort_columns(),
             func.max(activity).label("last_run_at"),
             func.count(TrialModel.id).label("total_trials"),
             func.count(case((TrialModel.status == TrialStatus.SUCCESS, 1))).label(
@@ -170,9 +174,13 @@ async def refresh_task_browse_summaries(
     for row in counts.mappings():
         summary = summaries[str(row["task_version_id"])]
         for field in _SUMMARY_FIELDS:
-            if field not in ("task_id", "cost_breakdown", "run_summary"):
+            if field not in ("task_id", "cost_breakdown", "run_summary", "effort"):
                 summary[field] = row[field]
         summary["run_summary"] = {role: row[role] for role in ("model", "oracle", "nop")}
+        summary["effort"] = TaskEffortSummary(
+            completed_trials=row["effort_completed_trials"],
+            **{key: row[key] for key in ("steps_sum", "steps_trial_count", "tokens_sum", "tokens_trial_count")},
+        ).model_dump(mode="json")
 
     billed = TrialModel.billed_user_id.isnot(None)
     costs = await session.execute(

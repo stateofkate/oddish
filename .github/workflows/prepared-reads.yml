@@ -32,6 +32,8 @@ jobs:
       - run: uv sync --frozen --extra server --extra dev
       - run: uv run alembic upgrade head
       - run: uv run pytest tests/test_prepared_dashboard.py tests/test_dashboard_collection_aggregates.py tests/test_dashboard_last_runner.py -q -s
+      - name: Check task effort cohorts and sorting
+        run: ODDISH_TEST_DATABASE_URL="$ODDISH_DATABASE_URL" uv run pytest tests/test_task_effort_metrics.py tests/test_task_effort_browse.py -q
   browser:
     runs-on: ubuntu-latest
     timeout-minutes: 15

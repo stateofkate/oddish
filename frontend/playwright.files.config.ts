@@ -10,6 +10,7 @@ export default defineConfig({
     "review-meaning.spec.ts",
     "trajectory-rendering.spec.ts",
     "ui-duplication.spec.ts",
+    "task-effort-comparison.spec.ts",
     "user-ui-layout.spec.ts",
   ],
   workers: 1,

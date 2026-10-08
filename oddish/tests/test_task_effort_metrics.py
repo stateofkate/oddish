@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import os
 from datetime import UTC, datetime
+from pathlib import Path
 from uuid import uuid4
 
 import asyncpg
 import pytest
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from oddish.core.endpoints.task_open_aggregates import fold_task_open_groups
 from oddish.core.endpoints.task_open_queries import AGGREGATE_SQL
+from oddish.core.task_browse_summary import refresh_task_browse_summaries
+from oddish.db import TaskBrowseSummaryModel
 from oddish.db.models import (
     Base,
     ExperimentModel,
@@ -17,6 +22,8 @@ from oddish.db.models import (
     TaskVersionModel,
     TrialModel,
 )
+from oddish.schemas import TaskEffortSummary
+from sqlalchemy import text, update
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -52,6 +59,11 @@ async def test_effort_uses_exact_selected_version_completed_model_measurements()
                     )
                 )
             await session.flush()
+            await session.execute(
+                update(TaskModel)
+                .where(TaskModel.id == "task")
+                .values(current_version_id="v2")
+            )
             cases = [
                 ("pass", {}),
                 (
@@ -120,6 +132,21 @@ async def test_effort_uses_exact_selected_version_completed_model_measurements()
                 .mappings()
                 .one()
             )
+            await refresh_task_browse_summaries(session, ["v2"])
+            saved = await session.get(TaskBrowseSummaryModel, "v2")
+            browse_effort = TaskEffortSummary.model_validate(saved.effort)
+            config = Config()
+            config.set_main_option(
+                "script_location", str(Path(__file__).parents[1] / "alembic")
+            )
+            migration = (
+                ScriptDirectory.from_config(config)
+                .get_revision("task_effort_001")
+                .module
+            )
+            await session.execute(text(migration._BACKFILL), {"ids": ["v2"]})
+            await session.refresh(saved)
+            assert TaskEffortSummary.model_validate(saved.effort) == browse_effort
         identity = {
             "selected_version_id": "v2",
             "selected_version": 2,
@@ -137,6 +164,7 @@ async def test_effort_uses_exact_selected_version_completed_model_measurements()
             "tokens_sum": 5_714_326_685,
             "tokens_trial_count": 4,
         }
+        assert browse_effort == selected.effort
     finally:
         await engine.dispose()
         await admin.execute(f'DROP DATABASE "{name}" WITH (FORCE)')

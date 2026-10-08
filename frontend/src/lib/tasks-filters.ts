@@ -294,6 +294,8 @@ export const TASK_SORT_FIELDS = [
   { value: "cost", label: "Trial cost" },
   { value: "total_tokens", label: "Total tokens" },
   { value: "steps_p50", label: "Median steps" },
+  { value: "avg_steps", label: "Avg steps" },
+  { value: "avg_tokens", label: "Avg tokens" },
   { value: "runtime_avg", label: "Average run time" },
 ];
 

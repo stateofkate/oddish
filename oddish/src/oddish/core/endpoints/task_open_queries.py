@@ -4,9 +4,7 @@ from sqlalchemy import literal_column, text
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql import JSONB
 
-from oddish.core.baseline_gate import baseline_agent_clause
-from oddish.core.task_browse_metrics import trial_bucket_label
-from oddish.db import TrialModel
+from oddish.core.task_effort import completed_model_clause
 from oddish.reasoning_effort import reasoning_effort_expression
 
 _EFFORT_SQL = str(
@@ -18,10 +16,7 @@ _EFFORT_SQL = str(
 # Match browser outcome semantics, including scored agent timeouts but excluding
 # infrastructure failures. The fixed table alias belongs to AGGREGATE_SQL.
 _EFFORT_COHORT_SQL = str(
-    (
-        ~baseline_agent_clause(TrialModel.agent)
-        & trial_bucket_label().in_(("pass", "partial", "fail", "scoreless"))
-    ).compile(
+    completed_model_clause().compile(
         dialect=postgresql.dialect(paramstyle="named"),
         compile_kwargs={"literal_binds": True},
     )

@@ -3826,3 +3826,16 @@ baseline agents; QA, deleted, superseded and combine-copy trials stay excluded.
 Token averages require both exact input and output counts; cache input is already
 included. Missing measurements are not zero. These read-time metrics require no
 new table or backfill and appear only in the internal task-detail summary.
+
+Task browse adds the same typed `effort` summary for each current task version.
+Apply core migration `task_effort_001` before deploying. It adds nullable JSONB
+`effort` to the existing version browse summary and backfills locked batches.
+The existing summary refresh computes typed totals inside the same transaction.
+`avg_steps_asc/desc` and `avg_tokens_asc/desc` order stored means before pagination,
+with missing measurements last; browse never scans historical trials for effort. These means exclude
+validation/QA/infra trials and use separate recorded-value denominators, unlike
+legacy median/total sorts whose meanings stay unchanged. Model/agent/experiment
+filters select tasks, not the effort cohort: effort always describes the shown
+version's completed model trials, matching task detail. Existing task/version FKs
+are unchanged; no new table is introduced. Table columns follow QA and trial results and respect saved
+column selections; sorting is shared with the sidebar and cards.

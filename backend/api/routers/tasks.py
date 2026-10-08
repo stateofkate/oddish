@@ -870,7 +870,8 @@ async def browse_tasks(
         description=(
             "Aggregate sort: cost_desc, avg_score_(asc|desc), "
             "total_tokens_(asc|desc), runtime_total_(asc|desc), or "
-            "runtime_avg_(asc|desc); stored-summary sort: "
+            "runtime_avg_(asc|desc); completed-model effort: "
+            "avg_steps_(asc|desc), avg_tokens_(asc|desc); stored-summary sort: "
             "steps_p50_(asc|desc), total_trials_(asc|desc), or "
             "agent_count_(asc|desc). Unknown/absent keeps the default recency "
             "order."

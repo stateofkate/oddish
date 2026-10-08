@@ -1,9 +1,9 @@
 "use client";
 
-import { Fragment } from "react";
+import { Fragment, type ReactNode } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { useSelection, TasksSelectionControls } from "./selection-context";
@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils";
 import type { TaskBrowseItem } from "@/lib/types";
 import { formatCostUsd } from "@/lib/format";
 import { TaskCard, TaskDeliveryHistory, TaskEvidence, TaskSortMetric } from "./task-card";
+import { TaskEffortCell } from "./task-effort-cell";
 import { TaskRunSummary } from "@/components/task-run-summary";
 import { TaskBrowseLink } from "./task-browse-link";
 import { TasksMatchCount } from "./tasks-client";
@@ -30,7 +31,7 @@ function pageHref(sp: URLSearchParams, offset: number): string {
   return query ? `/tasks?${query}` : "/tasks";
 }
 
-const TASK_COLUMNS = [
+const TASK_COLUMNS: { label: string; sort?: string; render: (task: TaskBrowseItem) => ReactNode }[] = [
   {
     label: "QA outcome",
     render: (task: TaskBrowseItem) =>
@@ -52,6 +53,14 @@ const TASK_COLUMNS = [
     label: "Trials",
     render: (task: TaskBrowseItem) => <TaskRunSummary summary={task.run_summary} compact outcomesOnly />,
   },
+  {
+    label: "Avg steps", sort: "avg_steps",
+    render: task => <TaskEffortCell effort={task.effort} metric="steps" />,
+  },
+  {
+    label: "Avg tokens", sort: "avg_tokens",
+    render: task => <TaskEffortCell effort={task.effort} metric="tokens" />,
+  },
   { label: "Agents", render: (task: TaskBrowseItem) => task.agent_count ?? 0 },
   {
     label: "Delivery history",
@@ -71,7 +80,7 @@ const TASK_COLUMNS = [
   },
 ];
 
-const DEFAULT_COLUMNS = ["QA outcome", "Trials", "Delivery history"];
+const DEFAULT_COLUMNS = ["QA outcome", "Trials", "Avg steps", "Avg tokens", "Delivery history"];
 
 const pagerClass =
   "inline-flex h-8 items-center gap-1 rounded-md border border-[#6f88b4]/30 px-3 text-[11px] transition-colors";
@@ -89,6 +98,7 @@ export function RecentTasksResults({
   const searchParams = useSearchParams();
   const { selection, toggle, deliveryId } = useSelection();
   const expanded = searchParams.get("expanded");
+  const sort = searchParams.get("sort");
   const view = searchParams.get("view") === "table" || (expanded && !searchParams.has("view")) ? "table" : "cards";
   const columns = TASK_COLUMNS.map((column) => column.label);
   const visibleColumns = searchParams.has("columns")
@@ -241,7 +251,19 @@ export function RecentTasksResults({
               <tr>
                 <th className="p-3">Select</th>
                 <th>Task</th>
-                {shownColumns.map(column => <th key={column.label}>{column.label}</th>)}
+                {shownColumns.map(column => {
+                  const active = column.sort && sort?.startsWith(`${column.sort}_`);
+                  const ascending = active && sort?.endsWith("_asc");
+                  const Icon = active ? (ascending ? ArrowUp : ArrowDown) : ArrowUpDown;
+                  return <th key={column.label} className={cn("px-3 whitespace-nowrap", column.sort && "text-right")}
+                    aria-sort={column.sort ? (active ? (ascending ? "ascending" : "descending") : "none") : undefined}>
+                    {column.sort ? <button type="button"
+                      className="inline-flex items-center gap-1 whitespace-nowrap rounded-sm py-2 hover:text-foreground focus-visible:outline focus-visible:outline-ring"
+                      onClick={() => updateTaskSearchParams(params => params.set("sort", `${column.sort}_${active && !ascending ? "asc" : "desc"}`))}>
+                      {column.label}<Icon className="h-3 w-3" aria-hidden />
+                    </button> : column.label}
+                  </th>;
+                })}
                 <th>Details</th>
               </tr>
             </thead>
@@ -266,9 +288,9 @@ export function RecentTasksResults({
                       <div className="text-muted-foreground text-xs">
                         v{task.current_version ?? "—"}
                       </div>
-                      <TaskSortMetric task={task} hidden={isLoading || Boolean(error)} />
+                      <TaskSortMetric task={task} hidden={isLoading || Boolean(error) || shownColumns.some(column => column.sort && sort?.startsWith(`${column.sort}_`))} />
                     </td>
-                    {shownColumns.map(column => <td className="px-3 py-2" key={column.label}>{column.render(task)}</td>)}
+                    {shownColumns.map(column => <td className={cn("px-3 py-2", column.sort && "text-right", column.label === "Trials" && "min-w-96")} key={column.label}>{column.render(task)}</td>)}
                     <td>
                       <Button
                         variant="ghost"

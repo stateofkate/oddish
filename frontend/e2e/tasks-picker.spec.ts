@@ -851,7 +851,7 @@ for (const columnsQuery of ["", "&columns="]) {
     await expect(page.getByRole("link", { name: task.name, exact: true })).toBeVisible();
     await page.locator("summary").filter({ hasText: /^Columns$/ }).click();
     const before = requests;
-    const initialColumns = columnsQuery ? [] : ["QA outcome", "Trials", "Delivery history"];
+    const initialColumns = columnsQuery ? [] : ["QA outcome", "Trials", "Avg steps", "Avg tokens", "Delivery history"];
     // Both DOM clicks run in the same browser task, before React can commit
     // the URL-driven render between them.
     for (const checked of [true, false]) {

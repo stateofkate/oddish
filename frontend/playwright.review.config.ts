@@ -9,6 +9,7 @@ export default defineConfig({
     "dashboard-member-filter.spec.ts",
     "review-meaning.spec.ts",
     "ui-duplication.spec.ts",
+    "task-effort-comparison.spec.ts",
     "qa-rejection-state.spec.ts",
     "user-ui-layout.spec.ts",
     "public-experiment-tasks.spec.ts",
