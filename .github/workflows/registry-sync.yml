@@ -50,7 +50,7 @@ jobs:
               --json databaseId -q '.[].databaseId'); do
             gh run download "$id" -n registry-sync-state -D "$(dirname "$STATE_FILE")" 2>/dev/null \
               && { echo "state from run $id"; cat "$STATE_FILE"; break; }
-          done
+          done || true  # no saved state yet (e.g. only dry runs): fall back to built_from
 
       - name: Upload and tag changed task folders
         env:
