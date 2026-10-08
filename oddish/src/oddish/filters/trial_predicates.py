@@ -9,6 +9,7 @@ from sqlalchemy import Integer, and_, exists, false, func, not_, select
 
 from oddish.core.baseline_gate import GATE_SKIP_PREFIX, baseline_agent_clause
 from oddish.core.cost_basis import CANCELLED_HARBOR_STAGE
+from oddish.core.trial_artifacts import LOST_ARTIFACTS_MARKER
 from oddish.db import AGENT_TRIAL_KIND, TrialModel, TrialStatus
 from oddish.filters.trial_metrics import TrialMetricFilter, TrialMetricMatch
 
@@ -132,5 +133,10 @@ def qa_eligible_trial_clauses() -> list[Any]:
         func.coalesce(TrialModel.harbor_stage, "") != CANCELLED_HARBOR_STAGE,
         TrialModel.status != TrialStatus.SKIPPED,
         func.coalesce(TrialModel.error_message, "").notlike(f"{GATE_SKIP_PREFIX}%"),
+        # The QA brief stops on missing evidence, so a trial whose files never
+        # reached storage would fail every QA run for its task.
+        func.coalesce(TrialModel.error_message, "").notlike(
+            f"%{LOST_ARTIFACTS_MARKER}%"
+        ),
         not_(baseline_agent_clause(TrialModel.agent)),
     ]

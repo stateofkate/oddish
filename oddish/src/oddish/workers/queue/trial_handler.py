@@ -25,6 +25,7 @@ from oddish.core.harbor_artifacts import (
     invalidates_score,
 )
 from oddish.core.trial_artifacts import (
+    LOST_ARTIFACTS_MARKER,
     trial_name_from_manifest,
     validate_uploaded_analysis_artifacts,
 )
@@ -823,7 +824,7 @@ async def _store_trial_results(
             # Any other kind keeps its verdict when its files were not saved (a
             # full re-run to recover logs is not worth it), but says so.
             lost_artifacts = (
-                f"Trial finished but its files were not saved: {artifact_upload_error}"
+                f"{LOST_ARTIFACTS_MARKER}: {artifact_upload_error}"
                 if artifact_upload_error and not analysis_artifact_error
                 else None
             )

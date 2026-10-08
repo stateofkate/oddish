@@ -18,6 +18,10 @@ from oddish.db.storage import (
     sanitize_s3_key_chars,
 )
 
+# Settlement keeps an agent trial's reward when its files never reached
+# storage and records this marker in error_message instead.
+LOST_ARTIFACTS_MARKER = "Trial finished but its files were not saved"
+
 
 class TrialArtifactPointer(Protocol):
     @property

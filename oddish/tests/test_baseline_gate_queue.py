@@ -895,6 +895,46 @@ async def test_qa_classification_excludes_historical_task_versions(cleanup_task_
     assert live_ids == {current_trial_id}
 
 
+@pytest.mark.asyncio
+async def test_qa_classification_excludes_trials_with_lost_artifacts(
+    cleanup_task_ids,
+):
+    from oddish.core.trial_artifacts import LOST_ARTIFACTS_MARKER
+    from oddish.queue import qa_eligible_trial_ids
+
+    task_id = f"qa-lost-{_RUN}"
+    cleanup_task_ids.append(task_id)
+    async with get_session() as session:
+        task = await create_task(
+            session,
+            TaskSubmission(
+                name="qa-lost",
+                task_path="s3://test-bucket/baseline-gate-fake-task",
+                user="test",
+                trials=[
+                    TrialSpec(agent=_LLM_AGENT, model=_LLM_MODEL),
+                    TrialSpec(agent=_LLM_AGENT, model=_LLM_MODEL),
+                ],
+            ),
+            task_id=task_id,
+        )
+        kept, lost = [t for t in task.trials if t.kind == "agent"]
+        kept_id = kept.id
+        # Settlement appends the marker after any agent error, on its own line.
+        lost.status = TrialStatus.SUCCESS
+        lost.error_message = (
+            "AgentTimeoutError\n"
+            f"{LOST_ARTIFACTS_MARKER}: Failed to upload trial results to S3: "
+            "ClientError: An error occurred () when calling the PutObject operation: "
+        )
+
+    async with get_session() as session:
+        live_ids = set(
+            await qa_eligible_trial_ids(session, task_id, task_version_id=None)
+        )
+    assert live_ids == {kept_id}
+
+
 # ---------------------------------------------------------------------------
 # Re-review fixes: flag-rollback release + advance-QA after a synchronous cancel
 # ---------------------------------------------------------------------------
