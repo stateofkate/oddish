@@ -368,3 +368,7 @@ removable through their active-filter chip.
 Run `DELIVERY_TEST_PORT=3219 pnpm exec playwright test -c playwright.delivery.config.ts tasks-picker.spec.ts task-run-coverage.spec.ts`
 for the fixture-backed browser checks. The corresponding PostgreSQL checks are
 `oddish/tests/test_task_run_coverage.py`; run against a disposable local database.
+
+Internal task reviews use `/api/tasks/{task_id}/versions/{version}/reviews` and
+its rating/comment routes. These authenticated proxies forward to the hosted API;
+direct API mode uses the same route contract. Public share pages do not use them.

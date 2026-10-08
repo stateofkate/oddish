@@ -3853,3 +3853,7 @@ Strict Pydantic writes reject caller-supplied identities and stale content/revis
 The version and fingerprint are locked in publication order during writes; it must match the version's current
 client-hash provenance. Ratings use compare-and-swap revisions and comment POSTs
 use org/reviewer-scoped request UUIDs. No review data is added to share responses.
+
+The authenticated Next.js review proxies preserve the hosted task/version review
+routes, content snapshots, revision checks, and comment cursors. The dashboard
+uses the same API paths in direct mode; no public share route exposes reviews.
