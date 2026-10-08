@@ -618,6 +618,12 @@ export interface TaskOpenAgentModelSummary {
 }
 
 export interface TaskEffortSummary {
+  uncached_input_tokens_sum?: number;
+  uncached_input_tokens_trial_count?: number;
+  cached_input_tokens_sum?: number;
+  cached_input_tokens_trial_count?: number;
+  output_tokens_sum?: number;
+  output_tokens_trial_count?: number;
   completed_trials: number;
   steps_sum: number;
   steps_trial_count: number;

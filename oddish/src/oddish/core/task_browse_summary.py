@@ -179,7 +179,11 @@ async def refresh_task_browse_summaries(
         summary["run_summary"] = {role: row[role] for role in ("model", "oracle", "nop")}
         summary["effort"] = TaskEffortSummary(
             completed_trials=row["effort_completed_trials"],
-            **{key: row[key] for key in ("steps_sum", "steps_trial_count", "tokens_sum", "tokens_trial_count")},
+            **{
+                key: row[key]
+                for key in TaskEffortSummary.model_fields
+                if key != "completed_trials"
+            },
         ).model_dump(mode="json")
 
     billed = TrialModel.billed_user_id.isnot(None)

@@ -342,7 +342,7 @@ export function TaskSortMetric({ task, hidden = false }: { task: TaskBrowseItem;
   const value = field === "created" ? (task.created_at ? formatShortDateTime(task.created_at) : "Unknown")
     : task.sort_value == null ? "Unavailable"
     : field === "cost" ? formatCostUsd(task.sort_value)
-    : field === "avg_tokens" ? new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(task.sort_value)
+    : (field === "avg_tokens" || field.startsWith("avg_") && field.endsWith("_tokens")) ? new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(task.sort_value)
     : `${task.sort_value.toLocaleString(undefined, { maximumFractionDigits: 1 })}${field === "runtime_avg" ? " s" : ""}`;
   return <div className="mx-5 mb-3 text-sm tabular-nums">{label}: <strong>{value}</strong></div>;
 }

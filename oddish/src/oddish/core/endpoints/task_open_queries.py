@@ -285,6 +285,18 @@ AGGREGATE_SQL = text(f"""
           AND tr.input_tokens >= 0 AND tr.output_tokens >= 0), 0) AS effort_tokens_sum,
         count(*) FILTER (WHERE tr.effort_eligible
           AND tr.input_tokens >= 0 AND tr.output_tokens >= 0) AS effort_tokens_trial_count,
+        COALESCE(sum(tr.input_tokens - tr.cache_tokens) FILTER (WHERE tr.effort_eligible
+          AND tr.cache_tokens >= 0 AND tr.input_tokens >= tr.cache_tokens), 0) AS effort_uncached_input_tokens_sum,
+        count(*) FILTER (WHERE tr.effort_eligible
+          AND tr.cache_tokens >= 0 AND tr.input_tokens >= tr.cache_tokens) AS effort_uncached_input_tokens_trial_count,
+        COALESCE(sum(tr.cache_tokens) FILTER (WHERE tr.effort_eligible
+          AND tr.cache_tokens >= 0), 0) AS effort_cached_input_tokens_sum,
+        count(*) FILTER (WHERE tr.effort_eligible
+          AND tr.cache_tokens >= 0) AS effort_cached_input_tokens_trial_count,
+        COALESCE(sum(tr.output_tokens) FILTER (WHERE tr.effort_eligible
+          AND tr.output_tokens >= 0), 0) AS effort_output_tokens_sum,
+        count(*) FILTER (WHERE tr.effort_eligible
+          AND tr.output_tokens >= 0) AS effort_output_tokens_trial_count,
         COALESCE(sum(tr.cost_usd) FILTER (WHERE tr.cost_usd IS NOT NULL), 0.0) AS native_cost,
         count(tr.cost_usd) AS native_count,
         count(*) FILTER (WHERE tr.has_estimatable_tokens) AS estimated_count,

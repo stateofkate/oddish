@@ -44,7 +44,7 @@ type LegacyBlob = { all?: string[]; any?: string[]; none?: string[] };
 const TAG_PARAM_KEYS = ["tags", "tags_any", "tags_none"] as const;
 // Snapshot every browse param (filters + extra backend keys) except tags,
 // which are persisted separately as stable ids.
-const STRUCTURED_KEYS = [...BROWSE_FORWARD_KEYS, "lab", "view", "columns"].filter(
+const STRUCTURED_KEYS = [...BROWSE_FORWARD_KEYS, "lab", "view", "columns", "token_metric"].filter(
   (k) => !TAG_PARAM_KEYS.includes(k as (typeof TAG_PARAM_KEYS)[number]),
 );
 

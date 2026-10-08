@@ -27,6 +27,12 @@ const rows: TaskBrowseItem[] = [
       steps_trial_count: 2,
       tokens_sum: 1500000,
       tokens_trial_count: 1,
+      cached_input_tokens_sum: 600000,
+      cached_input_tokens_trial_count: 2,
+      uncached_input_tokens_sum: 400000,
+      uncached_input_tokens_trial_count: 1,
+      output_tokens_sum: 0,
+      output_tokens_trial_count: 1,
     },
   },
   { ...base, id: "b", name: "Unmeasured task" },
@@ -50,7 +56,7 @@ test("averages follow results; sorting preserves filters and resets pagination",
     "QA outcome",
     "Trials",
     "Avg steps",
-    "Avg tokens",
+    "Avg tokens · TotalAvg tokens · Uncached inputAvg tokens · Cached inputAvg tokens · Output",
     "Delivery history",
     "Details",
   ]);
@@ -62,14 +68,14 @@ test("averages follow results; sorting preserves filters and resets pagination",
     "1 of 2 completed model trials",
   );
   await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "Avg tokens", exact: true }).click();
+  await page.getByRole("button", { name: "Sort by average total tokens", exact: true }).click();
   await expect(page).toHaveURL(/sort=avg_tokens_desc/);
   expect(new URL(page.url()).searchParams.get("offset")).toBeNull();
   expect(new URL(page.url()).searchParams.get("filter_search")).toBe("sample");
   await expect(
     page.getByRole("columnheader", { name: "Avg tokens" }),
   ).toHaveAttribute("aria-sort", "descending");
-  await page.getByRole("button", { name: "Avg tokens", exact: true }).click();
+  await page.getByRole("button", { name: "Sort by average total tokens", exact: true }).click();
   await expect(page).toHaveURL(/sort=avg_tokens_asc/);
   await expect(measured.getByText(/Avg tokens:/)).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath("comparison-desktop.png"), fullPage: true });
@@ -101,4 +107,59 @@ test("saved column choices and missing values remain explicit", async ({
       () => document.documentElement.scrollWidth <= innerWidth,
     ),
   ).toBe(true);
+});
+
+test("token selector switches values, coverage, sort and URL without extra columns", async ({ page }) => {
+  await page.goto("/comparison?view=table&sort=avg_tokens_desc&models=grok&offset=24");
+  const selector = page.getByRole("combobox", { name: "Average token metric" });
+  await selector.selectOption("cached_input");
+  await expect(page).toHaveURL(/sort=avg_cached_input_tokens_desc/);
+  expect(new URL(page.url()).searchParams.get("models")).toBe("grok");
+  expect(new URL(page.url()).searchParams.has("offset")).toBe(false);
+  const measured = page.getByRole("row").filter({ hasText: "Measured task" });
+  await expect(measured.getByText("300K", { exact: true })).toBeVisible();
+  await measured.getByText("300K", { exact: true }).focus();
+  await expect(page.getByRole("tooltip")).toContainText("2 of 2 completed model trials");
+  await page.keyboard.press("Escape");
+  await page.reload();
+  await expect(selector).toHaveValue("cached_input");
+  await selector.selectOption("uncached_input");
+  await expect(measured.getByText("400K", { exact: true })).toBeVisible();
+  await selector.selectOption("output");
+  await expect(measured.getByText("0", { exact: true })).toBeVisible();
+  await expect(page.getByRole("row").filter({ hasText: "Unmeasured task" }).getByText("—", { exact: true })).toHaveCount(2);
+  await expect(page.getByRole("columnheader")).toHaveCount(8);
+});
+
+test("narrow table keeps selector accessible without widening the page", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/comparison?view=table&token_metric=output");
+  const selector = page.getByRole("combobox", { name: "Average token metric" });
+  await selector.selectOption("cached_input");
+  await expect(selector).toHaveValue("cached_input");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({path: testInfo.outputPath("token-selector-mobile.png")});
+});
+
+test("saved views persist and restore token metric with cohort filters", async ({ page }) => {
+  let saved: Record<string, unknown> | null = null;
+  await page.route("**/api/tags", route => route.fulfill({ json: { items: [] } }));
+  await page.route("**/api/tag-filters", async route => {
+    if (route.request().method() === "POST") {
+      saved = { ...route.request().postDataJSON(), id: "saved-token-view" };
+      return route.fulfill({ json: saved });
+    }
+    return route.fulfill({ json: { items: saved ? [saved] : [] } });
+  });
+  await page.goto("/comparison?view=table&token_metric=cached_input&models=grok");
+  await page.getByRole("button", { name: "Saved views", exact: true }).click();
+  await page.getByRole("textbox", { name: "View name" }).fill("Cache comparison");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect.poll(() => saved).not.toBeNull();
+  expect(saved).toMatchObject({ filter_ast: { params: { token_metric: "cached_input", models: "grok" } } });
+  await page.goto("/comparison?view=table");
+  await page.getByRole("button", { name: "Saved views", exact: true }).click();
+  await page.getByRole("button", { name: "Cache comparison", exact: true }).click();
+  await expect(page.getByRole("combobox", { name: "Average token metric" })).toHaveValue("cached_input");
+  expect(new URL(page.url()).searchParams.get("models")).toBe("grok");
 });

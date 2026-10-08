@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils";
 import type { TaskBrowseItem } from "@/lib/types";
 import { formatCostUsd } from "@/lib/format";
 import { TaskCard, TaskDeliveryHistory, TaskEvidence, TaskSortMetric } from "./task-card";
+import { TOKEN_METRICS, selectedTokenMetric, setTokenMetric } from "@/lib/token-metrics";
 import { TaskEffortCell } from "./task-effort-cell";
 import { TaskRunSummary } from "@/components/task-run-summary";
 import { TaskBrowseLink } from "./task-browse-link";
@@ -99,6 +100,7 @@ export function RecentTasksResults({
   const { selection, toggle, deliveryId } = useSelection();
   const expanded = searchParams.get("expanded");
   const sort = searchParams.get("sort");
+  const tokenMetric = selectedTokenMetric(searchParams);
   const view = searchParams.get("view") === "table" || (expanded && !searchParams.has("view")) ? "table" : "cards";
   const columns = TASK_COLUMNS.map((column) => column.label);
   const visibleColumns = searchParams.has("columns")
@@ -106,7 +108,11 @@ export function RecentTasksResults({
     : DEFAULT_COLUMNS;
   const shownColumns = TASK_COLUMNS.filter((column) =>
     visibleColumns.includes(column.label)
-  );
+  ).map(column => column.label === "Avg tokens" ? {
+    ...column,
+    sort: tokenMetric.sort,
+    render: (task: TaskBrowseItem) => <TaskEffortCell effort={task.effort} metric={tokenMetric.field} />,
+  } : column);
   const sp = new URLSearchParams(searchParams.toString());
   const offset = Math.max(Number(sp.get("offset") ?? "0") || 0, 0);
   const { data, error, isLoading, mutate } = useTaskBrowse(sp);
@@ -257,10 +263,19 @@ export function RecentTasksResults({
                   const Icon = active ? (ascending ? ArrowUp : ArrowDown) : ArrowUpDown;
                   return <th key={column.label} className={cn("px-3 whitespace-nowrap", column.sort && "text-right")}
                     aria-sort={column.sort ? (active ? (ascending ? "ascending" : "descending") : "none") : undefined}>
+                    {column.label === "Avg tokens" && <select
+                      aria-label="Average token metric"
+                      className="max-w-full cursor-pointer rounded-sm bg-transparent py-2 text-xs hover:text-foreground focus-visible:outline focus-visible:outline-ring"
+                      value={tokenMetric.value}
+                      onChange={event => updateTaskSearchParams(params => { setTokenMetric(params, event.target.value); }, { resetPage: false })}
+                    >
+                      {TOKEN_METRICS.map(metric => <option key={metric.value} value={metric.value}>Avg tokens · {metric.label}</option>)}
+                    </select>}
                     {column.sort ? <button type="button"
+                      aria-label={column.label === "Avg tokens" ? `Sort by average ${tokenMetric.label.toLowerCase()} tokens` : undefined}
                       className="inline-flex items-center gap-1 whitespace-nowrap rounded-sm py-2 hover:text-foreground focus-visible:outline focus-visible:outline-ring"
                       onClick={() => updateTaskSearchParams(params => params.set("sort", `${column.sort}_${active && !ascending ? "asc" : "desc"}`))}>
-                      {column.label}<Icon className="h-3 w-3" aria-hidden />
+                      {column.label !== "Avg tokens" && column.label}<Icon className="h-3 w-3" aria-hidden />
                     </button> : column.label}
                   </th>;
                 })}

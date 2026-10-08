@@ -24,10 +24,29 @@ def task_effort_columns() -> list[Any]:
     has_tokens = (
         eligible & (TrialModel.input_tokens >= 0) & (TrialModel.output_tokens >= 0)
     )
-    return [
+    columns = [
         func.count().filter(eligible).label("effort_completed_trials"),
         func.coalesce(func.sum(steps).filter(has_steps), 0).label("steps_sum"),
         func.count().filter(has_steps).label("steps_trial_count"),
         func.coalesce(func.sum(tokens).filter(has_tokens), 0).label("tokens_sum"),
         func.count().filter(has_tokens).label("tokens_trial_count"),
     ]
+    measurements = {
+        "uncached_input_tokens": (
+            TrialModel.input_tokens - TrialModel.cache_tokens,
+            (TrialModel.cache_tokens >= 0)
+            & (TrialModel.input_tokens >= TrialModel.cache_tokens),
+        ),
+        "cached_input_tokens": (TrialModel.cache_tokens, TrialModel.cache_tokens >= 0),
+        "output_tokens": (TrialModel.output_tokens, TrialModel.output_tokens >= 0),
+    }
+    for name, (value, valid) in measurements.items():
+        columns.extend(
+            [
+                func.coalesce(func.sum(value).filter(eligible & valid), 0).label(
+                    f"{name}_sum"
+                ),
+                func.count().filter(eligible & valid).label(f"{name}_trial_count"),
+            ]
+        )
+    return columns

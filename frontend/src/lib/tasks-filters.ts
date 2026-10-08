@@ -296,6 +296,9 @@ export const TASK_SORT_FIELDS = [
   { value: "steps_p50", label: "Median steps" },
   { value: "avg_steps", label: "Avg steps" },
   { value: "avg_tokens", label: "Avg tokens" },
+  { value: "avg_uncached_input_tokens", label: "Avg uncached input tokens" },
+  { value: "avg_cached_input_tokens", label: "Avg cached input tokens" },
+  { value: "avg_output_tokens", label: "Avg output tokens" },
   { value: "runtime_avg", label: "Average run time" },
 ];
 

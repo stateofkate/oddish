@@ -1,3 +1,4 @@
+import { effortMeasurement, TOKEN_METRICS, type EffortMetric } from "@/lib/token-metrics";
 import type { TaskEffortSummary } from "@/lib/types";
 import {
   Tooltip,
@@ -10,10 +11,10 @@ export function TaskEffortCell({
   metric,
 }: {
   effort?: TaskEffortSummary;
-  metric: "steps" | "tokens";
+  metric: EffortMetric;
 }) {
-  const count = effort?.[`${metric}_trial_count`] ?? 0;
-  const average = count ? effort![`${metric}_sum`] / count : null;
+  const { count, average } = effortMeasurement(effort, metric);
+  const tokenMetric = TOKEN_METRICS.find(option => option.field === metric);
   const value =
     average === null
       ? "—"
@@ -36,15 +37,13 @@ export function TaskEffortCell({
       <TooltipContent side="bottom" className="max-w-xs">
         <p>
           {count} of {effort?.completed_trials ?? 0} completed model trials have
-          recorded {metric}.
+          recorded {tokenMetric ? `${tokenMetric.label.toLowerCase()} tokens` : "steps"}.
         </p>
         <p>
           Current version. Includes reward passes and failures; excludes Oracle,
           NOP, QA, and infrastructure failures.
         </p>
-        {metric === "tokens" && (
-          <p>Input + output; cache tokens are counted once.</p>
-        )}
+        {tokenMetric && <p>{tokenMetric.description}</p>}
       </TooltipContent>
     </Tooltip>
   );

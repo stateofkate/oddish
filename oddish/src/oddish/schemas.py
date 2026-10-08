@@ -2077,6 +2077,12 @@ class TaskEffortSummary(BaseModel):
     steps_trial_count: int = Field(default=0, ge=0)
     tokens_sum: int = Field(default=0, ge=0)
     tokens_trial_count: int = Field(default=0, ge=0)
+    uncached_input_tokens_sum: int = Field(default=0, ge=0)
+    uncached_input_tokens_trial_count: int = Field(default=0, ge=0)
+    cached_input_tokens_sum: int = Field(default=0, ge=0)
+    cached_input_tokens_trial_count: int = Field(default=0, ge=0)
+    output_tokens_sum: int = Field(default=0, ge=0)
+    output_tokens_trial_count: int = Field(default=0, ge=0)
 
 
 class TaskBrowseItem(BaseModel):

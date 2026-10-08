@@ -73,6 +73,7 @@ async def test_effort_uses_exact_selected_version_completed_model_measurements()
                         "total_steps": 0,
                         "input_tokens": 0,
                         "output_tokens": 0,
+                        "cache_tokens": 0,
                     },
                 ),
                 ("missing", {"total_steps": None, "input_tokens": None}),
@@ -141,7 +142,7 @@ async def test_effort_uses_exact_selected_version_completed_model_measurements()
             )
             migration = (
                 ScriptDirectory.from_config(config)
-                .get_revision("task_effort_001")
+                .get_revision("task_effort_tokens_001")
                 .module
             )
             await session.execute(text(migration._BACKFILL), {"ids": ["v2"]})
@@ -163,6 +164,12 @@ async def test_effort_uses_exact_selected_version_completed_model_measurements()
             "steps_trial_count": 4,
             "tokens_sum": 5_714_326_685,
             "tokens_trial_count": 4,
+            "uncached_input_tokens_sum": 5_714_326_475,
+            "uncached_input_tokens_trial_count": 4,
+            "cached_input_tokens_sum": 200,
+            "cached_input_tokens_trial_count": 5,
+            "output_tokens_sum": 80,
+            "output_tokens_trial_count": 5,
         }
         assert browse_effort == selected.effort
     finally:

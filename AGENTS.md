@@ -3863,3 +3863,20 @@ modal. Reviews load only on opening; each version has an independent SWR key.
 Rating writes use the current revision and comments keep a request UUID across
 retries. Conflicts preserve the draft and request a reload. Public task and
 trial surfaces do not mount this control.
+
+The token selector adds `uncached_input_tokens`, `cached_input_tokens`, and
+`output_tokens` sum/count pairs to `TaskEffortSummary`; original total fields
+and `avg_tokens` sorts retain their meanings. New `avg_<measurement>_asc/desc`
+sorts use the stored summary before pagination, with unmeasured values last.
+Uncached input is exact recorded input minus cache-read tokens, including cache
+writes. It requires both counts and rejects negative values or cache > input;
+cached and output counts independently require nonnegative recorded values.
+Missing cache is not zero. Apply `task_effort_tokens_001` to populate historical
+summaries in resumable batches under the existing per-version advisory locks.
+
+That migration installs a guarded summary-write trigger for overlapping old worker
+images: when the breakdown marker is absent, it fills only the six new fields
+from that version's recorded trial cohort in the same transaction. Existing step
+and total fields remain the writer's values; a NULL snapshot reconstructs those
+base fields too. New writers skip the extra query.
+Downgrade removes the compatibility trigger/function and keeps additive JSON keys.

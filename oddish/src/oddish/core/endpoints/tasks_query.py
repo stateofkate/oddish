@@ -2158,7 +2158,13 @@ async def browse_tasks_core(
 
     # The same per-version snapshot supplies ordering and displayed averages.
     effort_sort = (sort or "").removesuffix("_asc").removesuffix("_desc")
-    if effort_sort in ("avg_steps", "avg_tokens") and sort.endswith(("_asc", "_desc")):
+    if effort_sort in (
+        "avg_steps",
+        "avg_tokens",
+        "avg_uncached_input_tokens",
+        "avg_cached_input_tokens",
+        "avg_output_tokens",
+    ) and sort.endswith(("_asc", "_desc")):
         measurement = effort_sort.removeprefix("avg_")
         effort = TaskBrowseSummaryModel.effort
         metric = effort[f"{measurement}_sum"].as_float() / func.nullif(
