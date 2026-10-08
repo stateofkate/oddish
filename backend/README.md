@@ -1105,3 +1105,10 @@ exception messages. Missing error metadata stays null.
 `GET /trials/{trial_id}/progress-history` requires READ scope and the trial's
 organization. It returns retained setup facts even after live transcript cleanup;
 apply core migration `trial_progress_001` before deploying its ingestion writer.
+
+### Internal task reviews
+
+Backend migration `task_reviews_001` adds version/content-bound rating and comment
+storage only; it enables no routes or notifications. See
+[`docs/task-review-storage.md`](../docs/task-review-storage.md) for columns,
+constraints, deletion policy and the required API tenant checks.

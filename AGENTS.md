@@ -3839,3 +3839,11 @@ filters select tasks, not the effort cohort: effort always describes the shown
 version's completed model trials, matching task detail. Existing task/version FKs
 are unchanged; no new table is introduced. Table columns follow QA and trial results and respect saved
 column selections; sorting is shared with the sidebar and cards.
+
+## Internal task review storage
+
+Hosted `TaskReviewRatingModel` and `TaskReviewCommentModel` live in backend/models.py.
+Their version/content identity must use `task_version_fingerprints`, never the
+uploader-supplied hash. Explicitly filter deleted reviews and subjects; enforce
+org membership and source-trial ownership in the API. Storage migration
+`task_reviews_001` is additive; schema details are in docs/task-review-storage.md.

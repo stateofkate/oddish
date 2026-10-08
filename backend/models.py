@@ -14,6 +14,7 @@ from sqlalchemy import (
     Integer,
     LargeBinary,
     Numeric,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -558,4 +559,88 @@ class EndpointCheckModel(Base):
     __table_args__ = (
         Index("ix_endpoint_checks_history", "monitor_id", "checked_at"),
         Index("ix_endpoint_checks_retention", "checked_at"),
+    )
+
+
+class TaskReviewFields:
+    """Internal feedback belongs to one server-verified version snapshot."""
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid4())
+    )
+    org_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False
+    )
+    reviewer_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    task_version_id: Mapped[str] = mapped_column(
+        String(160), ForeignKey("task_versions.id", ondelete="CASCADE"), nullable=False
+    )
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    content_algorithm: Mapped[str] = mapped_column(String(64), nullable=False)
+    revision: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utcnow,
+        server_default=text("now()"),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utcnow,
+        server_default=text("now()"),
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class TaskReviewRatingModel(TaskReviewFields, Base):
+    __tablename__ = "task_review_ratings"
+    score: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    __table_args__ = (
+        CheckConstraint("score BETWEEN 1 AND 5", name="ck_task_review_rating_score"),
+        CheckConstraint("revision > 0", name="ck_task_review_rating_revision"),
+        UniqueConstraint(
+            "org_id",
+            "task_version_id",
+            "content_algorithm",
+            "content_hash",
+            "reviewer_id",
+            name="uq_task_review_rating_reviewer",
+        ),
+    )
+
+
+class TaskReviewCommentModel(TaskReviewFields, Base):
+    __tablename__ = "task_review_comments"
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    client_request_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    source_trial_id: Mapped[str | None] = mapped_column(
+        String(160), ForeignKey("trials.id", ondelete="SET NULL")
+    )
+    __table_args__ = (
+        CheckConstraint(
+            "char_length(btrim(body)) BETWEEN 1 AND 10000",
+            name="ck_task_review_comment_body",
+        ),
+        CheckConstraint("revision > 0", name="ck_task_review_comment_revision"),
+        UniqueConstraint(
+            "org_id",
+            "reviewer_id",
+            "client_request_id",
+            name="uq_task_review_comment_request",
+        ),
+        Index(
+            "idx_task_review_comments_version",
+            "org_id",
+            "task_version_id",
+            "content_algorithm",
+            "content_hash",
+            "created_at",
+            "id",
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
     )
