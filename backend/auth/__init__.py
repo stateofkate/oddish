@@ -15,7 +15,6 @@ from oddish.core.sharing.helpers import (
     DIRECT_TASK_KEY,
     share_costs_hidden,
     share_hides_costs,
-    share_shows_qa,
     share_viewer_org_id,
 )
 from oddish.db import get_read_session, get_session
@@ -344,7 +343,6 @@ async def set_share_viewer(
     # requests must not hand the previous caller's org to this one.
     share_viewer_org_id.set(None)
     share_hides_costs.set(False)
-    share_shows_qa.set(True)
     if not (authorization or x_clerk_authorization or x_authorization):
         return
     try:
@@ -355,7 +353,7 @@ async def set_share_viewer(
         if not auth.is_authenticated or auth.bound_analysis_trial_id is not None:
             return
         async with get_read_session() as session:
-            org = await require_signin_org(auth.org_id, session=session)
+            await require_signin_org(auth.org_id, session=session)
             key = request.path_params.get("public_token")
             # Directly shared tasks never show what they cost to make.
             hide = key == DIRECT_TASK_KEY or (
@@ -365,7 +363,6 @@ async def set_share_viewer(
         return
     share_viewer_org_id.set(auth.org_id)
     share_hides_costs.set(hide)
-    share_shows_qa.set(org.org_type != "customer" or org.show_shared_qa)
 
 
 async def require_auth(

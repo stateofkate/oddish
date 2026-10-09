@@ -7,6 +7,7 @@ import { Share2, X } from "lucide-react";
 import { apiFetch, fetcher } from "@/lib/api";
 import type { OrgShare, ShareResourceType, ShareableOrg } from "@/lib/types";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import {
   Dialog,
@@ -28,6 +29,36 @@ function useShareableOrgs() {
     orgId ? `/api/org-shares/orgs?org=${encodeURIComponent(orgId)}` : null,
     fetcher,
     { shouldRetryOnError: false, revalidateOnFocus: false }
+  );
+}
+
+type ShareFlags = { show_qa: boolean; show_costs: boolean };
+
+/** What one share lets its grantee see: QA (on by default) and costs (off). */
+export function ShareToggles({
+  share,
+  disabled,
+  onChange,
+}: {
+  share: ShareFlags;
+  disabled: boolean;
+  onChange: (patch: Partial<ShareFlags>) => void;
+}) {
+  const toggle = (key: keyof ShareFlags, label: string) => (
+    <label className="text-muted-foreground flex items-center gap-1.5 text-xs">
+      <Checkbox
+        checked={share[key]}
+        disabled={disabled}
+        onCheckedChange={(checked) => onChange({ [key]: checked === true })}
+      />
+      {label}
+    </label>
+  );
+  return (
+    <>
+      {toggle("show_qa", "Show QA")}
+      {toggle("show_costs", "Show costs")}
+    </>
   );
 }
 
@@ -70,7 +101,10 @@ export function OrgSharePicker({
       if (!res.ok) {
         throw new Error(payload?.detail || payload?.error || "Request failed");
       }
-      await mutate(payload as OrgShare[], false);
+      // Share and revoke answer with the list; a toggle answers with one share.
+      await (Array.isArray(payload)
+        ? mutate(payload as OrgShare[], false)
+        : mutate());
       setSelected("");
       setNotice(done);
       onChange?.();
@@ -87,8 +121,25 @@ export function OrgSharePicker({
       {shares && shares.length > 0 && (
         <ul className="space-y-1 text-sm">
           {shares.map((share) => (
-            <li key={share.id} className="flex items-center justify-between">
-              {share.grantee_org_name}
+            <li key={share.id} className="flex items-center gap-3">
+              <span className="min-w-0 flex-1 truncate">
+                {share.grantee_org_name}
+              </span>
+              <ShareToggles
+                share={share}
+                disabled={busy}
+                onChange={(patch) =>
+                  run(
+                    `/api/org-shares/${encodeURIComponent(share.id)}`,
+                    {
+                      method: "PATCH",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify(patch),
+                    },
+                    `Updated ${share.grantee_org_name}`
+                  )
+                }
+              />
               <Button
                 type="button"
                 variant="ghost"

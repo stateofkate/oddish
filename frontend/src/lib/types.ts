@@ -1492,6 +1492,8 @@ export interface OrgShare {
   grantee_org_name: string;
   resource_type: ShareResourceType;
   resource_id: string;
+  show_costs: boolean;
+  show_qa: boolean;
   created_at: string;
 }
 
@@ -1503,7 +1505,6 @@ export interface CustomerOrg {
   share_count: number;
   image_url: string | null;
   members_count: number | null;
-  show_shared_qa: boolean;
 }
 
 export interface DeliveryCustomer {
@@ -1553,6 +1554,7 @@ export interface CustomerShare {
   /** Deleted, or a delivery not finalized yet: grants nothing for now. */
   inactive: boolean;
   show_costs: boolean;
+  show_qa: boolean;
   shared_at: string;
 }
 

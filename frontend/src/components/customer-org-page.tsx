@@ -25,6 +25,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { ShareToggles } from "@/components/org-share-picker";
 
 export const ACCESS_LABEL: Record<CustomerOrg["access"], string> = {
   viewer: "View-only",
@@ -668,24 +669,6 @@ function SharingSection({
       () => send(`/api/org-shares/${encodeURIComponent(shareId)}`, "DELETE"),
       refresh
     );
-  const costsToggle = (row: CustomerShare) => (
-    <label className="text-muted-foreground flex items-center gap-1.5 text-xs">
-      <Checkbox
-        checked={row.show_costs}
-        disabled={busy}
-        onCheckedChange={(checked) =>
-          run(
-            () =>
-              send(`/api/org-shares/${encodeURIComponent(row.id)}`, "PATCH", {
-                show_costs: checked === true,
-              }),
-            refresh
-          )
-        }
-      />
-      Show costs
-    </label>
-  );
 
   const linkCustomer = (customerId: string, linked: boolean) =>
     run(
@@ -705,21 +688,6 @@ function SharingSection({
 
   return (
     <div className="space-y-8">
-      <label className="flex items-center gap-2 text-sm">
-        <Checkbox
-          checked={org.show_shared_qa}
-          disabled={busy}
-          onCheckedChange={(checked) =>
-            run(
-              () =>
-                send(`${base}/shared-qa`, "PUT", { show: checked === true }),
-              refresh
-            )
-          }
-        />
-        Show QA on shared samples
-      </label>
-
       <Subsection title="Delivery customers">
         <ul className="divide-y rounded-md border text-sm">
           {deliveryCustomers.map((customer) => (
@@ -756,7 +724,21 @@ function SharingSection({
                     {INACTIVE_LABEL[row.resource_type]}
                   </Badge>
                 ) : (
-                  costsToggle(row)
+                  <ShareToggles
+                    share={row}
+                    disabled={busy}
+                    onChange={(patch) =>
+                      run(
+                        () =>
+                          send(
+                            `/api/org-shares/${encodeURIComponent(row.id)}`,
+                            "PATCH",
+                            patch
+                          ),
+                        refresh
+                      )
+                    }
+                  />
                 )}
                 <Button
                   variant="ghost"

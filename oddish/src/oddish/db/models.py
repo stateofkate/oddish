@@ -2950,6 +2950,10 @@ class OrgShareModel(TimestampedMixin, Base):
     show_costs: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("false")
     )
+    # Whether the grantee sees QA verdicts and analysis.
+    show_qa: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true")
+    )
 
 
 class FeedbackModel(Base):

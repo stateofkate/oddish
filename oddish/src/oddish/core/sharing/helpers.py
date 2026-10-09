@@ -51,9 +51,6 @@ share_viewer_org_id: ContextVar[str | None] = ContextVar(
 )
 # Set per request alongside it: blank cost figures for this viewer.
 share_hides_costs: ContextVar[bool] = ContextVar("share_hides_costs", default=False)
-# False when the viewer is a customer org Abundant has not opened QA to.
-share_shows_qa: ContextVar[bool] = ContextVar("share_shows_qa", default=True)
-
 
 # The share key that opens shared tasks themselves: experiment ids and tokens
 # never take this value.
@@ -136,8 +133,8 @@ def experiment_shares_query(experiment_id):
 
 
 def shared_tasks_query(org_id: str):
-    """(task_id, task_version_id, delivery_id, shared_at) for every task an org
-    can open: shared directly, in a finalized delivery shared with it (pinned
+    """(task_id, task_version_id, delivery_id, shared_at, show_qa) for every
+    task an org can open: shared directly, in a finalized delivery shared with it (pinned
     to the shipped version), or in an experiment shared with it. A task can
     appear more than once."""
     live = (
@@ -149,6 +146,7 @@ def shared_tasks_query(org_id: str):
         null().label("task_version_id"),
         null().label("delivery_id"),
         OrgShareModel.created_at.label("shared_at"),
+        OrgShareModel.show_qa.label("show_qa"),
     ).where(*live, OrgShareModel.resource_type == "task")
     delivered = (
         select(
@@ -156,6 +154,7 @@ def shared_tasks_query(org_id: str):
             DeliveryTaskModel.pinned_version_id,
             DeliveryModel.id,
             DeliveryModel.finalized_at,
+            OrgShareModel.show_qa,
         )
         .join(DeliveryModel, DeliveryModel.id == DeliveryTaskModel.delivery_id)
         .join(OrgShareModel, OrgShareModel.resource_id == DeliveryModel.id)
@@ -174,6 +173,7 @@ def shared_tasks_query(org_id: str):
             null(),
             null(),
             OrgShareModel.created_at,
+            OrgShareModel.show_qa,
         )
         .join(
             OrgShareModel,
@@ -207,6 +207,20 @@ async def find_shared_task(
                 TaskModel.org_id == viewer_org_id,
                 exists(select(literal(1)).where(grants.c.task_id == TaskModel.id)),
             ),
+        )
+    )
+
+
+async def task_shows_qa(
+    session: AsyncSession, task: TaskModel, viewer_org_id: str | None
+) -> bool:
+    """QA shows on a shared task when any grant reaching it allows QA."""
+    if viewer_org_id is None or task.org_id == viewer_org_id:
+        return True
+    grants = shared_tasks_query(viewer_org_id).subquery()
+    return bool(
+        await session.scalar(
+            select(exists().where(grants.c.task_id == task.id, grants.c.show_qa))
         )
     )
 
@@ -271,11 +285,15 @@ async def get_public_experiment(
     )
     if not found:
         return None
-    experiment = found[0]
+    experiment, shares = found
+    viewer = share_viewer_org_id.get()
     if public_token == experiment.id:
-        # The viewer org's QA setting decides; the per-link opt-in only
-        # governs anonymous token links. Committed value: never written back.
-        set_committed_value(experiment, "show_qa", share_shows_qa.get())
+        # The owner, or the viewer's own shares, decide; the per-link opt-in
+        # only governs anonymous token links. Committed value: never written back.
+        show = viewer == experiment.org_id or any(
+            s.show_qa for s in shares if s.grantee_org_id == viewer
+        )
+        set_committed_value(experiment, "show_qa", show)
     return experiment
 
 
@@ -324,7 +342,8 @@ async def get_public_task_for_experiment(
                 return None
         set_committed_value(task, "trials", [])
         # Unsaved stand-in so every experiment-keyed route serves it unchanged.
-        return ExperimentModel(id=None, show_qa=share_shows_qa.get()), task, set()
+        show_qa = await task_shows_qa(session, task, viewer_org_id)
+        return ExperimentModel(id=None, show_qa=show_qa), task, set()
     experiment = await get_public_experiment(session, public_token)
     if not experiment:
         return None

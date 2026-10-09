@@ -38,7 +38,7 @@ harbor run -p ./task-7f3a -a claude-code -m anthropic/claude-opus-5-5
 
 ## What you do not see
 
-Abundant's QA results appear on tasks and samples only when Abundant turns them on for your organization. Costs are hidden unless Abundant chose to show them. Other customers' work and Abundant's internal notes never appear.
+Abundant chooses for each thing it shares whether you see its QA results (shown unless Abundant turned them off) and its costs (hidden unless Abundant turned them on), so one sample can show QA while another does not. Other customers' work and Abundant's internal notes never appear.
 
 ## Access
 

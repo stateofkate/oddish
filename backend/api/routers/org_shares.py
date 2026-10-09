@@ -50,6 +50,7 @@ class OrgShareResponse(BaseModel):
     resource_type: str
     resource_id: str
     show_costs: bool
+    show_qa: bool
     created_at: datetime
 
 
@@ -68,7 +69,8 @@ class CreateOrgShareRequest(BaseModel):
 
 
 class UpdateOrgShareRequest(BaseModel):
-    show_costs: bool
+    show_costs: bool | None = None
+    show_qa: bool | None = None
 
 
 class SharedExperiment(BaseModel):
@@ -98,7 +100,7 @@ async def incoming_experiments(
 ) -> list[SharedExperiment]:
     """Experiments shared with ``org_id``, newest share first."""
     rows = await session.execute(
-        select(ExperimentModel, OrgShareModel.created_at)
+        select(ExperimentModel, OrgShareModel.created_at, OrgShareModel.show_qa)
         .join(OrgShareModel, OrgShareModel.resource_id == ExperimentModel.id)
         .where(
             OrgShareModel.grantee_org_id == org_id,
@@ -107,11 +109,8 @@ async def incoming_experiments(
         )
         .order_by(OrgShareModel.created_at.desc())
     )
-    viewer = await session.get(OrganizationModel, org_id) if org_id else None
-    # Customer orgs see QA only when Abundant has opened it to them.
-    show_qa = viewer is None or viewer.org_type != "customer" or viewer.show_shared_qa
     result = []
-    for experiment, at in rows.all():
+    for experiment, at, show_qa in rows.all():
         # The sample page's own summary, so the list never disagrees with it.
         # ponytail: one summary per shared sample; a customer has a handful.
         summary = await experiment_page_summary(
@@ -198,6 +197,7 @@ async def _shares_for(
             resource_type=share.resource_type,
             resource_id=share.resource_id,
             show_costs=share.show_costs,
+            show_qa=share.show_qa,
             created_at=share.created_at,
         )
         for share, name in rows.all()
@@ -346,11 +346,14 @@ async def update_org_share(
     payload: UpdateOrgShareRequest,
     auth: Annotated[AuthContext, Depends(require_admin)],
 ) -> OrgShareResponse:
-    """Show or hide experiment costs from the grantee."""
+    """Show or hide costs or QA from the grantee."""
     require_operator_org(auth)
     async with get_session() as session:
         share = await _live_share(session, share_id)
-        share.show_costs = payload.show_costs
+        if payload.show_costs is not None:
+            share.show_costs = payload.show_costs
+        if payload.show_qa is not None:
+            share.show_qa = payload.show_qa
         await session.commit()
         org = await session.get(OrganizationModel, share.grantee_org_id)
         return OrgShareResponse(
@@ -360,6 +363,7 @@ async def update_org_share(
             resource_type=share.resource_type,
             resource_id=share.resource_id,
             show_costs=share.show_costs,
+            show_qa=share.show_qa,
             created_at=share.created_at,
         )
 

@@ -8,6 +8,14 @@
     "title": "Terms used in these guides"
   },
   {
+    "slug": "guides/website",
+    "title": "Use the website"
+  },
+  {
+    "slug": "guides/settings",
+    "title": "Settings and API keys"
+  },
+  {
     "slug": "guides/first-run",
     "title": "Run a task"
   },

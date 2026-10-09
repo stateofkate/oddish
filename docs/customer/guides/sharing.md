@@ -18,6 +18,10 @@ oddish unpublish EXPERIMENT_ID
 
 This cannot erase copies someone already downloaded.
 
+## Share with another organization
+
+Abundant can share an experiment, task or delivery with another organization instead of publishing a link. Only members of that organization can open it. Each share has two switches, set in the **Share** dialog: **Show QA** (on by default) and **Show costs** (off by default).
+
 ## Collect trials without publishing
 
 Replace `TASK_ID` with a task in your workspace:

@@ -97,10 +97,6 @@ class OrganizationModel(TimestampedMixin, Base):
     org_type: Mapped[str] = mapped_column(
         String(16), default="internal", server_default="internal", nullable=False
     )
-    # Customer orgs see QA on shared samples only when Abundant turns this on.
-    show_shared_qa: Mapped[bool] = mapped_column(
-        Boolean, default=False, server_default=text("false"), nullable=False
-    )
 
     # Relationships
     users: Mapped[list["UserModel"]] = relationship(  # type: ignore[assignment]

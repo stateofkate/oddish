@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { docsBundle } from "./docs-bundle.mjs";
 
 const nextConfig: NextConfig = {
   allowedDevOrigins: ["local.oddish.app"],
@@ -9,6 +10,7 @@ const nextConfig: NextConfig = {
     },
   },
   env: {
+    ODDISH_DOCS_BUNDLE: docsBundle(),
     // Opt this combined branch's preview into direct calls; other deployments
     // retain the explicit flag/default. Template names are public, not secrets.
     NEXT_PUBLIC_API_DIRECT:

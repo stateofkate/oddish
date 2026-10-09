@@ -43,6 +43,8 @@ test("a customer org is sent to /shared and its nav lists only shared views", as
   await page.goto("/leaderboard");
   await expect(page).toHaveURL(/\/shared$/);
   const nav = page.locator("nav[data-page-sticky-header]");
+  // Docs leads the nav for every org, view-only ones included.
+  await expect(nav.getByRole("link", { name: "Docs" })).toBeVisible();
   for (const label of ["Samples", "Tasks"])
     await expect(nav.getByRole("link", { name: label })).toBeVisible();
   await expect(nav.getByRole("link", { name: "Deliveries" })).toHaveCount(0);
@@ -184,9 +186,15 @@ test("sharing confirms and then says every customer org has it", async ({
 }) => {
   await clerk(page, { isSignedIn: true });
   let shares: OrgShare[] = [];
+  let patched: unknown = null;
   await page.route("**/api/org-shares**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
+    if (request.method() === "PATCH") {
+      patched = request.postDataJSON();
+      shares = [{ ...shares[0], show_qa: false }];
+      return route.fulfill({ json: shares[0] });
+    }
     if (url.pathname === "/api/org-shares/orgs")
       return route.fulfill({
         json: [{ id: "org-c", name: "Cursive", slug: "cursive" }],
@@ -199,8 +207,10 @@ test("sharing confirms and then says every customer org has it", async ({
           grantee_org_name: "Cursive",
           resource_type: "experiment",
           resource_id: "exp-shared",
+          show_costs: false,
+          show_qa: true,
           created_at: "2026-10-09T12:00:00Z",
-        } as OrgShare,
+        },
       ];
     return route.fulfill({ json: shares });
   });
@@ -210,6 +220,13 @@ test("sharing confirms and then says every customer org has it", async ({
   await expect(page.getByRole("status")).toHaveText("Shared with Cursive");
   await expect(page.getByText("Shared with every customer org.")).toBeVisible();
   await expect(page.getByText("No orgs left")).toHaveCount(0);
+  // A new share shows QA and hides costs; each switch saves on its own.
+  const qa = page.getByRole("checkbox", { name: "Show QA" });
+  await expect(qa).toBeChecked();
+  await expect(page.getByRole("checkbox", { name: "Show costs" })).not.toBeChecked();
+  await qa.click();
+  await expect.poll(() => patched).toEqual({ show_qa: false });
+  await expect(qa).not.toBeChecked();
 });
 
 test("with no customer orgs there is nothing to share with", async ({
@@ -243,4 +260,37 @@ test("a public share link loads even when Clerk never does", async ({
   );
   await page.goto(`/share/${token}`);
   await read;
+});
+
+test("docs list the guides each org can use and link between them", async ({
+  page,
+}) => {
+  await clerk(page, { isSignedIn: true });
+  await api(page, { org_type: "customer", access: "execution" });
+  await page.goto("/docs");
+  const side = page.locator("article").locator("..").locator("nav");
+  await expect(page.getByRole("heading", { name: "Getting started" })).toBeVisible();
+  await expect(side.getByRole("link", { name: "Run a task" })).toBeVisible();
+  // Abundant-only features have no guide for a customer org.
+  await expect(side.getByRole("link", { name: "Review a delivery" })).toHaveCount(0);
+  await page.locator("article").getByRole("link", { name: "Troubleshooting" }).click();
+  await expect(page).toHaveURL(/\/docs\/troubleshooting$/);
+  await expect(page.getByRole("heading", { name: "Troubleshooting" })).toBeVisible();
+});
+
+test("a view-only org's docs are setup, terms and shared data", async ({
+  page,
+}) => {
+  await clerk(page, { isSignedIn: true });
+  await api(page, { org_type: "customer", access: "viewer" });
+  await page.goto("/docs/shared/use-shared-data");
+  await expect(page).toHaveURL(/\/docs\/shared\/use-shared-data$/);
+  const side = page.locator("article").locator("..").locator("nav");
+  await expect(side.getByRole("link")).toHaveText([
+    "Getting started",
+    "Terms used in these guides",
+    "Use data Abundant shares with you",
+  ]);
+  await page.goto("/docs/guides/first-run");
+  await expect(page.getByText("Page not found.")).toBeVisible();
 });

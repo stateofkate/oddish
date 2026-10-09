@@ -64,8 +64,6 @@ const navSwitcherAppearance = {
   },
 };
 
-const DOCS_URL = "https://github.com/abundant-ai/oddish/blob/main/DOCS.md";
-
 type NavLink = {
   href: string;
   label: string;
@@ -100,6 +98,13 @@ const PRIMARY_NAV_LINKS: NavLink[] = [
     icon: <Trophy className="h-4 w-4" />,
   },
 ];
+
+const DOCS_NAV_LINK: NavLink = {
+  href: "/docs",
+  label: "Docs",
+  icon: <BookOpen className="h-4 w-4" />,
+  prefix: true,
+};
 
 const SHARED_NAV_LINK: NavLink = {
   href: "/shared",
@@ -143,16 +148,21 @@ export function Nav() {
   const isOrgAdmin = isOrgAdminRole(orgRole) && !viewer && !customer;
   // Other orgs get the Shared link once something is shared with them.
   const { data: incoming } = useIncomingShares();
-  const navLinks = viewer
-    ? CUSTOMER_NAV_LINKS
-    : customer
-      ? [
-          ...PRIMARY_NAV_LINKS.filter((l) => !ABUNDANT_ONLY_HREFS.has(l.href)),
-          SHARED_NAV_LINK,
-        ]
-      : incoming?.length
-        ? [...PRIMARY_NAV_LINKS, SHARED_NAV_LINK]
-        : PRIMARY_NAV_LINKS;
+  const navLinks = [
+    DOCS_NAV_LINK,
+    ...(viewer
+      ? CUSTOMER_NAV_LINKS
+      : customer
+        ? [
+            ...PRIMARY_NAV_LINKS.filter(
+              (l) => !ABUNDANT_ONLY_HREFS.has(l.href)
+            ),
+            SHARED_NAV_LINK,
+          ]
+        : incoming?.length
+          ? [...PRIMARY_NAV_LINKS, SHARED_NAV_LINK]
+          : PRIMARY_NAV_LINKS),
+  ];
 
   return (
     <nav
@@ -190,18 +200,6 @@ export function Nav() {
                     </Link>
                   </DropdownMenuItem>
                 ))}
-                <DropdownMenuSeparator className="my-1" />
-                <DropdownMenuItem asChild>
-                  <a
-                    href={DOCS_URL}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="hover:bg-muted focus:bg-muted flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-hidden"
-                  >
-                    <BookOpen className="h-4 w-4" />
-                    Docs
-                  </a>
-                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
             <Link href={orgHref("/dashboard")} className="shrink-0 sm:hidden">
@@ -243,17 +241,6 @@ export function Nav() {
             <ThemeToggle />
             {isLoaded && isSignedIn && (
               <>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  asChild
-                  className="text-foreground hover:text-foreground hidden gap-2 sm:inline-flex"
-                >
-                  <a href={DOCS_URL} target="_blank" rel="noreferrer">
-                    <BookOpen className="h-4 w-4" />
-                    <span>Docs</span>
-                  </a>
-                </Button>
                 <OrganizationSwitcher
                   hidePersonal
                   appearance={navSwitcherAppearance}
