@@ -70,7 +70,7 @@ dev = [
 [tool.uv.sources]
 oddish = { path = "../oddish", editable = true }
 # Mirror oddish/src/oddish/harbor-pin.toml (run oddish/scripts/sync_harbor_pin.py).
-harbor = { git = "https://github.com/abundant-ai/harbor", rev = "a2a0f8e790380a36711a91b92eddc6cbdf92dbe1" }
+harbor = { git = "https://github.com/abundant-ai/harbor", rev = "b19553b932fb6e9105a7dfe0acb52214e9ff05fb" }
 
 [tool.uv]
 override-dependencies = ["harbor==0.16.1"]
