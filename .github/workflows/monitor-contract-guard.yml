@@ -106,7 +106,7 @@ jobs:
         password: ${{ secrets.GITHUB_TOKEN }}
     services:
       monitor-postgres:
-        image: postgres:16-alpine
+        image: public.ecr.aws/docker/library/postgres:16-alpine
         env:
           POSTGRES_USER: oddish
           POSTGRES_PASSWORD: oddish
