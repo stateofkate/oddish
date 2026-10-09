@@ -74,6 +74,9 @@ import {
 import { reconcileTrialLifecycle } from "@/lib/trial-lifecycle";
 import { HarborStageTimeline } from "@/components/harbor-stage-timeline";
 import { HarborStageBadge } from "@/components/harbor-stage-badge";
+import { TrialTokenCount } from "@/components/trial-token-count";
+import { hasAgentRunEnded, reconcileAgentRunProgress } from "@/lib/trial-agent-run";
+import { TrialAgentRunCard } from "@/components/trial-agent-run-card";
 import { TrialProgress } from "@/components/trial-progress";
 import { TimingBreakdownBar } from "@/components/timing-breakdown-bar";
 import { CodeBlock } from "@/components/code-block";
@@ -83,7 +86,6 @@ import { stepIdsLabel } from "@/lib/trajectory-segments";
 import {
   costEstimateMarks,
   formatCostUsd,
-  formatTokenCount,
   hasDisplayableCostUsd,
   sumTaskTrialCost,
 } from "@/lib/format";
@@ -793,7 +795,7 @@ export function TrialDetailPanel({
   // Public result pages carry compact trial rows. Read the shared task to
   // fill in report evidence and agent timing without using the private
   // trial-detail route; the backend strips QA when the share hides it.
-  const { data: publicTask } = useSWR<Task>(
+  const { data: publicTask, error: publicTaskError, mutate: revalidatePublicTask } = useSWR<Task>(
     isOpen && readOnly && task?.id
       ? `${apiBaseUrl}/tasks/${encodeURIComponent(task.id)}`
       : null,
@@ -857,18 +859,32 @@ export function TrialDetailPanel({
   const actionsReady = !loadTrialDetail || canonicalTrial !== null;
   const trial = canonicalTrial ?? selectedTrial;
   const progressTrial = reconcileTrialLifecycle(canonicalTrial, selectedTrial);
-  // The table owns its list cache; detail owns a separate SWR key. A terminal
-  // list update must invalidate that detail even while its request is delayed.
+  const agentRunTrial = reconcileAgentRunProgress(progressTrial, selectedTrial);
+  const agentRunProgressAhead = Boolean(canonicalTrial && agentRunTrial &&
+    (canonicalTrial.harbor_stage !== agentRunTrial.harbor_stage ||
+      canonicalTrial.status !== agentRunTrial.status));
   const lifecycleSignal = selectedTrial
-    ? `${selectedTrial.id}:${selectedTrial.attempts}:${selectedTrial.status}:${selectedTrial.finished_at ?? ""}`
+    ? `${selectedTrial.id}:${selectedTrial.attempts}:${selectedTrial.status}:${selectedTrial.harbor_stage ?? ""}:${selectedTrial.finished_at ?? ""}`
     : null;
+  const [agentTimingRefresh, setAgentTimingRefresh] = useState<string | null>(null);
+  const agentTimingUpdating = Boolean(agentRunTrial &&
+    hasAgentRunEnded(agentRunTrial.harbor_stage) &&
+    !(readOnly ? publicTaskError : trialDetailError) &&
+    agentTimingRefresh !== null && agentTimingRefresh === lifecycleSignal);
+  // List progress must refresh its independent detail cache at each phase boundary.
   const lastLifecycleSignal = useRef<string | null>(null);
   useEffect(() => {
-    if (!isOpen || !loadTrialDetail || !canonicalTrial || !lifecycleSignal) return;
+    if (!isOpen || (!readOnly && !loadTrialDetail) || !canonicalTrial || !lifecycleSignal) return;
     if (lastLifecycleSignal.current === lifecycleSignal) return;
     lastLifecycleSignal.current = lifecycleSignal;
-    if (reconcileTrialLifecycle(canonicalTrial, selectedTrial) !== canonicalTrial) void revalidateTrial();
-  }, [isOpen, loadTrialDetail, canonicalTrial, selectedTrial, lifecycleSignal, revalidateTrial]);
+    if (agentRunProgressAhead || reconcileTrialLifecycle(canonicalTrial, selectedTrial) !== canonicalTrial) {
+      setAgentTimingRefresh(lifecycleSignal);
+      void (readOnly ? revalidatePublicTask() : revalidateTrial())
+        .catch(() => {})
+        .finally(() => setAgentTimingRefresh(current =>
+          current === lifecycleSignal ? null : current));
+    }
+  }, [isOpen, readOnly, loadTrialDetail, canonicalTrial, selectedTrial, lifecycleSignal, agentRunProgressAhead, revalidateTrial, revalidatePublicTask]);
   const verifierSummary = embeddedCtrfSummary(trial?.result);
   // Only trials whose verifier published a robot playback manifest get the
   // Scene tab. Coding-agent trials have no descriptor or an ``absent`` one,
@@ -1542,8 +1558,7 @@ export function TrialDetailPanel({
                 </div>
               </CardContent>
             </Card>
-            {((!readOnly && trial.total_steps != null) ||
-              trial.cost_usd != null ||
+            {(trial.cost_usd != null ||
               trial.input_tokens != null ||
               trial.output_tokens != null ||
               // A trial can be QA'd without the agent ever reporting a cost;
@@ -1589,28 +1604,17 @@ export function TrialDetailPanel({
                       />
                       <VerifierCostSuffix costUsd={trial.verifier_cost_usd} />
                     </div>
-                    {((!readOnly && trial.total_steps != null) ||
-                      trial.input_tokens != null ||
+                    {(trial.input_tokens != null ||
                       trial.output_tokens != null) && (
                       <div className="text-muted-foreground mt-1 font-mono text-[9px] leading-none">
-                        {(!readOnly && trial.total_steps != null) &&
-                          `${trial.total_steps.toLocaleString()} steps`}
-                        {(!readOnly && trial.total_steps != null) &&
-                          (trial.input_tokens != null ||
-                            trial.output_tokens != null) &&
-                          " · "}
-                        {(trial.input_tokens != null ||
-                          trial.output_tokens != null) &&
-                          formatTokenCount(
-                            (trial.input_tokens ?? 0) +
-                              (trial.output_tokens ?? 0)
-                          )}
+                        <TrialTokenCount trial={trial} />
                       </div>
                     )}
                   </div>
                 </CardContent>
               </Card>
             )}
+            <TrialAgentRunCard trial={agentRunTrial ?? trial} updating={agentTimingUpdating} />
             {showRetry && (
               <Button
                 onClick={handleRetry}

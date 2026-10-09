@@ -202,7 +202,9 @@ test("compact cards keep exact outcomes, direct filters and expandable evidence"
   release!();
   await expect(page.getByRole("link", { name: validation.name, exact: true })).toHaveCount(0);
   const selection = page.waitForRequest(request => request.url().includes("/api/tasks/browse/ids?"));
-  await page.getByRole("button", { name: /Select .*matching tasks/ }).click();
+  const selectMatching = page.getByRole("button", { name: /Select .*matching tasks/ });
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await selectMatching.click();
   expect(new URL((await selection).url()).searchParams.get("run_coverage")).toBe("in_progress");
   await page.screenshot({ path: "tasks-mece-preview.png", fullPage: true });
   summaryUnavailable = true;

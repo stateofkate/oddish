@@ -4,6 +4,7 @@ export default defineConfig({
   testDir: "e2e",
   testMatch: [
     "task-reviews.spec.ts",
+    "trial-agent-run.spec.ts",
     "robot-recording.spec.ts",
     "qa-evals.spec.ts",
     "qa-feedback.spec.ts",
