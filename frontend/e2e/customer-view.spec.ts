@@ -100,7 +100,26 @@ test("samples list what each one holds", async ({ page }) => {
       description: "Kernel tasks",
       shared_at: "2026-10-08T12:00:00Z",
       task_count: 2,
-      run_count: 1,
+      run_count: 14,
+      summary: {
+        task_count: 2,
+        trial_count: 14,
+        completed: 14,
+        failed: 0,
+        skipped: 0,
+        active: 0,
+        reward_sum: 9,
+        reward_total: 14,
+        pass_count: 8,
+        partial_count: 2,
+        fail_count: 4,
+        harness_error_count: 0,
+        average_score: 0.64,
+        qa_accepted: 1,
+        qa_rejected: 1,
+        qa_running: 0,
+        qa_failed: 0,
+      },
     },
   ];
   await api(
@@ -111,7 +130,8 @@ test("samples list what each one holds", async ({ page }) => {
   await page.goto("/shared");
   await expect(page.getByRole("heading", { name: "Samples" })).toBeVisible();
   const row = page.getByRole("link", { name: /gpu sample/ });
-  await expect(row).toContainText("2 tasks · 1 run");
+  for (const text of ["Tasks2", "Runs14", "Score64%", "1 / 1"])
+    await expect(row).toContainText(text);
   await expect(row).toHaveAttribute("href", "/shared/exp-shared");
 });
 

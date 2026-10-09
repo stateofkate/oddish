@@ -1561,6 +1561,7 @@ export interface SharedExperiment {
   shared_at: string;
   task_count: number;
   run_count: number;
+  summary?: ExperimentPageSummary | null;
 }
 
 export interface SharedTask {

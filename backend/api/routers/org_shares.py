@@ -28,7 +28,8 @@ from oddish.db import (
     get_session,
     utcnow,
 )
-from oddish.core.endpoints.experiment_page import experiment_counts
+from oddish.core.endpoints.experiment_page import experiment_page_summary
+from oddish.schemas import ExperimentPageSummary
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -77,6 +78,8 @@ class SharedExperiment(BaseModel):
     shared_at: datetime
     task_count: int = 0
     run_count: int = 0
+    # Scores and QA as the sample's page shows them; never costs.
+    summary: ExperimentPageSummary | None = None
 
 
 class SharedTask(BaseModel):
@@ -107,7 +110,7 @@ async def incoming_experiments(
     for experiment, at in rows.all():
         # The sample page's own summary, so the list never disagrees with it.
         # ponytail: one summary per shared sample; a customer has a handful.
-        task_count, run_count = await experiment_counts(
+        summary = await experiment_page_summary(
             session, experiment_id=experiment.id, org_id=experiment.org_id
         )
         result.append(
@@ -116,8 +119,9 @@ async def incoming_experiments(
                 name=experiment.name,
                 description=experiment.description,
                 shared_at=at,
-                task_count=task_count,
-                run_count=run_count,
+                task_count=summary.task_count,
+                run_count=summary.trial_count,
+                summary=summary,
             )
         )
     return result

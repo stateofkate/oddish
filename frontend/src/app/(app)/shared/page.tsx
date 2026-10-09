@@ -1,58 +1,117 @@
 "use client";
 
 import Link from "next/link";
+import { ArrowRight } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useIncomingShares } from "@/lib/use-org-access";
 import { useOrgHref } from "@/lib/use-org-href";
-import { formatRelativeTime } from "@/lib/utils";
+import type { SharedExperiment } from "@/lib/types";
+import { formatDate } from "@/lib/format";
 
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
+        {label}
+      </div>
+      <div className="font-mono text-lg tabular-nums">{value}</div>
+    </div>
+  );
+}
+
+/** Runs split by outcome: passed, partial credit, failed. */
+function OutcomeBar({ sample }: { sample: SharedExperiment }) {
+  const s = sample.summary;
+  const total = s ? s.pass_count + s.partial_count + s.fail_count : 0;
+  if (!s || total === 0) return <div className="bg-muted h-1.5 rounded-full" />;
+  const part = (n: number) => `${(n / total) * 100}%`;
+  return (
+    <div
+      className="bg-muted flex h-1.5 overflow-hidden rounded-full"
+      title={`${s.pass_count} passed · ${s.partial_count} partial · ${s.fail_count} failed`}
+    >
+      <div className="bg-emerald-500" style={{ width: part(s.pass_count) }} />
+      <div className="bg-amber-500" style={{ width: part(s.partial_count) }} />
+      <div className="bg-red-500" style={{ width: part(s.fail_count) }} />
+    </div>
+  );
+}
+
+function SampleCard({
+  sample,
+  href,
+}: {
+  sample: SharedExperiment;
+  href: string;
+}) {
+  const s = sample.summary;
+  const score =
+    s?.average_score != null ? `${Math.round(s.average_score * 100)}%` : "—";
+  const qa = s ? `${s.qa_accepted} / ${s.qa_rejected}` : "—";
+  return (
+    <Link
+      href={href}
+      className="bg-card hover:border-foreground/30 group flex flex-col gap-4 rounded-lg border p-5 transition-colors"
+    >
+      <div className="min-w-0">
+        <div className="flex items-start justify-between gap-3">
+          <h2 className="truncate text-base font-semibold">{sample.name}</h2>
+          <ArrowRight className="text-muted-foreground group-hover:text-foreground mt-0.5 h-4 w-4 shrink-0 transition-colors" />
+        </div>
+        {sample.description && (
+          <p className="text-muted-foreground mt-1 line-clamp-2 text-sm">
+            {sample.description}
+          </p>
+        )}
+      </div>
+      <div className="grid grid-cols-4 gap-3">
+        <Stat label="Tasks" value={String(sample.task_count)} />
+        <Stat label="Runs" value={String(sample.run_count)} />
+        <Stat label="Score" value={score} />
+        <Stat label="QA ✓ / ✗" value={qa} />
+      </div>
+      <OutcomeBar sample={sample} />
+      <div className="text-muted-foreground text-xs">
+        Shared {formatDate(sample.shared_at)}
+      </div>
+    </Link>
+  );
+}
 
 export default function SharedPage() {
   const orgHref = useOrgHref();
   const { data, error } = useIncomingShares();
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-xl font-semibold">Samples</h1>
+    <div className="space-y-5">
+      <div className="flex items-baseline gap-3">
+        <h1 className="text-xl font-semibold">Samples</h1>
+        {data && data.length > 0 && (
+          <span className="text-muted-foreground text-sm">{data.length}</span>
+        )}
+      </div>
       {error ? (
         <p role="alert" className="text-sm text-red-500">
           Unable to load samples.
         </p>
       ) : !data ? (
-        <p role="status" className="text-muted-foreground text-sm">
-          Loading...
-        </p>
+        <div role="status" className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} className="h-48 rounded-lg" />
+          ))}
+        </div>
       ) : data.length === 0 ? (
         <p className="text-muted-foreground text-sm">Nothing shared yet.</p>
       ) : (
-        <ul className="divide-y rounded-lg border">
-          {data.map((experiment) => (
-            <li key={experiment.id}>
-              <Link
-                href={orgHref(`/shared/${encodeURIComponent(experiment.id)}`)}
-                className="hover:bg-muted/50 flex items-baseline justify-between gap-4 px-4 py-3"
-              >
-                <span className="min-w-0">
-                  <span className="block truncate font-medium">
-                    {experiment.name}
-                  </span>
-                  {experiment.description && (
-                    <span className="text-muted-foreground block truncate text-sm">
-                      {experiment.description}
-                    </span>
-                  )}
-                  <span className="text-muted-foreground block text-xs">
-                    {plural(experiment.task_count, "task")} ·{" "}
-                    {plural(experiment.run_count, "run")}
-                  </span>
-                </span>
-                <span className="text-muted-foreground shrink-0 text-xs">
-                  {formatRelativeTime(experiment.shared_at)}
-                </span>
-              </Link>
-            </li>
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {data.map((sample) => (
+            <SampleCard
+              key={sample.id}
+              sample={sample}
+              href={orgHref(`/shared/${encodeURIComponent(sample.id)}`)}
+            />
           ))}
-        </ul>
+        </div>
       )}
     </div>
   );

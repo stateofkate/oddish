@@ -563,14 +563,14 @@ async def _experiment_summary(
     return summary, active
 
 
-async def experiment_counts(
+async def experiment_page_summary(
     session: AsyncSession, *, experiment_id: str, org_id: str
-) -> tuple[int, int]:
-    """(task count, run count) exactly as the experiment page reports them."""
+) -> ExperimentPageSummary:
+    """The experiment page's summary (counts, scores, QA), for list views."""
     summary, _active = await _experiment_summary(
-        session, experiment_id=experiment_id, org_id=org_id, include_qa=False
+        session, experiment_id=experiment_id, org_id=org_id
     )
-    return summary.task_count, summary.trial_count
+    return summary
 
 
 async def get_experiment_open_core(
