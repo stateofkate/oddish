@@ -26,6 +26,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -87,6 +88,20 @@ def changed_task_folders(repo: Path, base: str, head: str) -> list[str]:
     return sorted(folders)
 
 
+class RetryTransport(httpx.HTTPTransport):
+    """Retries dropped connections; the API resets idle pooled ones mid-run."""
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        for attempt in range(3):
+            try:
+                return super().handle_request(request)
+            except httpx.TransportError:
+                if attempt == 2:
+                    raise
+                time.sleep(2**attempt)
+        raise AssertionError("unreachable")
+
+
 def get_task(client: httpx.Client, task_id: str) -> dict:
     return (
         client.get(f"/tasks/{task_id}", params={"include_trials": "false"})
@@ -143,7 +158,8 @@ def sync_folders(
                     "/task-aliases",
                     json={"aliases": {alias: got["task_id"]}, "dry_run": False},
                 ).raise_for_status()
-                if not added.json()["created"]:
+                # A retried POST finds the alias it already added as existing.
+                if alias not in added.json()["created"] + added.json()["existing"]:
                     raise RuntimeError(f"alias {alias} not added: {added.json()}")
             task = task or get_task(client, got["task_id"])
             # Assign 409s once a task holds the org's tag cap, even when this
@@ -236,7 +252,12 @@ def main() -> None:
     api = get_api_url()
     failed_repos = []
     with (
-        httpx.Client(base_url=api, timeout=60.0, headers=get_auth_headers()) as client,
+        httpx.Client(
+            base_url=api,
+            timeout=60.0,
+            headers=get_auth_headers(),
+            transport=RetryTransport(),
+        ) as client,
         tempfile.TemporaryDirectory() as work,
     ):
         tags = client.get("/tags").raise_for_status().json()["items"]

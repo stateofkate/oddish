@@ -94,7 +94,9 @@ class Oddish:
             if path == "/task-aliases":
                 added = json.loads(request.content)["aliases"]
                 self.aliases.update(added)
-                return httpx.Response(200, json={"created": list(added)})
+                return httpx.Response(
+                    200, json={"created": list(added), "existing": []}
+                )
             self.tagged.append(json.loads(request.content)["target_id"])
             return httpx.Response(200, json={})
 
@@ -297,3 +299,39 @@ def test_folders_are_checked_out_one_batch_at_a_time(registry, tmp_path, monkeyp
 
     assert [name for name, _ in oddish.uploads] == ["added", "plain", "renamed-folder"]
     assert on_disk == [["added"], ["plain"], ["renamed-folder"]]
+
+
+def test_dropped_connections_are_retried(monkeypatch):
+    calls = []
+
+    def flaky(self, request):
+        calls.append(request.url.path)
+        if len(calls) < 3:
+            raise httpx.ReadError("Connection reset by peer")
+        return httpx.Response(200, json={"ok": True})
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", flaky)
+    monkeypatch.setattr(sync.time, "sleep", lambda s: None)
+    with Client(base_url="http://oddish", transport=sync.RetryTransport()) as c:
+        assert c.get("/tags").json() == {"ok": True}
+    assert calls == ["/tags"] * 3
+
+
+def test_an_alias_added_by_an_earlier_attempt_counts_as_added(registry):
+    repo = registry[0]
+    oddish = Oddish()
+    client = oddish.client()
+    handle = client._transport.handler
+
+    def already_added(request):  # the first POST landed, its reply was lost
+        if request.url.path == "/task-aliases" and request.method == "POST":
+            alias = list(json.loads(request.content)["aliases"])
+            return httpx.Response(200, json={"created": [], "existing": alias})
+        return handle(request)
+
+    client._transport.handler = already_added
+
+    failed = sync.sync_folders(repo, ["tasks/added"], "r~", client, "T1", oddish.upload)
+
+    assert failed == []
+    assert oddish.tagged == ["added-0000aaaa"]
