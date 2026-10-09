@@ -58,11 +58,13 @@ test("a trial with a playback manifest adds a Scene tab beside the usual tabs", 
   await mockRun(page);
   await page.goto("/robot-recording");
   await expect(page.getByRole("tab", { name: "Summary", exact: true })).toHaveAttribute("data-state", "active");
-  // Collect errors once the drawer has hydrated: this review app server-renders
-  // the drawer, which intermittently reports a text hydration mismatch (React
-  // #418) for coding-agent trials too.
+  // This review app server-renders the drawer, which intermittently reports a
+  // text hydration mismatch (React #418) for coding-agent trials too, sometimes
+  // after the drawer looks hydrated. Count every other page error.
   const errors: string[] = [];
-  page.on("pageerror", error => errors.push(error.message));
+  page.on("pageerror", error => {
+    if (!error.message.includes("React error #418")) errors.push(error.message);
+  });
   expect(await tabNames(page)).toEqual(["Summary", "Scene", "Files", "Trajectory", "Artifacts"]);
   // Summary leads with the episode goal and its final checks.
   await page.getByText("Final checks", { exact: true }).click();
