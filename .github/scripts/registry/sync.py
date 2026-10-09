@@ -38,6 +38,8 @@ TAG = "registry-main"
 BATCH = 50
 # Registry repos and the main commit their aliases were loaded from.
 REPOS = {
+    # No aliases loaded; its first commit has no tasks, so every task uploads.
+    "abundant-ai/DeepSWE-test": "386a2eaf72a17177cee980d9c7fead4bc67737d0",
     "abundant-ai/harbor-forge-archive": "c49f8effe9d1b97792622f32b4221287f15ffbb8",
     "abundant-ai/harbor-forge-v2": "1e1fb983268f009ab2293b2d49c16d12fa24787c",
     "abundant-ai/harbor-lh": "abee65a3cc3c6190a545718a5be123bc8e1d3c33",
