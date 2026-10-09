@@ -139,6 +139,13 @@ _SINGLE_LLM_ANALYSIS_DOCKERFILE = """FROM python:3.13-slim
 WORKDIR /app
 """
 
+#: Each fixed analysis sandbox Dockerfile. Backends that require prebuilt
+#: images push one content-addressed image for each (cli/unikraft_prebuild.py).
+ANALYSIS_DOCKERFILES: tuple[str, ...] = (
+    _ANALYSIS_DOCKERFILE,
+    _SINGLE_LLM_ANALYSIS_DOCKERFILE,
+)
+
 _ANALYSIS_TASK_TOML = """[metadata]
 name = "oddish-analysis"
 

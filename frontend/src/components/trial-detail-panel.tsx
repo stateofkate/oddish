@@ -608,7 +608,8 @@ type SandboxBackendId =
   | "archil"
   | "ec2"
   | "numinous"
-  | "thunder";
+  | "thunder"
+  | "unikraft";
 
 type SandboxBackend = {
   id: SandboxBackendId;
@@ -657,6 +658,10 @@ const SANDBOX_BACKENDS: Record<
     logoSrc: "/thunder-compute-logo.svg",
     logoFill: true,
   },
+  unikraft: {
+    id: "unikraft",
+    label: "Unikraft Cloud",
+  },
 };
 
 function normalizeSandboxBackend(
@@ -669,7 +674,8 @@ function normalizeSandboxBackend(
     normalized === "archil" ||
     normalized === "ec2" ||
     normalized === "numinous" ||
-    normalized === "thunder"
+    normalized === "thunder" ||
+    normalized === "unikraft"
   ) {
     return normalized;
   }

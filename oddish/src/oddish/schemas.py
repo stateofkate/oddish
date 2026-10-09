@@ -627,7 +627,7 @@ class TrialCollectionRequest(BaseModel):
 class QARunRequest(BaseModel):
     """Optional sandbox selection for a QA or pre-trial audit rerun."""
 
-    environment: Literal["modal", "daytona"] | None = Field(
+    environment: Literal["modal", "daytona", "unikraft"] | None = Field(
         None,
         description="QA sandbox provider. Null uses the deployed worker default.",
     )
@@ -675,7 +675,7 @@ class QAEvalCreateRequest(TrialSpec):
             "Analysis model override. Null uses the deployed production QA model."
         ),
     )
-    environment: Literal["modal", "daytona"] | None = Field(
+    environment: Literal["modal", "daytona", "unikraft"] | None = Field(
         None,
         description="QA sandbox provider. Null uses the deployed worker default.",
     )

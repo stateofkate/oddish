@@ -1834,6 +1834,15 @@ class Settings(BaseSettings):
     # provider wired (RunPod SECURE for dedicated, or gpu_mux for shared).
     numinous_gpu_enabled: bool = False
 
+    # Unikraft Cloud backend (opt-in). Callers select it with --env unikraft;
+    # routing never picks it. Needs UKC_TOKEN, UKC_METRO and UKC_USER.
+    unikraft_enabled: bool = False
+    # Refuse trial-time image builds: hosted workers have no BuildKit, and the
+    # submitting CLI pushes each image first (cli/unikraft_prebuild.py).
+    unikraft_require_prebuilt_image: bool = False
+    # Memory of a trial whose task sets none.
+    unikraft_default_memory_mb: int | None = None
+
     ec2_enabled: bool = False
     ec2_region: str | None = None
     ec2_ami_id: str | None = None

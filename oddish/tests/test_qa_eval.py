@@ -79,6 +79,43 @@ def test_request_strips_and_deduplicates_source_trial_ids():
     assert request.audit_context == "current"
 
 
+def test_request_accepts_an_explicit_unikraft_sandbox():
+    # Mirrors QARunRequest: an enabled deploy can pin evals to Unikraft.
+    request = QAEvalCreateRequest(
+        name="replay",
+        source_trial_ids=["source-1"],
+        prompt_name="candidate-1",
+        prompt_text="classify this",
+        environment="unikraft",
+    )
+    assert request.environment == "unikraft"
+
+
+@pytest.mark.asyncio
+async def test_create_rejects_an_unregistered_sandbox_before_any_work():
+    from unittest.mock import AsyncMock
+
+    from fastapi import HTTPException
+
+    session = AsyncMock()
+    with pytest.raises(HTTPException) as exc:
+        await create_qa_eval_core(
+            session,
+            request=QAEvalCreateRequest(
+                name="replay",
+                source_trial_ids=["source-1"],
+                prompt_name="candidate-1",
+                prompt_text="classify this",
+                environment="unikraft",
+            ),
+            org_id="org-1",
+            owner_user_id=None,
+            billed_user_id=None,
+        )
+    assert exc.value.status_code == 400
+    session.execute.assert_not_awaited()
+
+
 def test_request_rejects_an_unknown_audit_context():
     with pytest.raises(ValueError, match="audit_context"):
         QAEvalCreateRequest(

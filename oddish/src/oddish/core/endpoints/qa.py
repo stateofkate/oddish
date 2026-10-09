@@ -30,6 +30,30 @@ from oddish.db import (
 _QA_EVIDENCE_READ_CONCURRENCY = 2
 
 
+def require_allowed_analysis_environment(environment: str | None) -> None:
+    """Reject a sandbox provider this deployment did not register, before the
+    trial can queue and fail at launch. ``None`` keeps the worker default."""
+    if environment is None:
+        return
+    from harbor.models.environment_type import EnvironmentType
+
+    from oddish.runtime.routing import allowed_cloud_environments
+
+    allowed = allowed_cloud_environments()
+    try:
+        requested = EnvironmentType(environment.strip().lower())
+    except ValueError:
+        requested = None
+    if requested is None or requested not in allowed:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"environment '{environment}' is not enabled on this deployment. "
+                "Allowed: " + ", ".join(sorted(e.value for e in allowed))
+            ),
+        )
+
+
 def _collect_cancel_metadata(rows: Collection[object]) -> dict[str, list[str]]:
     modal_fc_ids: list[str] = []
     for row in rows:
@@ -286,6 +310,7 @@ async def backfill_task_analysis_core(
     front so the UI shows them as pending (all live trials, or just
     ``trial_ids``).
     """
+    require_allowed_analysis_environment(environment)
     from oddish.queue import (
         live_analysis_trial_id,
         qa_eligible_trial_ids,
@@ -423,6 +448,7 @@ async def rerun_pre_trial_audit_core(
     this audit and any existing runs finish, normal QA admission reconciles
     the task against the new audit without interrupting running jobs.
     """
+    require_allowed_analysis_environment(environment)
     from datetime import timedelta
 
     from oddish.queue import live_analysis_trial_id

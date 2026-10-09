@@ -51,7 +51,8 @@ Scheduled functions
        - Writes heartbeats, records outcomes, exits
   ▼
 Harbor execution on Modal, Archil, GKE (TPU), opt-in ephemeral EC2,
-opt-in Numinous Cloud (CPU and optionally GPU), or opt-in Thunder GPU sandboxes
+opt-in Numinous Cloud (CPU and optionally GPU), opt-in Thunder GPU sandboxes,
+or opt-in Unikraft Cloud microVMs
   - logs/artifacts persisted to S3
 ```
 
@@ -679,6 +680,29 @@ contain the expected GPU output. Separately cancel an in-flight smoke trial and
 confirm its persisted sandbox ID is terminated. Finally, verify the Thunder
 provider inventory contains none of the sandbox IDs created by either run and
 that the `sandbox_capacity_leases` count returns to its pre-smoke value.
+
+### Unikraft Cloud Harbor backend
+
+Unikraft Cloud registration uses `ODDISH_UNIKRAFT_ENABLED`. When enabled, the
+deployment attaches the secret named by `ODDISH_UNIKRAFT_SECRET_NAME` (default
+`oddish-unikraft`), which must contain `UKC_TOKEN`, `UKC_METRO` and `UKC_USER`.
+Tasks whose network policy is not public run behind Unikraft's network shield
+and also need `HARBOR_UNIKRAFT_SHIELD_CA`, the shield's CA certificate in PEM,
+which Unikraft provides; Harbor installs it into each shielded sandbox. The
+Harbor pin must carry the Unikraft environment, or the backend is not
+registered. Workers run with `require_prebuilt_image`: hosted containers have
+no BuildKit, so `oddish run --env unikraft` builds and pushes each task's
+image before submitting. Unikraft is never chosen automatically; CPU work
+stays on Modal unless a run selects it.
+`ODDISH_UNIKRAFT_DEFAULT_MEMORY_MB` sizes a trial whose task sets no memory.
+`ODDISH_HARBOR_ENVIRONMENT=unikraft` runs QA and audit trials there too; the
+deploy refuses that value unless `ODDISH_UNIKRAFT_ENABLED` is set, and the QA
+rerun endpoints reject an environment the deployment did not register.
+
+QA, audit and summarize trials boot from two fixed analysis images. Every
+`oddish run --env unikraft` submission pushes them when they are missing, so
+the first path-based submission seeds a new registry namespace. Remote
+Unikraft builds are coming soon and will remove the local build step.
 
 ### oddish runtime patching
 

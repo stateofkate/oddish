@@ -105,7 +105,7 @@ async def test_qa_source_evidence_skips_artifacts_for_unstarted_trial(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("environment", [None, "modal", "daytona"])
+@pytest.mark.parametrize("environment", [None, "modal"])
 async def test_qa_rerun_passes_environment_through_admission(monkeypatch, environment):
     from oddish.core.endpoints.qa import rerun_task_qa_core
     from oddish.db import TaskModel, TrialModel, TrialStatus
@@ -151,3 +151,21 @@ async def test_qa_rerun_passes_environment_through_admission(monkeypatch, enviro
         environment=environment,
     )
     session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("environment", ["daytona", "unikraft"])
+async def test_qa_rerun_rejects_an_unregistered_environment(environment):
+    # The gate runs before any admission work, so the session stays untouched.
+    from fastapi import HTTPException
+
+    from oddish.core.endpoints.qa import rerun_task_qa_core
+
+    session = AsyncMock()
+    with pytest.raises(HTTPException) as exc:
+        await rerun_task_qa_core(
+            session, task_id="task-1", org_id="org-1", environment=environment
+        )
+    assert exc.value.status_code == 400
+    session.execute.assert_not_awaited()
+    session.commit.assert_not_awaited()

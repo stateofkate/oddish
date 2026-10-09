@@ -88,6 +88,8 @@ worker = [
     # Hosted workers orchestrate Thunder sandboxes directly. Keep this aligned
     # with Harbor's thunder extra so cancellation can recover a sandbox by id.
     "thunder-sandbox==0.7.5",
+    # Hosted workers run Harbor's unikraft environment, which imports this SDK.
+    "unikraft-cloud==0.2.0",
     # LLM providers
     "anthropic==0.76.0",
     "openai==2.24.0",

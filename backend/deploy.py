@@ -12,6 +12,7 @@ from modal_app import (
     ENABLE_SLACK_EXPENSE_NOTIFICATIONS,
     app,
     assert_gke_cluster_exists,
+    assert_unikraft_default_enabled,
 )
 
 # Import modules for side-effect registration of Modal functions.
@@ -34,6 +35,7 @@ import carl_agent  # noqa: F401, E402
 # Deploy-time only: containers import the registration modules above, never
 # execute this entrypoint locally, so the gate cannot run in workers.
 if modal.is_local():
+    assert_unikraft_default_enabled()
     assert_gke_cluster_exists()
 
 __all__ = ["app"]

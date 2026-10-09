@@ -51,6 +51,12 @@ class HarborVariant:
 # google-cloud stack, on a dedicated worker image.
 GKE_VARIANT_ID = "gke"
 
+# The default Harbor pin may predate the Unikraft environment, so every use
+# of the enum member goes through this.
+UNIKRAFT_ENVIRONMENT: EnvironmentType | None = getattr(
+    EnvironmentType, "UNIKRAFT", None
+)
+
 # Blessed source@sha -> image variant. Keyed by ``variant_id``. Blessing a pin
 # means adding an entry here and building its image/Function (the Modal side
 # reads this same registry). Any allowlisted pin not registered here runs

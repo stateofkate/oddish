@@ -70,3 +70,43 @@ print(json.dumps({
     # environment, so it still defaults to Modal.
     assert resolved["untyped_gpu_default"] == "modal"
     assert resolved["cpu_default"] == "modal"
+
+
+def test_unikraft_absent_by_default() -> None:
+    # A deploy that never asked for Unikraft has no such backend, so cloud
+    # policy never admits --env unikraft and routing is unchanged.
+    assert get_backend("unikraft") is None
+    assert "unikraft" not in [b.name for b in ordered_backends()]
+
+
+def test_enabled_unikraft_registers_as_an_explicit_choice() -> None:
+    code = """
+import json
+from oddish.core.harbor_source import UNIKRAFT_ENVIRONMENT
+from oddish.runtime.routing import allowed_cloud_environments, default_cloud_environment
+from oddish.runtime.registry import ordered_backends
+print(json.dumps({
+    "pinned_harbor_has_it": UNIKRAFT_ENVIRONMENT is not None,
+    "registered": [backend.name for backend in ordered_backends()],
+    "allowed": sorted(environment.value for environment in allowed_cloud_environments()),
+    "cpu_default": default_cloud_environment().value,
+}))
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        env={**os.environ, "ODDISH_UNIKRAFT_ENABLED": "true"},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    resolved = json.loads(result.stdout.splitlines()[-1])
+    if not resolved["pinned_harbor_has_it"]:
+        # Registering would break EnvironmentType(b.name) for every caller.
+        assert "unikraft" not in resolved["registered"]
+        return
+    registered = resolved["registered"]
+    assert registered.index("daytona") < registered.index("unikraft")
+    assert "unikraft" in resolved["allowed"]
+    # Only --env unikraft selects it; CPU work still defaults to Modal.
+    assert resolved["cpu_default"] == "modal"

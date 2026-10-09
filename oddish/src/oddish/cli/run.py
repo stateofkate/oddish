@@ -65,7 +65,7 @@ def _hosted_passthrough_environments(
         environment_type.GKE,
     }
     # Public Harbor releases may lag fork-only environments.
-    for name in ("ARCHIL", "NUMINOUS", "THUNDER"):
+    for name in ("ARCHIL", "NUMINOUS", "THUNDER", "UNIKRAFT"):
         member = getattr(environment_type, name, None)
         if member is not None:
             environments.add(member)
@@ -627,6 +627,16 @@ def run(
             ),
         ),
     ] = None,
+    unikraft_prebuild: Annotated[
+        bool,
+        typer.Option(
+            "--unikraft-prebuild/--no-unikraft-prebuild",
+            help=(
+                "With --env unikraft on hosted Oddish, build and push each "
+                "task's image with the unikraft CLI before submitting."
+            ),
+        ),
+    ] = True,
     force_new_version: Annotated[
         bool,
         typer.Option(
@@ -1061,10 +1071,33 @@ def run(
         if environment is not None and normalized_environment != environment:
             console.print(
                 "[yellow]Oddish Cloud supports --env modal, --env ec2, "
-                "--env gke, --env archil, --env numinous, and --env thunder; "
-                "forcing --env modal[/yellow]"
+                "--env gke, --env archil, --env numinous, --env thunder, and "
+                "--env unikraft; forcing --env modal[/yellow]"
             )
         environment = normalized_environment
+
+    # Hosted workers have no BuildKit, so the task images are built and pushed
+    # here first; the worker then finds the content-addressed image.
+    if (
+        is_modal_api
+        and unikraft_prebuild
+        and environment is not None
+        and environment.value == "unikraft"
+    ):
+        if task_paths:
+            from oddish.cli.unikraft_prebuild import prebuild_task_images
+
+            prebuild_task_images(
+                task_paths, quiet=quiet, force_build=bool(force_build)
+            )
+        elif existing_task_ids:
+            # An append sends no task files, so there is nothing to build from.
+            console.print(
+                "[yellow]--task appends trials without local task files, so no "
+                "Unikraft image is built now. The trials need the image from "
+                "an earlier --env unikraft submission of this task version "
+                "(missing images fail the trial at launch).[/yellow]"
+            )
 
     # Upload and submit all tasks
     all_results = []

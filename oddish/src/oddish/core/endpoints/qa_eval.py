@@ -31,6 +31,7 @@ from oddish.db import (
     TrialStatus,
     utcnow,
 )
+from oddish.core.endpoints.qa import require_allowed_analysis_environment
 from oddish.schemas import (
     QAEvalCreateRequest,
     QAEvalCreateResponse,
@@ -58,6 +59,7 @@ async def create_qa_eval_core(
 ) -> QAEvalCreateResponse:
     """Create one replay experiment and one QA trial per source trial: the
     listed trials, or every counted golden's."""
+    require_allowed_analysis_environment(request.environment)
     reservation: Reservation | None = None
     if idempotency_store is not None and idempotency_key and org_id:
         try:

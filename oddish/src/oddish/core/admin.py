@@ -1830,9 +1830,17 @@ _COMPUTE_PROVIDER_LABELS = {
     "archil": "Archil",
     "numinous": "Numinous Cloud",
     "thunder": "Thunder Compute",
+    "unikraft": "Unikraft Cloud",
     "other": "Other",
 }
-_KNOWN_COMPUTE_PROVIDERS = ("modal", "daytona", "archil", "numinous", "thunder")
+_KNOWN_COMPUTE_PROVIDERS = (
+    "modal",
+    "daytona",
+    "archil",
+    "numinous",
+    "thunder",
+    "unikraft",
+)
 
 
 def _normalize_compute_provider(raw: str | None) -> str:

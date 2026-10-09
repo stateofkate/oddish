@@ -7,6 +7,13 @@ retries selecting Daytona fail without switching providers; resubmit with an
 explicit supported provider. Existing Daytona sandboxes remain available for
 status checks and cleanup. The default `ODDISH_HARBOR_ENVIRONMENT` is `modal`.
 
+`--env unikraft` runs a task on Unikraft Cloud where the deployment enables it.
+Hosted workers cannot build images, so the CLI builds and pushes each task's
+image with the `unikraft` CLI first; it needs that CLI plus `UKC_TOKEN`,
+`UKC_METRO` and `UKC_USER`. `oddish run --task <id> --env unikraft` appends
+trials without local task files, so the image must already exist from an
+earlier submission of that task version (remote builds are coming soon).
+
 Customer guides are maintained in [docs/customer](docs/customer/getting-started.md). Read the guides at https://docs.abundant.dev/docs/oddish. The website requires a separate Abundant Docs account with Oddish documentation access. A docs account grants no task-workspace membership.
 
 The [command reference](docs/customer/reference/commands.md) explains common commands. Run `oddish COMMAND --help` for options in your installed version. [Internal CLI details](docs/cli-advanced-internal.md) remain repository-only. [Migration inventory](docs/customer-docs-migration.md) records each moved section.

@@ -50,6 +50,9 @@ jobs:
       # flag from ODDISH_NUMINOUS_ENABLED; set to "1" to route GPU trials to
       # Numinous ahead of Modal.
       ODDISH_NUMINOUS_GPU_ENABLED: "0"
+      # Unikraft Cloud execution backend (opt-in). Disabled: it needs the
+      # oddish-unikraft secret and a Harbor pin that carries the environment.
+      ODDISH_UNIKRAFT_ENABLED: "0"
       # (staging-only until it reaches main after this soaks)
       # GKE (TPU) execution backend, mirroring modal-deploy.yml's prod block.
       # backend/modal_app.py only bakes env vars prefixed ODDISH_GKE_ into the

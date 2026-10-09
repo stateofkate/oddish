@@ -17,6 +17,7 @@ from modal_runtime import (
     runtime_secret,
 )
 from modal_runtime import app as app
+from oddish.core import harbor_source
 from oddish.core.harbor_source import (
     HARBOR_VARIANTS,
     HarborVariant,
@@ -274,6 +275,15 @@ _THUNDER_SECRET_NAME = (
 )
 _NUMINOUS_GPU_ENABLED_ENV = "ODDISH_NUMINOUS_GPU_ENABLED"
 _NUMINOUS_SECRET_NAME = os.environ.get("ODDISH_NUMINOUS_SECRET_NAME", "oddish-numinous")
+_UNIKRAFT_ENABLED_ENV = "ODDISH_UNIKRAFT_ENABLED"
+_UNIKRAFT_SECRET_NAME_ENV = "ODDISH_UNIKRAFT_SECRET_NAME"
+_UNIKRAFT_SECRET_NAME = (
+    os.environ.get(_UNIKRAFT_SECRET_NAME_ENV)
+    or LOCAL_DOTENV_VARS.get(_UNIKRAFT_SECRET_NAME_ENV)
+    or "oddish-unikraft"
+)
+# Deploy-time settings that ride the image env so the workers' Settings see them.
+_UNIKRAFT_PUBLIC_ENV_NAMES = {"ODDISH_UNIKRAFT_DEFAULT_MEMORY_MB"}
 _EC2_CONTROL_SECRET_NAME_ENV = "ODDISH_EC2_CONTROL_SECRET_NAME"
 _EC2_SSH_SECRET_NAME_ENV = "ODDISH_EC2_SSH_SECRET_NAME"
 _EC2_PLAN_FILE = "/opt/oddish/ec2_secret_plan.json"
@@ -669,6 +679,21 @@ thunder_worker_secrets = [
     for secret_name in THUNDER_SECRET_PLAN
 ]
 
+# The Unikraft Cloud secret (UKC_* and HARBOR_UNIKRAFT_SHIELD_CA), gated on the
+# opt-in flag like Numinous. Its trials run on the default worker image.
+_UNIKRAFT_ENABLED = _is_truthy(
+    _deploy_value(_UNIKRAFT_ENABLED_ENV, os.environ, LOCAL_DOTENV_VARS)
+)
+UNIKRAFT_SECRET_PLAN = (
+    [_UNIKRAFT_SECRET_NAME] if _UNIKRAFT_ENABLED and _UNIKRAFT_SECRET_NAME else []
+)
+for _unikraft_secret_name in UNIKRAFT_SECRET_PLAN:
+    runtime_secrets.append(
+        modal.Secret.from_name(
+            _unikraft_secret_name, environment_name=MODAL_SECRET_ENVIRONMENT
+        )
+    )
+
 # EC2 secrets intentionally do not join ``runtime_secrets``. That base list is
 # attached to the API, dispatcher, and unrelated scheduled functions. EC2's AWS
 # control secret goes only to trial workers and the reconciler; its SSH private
@@ -681,6 +706,7 @@ _broad_runtime_secret_names = {
     *GKE_SECRET_PLAN,
     *NUMINOUS_SECRET_PLAN,
     *THUNDER_SECRET_PLAN,
+    *UNIKRAFT_SECRET_PLAN,
 }
 if SAURON_AWS_SECRET_NAME:
     _broad_runtime_secret_names.add(SAURON_AWS_SECRET_NAME)
@@ -715,6 +741,28 @@ ec2_ssh_secrets = (
     else []
 )
 ec2_worker_secrets = [*ec2_control_secrets, *ec2_ssh_secrets]
+
+
+def assert_unikraft_default_enabled() -> None:
+    """Deploy-time gate: ODDISH_HARBOR_ENVIRONMENT=unikraft needs the backend
+    registered, or each QA/audit trial fails at launch. Deploy-local only."""
+    default_env = (
+        _deploy_value("ODDISH_HARBOR_ENVIRONMENT", os.environ, LOCAL_DOTENV_VARS) or ""
+    )
+    if default_env.strip().lower() != "unikraft":
+        return
+    if not _is_truthy(
+        _deploy_value(_UNIKRAFT_ENABLED_ENV, os.environ, LOCAL_DOTENV_VARS)
+    ):
+        raise RuntimeError(
+            "ODDISH_HARBOR_ENVIRONMENT=unikraft requires ODDISH_UNIKRAFT_ENABLED=true"
+        )
+    # The deploy venv resolves the same Harbor pin the worker image bakes.
+    if harbor_source.UNIKRAFT_ENVIRONMENT is None:
+        raise RuntimeError(
+            "ODDISH_HARBOR_ENVIRONMENT=unikraft requires a Harbor pin that "
+            "defines EnvironmentType.UNIKRAFT; the pinned Harbor lacks it"
+        )
 
 
 def assert_gke_cluster_exists() -> None:
@@ -921,7 +969,13 @@ ENV_VARS = {
         or (LOCAL_DOTENV_VARS.get("ODDISH_OPERATOR_ORG_ID") or "").strip()
         or DEFAULT_OPERATOR_ORG_ID
     ),
-    "ODDISH_HARBOR_ENVIRONMENT": "modal",
+    # The sandbox for trials without an explicit environment, such as QA and
+    # audit trials. The deploy env or backend/.env can override it.
+    "ODDISH_HARBOR_ENVIRONMENT": (
+        (os.environ.get("ODDISH_HARBOR_ENVIRONMENT") or "").strip()
+        or (LOCAL_DOTENV_VARS.get("ODDISH_HARBOR_ENVIRONMENT") or "").strip()
+        or "modal"
+    ),
     "ODDISH_ARCHIL_TRAFFIC_PERCENT": os.environ.get(
         "ODDISH_ARCHIL_TRAFFIC_PERCENT",
         LOCAL_DOTENV_VARS.get("ODDISH_ARCHIL_TRAFFIC_PERCENT", "0"),
@@ -996,6 +1050,18 @@ ENV_VARS = {
     _NUMINOUS_GPU_ENABLED_ENV: str(_NUMINOUS_GPU_ENABLED).lower(),
     # Keep worker-side Settings and the deploy-time secret plan in lockstep.
     _THUNDER_ENABLED_ENV: str(_THUNDER_ENABLED).lower(),
+    # Baked like the Numinous flag, so the registry inside the worker sees it.
+    _UNIKRAFT_ENABLED_ENV: str(_UNIKRAFT_ENABLED).lower(),
+    # The resolved name rides the image so the in-container recompute of the
+    # runtime-secret list agrees with the deploy, as the Thunder name does.
+    _UNIKRAFT_SECRET_NAME_ENV: _UNIKRAFT_SECRET_NAME,
+    # Hosted workers have no BuildKit; the submitting CLI pushes the image first.
+    "ODDISH_UNIKRAFT_REQUIRE_PREBUILT_IMAGE": "true",
+    **{
+        k: v
+        for k, v in {**LOCAL_DOTENV_VARS, **os.environ}.items()
+        if k in _UNIKRAFT_PUBLIC_ENV_NAMES
+    },
     _THUNDER_CAPACITY_FALLBACK_ENV: str(
         _is_truthy(
             _deploy_value(_THUNDER_CAPACITY_FALLBACK_ENV, os.environ, LOCAL_DOTENV_VARS)

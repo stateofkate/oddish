@@ -1080,6 +1080,7 @@ const COMPUTE_PROVIDER_LABELS: Record<string, string> = {
   archil: "Archil",
   numinous: "Numinous Cloud",
   thunder: "Thunder Compute",
+  unikraft: "Unikraft Cloud",
   other: "Other",
 };
 
