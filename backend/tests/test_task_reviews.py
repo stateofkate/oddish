@@ -15,7 +15,6 @@ from models import OrganizationModel, UserModel, UserRole
 from oddish.db.models import (
     Base,
     TaskModel,
-    TaskVersionFingerprintModel,
     TaskVersionModel,
 )
 from sqlalchemy import update
@@ -23,7 +22,6 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 PATH = "/tasks/task/versions/v1/reviews"
-SNAPSHOT = {"content_hash": "a" * 64, "content_algorithm": "sha256"}
 
 
 @pytest_asyncio.fixture
@@ -80,14 +78,6 @@ async def review_api(monkeypatch):
                 )
             )
             await session.flush()
-            session.add(
-                TaskVersionFingerprintModel(
-                    task_version_id="v1",
-                    content_hash=SNAPSHOT["content_hash"],
-                    algorithm="sha256",
-                    client_content_hash="client",
-                )
-            )
 
         @asynccontextmanager
         async def read():
@@ -127,12 +117,11 @@ async def test_ratings_and_comment_only_reviews_do_not_share_denominators(review
     assert empty["average_score"] is None
     assert empty["own_rating_revision"] == 0
     response = await client.put(
-        PATH + "/rating", json={**SNAPSHOT, "score": 5, "expected_revision": 0}
+        PATH + "/rating", json={"score": 5, "expected_revision": 0}
     )
     assert response.status_code == 200, response.text
     auth.user_id = "bob"
     comment = {
-        **SNAPSHOT,
         "body": " Needs clearer instructions ",
         "client_request_id": str(uuid4()),
     }
@@ -148,9 +137,7 @@ async def test_ratings_and_comment_only_reviews_do_not_share_denominators(review
     assert page["comments"][0]["reviewer"]["name"] == "Bob"
     assert "email" not in str(page)
     assert (
-        await client.put(
-            PATH + "/rating", json={**SNAPSHOT, "score": 1, "expected_revision": 0}
-        )
+        await client.put(PATH + "/rating", json={"score": 1, "expected_revision": 0})
     ).status_code == 200
     assert (await client.get(PATH)).json()["average_score"] == 3
 
@@ -158,7 +145,7 @@ async def test_ratings_and_comment_only_reviews_do_not_share_denominators(review
 @pytest.mark.asyncio
 async def test_revision_clear_and_restore(review_api):
     client, _, _ = review_api
-    data = {**SNAPSHOT, "score": 4, "expected_revision": 0}
+    data = {"score": 4, "expected_revision": 0}
     assert (await client.put(PATH + "/rating", json=data)).status_code == 200
     assert (await client.put(PATH + "/rating", json=data)).status_code == 409
     assert (
@@ -176,7 +163,7 @@ async def test_revision_clear_and_restore(review_api):
 
 
 @pytest.mark.asyncio
-async def test_tenant_identity_and_content_guards(review_api):
+async def test_tenant_identity_and_version_scope(review_api):
     client, auth, sessions = review_api
     auth.org_id = "other"
     assert (await client.get(PATH)).status_code == 404
@@ -188,33 +175,32 @@ async def test_tenant_identity_and_content_guards(review_api):
         assert (
             await client.put(
                 PATH + "/rating",
-                json={**SNAPSHOT, "score": invalid, "expected_revision": 0},
+                json={"score": invalid, "expected_revision": 0},
             )
         ).status_code == 422
     assert (
         await client.put(
             PATH + "/rating",
-            json={**SNAPSHOT, "score": 4, "expected_revision": 0, "reviewer_id": "bob"},
+            json={"score": 4, "expected_revision": 0, "reviewer_id": "bob"},
         )
     ).status_code == 422
     assert (
         await client.put(
             PATH + "/rating",
             json={
-                **SNAPSHOT,
                 "content_hash": "stale",
                 "score": 4,
                 "expected_revision": 0,
             },
         )
-    ).status_code == 409
+    ).status_code == 422
     async with sessions.begin() as s:
         await s.execute(
             update(TaskVersionModel)
             .where(TaskVersionModel.id == "v1")
             .values(content_hash="new")
         )
-    assert (await client.get(PATH)).status_code == 404
+    assert (await client.get(PATH)).status_code == 200
 
 
 @pytest.mark.asyncio
@@ -225,7 +211,6 @@ async def test_comment_edits_ownership_pagination_and_retries(review_api):
         response = await client.post(
             PATH + "/comments",
             json={
-                **SNAPSHOT,
                 "body": f"Comment {i}",
                 "client_request_id": str(uuid4()),
             },
@@ -246,7 +231,7 @@ async def test_comment_edits_ownership_pagination_and_retries(review_api):
     assert len(page["comments"]) == 2 and len(next_page["comments"]) == 1
     assert len({c["id"] for c in page["comments"] + next_page["comments"]}) == 3
     auth.user_id = "bob"
-    edit = {**SNAPSHOT, "body": "Edited", "expected_revision": 1}
+    edit = {"body": "Edited", "expected_revision": 1}
     assert (
         await client.patch(PATH + "/comments/" + ids[0], json=edit)
     ).status_code == 409
@@ -288,7 +273,6 @@ async def test_source_trial_must_match_subject_and_org(review_api):
             )
         )
     data = {
-        **SNAPSHOT,
         "body": "Observed in this trial",
         "client_request_id": str(uuid4()),
     }
@@ -323,7 +307,7 @@ async def test_admin_moderation_deleted_subject_and_invalid_cursor(review_api):
     client, auth, sessions = review_api
     saved = await client.post(
         PATH + "/comments",
-        json={**SNAPSHOT, "body": "Comment", "client_request_id": str(uuid4())},
+        json={"body": "Comment", "client_request_id": str(uuid4())},
     )
     comment_id = saved.json()["id"]
     auth.user_id = "bob"
@@ -331,7 +315,7 @@ async def test_admin_moderation_deleted_subject_and_invalid_cursor(review_api):
     assert (
         await client.patch(
             PATH + "/comments/" + comment_id,
-            json={**SNAPSHOT, "body": None, "expected_revision": 1},
+            json={"body": None, "expected_revision": 1},
         )
     ).status_code == 200
     assert (await client.get(PATH)).json()["comments"] == []
@@ -347,14 +331,12 @@ async def test_admin_moderation_deleted_subject_and_invalid_cursor(review_api):
         )
     assert (await client.get(PATH)).status_code == 404
     assert (
-        await client.put(
-            PATH + "/rating", json={**SNAPSHOT, "score": 3, "expected_revision": 0}
-        )
+        await client.put(PATH + "/rating", json={"score": 3, "expected_revision": 0})
     ).status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_write_waits_for_version_overwrite_before_checking_fingerprint(
+async def test_rating_write_serializes_on_task_version(
     review_api,
 ):
     import asyncio
@@ -370,9 +352,7 @@ async def test_write_waits_for_version_overwrite_before_checking_fingerprint(
         )
         blocker_pid = await overwrite.scalar(text("SELECT pg_backend_pid()"))
         pending = asyncio.create_task(
-            client.put(
-                PATH + "/rating", json={**SNAPSHOT, "score": 5, "expected_revision": 0}
-            )
+            client.put(PATH + "/rating", json={"score": 5, "expected_revision": 0})
         )
         try:
             async with sessions() as observer:
@@ -402,4 +382,29 @@ async def test_write_waits_for_version_overwrite_before_checking_fingerprint(
             pending.cancel()
             raise
     response = await asyncio.wait_for(pending, timeout=5)
-    assert response.status_code == 404
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_version_without_fingerprint_supports_comment_crud(review_api):
+    client, _, _ = review_api
+    assert (await client.get(PATH)).status_code == 200
+    result = await client.post(
+        PATH + "/comments",
+        json={"body": "Initial feedback", "client_request_id": str(uuid4())},
+    )
+    assert result.status_code == 200
+    comment_id = result.json()["id"]
+    assert (
+        await client.patch(
+            PATH + "/comments/" + comment_id,
+            json={"body": "Updated feedback", "expected_revision": 1},
+        )
+    ).status_code == 200
+    assert (await client.get(PATH)).json()["comments"][0]["body"] == "Updated feedback"
+    assert (
+        await client.request(
+            "DELETE", PATH + "/comments/" + comment_id, json={"expected_revision": 2}
+        )
+    ).status_code == 200
+    assert (await client.get(PATH)).json()["comments"] == []

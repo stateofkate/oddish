@@ -219,7 +219,7 @@ export async function proxyPublicBackendJson({
 export async function proxyJsonRequest(
   request: NextRequest,
   path: string,
-  method: "PUT" | "POST" | "PATCH"
+  method: "PUT" | "POST" | "PATCH" | "DELETE"
 ): Promise<NextResponse> {
   let body: unknown;
   try {

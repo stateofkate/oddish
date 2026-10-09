@@ -577,7 +577,7 @@ class EndpointCheckModel(Base):
 
 
 class TaskReviewFields:
-    """Internal feedback belongs to one server-verified version snapshot."""
+    """Internal feedback belongs to one task version."""
 
     id: Mapped[str] = mapped_column(
         String(36), primary_key=True, default=lambda: str(uuid4())
@@ -591,8 +591,6 @@ class TaskReviewFields:
     task_version_id: Mapped[str] = mapped_column(
         String(160), ForeignKey("task_versions.id", ondelete="CASCADE"), nullable=False
     )
-    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    content_algorithm: Mapped[str] = mapped_column(String(64), nullable=False)
     revision: Mapped[int] = mapped_column(
         Integer, nullable=False, default=1, server_default="1"
     )
@@ -617,13 +615,13 @@ class TaskReviewRatingModel(TaskReviewFields, Base):
     __table_args__ = (
         CheckConstraint("score BETWEEN 1 AND 5", name="ck_task_review_rating_score"),
         CheckConstraint("revision > 0", name="ck_task_review_rating_revision"),
-        UniqueConstraint(
+        Index(
+            "uq_task_review_rating_reviewer",
             "org_id",
             "task_version_id",
-            "content_algorithm",
-            "content_hash",
             "reviewer_id",
-            name="uq_task_review_rating_reviewer",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
         ),
     )
 
@@ -651,8 +649,6 @@ class TaskReviewCommentModel(TaskReviewFields, Base):
             "idx_task_review_comments_version",
             "org_id",
             "task_version_id",
-            "content_algorithm",
-            "content_hash",
             "created_at",
             "id",
             postgresql_where=text("deleted_at IS NULL"),

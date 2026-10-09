@@ -7,13 +7,11 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 
-class Snapshot(BaseModel):
+class ReviewInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    content_hash: str = Field(min_length=1, max_length=64)
-    content_algorithm: str = Field(min_length=1, max_length=64)
 
 
-class RatingWrite(Snapshot):
+class RatingWrite(ReviewInput):
     score: int | None = Field(ge=1, le=5, strict=True)
     expected_revision: int = Field(ge=0, strict=True)
 
@@ -26,15 +24,18 @@ CommentBody = Annotated[
 ]
 
 
-class CommentCreate(Snapshot):
+class CommentCreate(ReviewInput):
     body: CommentBody
     client_request_id: UUID
     source_trial_id: str | None = Field(default=None, max_length=160)
 
 
-class CommentEdit(Snapshot):
-    body: CommentBody | None
+class CommentDelete(ReviewInput):
     expected_revision: int = Field(ge=1, strict=True)
+
+
+class CommentEdit(CommentDelete):
+    body: CommentBody | None
 
 
 class Reviewer(BaseModel):
@@ -60,7 +61,7 @@ class Comment(BaseModel):
     updated_at: datetime
 
 
-class ReviewPage(Snapshot):
+class ReviewPage(BaseModel):
     task_version_id: str
     current_user_id: str
     can_moderate: bool

@@ -3858,25 +3858,24 @@ column selections; sorting is shared with the sidebar and cards.
 ## Internal task review storage
 
 Hosted `TaskReviewRatingModel` and `TaskReviewCommentModel` live in backend/models.py.
-Their version/content identity must use `task_version_fingerprints`, never the
-uploader-supplied hash. Explicitly filter deleted reviews and subjects; enforce
+Reviews belong to a task version; do not require archive fingerprints or file preparation.
+Explicitly filter deleted reviews and subjects; enforce
 org membership and source-trial ownership in the API. Storage migration
 `task_reviews_001` is additive; schema details are in docs/task-review-storage.md.
 
 Internal reviews are hosted-only under `/tasks/{task_id}/versions/{version_id}/reviews`.
-Strict Pydantic writes reject caller-supplied identities and stale content/revisions.
-The version and fingerprint are locked in publication order during writes; it must match the version's current
-client-hash provenance. Ratings use compare-and-swap revisions and comment POSTs
+Strict Pydantic writes reject caller-supplied identities and stale review revisions.
+Writes lock the task version to serialize concurrent rating updates. Ratings use compare-and-swap revisions and comment POSTs
 use org/reviewer-scoped request UUIDs. No review data is added to share responses.
 
 The authenticated Next.js review proxies preserve the hosted task/version review
-routes, content snapshots, revision checks, and comment cursors. The dashboard
+routes, revision checks, and comment cursors. The dashboard
 uses the same API paths in direct mode; no public share route exposes reviews.
 
 The signed-in task detail header opens internal reviews in a version-selectable
 modal. Reviews load only on opening; each version has an independent SWR key.
 Rating writes use the current revision and comments keep a request UUID across
-retries. Conflicts preserve the draft and request a reload. Public task and
+retries. Failed writes preserve the draft and refresh cached reviews without retry controls. Public task and
 trial surfaces do not mount this control.
 
 The token selector adds `uncached_input_tokens`, `cached_input_tokens`, and

@@ -1,8 +1,6 @@
 import { test, expect } from "@playwright/test";
 
 const empty = {
-  content_hash: "verified-content",
-  content_algorithm: "sha256",
   task_version_id: "v2",
   current_user_id: "me",
   can_moderate: false,
@@ -69,7 +67,6 @@ test("day zero, rating, comment and version selection stay scoped", async ({
   expect(writes[0].body).toMatchObject({
     score: 4,
     expected_revision: 0,
-    content_hash: "verified-content",
   });
   await page
     .getByLabel("Comment", { exact: true })
@@ -78,7 +75,6 @@ test("day zero, rating, comment and version selection stay scoped", async ({
   await expect(page.getByLabel("Comment", { exact: true })).toHaveValue("");
   expect(writes[1].body).toMatchObject({
     body: "The requirements are ambiguous.",
-    content_algorithm: "sha256",
   });
   expect(writes[1].body.client_request_id).toMatch(/^[a-f0-9-]{36}$/);
   await page.getByLabel("Review version").selectOption("v1");
@@ -137,7 +133,7 @@ test("others' reviews, older comments, conflict and mobile layout", async ({
   await expect(page.getByText("Earlier observation")).toBeVisible();
   await page.getByLabel("Comment", { exact: true }).fill("My unsaved comment");
   await page.getByRole("button", { name: "Post comment" }).click();
-  await expect(page.getByRole("alert")).toContainText("Reload reviews");
+  await expect(page.getByRole("alert")).toContainText("Couldn’t save review.");
   await expect(page.getByLabel("Comment", { exact: true })).toHaveValue(
     "My unsaved comment"
   );
@@ -151,7 +147,7 @@ test("others' reviews, older comments, conflict and mobile layout", async ({
 
 test("own comments can be edited and removed without changing another review", async ({
   page,
-}, testInfo) => {
+}) => {
   let comment = {
     id: "mine",
     reviewer: rating.reviewer,
@@ -165,10 +161,10 @@ test("own comments can be edited and removed without changing another review", a
   await page.route(
     "**/api/tasks/review-task/versions/*/reviews**",
     async (route) => {
-      if (route.request().method() === "PATCH") {
+      if (["PATCH", "DELETE"].includes(route.request().method())) {
         const payload = route.request().postDataJSON();
         expect(payload.expected_revision).toBe(comment.revision);
-        if (payload.body === null) removed = true;
+        if (route.request().method() === "DELETE") removed = true;
         else
           comment = {
             ...comment,
@@ -200,4 +196,20 @@ test("own comments can be edited and removed without changing another review", a
   page.on("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Delete", exact: true }).click();
   await expect(page.getByText("No comments yet.")).toBeVisible();
+});
+
+test("failed loads stay stable without preparation copy or retry controls", async ({ page }) => {
+  let requests = 0;
+  await page.route("**/api/tasks/review-task/versions/*/reviews**", async route => {
+    requests++;
+    await route.fulfill({ status: 500, json: { detail: "Internal error" } });
+  });
+  await page.goto("/task-reviews");
+  await page.getByRole("button", { name: "Review task" }).click();
+  await expect(page.getByRole("alert")).toHaveText("Couldn’t load reviews.");
+  await expect(page.getByRole("button", { name: /Try again|Reload reviews/ })).toHaveCount(0);
+  await page.clock.install();
+  await page.clock.fastForward(60_000);
+  expect(requests).toBe(1);
+  await expect(page.getByRole("status")).toHaveCount(0);
 });

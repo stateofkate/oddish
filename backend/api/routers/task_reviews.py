@@ -1,4 +1,4 @@
-"""Internal reviews: authenticated members, one verified version at a time."""
+"""Internal reviews for a task version."""
 
 from datetime import datetime
 from typing import Annotated
@@ -19,7 +19,6 @@ from models import (
 from oddish.db import get_read_session, get_session, utcnow
 from oddish.db.models import (
     TaskModel,
-    TaskVersionFingerprintModel,
     TaskVersionModel,
     TrialModel,
 )
@@ -30,12 +29,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.task_review_schemas import (
     Comment,
     CommentCreate,
+    CommentDelete,
     CommentEdit,
     Rating,
     RatingWrite,
     Reviewer,
     ReviewPage,
-    Snapshot,
     WriteResult,
 )
 
@@ -58,26 +57,11 @@ async def subject(
     task_id: str,
     version_id: str,
     auth: AuthContext,
-    expected: Snapshot | None = None,
-) -> Snapshot:
-    if expected is not None:
-        # Match archive publication lock order: version, then fingerprint.
-        await session.scalar(
-            select(TaskVersionModel.id)
-            .join(TaskModel, TaskModel.id == TaskVersionModel.task_id)
-            .where(
-                TaskVersionModel.id == version_id,
-                TaskModel.id == task_id,
-                TaskModel.org_id == auth.org_id,
-            )
-            .with_for_update(of=TaskVersionModel)
-        )
+    *,
+    write: bool = False,
+):
     statement = (
-        select(TaskVersionFingerprintModel)
-        .join(
-            TaskVersionModel,
-            TaskVersionModel.id == TaskVersionFingerprintModel.task_version_id,
-        )
+        select(TaskVersionModel.id)
         .join(TaskModel, TaskModel.id == TaskVersionModel.task_id)
         .where(
             TaskModel.id == task_id,
@@ -85,36 +69,16 @@ async def subject(
             TaskModel.deleted_at.is_(None),
             TaskVersionModel.id == version_id,
             TaskVersionModel.deleted_at.is_(None),
-            TaskVersionFingerprintModel.client_content_hash.is_not_distinct_from(
-                TaskVersionModel.content_hash
-            ),
         )
     )
-    if expected is not None:
-        statement = statement.with_for_update(of=TaskVersionFingerprintModel)
-    fingerprint = await session.scalar(statement)
-    if fingerprint is None:
-        raise HTTPException(
-            404, "Task version is unavailable or its content is still being prepared"
-        )
-    snapshot = Snapshot(
-        content_hash=fingerprint.content_hash, content_algorithm=fingerprint.algorithm
-    )
-    if expected is not None and (
-        expected.content_hash != snapshot.content_hash
-        or expected.content_algorithm != snapshot.content_algorithm
-    ):
-        raise HTTPException(409, "Task content changed. Reload before reviewing.")
-    return snapshot
+    if write:
+        statement = statement.with_for_update(of=TaskVersionModel)
+    if await session.scalar(statement) is None:
+        raise HTTPException(404, "Task version not found")
 
 
-def scope(model, auth, version_id, snapshot):
-    return (
-        model.org_id == auth.org_id,
-        model.task_version_id == version_id,
-        model.content_hash == snapshot.content_hash,
-        model.content_algorithm == snapshot.content_algorithm,
-    )
+def scope(model, auth, version_id):
+    return (model.org_id == auth.org_id, model.task_version_id == version_id)
 
 
 def reviewer(user):
@@ -145,8 +109,8 @@ async def read_reviews(
     ):
         raise HTTPException(422, "Use both cursor fields with a timezone")
     async with get_read_session() as session:
-        snapshot = await subject(session, task_id, version_id, auth)
-        filters = scope(Ratings, auth, version_id, snapshot)
+        await subject(session, task_id, version_id, auth)
+        filters = scope(Ratings, auth, version_id)
         average, count = (
             await session.execute(
                 select(func.avg(Ratings.score), func.count()).where(
@@ -164,13 +128,16 @@ async def read_reviews(
             )
         ).all()
         own = await session.scalar(
-            select(Ratings).where(*filters, Ratings.reviewer_id == auth.user_id)
+            select(Ratings)
+            .where(*filters, Ratings.reviewer_id == auth.user_id)
+            .order_by(Ratings.updated_at.desc(), Ratings.id.desc())
+            .limit(1)
         )
         comments_query = (
             select(Comments, UserModel)
             .join(UserModel, UserModel.id == Comments.reviewer_id)
             .where(
-                *scope(Comments, auth, version_id, snapshot),
+                *scope(Comments, auth, version_id),
                 Comments.deleted_at.is_(None),
             )
         )
@@ -190,7 +157,6 @@ async def read_reviews(
             await session.get(UserModel, auth.user_id) if own is not None else None
         )
         return ReviewPage(
-            **snapshot.model_dump(),
             task_version_id=version_id,
             current_user_id=auth.user_id,
             can_moderate=auth.user_role == UserRole.ADMIN,
@@ -221,45 +187,38 @@ async def read_reviews(
 @router.put("/rating", response_model=WriteResult)
 async def write_rating(task_id: str, version_id: str, data: RatingWrite, auth: Member):
     async with get_session() as session:
-        snapshot = await subject(session, task_id, version_id, auth, data)
+        await subject(session, task_id, version_id, auth, write=True)
         filters = (
-            *scope(Ratings, auth, version_id, snapshot),
+            *scope(Ratings, auth, version_id),
             Ratings.reviewer_id == auth.user_id,
         )
-        existing = await session.scalar(select(Ratings).where(*filters))
-        now = utcnow()
+        existing = await session.scalar(
+            select(Ratings)
+            .where(*filters)
+            .order_by(Ratings.updated_at.desc(), Ratings.id.desc())
+            .limit(1)
+        )
+        if data.expected_revision != (existing.revision if existing else 0):
+            raise HTTPException(409, "Rating changed")
         if existing is None:
-            if data.expected_revision != 0 or data.score is None:
-                raise HTTPException(409, "Rating changed. Reload before saving.")
-            statement = (
-                insert(Ratings)
-                .values(
-                    id=str(uuid4()),
-                    org_id=auth.org_id,
-                    reviewer_id=auth.user_id,
-                    task_version_id=version_id,
-                    **snapshot.model_dump(),
-                    score=data.score,
-                )
-                .on_conflict_do_nothing()
-                .returning(Ratings.id, Ratings.revision)
+            if data.score is None:
+                raise HTTPException(409, "Rating does not exist")
+            existing = Ratings(
+                id=str(uuid4()),
+                org_id=auth.org_id,
+                reviewer_id=auth.user_id,
+                task_version_id=version_id,
+                score=data.score,
+                revision=1,
             )
+            session.add(existing)
         else:
-            statement = (
-                update(Ratings)
-                .where(*filters, Ratings.revision == data.expected_revision)
-                .values(
-                    score=data.score if data.score is not None else existing.score,
-                    deleted_at=now if data.score is None else None,
-                    updated_at=now,
-                    revision=Ratings.revision + 1,
-                )
-                .returning(Ratings.id, Ratings.revision)
-            )
-        saved = (await session.execute(statement)).one_or_none()
-        if saved is None:
-            raise HTTPException(409, "Rating changed. Reload before saving.")
-        return WriteResult(id=saved.id, revision=saved.revision)
+            if data.score is not None:
+                existing.score = data.score
+            existing.deleted_at = utcnow() if data.score is None else None
+            existing.updated_at = utcnow()
+            existing.revision += 1
+        return WriteResult(id=existing.id, revision=existing.revision)
 
 
 @router.post("/comments", response_model=WriteResult)
@@ -267,7 +226,7 @@ async def create_comment(
     task_id: str, version_id: str, data: CommentCreate, auth: Member
 ):
     async with get_session() as session:
-        snapshot = await subject(session, task_id, version_id, auth, data)
+        await subject(session, task_id, version_id, auth, write=True)
         if (
             data.source_trial_id is not None
             and await session.scalar(
@@ -282,16 +241,15 @@ async def create_comment(
             is None
         ):
             raise HTTPException(422, "Trial does not belong to this task version")
-        values = dict(
-            id=str(uuid4()),
-            org_id=auth.org_id,
-            reviewer_id=auth.user_id,
-            task_version_id=version_id,
-            **snapshot.model_dump(),
-            body=data.body,
-            source_trial_id=data.source_trial_id,
-            client_request_id=str(data.client_request_id),
-        )
+        values = {
+            "id": str(uuid4()),
+            "org_id": auth.org_id,
+            "reviewer_id": auth.user_id,
+            "task_version_id": version_id,
+            "body": data.body,
+            "source_trial_id": data.source_trial_id,
+            "client_request_id": str(data.client_request_id),
+        }
         saved = (
             await session.execute(
                 insert(Comments)
@@ -314,8 +272,6 @@ async def create_comment(
                     getattr(existing, field) != values[field]
                     for field in (
                         "task_version_id",
-                        "content_hash",
-                        "content_algorithm",
                         "body",
                         "source_trial_id",
                     )
@@ -332,9 +288,9 @@ async def edit_comment(
     task_id: str, version_id: str, comment_id: str, data: CommentEdit, auth: Member
 ):
     async with get_session() as session:
-        snapshot = await subject(session, task_id, version_id, auth, data)
+        await subject(session, task_id, version_id, auth, write=True)
         filters = [
-            *scope(Comments, auth, version_id, snapshot),
+            *scope(Comments, auth, version_id),
             Comments.id == comment_id,
             Comments.deleted_at.is_(None),
             Comments.revision == data.expected_revision,
@@ -357,3 +313,16 @@ async def edit_comment(
         if saved is None:
             raise HTTPException(409, "Comment changed or cannot be edited")
         return WriteResult(id=saved.id, revision=saved.revision)
+
+
+@router.delete("/comments/{comment_id}", response_model=WriteResult)
+async def delete_comment(
+    task_id: str, version_id: str, comment_id: str, data: CommentDelete, auth: Member
+):
+    return await edit_comment(
+        task_id,
+        version_id,
+        comment_id,
+        CommentEdit(body=None, expected_revision=data.expected_revision),
+        auth,
+    )

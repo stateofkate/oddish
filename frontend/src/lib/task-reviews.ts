@@ -18,8 +18,6 @@ export type ReviewComment = {
   updated_at: string;
 };
 export type ReviewPage = {
-  content_hash: string;
-  content_algorithm: string;
   task_version_id: string;
   current_user_id: string;
   can_moderate: boolean;
@@ -35,22 +33,7 @@ export type ReviewPage = {
 
 export async function reviewRequest<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await apiFetch(url, options);
-  const body = await response.json();
-  if (!response.ok) {
-    if (response.status === 409)
-      throw new Error(
-        "This review changed. Reload reviews before saving again."
-      );
-    if (response.status === 404)
-      throw new Error(
-        "Reviews are unavailable while this version is being prepared."
-      );
-    throw new Error(
-      typeof body.detail === "string"
-        ? body.detail
-        : "Could not save or load reviews. Please try again."
-    );
-  }
-  return body as T;
+  if (!response.ok)
+    throw new Error(options?.method ? "Couldn’t save review." : "Couldn’t load reviews.");
+  return await response.json() as T;
 }
-

@@ -111,7 +111,7 @@ function ReviewForm({
       return `${base}?${new URLSearchParams({ before: previous.next_before, before_id: previous.next_before_id })}`;
     },
     request<ReviewPage>,
-    { revalidateOnFocus: false }
+    { revalidateOnFocus: false, shouldRetryOnError: false }
   );
   const data = pages?.[0];
   const [score, setScore] = useState<number | null | undefined>(undefined);
@@ -138,25 +138,20 @@ function ReviewForm({
       await request(base + path, {
         method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          content_hash: data.content_hash,
-          content_algorithm: data.content_algorithm,
-          ...payload,
-        }),
+        body: JSON.stringify(payload),
       });
       complete();
       await mutate();
       setMessage("Saved");
-    } catch (error) {
-      setFailure(
-        error instanceof Error ? error.message : "Could not save review."
-      );
+    } catch {
+      setFailure("Couldn’t save review.");
+      void mutate().catch(() => {});
     } finally {
       setBusy(false);
       onBusy(false);
     }
   }
-  if (isLoading)
+  if (isLoading && !error)
     return (
       <p role="status" className="text-muted-foreground text-sm">
         Loading reviews…
@@ -164,12 +159,7 @@ function ReviewForm({
     );
   if (!data)
     return (
-      <div role="alert" className="space-y-2 text-sm">
-        <p>{error?.message ?? "Could not load reviews."}</p>
-        <Button variant="outline" onClick={() => void mutate()}>
-          Try again
-        </Button>
-      </div>
+      <p role="alert" className="text-sm">Couldn’t load reviews.</p>
     );
   const comments = [
     ...new Map(
@@ -212,7 +202,7 @@ function ReviewForm({
           ))}
         </div>
         <p className="text-muted-foreground text-xs">
-          1 · Poor 3 · Adequate 5 · Excellent
+          1 · Poor 3 · Adequate 5 · Excellent
         </p>
         <div className="flex gap-2">
           <Button
@@ -311,22 +301,7 @@ function ReviewForm({
         </div>
       </form>
       {message && <p role="status">{message}</p>}
-      {(failure || error) && (
-        <div role="alert">
-          <p>{failure || error?.message}</p>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={busy}
-            onClick={() => {
-              setFailure("");
-              void mutate();
-            }}
-          >
-            Reload reviews
-          </Button>
-        </div>
-      )}
+      {(failure || error) && <p role="alert">{failure || error?.message}</p>}
       <section className="space-y-2 border-t pt-4" aria-label="Ratings">
         <h3 className="font-medium">Ratings</h3>
         {data.ratings.map((rating) => (
@@ -390,8 +365,8 @@ function ReviewForm({
                     if (window.confirm("Delete this comment?"))
                       void write(
                         `/comments/${encodeURIComponent(comment.id)}`,
-                        "PATCH",
-                        { body: null, expected_revision: comment.revision },
+                        "DELETE",
+                        { expected_revision: comment.revision },
                         () => {
                           if (editing?.id === comment.id) {
                             setEditing(null);
