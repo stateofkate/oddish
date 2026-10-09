@@ -30,7 +30,7 @@ from oddish.db import (
     utcnow,
 )
 from pydantic import BaseModel
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/org-shares", tags=["Sharing"])
@@ -279,7 +279,7 @@ async def _own(
 async def list_shareable_orgs(
     auth: Annotated[AuthContext, Depends(require_admin)],
 ) -> list[ShareableOrg]:
-    """Orgs that can sign in, other than the operator's own."""
+    """Customer orgs, the only ones anything is shared with."""
     require_operator_org(auth)
     async with get_session() as session:
         orgs = await session.scalars(
@@ -287,10 +287,7 @@ async def list_shareable_orgs(
             .where(
                 OrganizationModel.is_active.is_(True),
                 OrganizationModel.id != auth.org_id,
-                or_(
-                    OrganizationModel.viewer_access.is_(True),
-                    OrganizationModel.execution_enabled.is_(True),
-                ),
+                OrganizationModel.org_type == "customer",
             )
             .order_by(OrganizationModel.name)
         )
@@ -319,7 +316,12 @@ async def create_org_share(
     async with get_session() as session:
         await _own(session, payload.resource_type, payload.resource_id, auth.org_id)
         org = await session.get(OrganizationModel, payload.grantee_org_id)
-        if org is None or not org.is_active or org.id == auth.org_id:
+        if (
+            org is None
+            or not org.is_active
+            or org.org_type != "customer"
+            or org.id == auth.org_id
+        ):
             raise HTTPException(status_code=404, detail="Organization not found")
         await add_org_share(
             session,

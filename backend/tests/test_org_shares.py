@@ -53,6 +53,7 @@ async def world(monkeypatch):
                     name=key,
                     slug=ids[key],
                     viewer_access=True,
+                    org_type="customer",
                     # "other" may run work but is still not the operator.
                     execution_enabled=key == "other",
                 )
@@ -189,6 +190,35 @@ async def test_org_share_opens_by_id_and_never_changes_the_public_link(world):
     assert (await world.get(link)).status_code == 200
     assert (await world.get(by_id, "cursive")).status_code == 404
     assert (await world.get("/org-shares/incoming", "cursive")).json() == []
+
+
+@pytest.mark.asyncio
+async def test_only_customer_orgs_can_be_picked_or_shared_with(world):
+    internal = f"share_internal_{uuid.uuid4().hex[:8]}"
+    async with get_session() as session:
+        session.add(
+            OrganizationModel(
+                id=internal, name="Someone's org", slug=internal, execution_enabled=True
+            )
+        )
+    try:
+        listed = await world.get("/org-shares/orgs", "operator")
+        ids = {o["id"] for o in listed.json()}
+        assert {world.ids["cursive"], world.ids["other"]} <= ids
+        assert internal not in ids
+        refused = await world.client.post(
+            "/org-shares",
+            json={"grantee_org_id": internal, "resource_id": world.experiment_id},
+            headers={"Authorization": f"Bearer {world.ids['operator']}"},
+        )
+        assert refused.status_code == 404, refused.text
+    finally:
+        async with get_session() as session:
+            await session.execute(
+                OrganizationModel.__table__.delete().where(
+                    OrganizationModel.id == internal
+                )
+            )
 
 
 @pytest.mark.asyncio
