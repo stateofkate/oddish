@@ -64,9 +64,9 @@ jobs:
       # development happens on preview deploys only (pr-preview.yml keeps it on).
       # CPU tasks default to Modal; Numinous remains an explicit opt-in.
       ODDISH_NUMINOUS_ENABLED: "0"
-      # Unikraft Cloud execution backend (opt-in). Disabled: it needs the
-      # oddish-unikraft secret and a Harbor pin that carries the environment.
-      ODDISH_UNIKRAFT_ENABLED: "0"
+      # Unikraft Cloud execution backend. Only --env unikraft selects it;
+      # credentials come from the oddish-unikraft secret.
+      ODDISH_UNIKRAFT_ENABLED: "1"
       # oddish-mon (V1) executes trials from inside the sandbox. Production
       # ramps by sample: 70 percent of eligible trials (by trial-id bucket) run
       # on the monitor for their first attempt and fall back to the worker after
