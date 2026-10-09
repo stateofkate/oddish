@@ -6,20 +6,18 @@ import { fetcher } from "@/lib/api";
 import type { SharedExperiment } from "@/lib/types";
 
 /**
- * True for a customer org (or any view-only one): it sees only what is shared
- * with it. Undefined while loading. The org id in the key keeps one cache per
- * org.
+ * True for a view-only org: it cannot run jobs, so it sees only what is shared
+ * with it. A customer org given "Runs jobs" gets the full app. Undefined while
+ * loading. The org id in the key keeps one cache per org.
  */
 export function useIsViewerOrg(): boolean | undefined {
   const { isSignedIn, orgId } = useAuth();
-  const { data } = useSWR<{ access?: string; org_type?: string }>(
+  const { data } = useSWR<{ access?: string }>(
     isSignedIn && orgId ? `/api/org?org=${encodeURIComponent(orgId)}` : null,
     fetcher,
     { revalidateOnFocus: false }
   );
-  return data
-    ? data.org_type === "customer" || data.access === "viewer"
-    : undefined;
+  return data ? data.access === "viewer" : undefined;
 }
 
 /** Experiments shared with the active org, cached per org like the above. */

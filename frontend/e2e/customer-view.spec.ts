@@ -65,6 +65,19 @@ test("an internal org stays on its page with the full nav", async ({
   await expect(nav.getByRole("link", { name: "Leaderboard" })).toBeVisible();
 });
 
+test("a customer org that runs jobs gets the full app", async ({ page }) => {
+  await clerk(page, { isSignedIn: true });
+  const reads = await api(page, { org_type: "customer", access: "execution" });
+  await page.goto("/leaderboard");
+  await expect
+    .poll(() => reads.some((r) => r.startsWith("/api/org?")))
+    .toBe(true);
+  await expect(page.getByText("Leaderboard fixture")).toBeVisible();
+  await expect(page).toHaveURL(/\/leaderboard$/);
+  const nav = page.locator("nav[data-page-sticky-header]");
+  await expect(nav.getByRole("link", { name: "Leaderboard" })).toBeVisible();
+});
+
 test("shared tasks link to the version that shipped", async ({ page }) => {
   await clerk(page, { isSignedIn: true });
   const tasks: SharedTask[] = [
