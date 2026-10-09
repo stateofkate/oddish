@@ -36,10 +36,6 @@
     "title": "Review a delivery"
   },
   {
-    "slug": "guides/shared-with-you",
-    "title": "Work shared with you"
-  },
-  {
     "slug": "guides/qa-goldens",
     "title": "Update the QA golden set"
   },

@@ -22,7 +22,7 @@ The script installs [uv](https://docs.astral.sh/uv/) if it is missing, downloads
 oddish ls
 ```
 
-Success is a task list, which can be empty. What a key can do depends on your workspace: a workspace that runs jobs can submit runs and pull its results; a view-only workspace gets read keys and reads what Abundant shared with it. If access is denied, see [Troubleshooting](troubleshooting.md).
+Success is a task list, which can be empty. What a key can do depends on your workspace: a workspace that runs jobs can submit runs and pull its results; a view-only workspace gets read keys, and the tasks Abundant shares with it are on the website. If access is denied, see [Troubleshooting](troubleshooting.md).
 
 People with GitHub read access to `abundant-ai/homebrew-tap` can instead run `brew install abundant-ai/tap/oddish`.
 

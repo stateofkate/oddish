@@ -86,6 +86,12 @@ WORKER_TASK_MOUNT_PATH = Path("/mnt/oddish-tasks")
 WORKER_TASK_KEY_PREFIX = "tasks/"
 
 
+def _task_archive_download_name(task_id: str) -> str:
+    """Name a downloaded task archive after its task, not the hidden object name."""
+    safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in task_id)
+    return f"{safe.strip('.') or 'task'}.tar.gz"
+
+
 def _cleanup_temp_directory(path: Path | None) -> None:
     """Best-effort removal for temporary S3 download directories."""
     if path is None:
@@ -1232,7 +1238,9 @@ class StorageClient:
             )
             if presign and source.archive_key:
                 listing["archive_url"] = await self.get_presigned_url(
-                    source.archive_key, expiration=presign_expiration
+                    source.archive_key,
+                    expiration=presign_expiration,
+                    download_name=_task_archive_download_name(task_id),
                 )
             return listing
         if source.archive_files is not None:
@@ -1249,7 +1257,9 @@ class StorageClient:
             ]
             archive_url = (
                 await self.get_presigned_url(
-                    source.archive_key, expiration=presign_expiration
+                    source.archive_key,
+                    expiration=presign_expiration,
+                    download_name=_task_archive_download_name(task_id),
                 )
                 if presign
                 else None
@@ -2118,21 +2128,29 @@ class StorageClient:
             "next_token": response.get("NextContinuationToken"),
         }
 
-    async def get_presigned_url(self, s3_key: str, expiration: int = 3600) -> str:
+    async def get_presigned_url(
+        self, s3_key: str, expiration: int = 3600, download_name: str | None = None
+    ) -> str:
         """
         Generate a presigned URL for accessing an S3 object.
 
         Args:
             s3_key: S3 key
             expiration: URL expiration time in seconds (default 1 hour)
+            download_name: File name a browser saves the object as
 
         Returns:
             Presigned URL
         """
         await self._ensure_client()
+        params = {"Bucket": settings.s3_bucket, "Key": s3_key}
+        if download_name:
+            params["ResponseContentDisposition"] = (
+                f'attachment; filename="{download_name}"'
+            )
         url: str = await self._s3.generate_presigned_url(
             "get_object",
-            Params={"Bucket": settings.s3_bucket, "Key": s3_key},
+            Params=params,
             ExpiresIn=expiration,
         )
         return url

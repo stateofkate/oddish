@@ -667,9 +667,13 @@ async def test_list_task_files_presign_returns_archive_url(monkeypatch):
         assert s3_key == "tasks/task-123/.oddish-task.tar.gz"
         return archive_bytes
 
-    async def fake_get_presigned_url(s3_key: str, expiration: int = 900) -> str:
+    async def fake_get_presigned_url(
+        s3_key: str, expiration: int = 900, download_name: str | None = None
+    ) -> str:
         assert s3_key == "tasks/task-123/.oddish-task.tar.gz"
         assert expiration == 900
+        # Browsers save the archive as the task, not as a hidden dotfile.
+        assert download_name == "task-123.tar.gz"
         return "https://example.com/task-archive"
 
     monkeypatch.setattr(storage, "head_object", fake_head_object)
@@ -913,7 +917,10 @@ async def test_expanded_listing_still_links_its_matching_archive(monkeypatch):
     async def matches(_manifest_key, _archive_key):
         return True
 
-    async def fake_presigned(s3_key: str, expiration: int) -> str:
+    async def fake_presigned(
+        s3_key: str, expiration: int, download_name: str | None = None
+    ) -> str:
+        assert download_name == "task-123.tar.gz"
         return f"https://example.com/{s3_key}"
 
     async def fake_presigned_batch(s3_keys, expiration):
@@ -1726,3 +1733,23 @@ async def test_published_definition_preview_failure_does_not_hide_other_files(
     assert "content" not in files["large.txt"]
     assert "content" not in files["slow.txt"]
     assert download.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_presigned_download_name_sets_content_disposition():
+    storage = storage_mod.StorageClient()
+    calls: list[dict] = []
+
+    class FakeS3:
+        async def generate_presigned_url(self, _op, Params, ExpiresIn):
+            calls.append(Params)
+            return "https://example.com/x"
+
+    storage._client = FakeS3()
+    await storage.get_presigned_url("k", download_name="task-123.tar.gz")
+    await storage.get_presigned_url("k")
+    assert calls[0]["ResponseContentDisposition"] == (
+        'attachment; filename="task-123.tar.gz"'
+    )
+    assert "ResponseContentDisposition" not in calls[1]
+    assert storage_mod._task_archive_download_name('../a"b') == "_a_b.tar.gz"
