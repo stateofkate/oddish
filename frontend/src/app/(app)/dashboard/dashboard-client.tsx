@@ -175,35 +175,37 @@ function ExperimentsTableBody({
     const Icon = active ? (ascending ? ArrowUp : ArrowDown) : ArrowUpDown;
     return (
       <TableHead
-        className="whitespace-nowrap text-right"
+        className="w-px whitespace-nowrap text-right"
         aria-sort={active ? (ascending ? "ascending" : "descending") : "none"}
       >
-        {token && (
-          <TokenMetricSelect
-            value={tokenMetric.value}
-            onChange={(value) =>
-              update((params) => {
-                setTokenMetric(params, value);
-              })
+        <div className="inline-flex items-center gap-1 [&_select]:field-sizing-content [&_select]:max-w-48">
+          {token && (
+            <TokenMetricSelect
+              value={tokenMetric.value}
+              onChange={(value) =>
+                update((params) => {
+                  setTokenMetric(params, value);
+                })
+              }
+            />
+          )}
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 py-2 hover:text-foreground"
+            aria-label={`Sort by ${label.toLowerCase()}`}
+            onClick={() =>
+              update((params) =>
+                params.set(
+                  "sort",
+                  `${sort}_${active && !ascending ? "asc" : "desc"}`,
+                ),
+              )
             }
-          />
-        )}
-        <button
-          type="button"
-          className="inline-flex items-center gap-1 py-2 hover:text-foreground"
-          aria-label={`Sort by ${label.toLowerCase()}`}
-          onClick={() =>
-            update((params) =>
-              params.set(
-                "sort",
-                `${sort}_${active && !ascending ? "asc" : "desc"}`,
-              ),
-            )
-          }
-        >
-          {!token && label}
-          <Icon className="h-3 w-3" aria-hidden />
-        </button>
+          >
+            {!token && label}
+            <Icon className="h-3 w-3" aria-hidden />
+          </button>
+        </div>
       </TableHead>
     );
   };
@@ -291,16 +293,16 @@ function ExperimentsTableBody({
       {showDetails && <TableHead>PR</TableHead>}
       <TableHead>Tasks</TableHead>
       <TableHead>Trials</TableHead>
+      {metricHeader("Avg steps", "avg_steps")}
+      {metricHeader(`Avg ${tokenMetric.label} tokens`, tokenMetric.sort, true)}
+      {metricHeader("Avg trial cost", "avg_cost")}
+      {showDetails && <TableHead className="text-right">Last task</TableHead>}
       <TableHead
         className="cursor-help"
         title="Average of per-task average reward, nop/oracle excluded"
       >
         Avg score
       </TableHead>
-      {metricHeader("Avg steps", "avg_steps")}
-      {metricHeader(`Avg ${tokenMetric.label} tokens`, tokenMetric.sort, true)}
-      {metricHeader("Avg trial cost", "avg_cost")}
-      {showDetails && <TableHead className="text-right">Last task</TableHead>}
       <TableHead className="text-right">Delete</TableHead>
     </>
   );
@@ -485,6 +487,14 @@ function ExperimentsTableBody({
                         </span>
                       )}
                     </TableCell>
+                    {["steps", tokenMetric.field, "cost"].map(metric => <TableCell key={metric} className="text-right">
+                      <EffortCell effort={experiment.effort} metric={metric as "steps" | typeof tokenMetric.field | "cost"} scope="This experiment's selected task versions." />
+                    </TableCell>)}
+                    {showDetails && <TableCell className="text-muted-foreground text-right text-xs whitespace-nowrap">
+                      {experiment.last_created_at
+                        ? formatShortDateTime(experiment.last_created_at)
+                        : "—"}
+                    </TableCell>}
                     <TableCell className="font-mono text-xs">
                       {avgScorePct === null ? (
                         <span className="text-muted-foreground">—</span>
@@ -502,14 +512,6 @@ function ExperimentsTableBody({
                         </span>
                       )}
                     </TableCell>
-                    {["steps", tokenMetric.field, "cost"].map(metric => <TableCell key={metric} className="text-right">
-                      <EffortCell effort={experiment.effort} metric={metric as "steps" | typeof tokenMetric.field | "cost"} scope="This experiment's selected task versions." />
-                    </TableCell>)}
-                    {showDetails && <TableCell className="text-muted-foreground text-right text-xs whitespace-nowrap">
-                      {experiment.last_created_at
-                        ? formatShortDateTime(experiment.last_created_at)
-                        : "—"}
-                    </TableCell>}
                     <TableCell className="text-right">
                       <Button
                         variant="ghost"
