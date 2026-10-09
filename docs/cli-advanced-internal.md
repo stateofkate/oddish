@@ -12,6 +12,7 @@ Repository-only reference migrated from DOCS.md. Contains operator and advanced 
 - `oddish ls` - list uploaded tasks
 - `oddish status` - view progress
 - `oddish qa export` - export existing QA findings and task statuses to CSV
+- `oddish qa feedback` - print agree/disagree votes on QA output as JSON lines
 - `oddish qa evals start/status/run/diff` - compare QA models and prompts against reviewed golden labels
 - `oddish logs` - stream a running trial's live transcript and cost estimate
 - `oddish cancel` - stop in-flight task runs, or just the QA/audit runs with `--qa`
@@ -503,6 +504,21 @@ when QA reports defects or is unfinished.
 `--api` overrides the API URL; the usual `ODDISH_API_KEY`, `ODDISH_API_URL`,
 and `ODDISH_PREVIEW_PR` settings apply. The exporter uses one existing task-detail
 request per ID, with a 30-second HTTP timeout and no automatic retry.
+
+### Read QA votes
+
+`oddish qa feedback` prints the org's agree/disagree votes on QA output as JSON
+lines, newest first:
+
+```bash
+oddish qa feedback --vote disagree --since 2026-10-01
+oddish qa feedback --experiment <experiment_id> --limit 2000
+```
+
+Each line has the voter (`created_by_user_id`), the judged trial (`trial_id`),
+the report voted on (`report_trial_id`), the item in it (`target`,
+`target_key`), `vote`, and the voter's comment (`body`). Run
+`oddish pull <report_trial_id>` to read the finding a vote refers to.
 
 ## Check Progress
 

@@ -1,12 +1,14 @@
 """Persist append-only QA votes after validating experiment or task membership."""
 
+from datetime import datetime
+
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from oddish.core.experiment_membership import trial_in_experiment
 from oddish.db import ExperimentModel, FeedbackModel, TrialModel
-from oddish.schemas import FeedbackCreate
+from oddish.schemas import FeedbackCreate, FeedbackVote
 
 
 async def create_feedback_core(
@@ -139,3 +141,30 @@ async def validate_feedback_report(
             raise HTTPException(
                 status_code=422, detail="report did not analyze this trial"
             )
+
+
+async def list_feedback_core(
+    session: AsyncSession,
+    *,
+    org_id: str | None,
+    experiment_id: str | None = None,
+    vote: FeedbackVote | None = None,
+    since: datetime | None = None,
+    limit: int = 200,
+) -> list[FeedbackModel]:
+    """Return the org's QA votes, newest first."""
+    query = select(FeedbackModel).where(
+        FeedbackModel.org_id.is_(None)
+        if org_id is None
+        else FeedbackModel.org_id == org_id
+    )
+    if experiment_id:
+        query = query.where(FeedbackModel.experiment_id == experiment_id)
+    if vote:
+        query = query.where(FeedbackModel.vote == vote)
+    if since:
+        query = query.where(FeedbackModel.created_at >= since)
+    rows = await session.scalars(
+        query.order_by(FeedbackModel.created_at.desc()).limit(limit)
+    )
+    return list(rows)

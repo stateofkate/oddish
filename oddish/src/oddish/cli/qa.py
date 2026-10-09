@@ -289,3 +289,49 @@ def export_qa(
     typer.echo(f"Findings: {output}\nTask summary: {summary_path}")
     if failures:
         raise typer.Exit(1)
+
+
+@qa_app.command("feedback")
+def list_feedback(
+    experiment: Annotated[
+        str | None, typer.Option("--experiment", "-e", help="Experiment ID.")
+    ] = None,
+    vote: Annotated[
+        str | None, typer.Option("--vote", help="agree or disagree.")
+    ] = None,
+    since: Annotated[
+        str | None, typer.Option("--since", help="ISO date or datetime, inclusive.")
+    ] = None,
+    limit: Annotated[int, typer.Option("--limit", min=1, max=2000)] = 200,
+    api: Annotated[
+        str | None, typer.Option("--api", help="Override the API URL.")
+    ] = None,
+) -> None:
+    """Print agree/disagree votes on QA output as JSON lines, newest first.
+
+    Each line names the judged trial (trial_id), the report voted on
+    (report_trial_id) and the item in it (target, target_key). `oddish pull
+    <report_trial_id>` downloads that report.
+    """
+    api_url = (api or get_api_url()).rstrip("/")
+    params = {
+        key: value
+        for key, value in {
+            "experiment_id": experiment,
+            "vote": vote,
+            "since": since,
+            "limit": limit,
+        }.items()
+        if value is not None
+    }
+    response = httpx.get(
+        f"{api_url}/feedback",
+        params=params,
+        headers=get_auth_headers(api_url),
+        timeout=60.0,
+    )
+    if response.is_error:
+        typer.echo(f"{response.status_code}: {response.text}", err=True)
+        raise typer.Exit(1)
+    for row in response.json():
+        typer.echo(json.dumps(row))

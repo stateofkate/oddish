@@ -313,3 +313,34 @@ async def test_trajectory_vote_accepts_grader_named_by_trial_analysis(harbor_con
         )
         assert row.report_trial_id == report.id
         await session.rollback()
+
+
+async def test_list_feedback_filters_by_org_experiment_and_vote():
+    if not URL:
+        pytest.skip("ODDISH_DATABASE_URL not set")
+    from oddish.core.feedback import list_feedback_core
+    from oddish.db import get_session, init_db
+    from oddish.db.models import FeedbackModel
+
+    await init_db()
+    async with get_session() as session:
+        experiment, trial = await _make_trial(session, run=uuid.uuid4().hex[:8])
+        org = f"org-{uuid.uuid4().hex[:8]}"
+        for vote, row_org in [("agree", org), ("disagree", org), ("disagree", "x")]:
+            session.add(
+                FeedbackModel(
+                    org_id=row_org,
+                    experiment_id=experiment.id,
+                    trial_id=trial.id,
+                    target="qa_verdict",
+                    target_key="BAD_FAILURE",
+                    vote=vote,
+                )
+            )
+        await session.flush()
+
+        rows = await list_feedback_core(
+            session, org_id=org, experiment_id=experiment.id, vote="disagree"
+        )
+        assert [(r.org_id, r.vote) for r in rows] == [(org, "disagree")]
+        assert len(await list_feedback_core(session, org_id=org)) == 2

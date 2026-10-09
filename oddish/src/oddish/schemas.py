@@ -2906,9 +2906,10 @@ class FeedbackCreate(BaseModel):
 
 
 class FeedbackResponse(BaseModel):
-    """The persisted QA vote returned by the create endpoint."""
+    """One persisted QA vote, as returned by the create and list endpoints."""
 
     id: str
+    created_by_user_id: str | None = None
     experiment_id: str
     trial_id: str
     report_trial_id: str | None = None
