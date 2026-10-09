@@ -26,6 +26,7 @@ from sqlalchemy import func, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.services.task_review_notifications import queue_review_notification
 from api.task_review_schemas import (
     Comment,
     CommentCreate,
@@ -313,6 +314,7 @@ async def save_comment(
         ):
             raise HTTPException(409, "Comment request already used")
         return WriteResult(id=existing.id, revision=existing.revision)
+    await queue_review_notification(session, saved.id)
     return WriteResult(id=saved.id, revision=saved.revision)
 
 
@@ -355,6 +357,8 @@ async def change_comment(
     ).one_or_none()
     if saved is None:
         raise HTTPException(409, "Comment changed or cannot be edited")
+    if data.body is not None:
+        await queue_review_notification(session, saved.id)
     return WriteResult(id=saved.id, revision=saved.revision)
 
 

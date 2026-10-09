@@ -933,6 +933,7 @@ interface AlertPrefs {
   experiment_finished_enabled: boolean;
   trial_finished_enabled: boolean;
   task_finished_enabled: boolean;
+  task_review_enabled: boolean;
   experiment_milestone_usd: number | null;
   trial_ping_usd: number | null;
   inherited_experiment_milestone_usd: number;
@@ -983,6 +984,11 @@ const ALERT_TOGGLES: {
     key: "task_finished_enabled",
     label: "QA verdict accepted",
     description: "A task received an Accepted QA verdict.",
+  },
+  {
+    key: "task_review_enabled",
+    label: "Task reviews",
+    description: "Someone reviews your task or updates their review.",
   },
 ];
 

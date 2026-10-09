@@ -4,8 +4,6 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy.exc import ProgrammingError
-
 import user_alert_prefs
 from slack_alert_settings import DEFAULT_ALERT_SETTINGS
 from slack_notifications import (
@@ -15,11 +13,13 @@ from slack_notifications import (
     FailedTrial,
     FinishedExperiment,
     FinishedTrial,
+    LiveTrialSpend,
     QaFailure,
     TaskFinished,
     TrialSpend,
     build_alerts,
 )
+from sqlalchemy.exc import ProgrammingError
 from user_alert_prefs import UserAlertPrefs
 
 NOW = datetime(2026, 7, 17, 12, 0, tzinfo=timezone.utc)
@@ -82,7 +82,8 @@ def test_cost_milestone_toggle_off_drops_only_the_milestone():
 def test_expensive_trial_toggle_off_drops_the_dm_but_not_the_escalation():
     candidates = AlertCandidates(
         experiments=[_experiment()],
-        trials=[_trial("whale", 1500)],  # > $1000 escalation
+        trials=[_trial("whale", 1500)],
+        live_trials=[LiveTrialSpend("whale", "whale title", "task/1", "e1", "m", 1500)],
     )
     off = _build(candidates, UserAlertPrefs(expensive_trial_enabled=False))
     # No owner DM, but the shared in-channel escalation still fires.
@@ -177,7 +178,9 @@ def test_personal_trial_floor_above_a_trial_suppresses_the_dm_only():
 
 def test_personal_trial_floor_above_escalation_still_lets_the_channel_fire():
     candidates = AlertCandidates(
-        experiments=[_experiment()], trials=[_trial("t", 1500)]
+        experiments=[_experiment()],
+        trials=[_trial("t", 1500)],
+        live_trials=[LiveTrialSpend("t", "t title", "task/1", "e1", "m", 1500)],
     )
     alerts = _build(candidates, UserAlertPrefs(trial_ping_usd=5000))
     assert "trial:t" not in _keys(alerts)  # no personal DM
@@ -268,6 +271,7 @@ def _row(**kw):
         experiment_finished_enabled=kw.get("experiment_finished_enabled", True),
         trial_finished_enabled=kw.get("trial_finished_enabled", True),
         task_finished_enabled=kw.get("task_finished_enabled", True),
+        task_review_enabled=kw.get("task_review_enabled", True),
         experiment_milestone_usd=kw.get("experiment_milestone_usd"),
         trial_ping_usd=kw.get("trial_ping_usd"),
     )

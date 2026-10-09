@@ -30,6 +30,7 @@ VALID = {
     "experiment_finished_enabled": True,
     "trial_finished_enabled": False,
     "task_finished_enabled": True,
+    "task_review_enabled": False,
     "experiment_milestone_usd": 2500,
     "trial_ping_usd": 50,
 }
@@ -116,6 +117,7 @@ async def test_put_writes_and_echoes(monkeypatch):
         experiment_finished_enabled=True,
         trial_finished_enabled=False,
         task_finished_enabled=True,
+        task_review_enabled=False,
         experiment_milestone_usd=2500,
         trial_ping_usd=50,
     )
@@ -127,6 +129,7 @@ async def test_put_writes_and_echoes(monkeypatch):
     assert body["expensive_trial_enabled"] is False
     assert body["trial_finished_enabled"] is False
     assert body["task_finished_enabled"] is True
+    assert body["task_review_enabled"] is False
     assert body["trial_ping_usd"] == 50
     assert any("INSERT INTO user_alert_preferences" in s for s in session.statements)
     assert any("ON CONFLICT" in s for s in session.statements)
@@ -159,6 +162,7 @@ async def test_null_cutoffs_are_accepted_as_inherit(monkeypatch):
         experiment_finished_enabled=True,
         trial_finished_enabled=True,
         task_finished_enabled=True,
+        task_review_enabled=False,
         experiment_milestone_usd=None,
         trial_ping_usd=None,
     )
@@ -187,3 +191,23 @@ async def test_requires_auth(monkeypatch):
     _install(monkeypatch, _FakeSession(row=None))
     resp = await _call("GET", auth=None)
     assert resp.status_code in (401, 403)
+
+
+async def test_old_settings_payload_preserves_review_opt_out(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from user_alert_prefs import UserAlertPrefs
+
+    _install(monkeypatch, _FakeSession())
+    monkeypatch.setattr(
+        notif_router,
+        "get_user_alert_prefs",
+        AsyncMock(return_value=UserAlertPrefs(task_review_enabled=False)),
+    )
+    save = AsyncMock(return_value=UserAlertPrefs(task_review_enabled=False))
+    monkeypatch.setattr(notif_router, "set_user_alert_prefs", save)
+    response = await _call(
+        "PUT", json={k: v for k, v in VALID.items() if k != "task_review_enabled"}
+    )
+    assert response.status_code == 200
+    assert save.await_args.args[2].task_review_enabled is False

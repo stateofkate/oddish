@@ -38,6 +38,7 @@ class AlertPreferences(BaseModel):
     experiment_finished_enabled: bool = True
     trial_finished_enabled: bool = True
     task_finished_enabled: bool = True
+    task_review_enabled: bool = True
     # null means "inherit the admin/global cutoff"; a value pins it for this user.
     # gt=0 also rejects NaN (NaN > 0 is false).
     experiment_milestone_usd: float | None = Field(default=None, gt=0)
@@ -103,8 +104,13 @@ async def update_alert_preferences(
     user_id = _require_user_session(auth)
     try:
         async with get_session() as session:
+            values = payload.model_dump()
+            if "task_review_enabled" not in payload.model_fields_set:
+                values["task_review_enabled"] = (
+                    await get_user_alert_prefs(session, user_id)
+                ).task_review_enabled
             prefs = await set_user_alert_prefs(
-                session, user_id, UserAlertPrefs(**payload.model_dump())
+                session, user_id, UserAlertPrefs(**values)
             )
     except ProgrammingError as exc:
         raise _unavailable(exc) from exc

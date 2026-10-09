@@ -51,6 +51,7 @@ class UserAlertPrefs:
     experiment_finished_enabled: bool = True
     trial_finished_enabled: bool = True
     task_finished_enabled: bool = True
+    task_review_enabled: bool = True
     # None means "inherit the deploy-time cutoff above"; a value pins it for this
     # person. The milestone value overrides both the first threshold and the
     # repeat interval -- a user thinks in one "DM me every $X", not two.
@@ -74,6 +75,7 @@ def _from_row(row: UserAlertPreferencesModel) -> UserAlertPrefs:
         experiment_finished_enabled=row.experiment_finished_enabled,
         trial_finished_enabled=row.trial_finished_enabled,
         task_finished_enabled=row.task_finished_enabled,
+        task_review_enabled=row.task_review_enabled,
         experiment_milestone_usd=_usd(row.experiment_milestone_usd),
         trial_ping_usd=_usd(row.trial_ping_usd),
     )
@@ -107,6 +109,7 @@ async def set_user_alert_prefs(
         "experiment_finished_enabled": prefs.experiment_finished_enabled,
         "trial_finished_enabled": prefs.trial_finished_enabled,
         "task_finished_enabled": prefs.task_finished_enabled,
+        "task_review_enabled": prefs.task_review_enabled,
         "experiment_milestone_usd": _usd(prefs.experiment_milestone_usd),
         "trial_ping_usd": _usd(prefs.trial_ping_usd),
         "updated_at": utcnow(),

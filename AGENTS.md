@@ -3857,6 +3857,14 @@ column selections; sorting is shared with the sidebar and cards.
 
 ## Internal task review storage
 
+Saved comments enqueue author DMs in the same transaction through the existing Slack
+outbox when `ODDISH_ENABLE_SLACK_EXPENSE_NOTIFICATIONS` is enabled. New comments
+and edits include the reviewer, current rating, version and internal task link;
+deletes and self-reviews are silent. Author tags resolve a unique active member
+(id before handle); untagged tasks notify only a creator matching the shown author.
+Unknown authors are skipped. `task_review_enabled` in alert preferences controls
+these DMs. No history backfill or separate delivery schedule is added.
+
 Hosted `TaskReviewRatingModel` and `TaskReviewCommentModel` live in backend/models.py.
 Reviews belong to a task version; do not require archive fingerprints or file preparation.
 Explicitly filter deleted reviews and subjects; enforce

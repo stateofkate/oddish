@@ -489,6 +489,9 @@ class UserAlertPreferencesModel(Base):
     task_finished_enabled: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("true"), default=True
     )
+    task_review_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true"), default=True
+    )
     experiment_milestone_usd: Mapped[Decimal | None] = mapped_column(
         Numeric(12, 2), nullable=True
     )

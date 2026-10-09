@@ -1161,3 +1161,13 @@ edits or soft-deletes with an expected revision. Writes require the content hash
 and algorithm returned by GET. A changed or unpublished fingerprint rejects the
 write. Comment ownership or org-admin status is required for edits. API keys and
 public shares cannot access these routes. No notification is sent by these routes yet.
+
+### Task review Slack notifications
+
+Comment creation and editing enqueue author DMs in the existing Slack outbox,
+within the review transaction. The scheduled sender delivers them using
+`SLACK_ALERT_BOT_TOKEN` and its existing identity lookup and retry behavior.
+`ODDISH_ENABLE_SLACK_EXPENSE_NOTIFICATIONS` also gates this producer, so staging
+and previews remain silent by default. Apply `task_review_alert_001` before deployment;
+Settings → Notifications includes a Task reviews toggle. Deletes, self-reviews
+and unresolvable authors do not enqueue messages; no historical reviews are sent.

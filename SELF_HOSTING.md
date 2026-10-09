@@ -437,3 +437,7 @@ setup history. It adds `trial_progress_events` without changing existing rows.
 Old setup steps already removed from the live table cannot be reconstructed.
 Rolling application code back can leave this additive table in place. An explicit
 Alembic downgrade drops the table and irreversibly removes retained setup history.
+
+Hosted task review DMs reuse the existing Slack sender and
+`ODDISH_ENABLE_SLACK_EXPENSE_NOTIFICATIONS` switch; `task_review_alert_001` adds
+the per-user `task_review_enabled` preference. No new Slack token or schedule is required.

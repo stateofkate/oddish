@@ -2,6 +2,7 @@
 
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from uuid import uuid4
 
 import asyncpg
@@ -596,3 +597,248 @@ async def test_combined_delete_uses_latest_rating_revision_with_history(review_a
         )
     ).status_code == 200
     assert (await client.get(PATH)).json()["own_rating"] is None
+
+
+@pytest.mark.asyncio
+async def test_review_slack_outbox_is_atomic_and_uses_current_rating(
+    review_api, monkeypatch
+):
+    from models import SlackExpenseAlertModel
+    from sqlalchemy import select
+
+    client, _, sessions = review_api
+    monkeypatch.setenv("ODDISH_ENABLE_SLACK_EXPENSE_NOTIFICATIONS", "true")
+    async with sessions.begin() as session:
+        await session.execute(
+            update(UserModel)
+            .where(UserModel.id == "bob")
+            .values(github_id="123", clerk_user_id="clerk-bob")
+        )
+        await session.execute(
+            update(TaskModel)
+            .where(TaskModel.id == "task")
+            .values(user="Bob", tags={"github_id": "123"}, created_by_user_id="alice")
+        )
+
+    async def alerts():
+        async with sessions() as session:
+            return (
+                await session.scalars(
+                    select(SlackExpenseAlertModel).order_by(
+                        SlackExpenseAlertModel.alert_key
+                    )
+                )
+            ).all()
+
+    payload = {
+        "score": 4,
+        "body": "Clear <instructions> & scope",
+        "expected_revision": 0,
+        "client_request_id": str(uuid4()),
+    }
+    response = await client.post(PATH, json=payload)
+    assert response.status_code == 200, response.text
+    saved = response.json()
+    rows = await alerts()
+    assert len(rows) == 1
+    assert rows[0].recipient_email == "bob@example.test"
+    assert rows[0].recipient_clerk_user_id == "clerk-bob"
+    assert "Alice* reviewed *task* · v1 · 4/5" in rows[0].payload
+    assert "Clear &lt;instructions&gt; &amp; scope" in rows[0].payload
+    assert "/orgs/org/tasks/task?version=v1" in rows[0].payload
+    # Retrying the same write never adds a second notification.
+    assert (await client.post(PATH, json=payload)).status_code == 409
+    assert len(await alerts()) == 1
+    edit = {
+        **payload,
+        "score": 2,
+        "body": "Needs work",
+        "expected_revision": 1,
+        "comment_id": saved["id"],
+        "comment_revision": 1,
+    }
+    assert (
+        await client.post(PATH, json={**edit, "comment_revision": 99})
+    ).status_code == 409
+    assert len(await alerts()) == 1
+    assert (await client.post(PATH, json=edit)).status_code == 200
+    rows = await alerts()
+    assert len(rows) == 2
+    assert "updated their review" in rows[1].payload and "2/5" in rows[1].payload
+    response = await client.request(
+        "DELETE",
+        PATH,
+        json={"comment_id": saved["id"], "expected_revision": 2, "rating_revision": 2},
+    )
+    assert response.status_code == 200, response.text
+    assert len(await alerts()) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "case",
+    [
+        "self",
+        "unmapped",
+        "wrong_org",
+        "inactive",
+        "deleted",
+        "ambiguous",
+        "opt_out",
+        "disabled",
+        "importer",
+        "unmatched_id",
+        "display_name",
+        "blank_email",
+    ],
+)
+async def test_review_slack_skips_ineligible_recipients(review_api, monkeypatch, case):
+    from models import SlackExpenseAlertModel, UserAlertPreferencesModel
+    from sqlalchemy import select
+
+    client, _, sessions = review_api
+    monkeypatch.setenv(
+        "ODDISH_ENABLE_SLACK_EXPENSE_NOTIFICATIONS",
+        "false" if case == "disabled" else "true",
+    )
+    async with sessions.begin() as session:
+        await session.execute(
+            update(UserModel)
+            .where(UserModel.id == "bob")
+            .values(github_username="bob", github_id="123")
+        )
+        tags = {"github_username": "alice" if case == "self" else "bob"}
+        if case == "self":
+            await session.execute(
+                update(UserModel)
+                .where(UserModel.id == "alice")
+                .values(github_username="alice")
+            )
+        if case == "unmapped":
+            tags = {"github_username": "missing"}
+        if case == "unmatched_id":
+            tags["github_id"] = "missing"
+        if case in {"wrong_org", "inactive", "deleted"}:
+            changes = (
+                {"org_id": "other"}
+                if case == "wrong_org"
+                else {"is_active": False}
+                if case == "inactive"
+                else {"deleted_at": datetime.now(timezone.utc)}
+            )
+            await session.execute(
+                update(UserModel).where(UserModel.id == "bob").values(**changes)
+            )
+        if case == "ambiguous":
+            await session.execute(
+                update(UserModel)
+                .where(UserModel.id == "alice")
+                .values(github_username="bob")
+            )
+        if case == "blank_email":
+            await session.execute(
+                update(UserModel).where(UserModel.id == "bob").values(email=" ")
+            )
+        if case == "opt_out":
+            session.add(
+                UserAlertPreferencesModel(user_id="bob", task_review_enabled=False)
+            )
+        if case in {"importer", "display_name"}:
+            tags = {}
+        await session.execute(
+            update(TaskModel)
+            .where(TaskModel.id == "task")
+            .values(
+                tags=tags,
+                created_by_user_id="bob",
+                user="Bob" if case == "display_name" else "different author",
+            )
+        )
+    response = await client.post(
+        PATH + "/comments", json={"body": "Review", "client_request_id": str(uuid4())}
+    )
+    assert response.status_code == 200, response.text
+    async with sessions() as session:
+        assert (await session.scalars(select(SlackExpenseAlertModel))).all() == []
+
+
+@pytest.mark.asyncio
+async def test_review_slack_existing_sender_retries_delivery(review_api, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    import slack_notifications
+    from models import SlackExpenseAlertModel
+    from sqlalchemy import select
+
+    client, _, sessions = review_api
+    monkeypatch.setenv("ODDISH_ENABLE_SLACK_EXPENSE_NOTIFICATIONS", "true")
+    async with sessions.begin() as session:
+        await session.execute(
+            update(TaskModel)
+            .where(TaskModel.id == "task")
+            .values(user="bob@example.test", created_by_user_id="bob")
+        )
+    body = {"body": "Needs tests", "client_request_id": str(uuid4())}
+    first = await client.post(PATH + "/comments", json=body)
+    assert first.status_code == 200
+    assert (await client.post(PATH + "/comments", json=body)).json() == first.json()
+
+    @asynccontextmanager
+    async def write():
+        async with sessions.begin() as session:
+            yield session
+
+    lookup = AsyncMock(return_value="U-bob")
+    post = AsyncMock(side_effect=[RuntimeError("Slack unavailable"), None])
+    monkeypatch.setattr(slack_notifications, "get_session", write)
+    monkeypatch.setattr(slack_notifications, "_resolve_dm_slack_id", lookup)
+    monkeypatch.setattr(slack_notifications, "_post_dm", post)
+    await slack_notifications.deliver_pending_alerts("", "test-token")
+    async with sessions() as session:
+        row = await session.scalar(select(SlackExpenseAlertModel))
+        assert row.notified_at is None
+    await slack_notifications.deliver_pending_alerts("", "test-token")
+    await slack_notifications.deliver_pending_alerts("", "test-token")
+    assert post.await_count == 2
+    assert post.await_args.args[1] == "U-bob"
+    assert "Needs tests" in post.await_args.args[2]
+    async with sessions() as session:
+        row = await session.scalar(select(SlackExpenseAlertModel))
+        assert row.notified_at is not None
+
+
+@pytest.mark.asyncio
+async def test_review_failure_rolls_back_queued_dm(review_api, monkeypatch):
+    from fastapi import HTTPException
+    from models import SlackExpenseAlertModel
+    from sqlalchemy import select
+
+    client, _, sessions = review_api
+    monkeypatch.setenv("ODDISH_ENABLE_SLACK_EXPENSE_NOTIFICATIONS", "true")
+    async with sessions.begin() as session:
+        await session.execute(
+            update(TaskModel)
+            .where(TaskModel.id == "task")
+            .values(user="bob@example.test", created_by_user_id="bob")
+        )
+    original = task_reviews.queue_review_notification
+
+    async def fail_after_queue(session, comment_id):
+        await original(session, comment_id)
+        raise HTTPException(500, "Transaction failed")
+
+    monkeypatch.setattr(task_reviews, "queue_review_notification", fail_after_queue)
+    response = await client.post(
+        PATH,
+        json={
+            "score": 5,
+            "body": "Review",
+            "expected_revision": 0,
+            "client_request_id": str(uuid4()),
+        },
+    )
+    assert response.status_code == 500
+    page = (await client.get(PATH)).json()
+    assert page["own_rating"] is None and page["comments"] == []
+    async with sessions() as session:
+        assert (await session.scalars(select(SlackExpenseAlertModel))).all() == []
