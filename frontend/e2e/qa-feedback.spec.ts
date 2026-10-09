@@ -17,7 +17,10 @@ test("three reports submit independent votes and replacement reports reset contr
     page.getByRole("tabpanel", { name: "Summary" })
       .getByText("The verifier recorded the result.", { exact: true })
   ).toBeVisible();
-  await expect(page.locator("details")).toHaveCount(0);
+  // QA evidence is never collapsed; only the trial's execution timeline is.
+  await expect(
+    page.locator("details").filter({ hasNotText: "Execution Timeline" })
+  ).toHaveCount(0);
   await page
     .getByRole("button", { name: "Agree with the task verdict", exact: true })
     .click();

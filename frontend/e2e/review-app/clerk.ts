@@ -1,11 +1,17 @@
 import { useSyncExternalStore } from "react";
 
 // Separate local fixture app; production authentication is unchanged.
+// A spec may set window.__fixtureClerk (isSignedIn, isLoaded) before load.
+const overrides =
+  typeof window === "undefined"
+    ? {}
+    : ((window as { __fixtureClerk?: object }).__fixtureClerk ?? {});
 let identity = {
   orgRole: "org:admin",
   userId: "maya",
   orgId: "fixture",
   isLoaded: true,
+  ...overrides,
 };
 const listeners = new Set<() => void>();
 const subscribe = (listener: () => void) => {

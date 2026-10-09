@@ -16,6 +16,7 @@ export default defineConfig({
     "user-ui-layout.spec.ts",
     "public-experiment-tasks.spec.ts",
     "public-share-qa.spec.ts",
+    "customer-view.spec.ts",
   ],
   workers: 1,
   reporter: "list",

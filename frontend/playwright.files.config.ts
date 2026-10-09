@@ -13,6 +13,11 @@ export default defineConfig({
     "ui-duplication.spec.ts",
     "task-effort-comparison.spec.ts",
     "user-ui-layout.spec.ts",
+    // Also in the review config, which CI does not run.
+    "robot-recording.spec.ts",
+    "qa-evals.spec.ts",
+    "qa-feedback.spec.ts",
+    "customer-view.spec.ts",
   ],
   workers: 1,
   reporter: "list",
