@@ -7,6 +7,7 @@ import { useAuth } from "@clerk/nextjs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { OrgShareButton } from "@/components/org-share-picker";
 import { ExperimentShareButton } from "@/components/experiment-share-button";
 import { ExperimentDetailView } from "@/components/experiment-detail-view";
 import { ExperimentDescription } from "@/components/experiment-description";
@@ -389,6 +390,10 @@ function ExperimentContent({ experimentId }: ExperimentClientPageProps) {
           headerRight={
             experimentId ? (
               <div className="flex items-center gap-2">
+                <OrgShareButton
+                  resourceType="experiment"
+                  resourceId={experimentId}
+                />
                 <ExperimentShareButton
                   experimentId={experimentId}
                   canManageShare={canManageExperimentShare}

@@ -16,8 +16,6 @@ from fastapi import Request
 
 _PRIVATE_LISTING = "private, max-age=600, stale-while-revalidate=60"
 _PRIVATE_FILE = "private, max-age=300, stale-while-revalidate=60"
-_PUBLIC_LISTING = "public, max-age=600, stale-while-revalidate=60"
-_PUBLIC_FILE = "public, max-age=300, stale-while-revalidate=60"
 
 ROUTE_CACHE_CONTROL: dict[str, str] = {
     "/dashboard": "private, max-age=5, stale-while-revalidate=30",
@@ -30,13 +28,15 @@ ROUTE_CACHE_CONTROL: dict[str, str] = {
     "/tasks/{task_id}/files": _PRIVATE_LISTING,
     "/trials/{trial_id}/files": _PRIVATE_LISTING,
     "/trials/{trial_id}/files/{file_path:path}": _PRIVATE_FILE,
-    "/public/experiments/{public_token}/tasks/{task_id}/files": _PUBLIC_LISTING,
+    # Private: a share link can require a login from a specific org, so a
+    # shared cache must never hand one viewer's response to another.
+    "/public/experiments/{public_token}/tasks/{task_id}/files": _PRIVATE_LISTING,
     "/public/experiments/{public_token}/tasks/{task_id}/files/{file_path:path}": (
-        _PUBLIC_FILE
+        _PRIVATE_FILE
     ),
-    "/public/experiments/{public_token}/trials/{trial_id}/files": _PUBLIC_LISTING,
+    "/public/experiments/{public_token}/trials/{trial_id}/files": _PRIVATE_LISTING,
     "/public/experiments/{public_token}/trials/{trial_id}/files/{file_path:path}": (
-        _PUBLIC_FILE
+        _PRIVATE_FILE
     ),
 }
 

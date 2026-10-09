@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getBackendUrl } from "@/lib/backend-config";
+import { publicAuthHeaders } from "@/lib/backend-response";
 
 export async function GET(
   request: NextRequest,
@@ -14,13 +15,16 @@ export async function GET(
     );
     const url = queryString ? `${baseUrl}?${queryString}` : baseUrl;
 
-    const res = await fetch(url, { cache: "no-store" });
+    const res = await fetch(url, {
+      cache: "no-store",
+      headers: await publicAuthHeaders(),
+    });
     if (!res.ok) {
       const error = await res.json().catch(() => ({ detail: res.statusText }));
       return NextResponse.json(error, { status: res.status });
     }
 
-    const cacheControl = "public, max-age=600, stale-while-revalidate=60";
+    const cacheControl = "private, max-age=600, stale-while-revalidate=60";
 
     // Streamed listings (stream=1) are NDJSON — pass the body through so the
     // client can paint the tree before the file contents finish loading.
@@ -30,6 +34,7 @@ export async function GET(
         headers: {
           "Content-Type": "application/x-ndjson",
           "Cache-Control": cacheControl,
+          Vary: "Cookie",
         },
       });
     }
@@ -38,6 +43,7 @@ export async function GET(
     return NextResponse.json(data, {
       headers: {
         "Cache-Control": cacheControl,
+        Vary: "Cookie",
       },
     });
   } catch (error) {

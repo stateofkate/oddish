@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, Response
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from oddish.core.endpoints.experiment_page import (
     get_public_experiment_focus_core,
     get_public_experiment_open_core,
@@ -37,6 +37,7 @@ from oddish.core.trial_io import (
 )
 from .helpers import (
     apply_public_task_qa_visibility,
+    experiment_shares_query,
     get_public_experiment,
     get_public_task_for_experiment,
     get_public_trial_for_experiment,
@@ -46,10 +47,15 @@ from .helpers import (
     list_task_files_s3,
     list_trial_files_s3,
     make_task_files_ndjson_response,
+    pinned_task_versions,
+    share_hides_costs,
+    share_viewer_org_id,
     stream_task_files_s3,
 )
 from oddish.db import (
     ExperimentModel,
+    JobStatus,
+    OrgShareModel,
     TaskVersionModel,
     TrialModel,
     get_read_session,
@@ -164,9 +170,12 @@ async def get_public_experiment_info(public_token: str) -> PublicExperimentRespo
 
         return PublicExperimentResponse(
             name=experiment.name,
-            public_token=experiment.public_token or public_token,
+            # Echo the caller's key: a grantee reading by id never learns the
+            # experiment's unlisted public link.
+            public_token=public_token,
             description=experiment.description,
             show_qa=bool(experiment.show_qa),
+            show_costs=not share_hides_costs.get(),
         )
 
 
@@ -306,7 +315,7 @@ async def get_public_experiment_trial_page(
 
 
 async def _public_experiment_refs(
-    session, task_ids: list[str]
+    session, task_ids: list[str], current_id: str
 ) -> dict[str, list[tuple[str, str, datetime | None]]]:
     """(id, name, created_at) of PUBLIC experiments per task.
 
@@ -314,7 +323,9 @@ async def _public_experiment_refs(
     ``experiment_*`` fields from every live membership, which is correct
     for org-authenticated callers but would leak private experiment
     names/ids on the anonymous public endpoints -- public responses get
-    both replaced via :func:`_apply_public_experiments`.
+    both replaced via :func:`_apply_public_experiments`. Experiments shared
+    with specific orgs are left out (other than the one being viewed), so one
+    customer never sees another's experiment names.
     """
     if not task_ids:
         return {}
@@ -334,6 +345,12 @@ async def _public_experiment_refs(
             task_experiments.c.task_id.in_(task_ids),
             task_experiments.c.deleted_at.is_(None),
             ExperimentModel.is_public == True,  # noqa: E712
+            or_(
+                ExperimentModel.id == current_id,
+                ~experiment_shares_query(ExperimentModel.id)
+                .where(OrgShareModel.deleted_at.is_(None))
+                .exists(),
+            ),
         )
         .order_by(ExperimentModel.name.asc(), ExperimentModel.id.asc())
     )
@@ -396,15 +413,36 @@ async def get_public_task_status(
         )
         user_tags_by_task = await _hydrate_public_user_tags(session, task_ids=[task.id])
         response.user_tags = _user_tag_refs(user_tags_by_task.get(task.id, []))
-        public_exps = await _public_experiment_refs(session, [task.id])
+        public_exps = await _public_experiment_refs(session, [task.id], exp.id)
         _apply_public_experiments(
             response, public_exps.get(task.id, []), preferred_id=exp.id
         )
         apply_model_display_names(response.trials or [], experiment_display_names(exp))
+        if exp.id is None:
+            await _pin_to_shipped_version(session, task, response)
         apply_public_task_qa_visibility(response, show_qa=bool(exp.show_qa))
         public_response = PublicTaskStatusResponse.model_validate(response)
         public_response.github_meta = public_task_github_meta(response.github_meta)
         return public_response
+
+
+async def _pin_to_shipped_version(session, task, response) -> None:
+    """A delivery-only grant reports the newest shipped version and its
+    verdict, never QA on versions made after the delivery."""
+    pinned = await pinned_task_versions(session, task, share_viewer_org_id.get())
+    if pinned is None:
+        return
+    row = await session.scalar(
+        select(TaskVersionModel).where(
+            TaskVersionModel.task_id == task.id,
+            TaskVersionModel.version == max(pinned),
+        )
+    )
+    response.current_version = row.version
+    response.current_version_id = row.id
+    response.verdict = row.verdict
+    response.verdict_status = JobStatus.SUCCESS if row.verdict else None
+    response.verdict_error = None
 
 
 @router.get(
@@ -418,7 +456,9 @@ async def get_public_task_qa(
 ) -> PublicTaskQaResponse:
     """Read source checks for a task version exposed by this QA-enabled link."""
     async with get_read_session() as session:
-        resolved = await get_public_task_for_experiment(session, public_token, task_id)
+        resolved = await get_public_task_for_experiment(
+            session, public_token, task_id, version=version
+        )
         if resolved is None or not resolved[0].show_qa:
             raise HTTPException(status_code=404, detail="Task QA not found")
         experiment, task, gathered_ids = resolved
@@ -428,7 +468,11 @@ async def get_public_task_qa(
             gathered_trial_ids=gathered_ids,
         )
         query = select(TaskVersionModel).where(TaskVersionModel.task_id == task.id)
-        if version is not None:
+        if version is not None and experiment.id is None:
+            # A directly shared task opens any of its versions (a delivery
+            # pins an older one).
+            query = query.where(TaskVersionModel.version == version)
+        elif version is not None:
             visible_version_ids = {
                 trial.task_version_id
                 for trial in task.trials
@@ -601,7 +645,9 @@ async def list_public_task_files(
 ):
     """List all files in a public task's S3 directory."""
     async with get_read_session() as session:
-        resolved = await get_public_task_for_experiment(session, public_token, task_id)
+        resolved = await get_public_task_for_experiment(
+            session, public_token, task_id, version=version
+        )
         if not resolved:
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
         source = await resolve_task_file_source(
@@ -657,7 +703,9 @@ async def get_public_task_file_content(
 ) -> dict:
     """Get content of a specific public task file from S3."""
     async with get_read_session() as session:
-        resolved = await get_public_task_for_experiment(session, public_token, task_id)
+        resolved = await get_public_task_for_experiment(
+            session, public_token, task_id, version=version
+        )
         if not resolved:
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
         source = await resolve_task_file_source(

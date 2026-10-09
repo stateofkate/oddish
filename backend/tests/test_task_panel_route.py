@@ -19,7 +19,10 @@ async def test_panel_uses_read_session_and_verified_org(monkeypatch):
 
     reader = AsyncMock(return_value=object())
     monkeypatch.setattr("auth.get_read_session", read_session)
-    monkeypatch.setattr("auth.require_execution_org", AsyncMock(return_value=object()))
+    monkeypatch.setattr(
+        "auth.require_signin_org",
+        AsyncMock(return_value=SimpleNamespace(execution_enabled=True)),
+    )
     monkeypatch.setattr(tasks, "get_task_panel_core", reader)
     auth = AuthContext(method=AuthMethod.API_KEY, org_id="verified-org")
     auth.require_scope = Mock()

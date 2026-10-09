@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import secrets
 from collections.abc import AsyncIterator
+from contextvars import ContextVar
+from typing import Literal
 
 from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
-from sqlalchemy import exists, select
+from sqlalchemy import exists, literal, null, or_, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import set_committed_value
@@ -28,7 +30,10 @@ from oddish.core.trial_artifacts import (
     resolve_trial_artifact_layout,
 )
 from oddish.db import (
+    DeliveryModel,
+    DeliveryTaskModel,
     ExperimentModel,
+    OrgShareModel,
     TaskModel,
     TaskVersionModel,
     TrialModel,
@@ -39,14 +44,26 @@ from oddish.db import (
 from oddish.schemas import TaskStatusResponse, TrialResponse
 
 
+# The caller's org on share routes, set per request by the hosted API from its
+# login. ``None`` means logged out (or a server that never sets it).
+share_viewer_org_id: ContextVar[str | None] = ContextVar(
+    "share_viewer_org_id", default=None
+)
+# Set per request alongside it: blank cost figures for this viewer.
+share_hides_costs: ContextVar[bool] = ContextVar("share_hides_costs", default=False)
+
+
+# The share key that opens shared tasks themselves: experiment ids and tokens
+# never take this value.
+DIRECT_TASK_KEY = "direct"
+
+
 def generate_public_token() -> str:
     """Generate a URL-safe token for public sharing."""
     return secrets.token_urlsafe(32)
 
 
-def apply_public_trial_qa_visibility(
-    response: TrialResponse, *, show_qa: bool
-) -> None:
+def apply_public_trial_qa_visibility(response: TrialResponse, *, show_qa: bool) -> None:
     """Remove QA data unless the owner opted in for this share link."""
     if show_qa:
         return
@@ -107,16 +124,171 @@ async def ensure_experiment_public(
 # =============================================================================
 
 
+def experiment_shares_query(experiment_id):
+    """Live shares of an experiment. ``experiment_id`` may be a column, for a
+    correlated EXISTS."""
+    return select(OrgShareModel).where(
+        OrgShareModel.resource_type == "experiment",
+        OrgShareModel.resource_id == experiment_id,
+    )
+
+
+def shared_tasks_query(org_id: str):
+    """(task_id, task_version_id, delivery_id, shared_at) for every task an org
+    can open: shared directly, in a finalized delivery shared with it (pinned
+    to the shipped version), or in an experiment shared with it. A task can
+    appear more than once."""
+    live = (
+        OrgShareModel.grantee_org_id == org_id,
+        OrgShareModel.deleted_at.is_(None),
+    )
+    direct = select(
+        OrgShareModel.resource_id.label("task_id"),
+        null().label("task_version_id"),
+        null().label("delivery_id"),
+        OrgShareModel.created_at.label("shared_at"),
+    ).where(*live, OrgShareModel.resource_type == "task")
+    delivered = (
+        select(
+            DeliveryTaskModel.task_id,
+            DeliveryTaskModel.pinned_version_id,
+            DeliveryModel.id,
+            DeliveryModel.finalized_at,
+        )
+        .join(DeliveryModel, DeliveryModel.id == DeliveryTaskModel.delivery_id)
+        .join(OrgShareModel, OrgShareModel.resource_id == DeliveryModel.id)
+        .where(
+            *live,
+            OrgShareModel.resource_type == "delivery",
+            DeliveryModel.status == "finalized",
+            DeliveryTaskModel.is_visible.is_(True),
+        )
+    )
+    in_experiment = (
+        select(
+            task_experiments.c.task_id,
+            null(),
+            null(),
+            OrgShareModel.created_at,
+        )
+        .join(
+            OrgShareModel,
+            OrgShareModel.resource_id == task_experiments.c.experiment_id,
+        )
+        .where(
+            *live,
+            OrgShareModel.resource_type == "experiment",
+            task_experiments.c.deleted_at.is_(None),
+        )
+    )
+    return union_all(direct, delivered, in_experiment)
+
+
+async def find_shared_task(
+    session: AsyncSession, task_id: str, viewer_org_id: str | None
+) -> TaskModel | None:
+    """A task its own org or a grantee org may open outside any experiment."""
+    if viewer_org_id is None:
+        return None
+    grants = shared_tasks_query(viewer_org_id).subquery()
+    return await session.scalar(
+        select(TaskModel)
+        .options(selectinload(TaskModel.trials), selectinload(TaskModel.experiments))
+        .where(
+            TaskModel.id == task_id,
+            or_(
+                TaskModel.org_id == viewer_org_id,
+                exists(select(literal(1)).where(grants.c.task_id == TaskModel.id)),
+            ),
+        )
+    )
+
+
+async def pinned_task_versions(
+    session: AsyncSession, task: TaskModel, viewer_org_id: str | None
+) -> set[int] | None:
+    """Version numbers a viewer may open when its only grants on the task are
+    delivery shares (each pins the shipped version); None means any version."""
+    if viewer_org_id is None or task.org_id == viewer_org_id:
+        return None
+    grants = shared_tasks_query(viewer_org_id).subquery()
+    pinned = list(
+        await session.scalars(
+            select(grants.c.task_version_id).where(grants.c.task_id == task.id)
+        )
+    )
+    if None in pinned:
+        return None
+    return set(
+        await session.scalars(
+            select(TaskVersionModel.version).where(TaskVersionModel.id.in_(pinned))
+        )
+    )
+
+
+async def find_shared_experiment(
+    session: AsyncSession, key: str, viewer_org_id: str | None
+) -> tuple[ExperimentModel, list[OrgShareModel]] | None:
+    """Resolve a share key: a published token, or an experiment id that only
+    its own org and the orgs it is shared with can open."""
+    experiment = await session.scalar(
+        select(ExperimentModel)
+        .where(ExperimentModel.public_token == key)
+        .where(ExperimentModel.is_public == True)  # noqa: E712
+    )
+    by_id = experiment is None
+    if by_id:
+        if viewer_org_id is None:
+            # Signed out, every id answers like an unknown one.
+            return None
+        experiment = await session.get(ExperimentModel, key)
+        if experiment is None:
+            return None
+    shares = list(await session.scalars(experiment_shares_query(experiment.id)))
+    if by_id and viewer_org_id != experiment.org_id:
+        if viewer_org_id not in {share.grantee_org_id for share in shares}:
+            return None
+    return experiment, shares
+
+
 async def get_public_experiment(
     session: AsyncSession, public_token: str
 ) -> ExperimentModel | None:
-    """Get a public experiment by its share token."""
-    result = await session.execute(
-        select(ExperimentModel)
-        .where(ExperimentModel.public_token == public_token)
-        .where(ExperimentModel.is_public == True)  # noqa: E712
+    """Get a shared experiment by share token or, for its grantees, by id.
+
+    Org shares never change a published link: the token stays open to anyone,
+    and grantees read by id.
+    """
+    found = await find_shared_experiment(
+        session, public_token, share_viewer_org_id.get()
     )
-    return result.scalar_one_or_none()
+    if not found:
+        return None
+    experiment = found[0]
+    if public_token == experiment.id:
+        # Customer orgs see all of Abundant's QA; the per-link opt-in only
+        # governs anonymous token links. Committed value: never written back.
+        set_committed_value(experiment, "show_qa", True)
+    return experiment
+
+
+async def share_costs_hidden(
+    session: AsyncSession, key: str, viewer_org_id: str | None
+) -> bool:
+    """Hide costs from a grantee org unless one of its shares shows them.
+
+    Anonymous links and the owning org keep seeing costs.
+    """
+    if viewer_org_id is None:
+        return False
+    found = await find_shared_experiment(session, key, viewer_org_id)
+    if found is None:
+        return False
+    experiment, shares = found
+    mine = [share for share in shares if share.grantee_org_id == viewer_org_id]
+    if viewer_org_id == experiment.org_id or not mine:
+        return False
+    return not any(share.show_costs for share in mine)
 
 
 async def get_public_task_for_experiment(
@@ -125,8 +297,27 @@ async def get_public_task_for_experiment(
     task_id: str,
     *,
     load_current_version: bool = False,
+    version: int | None | Literal["any"] = "any",
 ) -> tuple[ExperimentModel, TaskModel, set[str]] | None:
-    """Get a public task only through the share token that exposes it."""
+    """Get a public task only through the share token that exposes it.
+
+    Under ``DIRECT_TASK_KEY`` a signed-in org opens a task shared with it
+    outside any experiment: QA shown, no trials. When a delivery is its only
+    grant, ``version`` must be a shipped version (None, the current one, is
+    refused).
+    """
+    if public_token == DIRECT_TASK_KEY:
+        viewer_org_id = share_viewer_org_id.get()
+        task = await find_shared_task(session, task_id, viewer_org_id)
+        if task is None:
+            return None
+        if version != "any":
+            pinned = await pinned_task_versions(session, task, viewer_org_id)
+            if pinned is not None and version not in pinned:
+                return None
+        set_committed_value(task, "trials", [])
+        # Unsaved stand-in so every experiment-keyed route serves it unchanged.
+        return ExperimentModel(id=None, show_qa=True), task, set()
     experiment = await get_public_experiment(session, public_token)
     if not experiment:
         return None
@@ -304,6 +495,9 @@ async def list_task_trials_for_public_experiment(
     if resolved is None:
         return None
     experiment, _, _ = resolved
+    if experiment.id is None:
+        # A directly shared task carries no trials.
+        return []
     result = await session.execute(
         select(TrialModel, TaskModel.task_path)
         .join(TaskModel, TaskModel.id == TrialModel.task_id)

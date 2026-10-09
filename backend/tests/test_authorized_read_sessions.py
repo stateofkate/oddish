@@ -238,7 +238,7 @@ async def test_database_failure_does_not_authorize_a_cached_key(api, monkeypatch
     reader = AsyncMock()
     monkeypatch.setattr(trials, "get_trial_response_for_org_core", reader)
     monkeypatch.setattr(
-        auth, "require_execution_org", AsyncMock(side_effect=ConnectionError("offline"))
+        auth, "require_signin_org", AsyncMock(side_effect=ConnectionError("offline"))
     )
     with pytest.raises(ConnectionError, match="offline"):
         await api.client.get("/trials/trial-1")

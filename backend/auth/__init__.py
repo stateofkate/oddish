@@ -11,8 +11,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import DBAPIError, TimeoutError as SATimeoutError
 
 from models import APIKeyScope, UserRole, hash_api_key
+from oddish.core.sharing.helpers import (
+    DIRECT_TASK_KEY,
+    share_costs_hidden,
+    share_hides_costs,
+    share_viewer_org_id,
+)
 from oddish.db import get_read_session, get_session
-from org_access import require_execution_org
+from org_access import require_signin_org
 from oddish.timing import (
     begin_auth_timing,
     finish_auth_timing,
@@ -291,6 +297,9 @@ async def get_auth_context(
         finish_auth_timing(auth_timing)
 
 
+_READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
 @asynccontextmanager
 async def authorized_read_session(
     request: Request, auth: AuthContext
@@ -308,8 +317,51 @@ async def authorized_read_session(
         )
     async with get_read_session() as session:
         await authorize_bound_analysis_request(request, auth, session)
-        auth.org = await require_execution_org(auth.org_id, session=session)
+        auth.org = await require_signin_org(auth.org_id, session=session)
+        method = getattr(request, "method", "GET")
+        if not auth.org.execution_enabled and method not in _READ_METHODS:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This organization has view-only access.",
+            )
         yield session
+
+
+async def set_share_viewer(
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+    x_clerk_authorization: Annotated[str | None, Header()] = None,
+    x_authorization: Annotated[str | None, Header()] = None,
+) -> None:
+    """Record the caller's org for share routes; any login failure reads as logged out.
+
+    Share links must keep opening for logged-out visitors, so an expired token
+    or unapproved org never fails the request here. Org-shared experiments then
+    answer 401 or 404 in ``get_public_experiment``.
+    """
+    # Always set, never inherit: a server that reuses one context across
+    # requests must not hand the previous caller's org to this one.
+    share_viewer_org_id.set(None)
+    share_hides_costs.set(False)
+    if not (authorization or x_clerk_authorization or x_authorization):
+        return
+    try:
+        auth = await get_auth_context(
+            request, authorization, x_clerk_authorization, x_authorization
+        )
+        if not auth.is_authenticated:
+            return
+        async with get_read_session() as session:
+            await require_signin_org(auth.org_id, session=session)
+            key = request.path_params.get("public_token")
+            # Directly shared tasks never show what they cost to make.
+            hide = key == DIRECT_TASK_KEY or (
+                bool(key) and await share_costs_hidden(session, key, auth.org_id)
+            )
+    except HTTPException:
+        return
+    share_viewer_org_id.set(auth.org_id)
+    share_hides_costs.set(hide)
 
 
 async def require_auth(

@@ -67,6 +67,7 @@ test("withOrgSlug prefixes app paths under /orgs/{slug}", () => {
     "/orgs/beta/tasks/task-1",
   );
   assert.equal(withOrgSlug("/dashboard", "acme"), "/orgs/acme/dashboard");
+  assert.equal(withOrgSlug("/shared/exp-1", "acme"), "/orgs/acme/shared/exp-1");
 });
 
 test("withOrgSlug leaves public, external, and unknown hrefs alone", () => {

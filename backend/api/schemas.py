@@ -18,6 +18,10 @@ class OrganizationResponse(BaseModel):
     slug: str
     plan: str
     created_at: str
+    # "viewer": signs in read-only and sees only what is shared with it.
+    access: str = "execution"
+    # "customer": the customer view (shared work only), whatever it may run.
+    org_type: str = "internal"
 
 
 # =============================================================================

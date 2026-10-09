@@ -1215,6 +1215,7 @@ def _build_worker_image(harbor_override: "HarborVariant | None" = None) -> modal
             "observability",
             "org_access",
             "pg_errors",
+            "provision_org",
             "slack_alert_settings",
             "slack_notifications",
             "user_alert_prefs",

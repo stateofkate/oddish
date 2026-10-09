@@ -27,6 +27,7 @@ from fastapi import (
     Request,
     UploadFile,
 )
+from api.routers.org_shares import share_with_customer_org
 from models import UserModel, UserRole
 from oddish.core.deliveries import (
     add_delivery_tasks_core,
@@ -442,6 +443,9 @@ async def finalize_delivery(
             delivery_id=delivery_id,
             org_id=auth.org_id,
             user_id=auth.user_id,
+        )
+        await share_with_customer_org(
+            session, board.delivery.customer_id, delivery_id, auth.user_id
         )
         await session.commit()
         return board

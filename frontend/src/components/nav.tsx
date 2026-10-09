@@ -10,6 +10,7 @@ import {
   useUser,
 } from "@clerk/nextjs";
 import { withOrgSlug } from "@/lib/org-path";
+import { useIncomingShares, useIsViewerOrg } from "@/lib/use-org-access";
 import { useAppPathname, useOrgHref } from "@/lib/use-org-href";
 import { isOrgAdminRole } from "@/lib/org-roles";
 import { Button } from "@/components/ui/button";
@@ -26,6 +27,7 @@ import {
   BookOpen,
   ChevronDown,
   FileText,
+  Inbox,
   Package,
   LogOut,
   Menu,
@@ -95,6 +97,34 @@ const PRIMARY_NAV_LINKS: NavLink[] = [
   },
 ];
 
+const SHARED_NAV_LINK: NavLink = {
+  href: "/shared",
+  label: "Shared",
+  icon: <Inbox className="h-4 w-4" />,
+  prefix: true,
+};
+
+// A customer org's whole app: what Abundant shared with it.
+const CUSTOMER_NAV_LINKS: NavLink[] = [
+  {
+    href: "/shared",
+    label: "Experiments",
+    icon: <Inbox className="h-4 w-4" />,
+  },
+  {
+    href: "/shared/tasks",
+    label: "Tasks",
+    icon: <FileText className="h-4 w-4" />,
+    prefix: true,
+  },
+  {
+    href: "/shared/deliveries",
+    label: "Deliveries",
+    icon: <Package className="h-4 w-4" />,
+    prefix: true,
+  },
+];
+
 function isNavLinkActive(pathname: string, link: NavLink): boolean {
   return link.prefix ? pathname.startsWith(link.href) : pathname === link.href;
 }
@@ -105,7 +135,16 @@ export function Nav() {
   const { user, isLoaded, isSignedIn } = useUser();
   const { orgRole } = useAuth();
   const { signOut } = useClerk();
-  const isOrgAdmin = isOrgAdminRole(orgRole);
+  // Customer orgs get their shared work only, and no Admin.
+  const viewer = useIsViewerOrg();
+  const isOrgAdmin = isOrgAdminRole(orgRole) && !viewer;
+  // Only orgs that other orgs shared experiments with get the Shared link.
+  const { data: incoming } = useIncomingShares();
+  const navLinks = viewer
+    ? CUSTOMER_NAV_LINKS
+    : incoming?.length
+      ? [...PRIMARY_NAV_LINKS, SHARED_NAV_LINK]
+      : PRIMARY_NAV_LINKS;
 
   return (
     <nav
@@ -131,7 +170,7 @@ export function Nav() {
                 align="start"
                 className="w-56 border-[#6f88b4]/20 p-2"
               >
-                {PRIMARY_NAV_LINKS.map((link) => (
+                {navLinks.map((link) => (
                   <DropdownMenuItem key={link.href} asChild>
                     <Link
                       href={orgHref(link.href)}
@@ -167,7 +206,7 @@ export function Nav() {
               />
             </Link>
             <div className="hidden items-center gap-4 sm:flex">
-              {PRIMARY_NAV_LINKS.map((link) => {
+              {navLinks.map((link) => {
                 const active = isNavLinkActive(pathname, link);
                 return (
                   <Button

@@ -100,7 +100,7 @@ async def test_public_qa_refuses_missing_task_or_disabled_link(monkeypatch, reso
     with pytest.raises(HTTPException) as exc:
         await public.get_public_task_qa("token", "task-1", version=None)
     assert exc.value.status_code == 404
-    resolve.assert_awaited_once_with(session, "token", "task-1")
+    resolve.assert_awaited_once_with(session, "token", "task-1", version=None)
     session.execute.assert_not_called()
 
 

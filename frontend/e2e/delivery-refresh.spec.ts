@@ -96,6 +96,9 @@ async function controlledAPI(page: Page) {
     }
     if (path.startsWith("/api/tasks/browse"))
       return route.fulfill({ json: { items: [] } });
+    // Not the operator org: no Share button.
+    if (path === "/api/org-shares/orgs")
+      return route.fulfill({ status: 403, json: { detail: "Forbidden" } });
     throw new Error(`Unexpected read: ${path}`);
   });
   await page.clock.install();

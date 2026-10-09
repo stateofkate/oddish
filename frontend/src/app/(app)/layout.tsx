@@ -1,6 +1,7 @@
 import { RedirectToSignIn, Show } from "@clerk/nextjs";
 import { Nav } from "@/components/nav";
 import { OrgSlugSync } from "@/components/org-slug-sync";
+import { ViewerRedirect } from "@/components/viewer-redirect";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -10,6 +11,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       </Show>
       <Show when="signed-in">
         <OrgSlugSync />
+        <ViewerRedirect />
         <Nav />
         <main className="mx-auto w-full max-w-(--breakpoint-2xl) px-3 py-3 sm:px-4 sm:py-4">
           {children}

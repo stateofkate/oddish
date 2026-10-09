@@ -87,6 +87,16 @@ class OrganizationModel(TimestampedMixin, Base):
     execution_enabled: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("false"), nullable=False
     )
+    # Operator-granted sign-in without execution: customers view what is
+    # shared with them; every non-GET request and every worker job is refused.
+    viewer_access: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
+    )
+    # "customer" orgs get the customer view (shared work only, no admin),
+    # whatever they may run; "internal" is everyone else.
+    org_type: Mapped[str] = mapped_column(
+        String(16), default="internal", server_default="internal", nullable=False
+    )
 
     # Relationships
     users: Mapped[list["UserModel"]] = relationship(  # type: ignore[assignment]

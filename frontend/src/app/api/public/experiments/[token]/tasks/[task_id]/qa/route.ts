@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getBackendUrl } from "@/lib/backend-config";
+import { publicAuthHeaders } from "@/lib/backend-response";
 
 export async function GET(
   request: NextRequest,
@@ -15,7 +16,10 @@ export async function GET(
     );
     const version = request.nextUrl.searchParams.get("version");
     if (version !== null) url.searchParams.set("version", version);
-    const res = await fetch(url, { cache: "no-store" });
+    const res = await fetch(url, {
+      cache: "no-store",
+      headers: await publicAuthHeaders(),
+    });
     const text = await res.text();
     const data = text ? JSON.parse(text) : null;
 

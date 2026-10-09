@@ -87,6 +87,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { OrgShareButton } from "@/components/org-share-picker";
 
 function postJson<T = void>(url: string, method: string, body?: unknown) {
   return fetcher<T>(url, {
@@ -1813,6 +1814,7 @@ function DeliveryBoardContent({
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <OrgShareButton resourceType="delivery" resourceId={deliveryId} />
             <Button variant="outline" size="sm" asChild>
               <Link
                 href={`/deliveries/${encodeURIComponent(deliveryId)}/qa-issues`}

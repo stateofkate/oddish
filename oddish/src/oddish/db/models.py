@@ -2915,6 +2915,43 @@ class CostExcludedExperimentModel(TimestampedMixin, Base):
     created_by_user_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
+class OrgShareModel(TimestampedMixin, Base):
+    """Another org's read access to one experiment, task, or delivery.
+
+    Only the operator org writes these. A live row (``deleted_at IS NULL``)
+    lets members of ``grantee_org_id`` read the resource and everything in it;
+    soft-deleting the row revokes that. A ``delivery`` share counts only once
+    the delivery is finalized. ``tag`` rows are retired and grant nothing.
+    """
+
+    __tablename__ = "org_shares"
+    __table_args__ = (
+        CheckConstraint(
+            "resource_type IN ('experiment', 'tag', 'delivery', 'task')",
+            name="ck_org_shares_resource_type",
+        ),
+        Index(
+            "uq_org_shares_live",
+            "grantee_org_id",
+            "resource_type",
+            "resource_id",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        Index("idx_org_shares_resource", "resource_type", "resource_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=generate_id)
+    grantee_org_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    resource_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    resource_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    granted_by_user_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Whether the grantee sees what the experiment cost to run.
+    show_costs: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+
+
 class FeedbackModel(Base):
     """An append-only agree/disagree vote on one trial's QA output."""
 
@@ -3053,6 +3090,8 @@ class CustomerModel(TimestampedMixin, Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=generate_id)
     org_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # The customer's own org: finalizing a delivery shares it there.
+    customer_org_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class DeliveryModel(TimestampedMixin, Base):
@@ -3602,5 +3641,6 @@ register_soft_delete_models(
     CostExcludedLlmKeyModel,
     CostExcludedModelModel,
     CostExcludedExperimentModel,
+    OrgShareModel,
     QAGoldenCaseModel,
 )

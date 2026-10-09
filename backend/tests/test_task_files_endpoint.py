@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -30,7 +31,10 @@ def client(monkeypatch):
 
     app = create_app()
     app.dependency_overrides[get_auth_context] = fake_require_auth
-    monkeypatch.setattr("auth.require_execution_org", AsyncMock(return_value=object()))
+    monkeypatch.setattr(
+        "auth.require_signin_org",
+        AsyncMock(return_value=SimpleNamespace(execution_enabled=True)),
+    )
     return TestClient(app)
 
 

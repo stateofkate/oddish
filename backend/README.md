@@ -155,8 +155,23 @@ matching `CLERK_SECRET_KEY`:
 
 ```bash
 uv run python -m provision_org --clerk-org-id org_EXACT_ID --approve --monthly-limit-usd 100
+uv run python -m provision_org --clerk-org-id org_EXACT_ID --viewer
 uv run python -m provision_org --clerk-org-id org_EXACT_ID --revoke
 ```
+
+`--viewer` gives a customer organization view-only access: its members can sign
+in and read, every non-GET request returns 403, and workers refuse its jobs
+because it does not have execution approval. `--revoke` removes both kinds of access.
+
+Operator-org admins can do all of this in the dashboard instead, under
+Admin > Customers. Each org has its own page: name, slug, logo, and delete;
+members, roles, and invitations; auto-join email domains; access (view-only,
+runs jobs with a monthly budget, or none); and what it sees. Share a tag to give
+the org every experiment carrying it, as tags change; each share can show or
+hide costs. Members of a view-only org see only Shared and Settings. Org details
+go through Clerk's Backend API, so no Abundant admin has to join the org. SSO is
+a Clerk enterprise connection (SAML or OIDC for the customer's email domain),
+set up in the Clerk dashboard.
 
 The approval command synchronizes the organization and sets a positive monthly
 budget in the same transaction as approval. Only someone with deployment database

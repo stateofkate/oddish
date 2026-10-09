@@ -6,7 +6,7 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from starlette.types import ASGIApp
@@ -15,6 +15,7 @@ from observability import (
     instrument_fastapi,
     span as _otel_span,
 )
+from auth import set_share_viewer
 from auth.verification import warm_clerk_jwks
 from oddish.config import settings
 from oddish.db import close_database_connections
@@ -293,6 +294,10 @@ def create_app() -> FastAPI:
         ],
     )
 
+    from api.share_costs import ShareCostsMiddleware
+
+    # Inside GZip so it rewrites the body before compression.
+    api.add_middleware(ShareCostsMiddleware)
     api.add_middleware(GZipMiddleware, minimum_size=500, compresslevel=1)
 
     from api.cache_headers import cache_header_middleware
@@ -309,6 +314,7 @@ def create_app() -> FastAPI:
         cost_excluded_experiments,
         cost_excluded_keys,
         cost_excluded_models,
+        customer_orgs,
         dashboard,
         deliveries,
         feedback,
@@ -318,6 +324,7 @@ def create_app() -> FastAPI:
         load,
         monitor,
         notifications,
+        org_shares,
         orgs,
         qa_issue_reports,
         qa_work,
@@ -352,8 +359,10 @@ def create_app() -> FastAPI:
     api.include_router(deliveries.router)
     api.include_router(qa_work.router)
     api.include_router(qa_issue_reports.router)
-    api.include_router(public.router)
-    api.include_router(public_analysis.router)
+    # Share routes read the caller's org to gate experiments shared with orgs.
+    share_viewer = [Depends(set_share_viewer)]
+    api.include_router(public.router, dependencies=share_viewer)
+    api.include_router(public_analysis.router, dependencies=share_viewer)
     api.include_router(qa_eval.router)
     api.include_router(qa_goldens.router)
     api.include_router(slack.router)
@@ -362,6 +371,8 @@ def create_app() -> FastAPI:
     api.include_router(cost_excluded_experiments.router)
     api.include_router(cost_excluded_keys.router)
     api.include_router(tags.router)
+    api.include_router(org_shares.router)
+    api.include_router(customer_orgs.router)
 
     return api
 

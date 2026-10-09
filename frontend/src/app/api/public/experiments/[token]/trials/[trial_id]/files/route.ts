@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getBackendUrl } from "@/lib/backend-config";
+import { publicAuthHeaders } from "@/lib/backend-response";
 
 export async function GET(
   request: NextRequest,
@@ -12,7 +13,7 @@ export async function GET(
       "public/experiments",
       `/${token}/trials/${trial_id}/files${search}`,
     );
-    const res = await fetch(url);
+    const res = await fetch(url, { headers: await publicAuthHeaders() });
 
     if (!res.ok) {
       const error = await res.json().catch(() => ({ detail: res.statusText }));
@@ -22,7 +23,8 @@ export async function GET(
     const data = await res.json();
     return NextResponse.json(data, {
       headers: {
-        "Cache-Control": "public, max-age=600, stale-while-revalidate=60",
+        "Cache-Control": "private, max-age=600, stale-while-revalidate=60",
+        Vary: "Cookie",
       },
     });
   } catch (error) {

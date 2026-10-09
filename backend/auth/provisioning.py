@@ -511,6 +511,57 @@ async def _fetch_clerk_org(clerk_org_id: str) -> dict:
     return data
 
 
+def _clerk_error(response: httpx.Response) -> str:
+    try:
+        errors = response.json().get("errors") or []
+        first = errors[0] if errors else {}
+        return first.get("long_message") or first.get("message") or response.text
+    except ValueError:
+        return response.text
+
+
+async def clerk_api(method: str, path: str, **kwargs) -> dict:
+    """Call Clerk's Backend API; Clerk errors become 502 with Clerk's message."""
+    if not CLERK_SECRET_KEY:
+        raise HTTPException(status_code=503, detail="CLERK_SECRET_KEY is not set")
+    # Ids come from URL params; ".." would let httpx resolve to the parent resource.
+    if not re.fullmatch(r"(/[A-Za-z0-9_-]+)+", path):
+        raise HTTPException(status_code=422, detail="Invalid Clerk id")
+    try:
+        async with RequestTimedAsyncClient(timeout=10) as client:
+            response = await client.request(
+                method,
+                f"https://api.clerk.com/v1{path}",
+                headers={"Authorization": f"Bearer {CLERK_SECRET_KEY}"},
+                **kwargs,
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Clerk unreachable: {exc}") from exc
+    if response.is_error:
+        raise HTTPException(
+            status_code=502, detail=f"Clerk: {_clerk_error(response)}"
+        )
+    return response.json() if response.content else {}
+
+
+async def create_clerk_org(name: str) -> dict:
+    """Create an organization in Clerk with no members; returns Clerk's payload."""
+    return await clerk_api("POST", "/organizations", json={"name": name})
+
+
+async def add_clerk_org_domain(clerk_org_id: str, domain: str) -> None:
+    """Invite everyone who signs in with an email at ``domain`` into the org."""
+    await clerk_api(
+        "POST",
+        f"/organizations/{clerk_org_id}/domains",
+        json={
+            "name": domain,
+            "enrollment_mode": "automatic_invitation",
+            "verified": True,
+        },
+    )
+
+
 async def fetch_and_sync_clerk_org(
     session: AsyncSession, clerk_org_id: str
 ) -> OrganizationModel:

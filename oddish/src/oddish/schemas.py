@@ -2638,6 +2638,7 @@ class PublicExperimentResponse(BaseModel):
     public_token: str
     description: str | None = None
     show_qa: bool = False
+    show_costs: bool = True
 
 
 class PublicTaskQaResponse(BaseModel):

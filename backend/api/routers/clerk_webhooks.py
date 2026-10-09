@@ -200,6 +200,7 @@ async def handle_clerk_webhook(request: Request) -> dict[str, str]:
             # deletion arrives first so an older event cannot restore access.
             org = await sync_clerk_org(session, clerk_org_id, None, None)
             org.execution_enabled = False
+            org.viewer_access = False
             org.is_active = False
             org.deleted_at = utcnow()
             await session.commit()

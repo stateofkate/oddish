@@ -47,6 +47,20 @@ async def org_id():
         )
 
 
+PAID_ROUTES = [
+    "/api-keys",
+    "/tasks/sweep",
+    "/tasks/sweep/batch",
+    "/trials/t/retry",
+    "/tasks/t/qa/retry",
+    "/tasks/t/qa/backfill",
+    "/tasks/t/qa/pre-trial",
+    "/trials/t/analysis/rerun",
+    "/trials/t/trajectory/summary",
+    "/qa-evals",
+]
+
+
 async def set_approval(org_id, enabled):
     async with get_session() as session:
         await session.execute(
@@ -70,21 +84,7 @@ async def test_cached_identities_do_not_bypass_approval_or_revocation(org_id, me
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "path",
-    [
-        "/api-keys",
-        "/tasks/sweep",
-        "/tasks/sweep/batch",
-        "/trials/t/retry",
-        "/tasks/t/qa/retry",
-        "/tasks/t/qa/backfill",
-        "/tasks/t/qa/pre-trial",
-        "/trials/t/analysis/rerun",
-        "/trials/t/trajectory/summary",
-        "/qa-evals",
-    ],
-)
+@pytest.mark.parametrize("path", PAID_ROUTES)
 async def test_every_paid_route_rejects_unapproved_admin_before_handler(org_id, path):
     app = FastAPI()
     for router in (api_keys.router, tasks.router, trials.router, qa_eval.router):
@@ -100,6 +100,75 @@ async def test_every_paid_route_rejects_unapproved_admin_before_handler(org_id, 
         response = await client.post(path, json={})
     assert response.status_code == 403, response.text
     assert "Abundant approval" in response.text
+
+
+async def set_viewer(org_id, enabled):
+    async with get_session() as session:
+        await session.execute(
+            OrganizationModel.__table__.update()
+            .where(OrganizationModel.id == org_id)
+            .values(viewer_access=enabled)
+        )
+
+
+@pytest.mark.asyncio
+async def test_viewer_org_signs_in_but_every_paid_route_is_refused(org_id):
+    await set_viewer(org_id, True)
+    context = AuthContext(
+        method=AuthMethod.CLERK_JWT, org_id=org_id, user_role=UserRole.ADMIN
+    )
+    assert await auth.require_auth(SimpleNamespace(method="GET"), context) is context
+    app = FastAPI()
+    for router in (api_keys.router, tasks.router, trials.router, qa_eval.router):
+        app.include_router(router)
+    app.dependency_overrides[auth.get_auth_context] = lambda: context
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        for path in PAID_ROUTES:
+            response = await client.post(path, json={})
+            assert response.status_code == 403, (path, response.text)
+            assert "view-only" in response.text
+
+
+@pytest.mark.asyncio
+async def test_viewer_org_jobs_never_run(org_id):
+    await set_viewer(org_id, True)
+    handler = SimpleNamespace(run=AsyncMock(return_value=JobOutcome.ok()))
+    with pytest.raises(JobAccessDenied):
+        await run_authorized_handler(
+            SimpleNamespace(org_id=org_id),
+            handler,
+            worker_access.authorize_worker_job,
+        )
+    handler.run.assert_not_awaited()
+    with pytest.raises(HTTPException):
+        await require_execution_org(org_id)
+
+
+@pytest.mark.asyncio
+async def test_operator_viewer_grant_drops_execution_and_revoke_clears_it(
+    org_id, monkeypatch
+):
+    import provision_org
+
+    async def fetch(session, clerk_id):
+        return await session.get(OrganizationModel, clerk_id)
+
+    monkeypatch.setattr(provision_org, "fetch_and_sync_clerk_org", fetch)
+    await set_approval(org_id, True)
+    await provision_org.grant_viewer(org_id)
+    async with get_session() as session:
+        org = await session.get(OrganizationModel, org_id)
+        assert org.viewer_access is True and org.execution_enabled is False
+        assert org.org_type == "customer"
+    await provision_org.provision(org_id, enable=False, monthly_limit=None)
+    async with get_session() as session:
+        org = await session.get(OrganizationModel, org_id)
+        assert org.viewer_access is False
+    context = AuthContext(method=AuthMethod.CLERK_JWT, org_id=org_id)
+    with pytest.raises(HTTPException, match="Abundant approval"):
+        await auth.require_auth(SimpleNamespace(method="GET"), context)
 
 
 @pytest.mark.asyncio

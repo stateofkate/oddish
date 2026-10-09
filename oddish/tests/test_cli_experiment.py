@@ -605,3 +605,82 @@ def test_rename_patches_and_reports_share_url(monkeypatch):
     assert _RenameClient.patched["json"] == {"name": "after"}
     assert "after" in result.output
     assert "tok123" in result.output
+
+
+_ORGS = [{"id": "org_c", "name": "Cursive", "slug": "cursive"}]
+
+
+class _ShareClient:
+    """Answers the org list and share list; records writes."""
+
+    calls: list = []
+    shares: list = []
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def get(self, url, params=None):
+        if url.endswith("/org-shares/orgs"):
+            return httpx.Response(200, json=_ORGS)
+        if url.endswith("/org-shares"):
+            return httpx.Response(200, json=type(self).shares)
+        raise AssertionError(f"unexpected get {url}")
+
+    def post(self, url, json=None):
+        type(self).calls.append(("post", url, json))
+        return httpx.Response(200, json=[])
+
+    def delete(self, url):
+        type(self).calls.append(("delete", url, None))
+        return httpx.Response(200, json=[])
+
+
+def test_share_resolves_the_org_slug(monkeypatch):
+    monkeypatch.setattr(httpx, "Client", _ShareClient)
+    _set_env(monkeypatch)
+    _ShareClient.calls = []
+
+    result = CliRunner().invoke(app, ["experiment", "share", "exp1", "--org", "cursive"])
+
+    assert result.exit_code == 0, result.output
+    assert _ShareClient.calls == [
+        (
+            "post",
+            "https://api.example.test/org-shares",
+            {
+                "grantee_org_id": "org_c",
+                "resource_type": "experiment",
+                "resource_id": "exp1",
+            },
+        )
+    ]
+    unknown = CliRunner().invoke(app, ["experiment", "share", "exp1", "--org", "gdm"])
+    assert unknown.exit_code == 1 and "cursive" in unknown.output
+
+
+def test_unshare_and_list_shares(monkeypatch):
+    monkeypatch.setattr(httpx, "Client", _ShareClient)
+    _set_env(monkeypatch)
+    _ShareClient.calls = []
+    _ShareClient.shares = [
+        {
+            "id": "share1",
+            "grantee_org_id": "org_c",
+            "grantee_org_name": "Cursive",
+            "show_costs": False,
+        }
+    ]
+
+    listed = CliRunner().invoke(app, ["experiment", "shares", "exp1"])
+    assert "Cursive  (costs hidden)" in listed.output
+    result = CliRunner().invoke(app, ["experiment", "unshare", "exp1", "-o", "Cursive"])
+    assert result.exit_code == 0, result.output
+    assert _ShareClient.calls == [
+        ("delete", "https://api.example.test/org-shares/share1", None)
+    ]

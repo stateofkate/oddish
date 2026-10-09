@@ -43,6 +43,7 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { apiFetch, fetcher } from "@/lib/api";
 import { formatDate } from "@/lib/format";
+import { useIsViewerOrg } from "@/lib/use-org-access";
 import { cn } from "@/lib/utils";
 import {
   Bell,
@@ -160,6 +161,8 @@ const SECTIONS: {
     icon: Bell,
   },
 ];
+
+const VIEWER_SECTIONS = new Set<SettingsSection>(["profile", "workspace"]);
 
 function isSettingsSection(value: string | null): value is SettingsSection {
   return (
@@ -1363,9 +1366,11 @@ function WorkspaceSection() {
 // =============================================================================
 
 function SidebarNav({
+  sections,
   section,
   onSelect,
 }: {
+  sections: typeof SECTIONS;
   section: SettingsSection;
   onSelect: (next: SettingsSection) => void;
 }) {
@@ -1374,7 +1379,7 @@ function SidebarNav({
       aria-label="Settings"
       className="flex gap-1 overflow-x-auto pb-2 lg:flex-col lg:gap-0.5 lg:overflow-visible lg:pb-0"
     >
-      {SECTIONS.map((entry) => {
+      {sections.map((entry) => {
         const Icon = entry.icon;
         const active = section === entry.id;
         return (
@@ -1415,9 +1420,16 @@ export default function SettingsPage() {
   // Accept both `?section=` (new) and `?tab=` (old, to preserve any inbound links).
   const requested =
     searchParams.get("section") ?? searchParams.get("tab") ?? null;
-  const section: SettingsSection = isSettingsSection(requested)
-    ? requested
-    : "profile";
+  // View-only customer orgs manage only their account and members.
+  const viewer = useIsViewerOrg();
+  const sections = viewer
+    ? SECTIONS.filter((entry) => VIEWER_SECTIONS.has(entry.id))
+    : SECTIONS;
+  const section: SettingsSection =
+    isSettingsSection(requested) &&
+    sections.some((entry) => entry.id === requested)
+      ? requested
+      : "profile";
 
   const currentMeta = SECTIONS.find((entry) => entry.id === section)!;
 
@@ -1454,7 +1466,11 @@ export default function SettingsPage() {
 
       <div className="grid gap-8 lg:grid-cols-[220px_minmax(0,1fr)]">
         <aside className="lg:sticky lg:top-[calc(5rem+var(--preview-banner-h,0px))] lg:self-start">
-          <SidebarNav section={section} onSelect={handleSectionChange} />
+          <SidebarNav
+            sections={sections}
+            section={section}
+            onSelect={handleSectionChange}
+          />
         </aside>
 
         <section className="min-w-0 space-y-6">
@@ -1479,15 +1495,19 @@ export default function SettingsPage() {
             <SectionContainer active={section === "workspace"}>
               <WorkspaceSection />
             </SectionContainer>
-            <SectionContainer active={section === "api-keys"}>
-              <APIKeysPanel />
-            </SectionContainer>
-            <SectionContainer active={section === "byok"}>
-              <ByokPanel />
-            </SectionContainer>
-            <SectionContainer active={section === "notifications"}>
-              <NotificationsPanel />
-            </SectionContainer>
+            {!viewer && (
+              <>
+                <SectionContainer active={section === "api-keys"}>
+                  <APIKeysPanel />
+                </SectionContainer>
+                <SectionContainer active={section === "byok"}>
+                  <ByokPanel />
+                </SectionContainer>
+                <SectionContainer active={section === "notifications"}>
+                  <NotificationsPanel />
+                </SectionContainer>
+              </>
+            )}
           </div>
         </section>
       </div>

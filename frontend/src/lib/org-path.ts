@@ -29,6 +29,7 @@ export const APP_ROOT_SEGMENTS = [
   "settings",
   "admin",
   "usage",
+  "shared",
 ] as const;
 
 const PUBLIC_ROOT = new Set<string>(PUBLIC_ROOT_SEGMENTS);

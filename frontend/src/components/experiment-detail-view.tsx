@@ -159,6 +159,8 @@ interface ExperimentDetailViewProps {
   readOnly?: boolean;
   allowRetry?: boolean;
   showAnalysis?: boolean;
+  /** Customer orgs see costs only when their share shows them. */
+  showCost?: boolean;
   /** Where the embedded QA view links and fetches; omitted, it is hidden. */
   qaIssues?: QaIssuesTarget;
   apiBaseUrl?: string;
@@ -605,6 +607,7 @@ function ExperimentSummaryBar({
   isLoadingTrials,
   showNewSpend,
   showVerifierSpend = true,
+  showCost = true,
   // True when cost came from the server rollup, which reports SPEND: every
   // trial that ran, including earlier task versions and superseded retries
   // that the table below filters out. Drives the tooltip's disclosure.
@@ -622,6 +625,8 @@ function ExperimentSummaryBar({
   showNewSpend: boolean;
   /** CUA/verifier spend is internal recon; omit on public share pages. */
   showVerifierSpend?: boolean;
+  /** Off for customer orgs whose share hides costs. */
+  showCost?: boolean;
   costStatus: ExperimentCostTotalsResource["status"];
   qa: Record<VerdictState, number> | null;
 }) {
@@ -668,6 +673,7 @@ function ExperimentSummaryBar({
   // With no gathered trials the two run-cost tiles carry the same number;
   // show it once.
   const showOwnedSpend =
+    showCost &&
     showNewSpend &&
     !(
       summary.costTrialCount === summary.ownedTrialCount &&
@@ -678,7 +684,11 @@ function ExperimentSummaryBar({
   return (
     <div
       className={`grid grid-cols-2 overflow-hidden rounded-[10px] border border-[color:var(--paper-line)] bg-[color:var(--paper-surface)] ${
-        qa
+        !showCost
+          ? qa
+            ? "md:grid-cols-[1fr_1.6fr_0.7fr_1fr]"
+            : "md:grid-cols-[1fr_1.6fr_0.7fr]"
+          : qa
           ? showOwnedSpend
             ? "md:grid-cols-[1fr_1.6fr_0.7fr_1fr_1fr_1fr]"
             : "md:grid-cols-[1fr_1.6fr_0.7fr_1fr_1fr]"
@@ -817,6 +827,7 @@ function ExperimentSummaryBar({
           </div>
         </KpiTile>
       )}
+      {showCost && (
       <KpiTile
         label="Run cost (all versions)"
         labelInfo="Run cost across all versions, including runs added from other experiments. QA costs are listed separately."
@@ -911,6 +922,7 @@ function ExperimentSummaryBar({
           </span>
         )}
       </KpiTile>
+      )}
       {showOwnedSpend && (
         <KpiTile
           label="This experiment's run cost"
@@ -1034,6 +1046,7 @@ export function ExperimentDetailView({
   readOnly = false,
   allowRetry = true,
   showAnalysis = true,
+  showCost = true,
   qaIssues,
   apiBaseUrl = "/api",
   focusUrl,
@@ -1915,13 +1928,14 @@ export function ExperimentDetailView({
             // (the only readOnly consumer).
             showNewSpend={!readOnly}
             showVerifierSpend={!readOnly}
+            showCost={showCost}
             costStatus={costTotals.status}
             qa={showAnalysis ? qaRollup : null}
             reviewFilter={reviewFilter}
             onReviewFilter={setReviewFilter}
           />
 
-          {!hasError && costTotals.status === "error" && (
+          {!hasError && showCost && costTotals.status === "error" && (
             <Alert variant="destructive">
               <AlertTitle>Failed to load experiment spend</AlertTitle>
               <AlertDescription className="flex flex-wrap items-center gap-2">

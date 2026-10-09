@@ -34,6 +34,7 @@ import { fetcher } from "@/lib/api";
 import { QueueKeyIcon } from "@/components/queue-key-icon";
 import { TagAdminPolicyForm } from "@/components/tag-admin-policy-form";
 import { QuotaAdminForm } from "@/components/quota-admin-form";
+import { CustomerOrgsCard } from "@/components/customer-orgs-card";
 import { EndpointHealthCard } from "@/components/endpoint-health-card";
 import { WorkerJobsCard } from "@/components/worker-jobs-card";
 import { UsagePanel } from "@/components/usage-panel";
@@ -720,12 +721,14 @@ const ADMIN_TABS = [
   "tags",
   "quotas",
   "qa-evals",
+  "customers",
   "diagnostics",
 ] as const;
 
 // Platform-wide config: hidden unless the caller is in the operator org.
 const OPERATOR_ONLY_TABS: ReadonlySet<(typeof ADMIN_TABS)[number]> = new Set([
   "concurrency",
+  "customers",
   "diagnostics",
 ]);
 
@@ -807,6 +810,9 @@ function AdminPageContent() {
           <TabsTrigger value="quotas">Quotas</TabsTrigger>
           <TabsTrigger value="qa-evals">QA Evals</TabsTrigger>
           {canManagePlatform && (
+            <TabsTrigger value="customers">Customers</TabsTrigger>
+          )}
+          {canManagePlatform && (
             <TabsTrigger value="diagnostics">Diagnostics</TabsTrigger>
           )}
         </TabsList>
@@ -876,6 +882,12 @@ function AdminPageContent() {
         <TabsContent value="qa-evals">
           <QaEvalsPage />
         </TabsContent>
+
+        {canManagePlatform && (
+          <TabsContent value="customers" className="space-y-4">
+            <CustomerOrgsCard />
+          </TabsContent>
+        )}
 
         {canManagePlatform && (
           <TabsContent value="diagnostics" className="space-y-4">

@@ -1,7 +1,7 @@
 """Hosted execution approval, read from the database rather than auth caches."""
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import raiseload
 
@@ -32,3 +32,28 @@ async def require_execution_org(
         status_code=403,
         detail="This organization needs Abundant approval. Select an approved organization or ask Abundant for access.",
     )
+
+
+async def require_signin_org(
+    org_id: str | None, *, session: AsyncSession
+) -> OrganizationModel:
+    """Like require_execution_org, but view-only customer orgs also pass.
+
+    Workers keep using require_execution_org, so viewer orgs never run jobs.
+    """
+    if org_id is not None:
+        org = await session.scalar(
+            select(OrganizationModel)
+            .options(raiseload("*"))
+            .where(
+                OrganizationModel.id == org_id,
+                OrganizationModel.is_active.is_(True),
+                or_(
+                    OrganizationModel.execution_enabled.is_(True),
+                    OrganizationModel.viewer_access.is_(True),
+                ),
+            )
+        )
+        if org is not None:
+            return org
+    return await require_execution_org(None)

@@ -154,11 +154,11 @@ export async function apiFetch(
   if (!target.direct) return fetch(input, init);
 
   const headers = new Headers(init.headers);
-  if (!target.public) {
-    const token = await clientToken();
-    if (!token) return fetch(input, init);
-    headers.set("Authorization", `Bearer ${token}`);
-  }
+  // Share-page reads go out logged-out when there is no token; with one they
+  // also open experiments shared with the visitor's org.
+  const token = await clientToken();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  else if (!target.public) return fetch(input, init);
   return fetch(target.url, {
     ...init,
     headers,

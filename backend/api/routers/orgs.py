@@ -91,6 +91,8 @@ async def get_organization(
         slug=auth.org.slug,
         plan=auth.org.plan,
         created_at=auth.org.created_at.isoformat(),
+        access="execution" if auth.org.execution_enabled else "viewer",
+        org_type=auth.org.org_type,
     )
 
 

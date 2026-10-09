@@ -1461,6 +1461,8 @@ export interface PublicExperimentInfo {
   public_token: string;
   description: string | null;
   show_qa?: boolean;
+  /** False for a customer org whose share hides costs. */
+  show_costs?: boolean;
 }
 
 export interface ExperimentShareInfo {
@@ -1473,6 +1475,119 @@ export interface ExperimentShareInfo {
   shadow_of?: string | null;
   qa_report_experiment_id?: string | null;
   show_qa?: boolean;
+}
+
+export interface ShareableOrg {
+  id: string;
+  name: string;
+  slug: string;
+}
+
+export type ShareResourceType = "experiment" | "task" | "delivery";
+
+export interface OrgShare {
+  id: string;
+  grantee_org_id: string;
+  grantee_org_name: string;
+  resource_type: ShareResourceType;
+  resource_id: string;
+  created_at: string;
+}
+
+export interface CustomerOrg {
+  id: string;
+  name: string;
+  slug: string;
+  access: "viewer" | "execution" | "none";
+  share_count: number;
+  image_url: string | null;
+  members_count: number | null;
+}
+
+export interface DeliveryCustomer {
+  id: string;
+  name: string;
+  /** The org finalized deliveries to this customer are shared with. */
+  customer_org_id: string | null;
+}
+
+export interface CustomerOrgDetail extends CustomerOrg {
+  monthly_limit_usd: number | null;
+  month_spend_usd: number;
+  delivery_customers: DeliveryCustomer[];
+}
+
+export type CustomerRole = "org:admin" | "org:member";
+
+export interface CustomerMember {
+  user_id: string;
+  email: string | null;
+  name: string | null;
+  image_url: string | null;
+  role: string;
+  /** Clerk timestamp, milliseconds. */
+  joined_at: number | null;
+}
+
+export interface CustomerInvitation {
+  id: string;
+  email: string;
+  role: string;
+  created_at: number | null;
+}
+
+export interface CustomerDomain {
+  id: string;
+  name: string;
+  enrollment_mode: string;
+}
+
+export interface CustomerShare {
+  id: string;
+  resource_type: ShareResourceType;
+  resource_id: string;
+  /** Experiment, task, or delivery name. */
+  label: string;
+  /** Deleted, or a delivery not finalized yet: grants nothing for now. */
+  inactive: boolean;
+  show_costs: boolean;
+  shared_at: string;
+}
+
+export interface SharedExperiment {
+  id: string;
+  name: string;
+  description: string | null;
+  shared_at: string;
+}
+
+export interface SharedTask {
+  id: string;
+  name: string;
+  /** The shipped version for a delivered task; null means the current one. */
+  version: number | null;
+  delivery_id: string | null;
+  delivery_name: string | null;
+  shared_at: string | null;
+}
+
+export interface SharedDelivery {
+  id: string;
+  name: string;
+  description: string | null;
+  finalized_at: string | null;
+  task_count: number;
+}
+
+export interface SharedDeliveryBoard extends SharedDelivery {
+  tasks: {
+    task_id: string;
+    task_name: string;
+    version: number | null;
+    customer_note: string | null;
+    checks: { label: string; status: string }[];
+    findings: string[];
+  }[];
 }
 
 // ---------------------------------------------------------------------------

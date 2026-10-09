@@ -1,5 +1,6 @@
 "use client";
 
+import { OrgShareButton } from "@/components/org-share-picker";
 import { TaskReviewDialog } from "@/components/task-review-dialog";
 import { TaskRunSummary } from "@/components/task-run-summary";
 
@@ -287,6 +288,7 @@ function TaskDetailHeader({
         })()}
       </div>
       <div className="flex flex-wrap items-center gap-2">
+        <OrgShareButton resourceType="task" resourceId={task.id} />
         {(() => {
           const meta = task.github_meta;
           const prUrl = taskPrUrl(task.link, meta);

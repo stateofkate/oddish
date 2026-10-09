@@ -352,6 +352,123 @@ def remove(
         )
 
 
+def _share_failure(resp) -> None:
+    try:
+        detail = resp.json().get("detail", resp.text)
+    except Exception:
+        detail = resp.text
+    console.print(f"[red]Sharing failed ({resp.status_code}):[/red] {detail}")
+    if resp.status_code == 403:
+        console.print("  Sharing needs an admin API key from Abundant's own org.")
+    raise typer.Exit(1)
+
+
+def _share_target(client: httpx.Client, api_url: str, org: str) -> dict:
+    """The shareable org whose slug, id, or name is ``org``."""
+    resp = client.get(f"{api_url}/org-shares/orgs")
+    if resp.status_code != 200:
+        _share_failure(resp)
+    orgs = resp.json()
+    match = next(
+        (o for o in orgs if org in (o["slug"], o["id"]) or o["name"] == org), None
+    )
+    if match is None:
+        console.print(f"[red]No org {org!r} to share with.[/red] Choose one of:")
+        for o in orgs:
+            console.print(f"  {o['slug']}  ({o['name']})")
+        raise typer.Exit(1)
+    return match
+
+
+_OrgOption = Annotated[
+    str, typer.Option("--org", "-o", help="Customer org slug, id, or name.")
+]
+_ApiUrlOption = Annotated[
+    Optional[str],
+    typer.Option("--api-url", "-u", help="API URL (uses configured URL if unset)."),
+]
+
+
+@experiment_app.command("share")
+def share(
+    experiment_id: Annotated[str, typer.Argument(help="Experiment id to share.")],
+    org: _OrgOption,
+    api_url: _ApiUrlOption = None,
+):
+    """Share an experiment with a customer org; its members open it under Shared.
+
+    oddish experiment share bd43dc73 --org cursive
+    """
+    api_url = api_url or get_api_url()
+    require_api_key(api_url)
+    with httpx.Client(timeout=60.0, headers=get_auth_headers()) as client:
+        target = _share_target(client, api_url, org)
+        resp = client.post(
+            f"{api_url}/org-shares",
+            json={
+                "grantee_org_id": target["id"],
+                "resource_type": "experiment",
+                "resource_id": experiment_id,
+            },
+        )
+        if resp.status_code != 200:
+            _share_failure(resp)
+    console.print(f"Shared {experiment_id} with {target['name']}.")
+
+
+@experiment_app.command("unshare")
+def unshare(
+    experiment_id: Annotated[str, typer.Argument(help="Experiment id.")],
+    org: _OrgOption,
+    api_url: _ApiUrlOption = None,
+):
+    """Stop sharing an experiment with a customer org.
+
+    oddish experiment unshare bd43dc73 --org cursive
+    """
+    api_url = api_url or get_api_url()
+    require_api_key(api_url)
+    with httpx.Client(timeout=60.0, headers=get_auth_headers()) as client:
+        target = _share_target(client, api_url, org)
+        resp = client.get(
+            f"{api_url}/org-shares", params={"resource_id": experiment_id}
+        )
+        if resp.status_code != 200:
+            _share_failure(resp)
+        share_ids = [
+            s["id"] for s in resp.json() if s["grantee_org_id"] == target["id"]
+        ]
+        if not share_ids:
+            console.print(f"{experiment_id} is not shared with {target['name']}.")
+            return
+        resp = client.delete(f"{api_url}/org-shares/{share_ids[0]}")
+        if resp.status_code != 200:
+            _share_failure(resp)
+    console.print(f"Stopped sharing {experiment_id} with {target['name']}.")
+
+
+@experiment_app.command("shares")
+def shares(
+    experiment_id: Annotated[str, typer.Argument(help="Experiment id.")],
+    api_url: _ApiUrlOption = None,
+):
+    """List the customer orgs an experiment is shared with."""
+    api_url = api_url or get_api_url()
+    require_api_key(api_url)
+    with httpx.Client(timeout=60.0, headers=get_auth_headers()) as client:
+        resp = client.get(
+            f"{api_url}/org-shares", params={"resource_id": experiment_id}
+        )
+        if resp.status_code != 200:
+            _share_failure(resp)
+    rows = resp.json()
+    if not rows:
+        console.print(f"{experiment_id} is not shared with any org.")
+    for row in rows:
+        costs = "costs shown" if row["show_costs"] else "costs hidden"
+        console.print(f"{row['grantee_org_name']}  ({costs})")
+
+
 @experiment_app.command("rename")
 def rename(
     experiment_id: Annotated[

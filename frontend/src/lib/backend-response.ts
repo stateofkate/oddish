@@ -152,6 +152,20 @@ export async function proxyBackendJson({
   return response;
 }
 
+/**
+ * The signed-in visitor's backend token for share-page reads, or nothing when
+ * logged out. Experiments shared with an org only open with it.
+ */
+export async function publicAuthHeaders(): Promise<Record<string, string>> {
+  try {
+    const { getToken } = await auth();
+    const token = await getClerkToken(getToken);
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  } catch {
+    return {};
+  }
+}
+
 export async function proxyPublicBackendJson({
   request,
   path,
@@ -165,7 +179,7 @@ export async function proxyPublicBackendJson({
     const res = await fetch(getBackendUrl(path), {
       cache: "no-store",
       signal: request.signal,
-      headers: backendFetchHeaders(request),
+      headers: backendFetchHeaders(request, await publicAuthHeaders()),
     });
     if (stream) {
       return attachUpstreamServerTiming(
