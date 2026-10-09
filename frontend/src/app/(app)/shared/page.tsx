@@ -19,20 +19,39 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-/** Runs split by outcome: passed, partial credit, failed. */
+/** Runs by outcome, the same five parts and colors as the sample page's bar,
+ *  so skipped runs and harness errors never read as passes or failures. */
 function OutcomeBar({ sample }: { sample: SharedExperiment }) {
   const s = sample.summary;
-  const total = s ? s.pass_count + s.partial_count + s.fail_count : 0;
-  if (!s || total === 0) return <div className="bg-muted h-1.5 rounded-full" />;
-  const part = (n: number) => `${(n / total) * 100}%`;
+  const parts = s
+    ? [
+        { n: s.pass_count, color: "var(--paper-pass)", label: "passed" },
+        { n: s.partial_count, color: "var(--paper-partial)", label: "partial" },
+        { n: s.fail_count, color: "var(--paper-fail)", label: "failed" },
+        {
+          n: s.harness_error_count,
+          color: "var(--paper-error)",
+          label: "errors",
+        },
+        { n: s.skipped, color: "var(--paper-ink-3)", label: "skipped" },
+      ]
+    : [];
+  const total = parts.reduce((sum, part) => sum + part.n, 0);
   return (
     <div
       className="bg-muted flex h-1.5 overflow-hidden rounded-full"
-      title={`${s.pass_count} passed · ${s.partial_count} partial · ${s.fail_count} failed`}
+      title={parts.map((part) => `${part.n} ${part.label}`).join(" · ")}
     >
-      <div className="bg-emerald-500" style={{ width: part(s.pass_count) }} />
-      <div className="bg-amber-500" style={{ width: part(s.partial_count) }} />
-      <div className="bg-red-500" style={{ width: part(s.fail_count) }} />
+      {total > 0 &&
+        parts.map((part) => (
+          <div
+            key={part.label}
+            style={{
+              width: `${(part.n / total) * 100}%`,
+              background: part.color,
+            }}
+          />
+        ))}
     </div>
   );
 }
