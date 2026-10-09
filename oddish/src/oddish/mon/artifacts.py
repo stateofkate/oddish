@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import io
 import logging
@@ -51,12 +52,15 @@ async def upload(
     failure before the trial started), so such an attempt still leaves its
     monitor log behind.
     """
-    uploaded = False
-    target = None
     job_dir = getattr(outcome, "job_dir", None)
     if job_dir is None or not Path(job_dir).is_dir():
         job_dir = fallback_dir
-    if job_dir is not None and Path(job_dir).is_dir():
+    if job_dir is None or not Path(job_dir).is_dir():
+        return False
+    # Compression can take long enough to starve the heartbeat. Finish it off
+    # the event loop, before requesting a time-limited upload URL.
+    archive = await asyncio.to_thread(archive_directory, Path(job_dir))
+    for grant_attempt in range(3):
         try:
             target = await client.artifact_upload()
         except ControlPlaneRefused as exc:
@@ -65,21 +69,29 @@ async def upload(
             logger.error(
                 "artifact grant refused (%s); reporting without artifacts", exc
             )
-            target = None
-    if target is not None:
+            return False
         async with httpx.AsyncClient(timeout=600.0, transport=transport) as http:
-            # A storage outage is retried like a control plane outage; a 4xx
-            # will not get better by retrying.
+            # A storage outage uses the runner's existing delivery retry window.
             try:
                 response = await http.put(
                     target.upload_url,
-                    content=archive_directory(Path(job_dir)),
+                    content=archive,
                     headers=target.upload_headers,
                 )
             except httpx.TransportError as exc:
                 raise ControlPlaneUnavailable(f"upload: {type(exc).__name__}") from None
             if response.status_code >= 500:
                 raise ControlPlaneUnavailable(f"upload: HTTP {response.status_code}")
+            if response.status_code in (403, 408, 429) and grant_attempt < 2:
+                # An expired signature is a 403. Ask for a fresh URL and keep
+                # the same archive; do not discard a finished trial's files
+                # after one refusal. Bound retries for permanent denials too.
+                logger.warning(
+                    "artifact upload HTTP %s; refreshing grant (%s/3)",
+                    response.status_code,
+                    grant_attempt + 1,
+                )
+                continue
             if response.status_code >= 400:
                 # Refused for good: the result still carries the verdict, and
                 # settlement reads archive_uploaded=False as "no artifacts".
@@ -88,9 +100,9 @@ async def upload(
                     "without artifacts",
                     response.status_code,
                 )
-            else:
-                uploaded = True
-    return uploaded
+                return False
+            return True
+    return False
 
 
 async def post_result(

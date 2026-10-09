@@ -1363,7 +1363,9 @@ async def _record_failure_outcome(
             else None
         ),
         "error_summary": (
-            provider_failure.error_summary if provider_failure is not None else None
+            provider_failure.error_summary
+            if provider_failure is not None
+            else classify_provider_failure(failure.error_message).error_summary
         ),
         "exception_type": failure.exception_type,
         "provider_request_id": failure.request_id,

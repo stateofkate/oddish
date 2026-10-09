@@ -22,6 +22,7 @@ on:
       - "oddish/src/oddish/workers/agents/**"
       - "oddish/src/oddish/workers/queue/**"
       - "oddish/tests/test_setup_events.py"
+      - "oddish/tests/test_worker_jobs_runner.py"
       - "oddish/src/oddish/config.py"
       - "oddish/src/oddish/schemas.py"
       - "oddish/src/oddish/harbor-pin.toml"
@@ -55,6 +56,7 @@ on:
       - "oddish/src/oddish/workers/agents/**"
       - "oddish/src/oddish/workers/queue/**"
       - "oddish/tests/test_setup_events.py"
+      - "oddish/tests/test_worker_jobs_runner.py"
       - "oddish/src/oddish/config.py"
       - "oddish/src/oddish/schemas.py"
       - "oddish/src/oddish/harbor-pin.toml"
@@ -147,7 +149,7 @@ jobs:
           tests/test_provider_startup.py tests/test_verifier_credentials.py
           tests/test_job_tokens.py tests/test_judge_keys.py
           tests/test_scoped_model_env_ambient.py
-          tests/test_setup_events.py -q
+          tests/test_setup_events.py tests/test_worker_jobs_runner.py -q
 
       # Run directly against a service so the lock regression cannot silently
       # skip when the job container has no Docker CLI/daemon.

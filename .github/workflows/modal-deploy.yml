@@ -68,12 +68,12 @@ jobs:
       # credentials come from the oddish-unikraft secret.
       ODDISH_UNIKRAFT_ENABLED: "1"
       # oddish-mon (V1) executes trials from inside the sandbox. Production
-      # ramps by sample: 70 percent of eligible trials (by trial-id bucket) run
+      # ramps by sample: 85 percent of eligible trials (by trial-id bucket) run
       # on the monitor for their first attempt and fall back to the worker after
       # one failure; every other trial runs on the worker as before. Ramp by
-      # editing this line (100); restore the prior sample: "40";
+      # editing this line (100); restore the prior sample: "70";
       # disable monitor routing: "0". At 100, retries also stay on the monitor.
-      ODDISH_MONITOR_EXECUTION_SAMPLE_PERCENT: "70"
+      ODDISH_MONITOR_EXECUTION_SAMPLE_PERCENT: "85"
       ODDISH_MONITOR_EXECUTION_FALLBACK_AFTER_ATTEMPTS: "1"
       # Route 20% of eligible new CPU submissions to Archil, otherwise Modal.
       # Request-hash groups keep a submission's trials together. Explicit

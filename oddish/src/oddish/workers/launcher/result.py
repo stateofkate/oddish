@@ -66,6 +66,14 @@ async def accept_monitor_result(
                 archive_key is not None,
                 execution_error is not None,
             )
+            if archive_key is None:
+                logger.warning(
+                    "metric=monitor_result outcome=no_archive job_id=%s attempt=%s "
+                    "execution_error=%s",
+                    attempt.worker_job_id,
+                    attempt.attempt,
+                    execution_error is not None,
+                )
             return "accepted"
         job = await session.get(WorkerJobModel, attempt.worker_job_id)
         if (

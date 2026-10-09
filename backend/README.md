@@ -392,9 +392,9 @@ Common optional settings:
 
 `oddish-mon` drives a trial inside its sandbox after the worker launches it.
 The production workflow, `.github/workflows/modal-deploy.yml`, sets
-`ODDISH_MONITOR_EXECUTION_SAMPLE_PERCENT=70` and
+`ODDISH_MONITOR_EXECUTION_SAMPLE_PERCENT=85` and
 `ODDISH_MONITOR_EXECUTION_FALLBACK_AFTER_ATTEMPTS=1`. Stable trial-ID buckets
-0–69 select eligible trials on attempt 1; later attempts use the worker.
+0–84 select eligible trials on attempt 1; later attempts use the worker.
 GPU, Daytona, non-agent, and unsupported-provider exclusions still apply.
 `modal_app.py` copies these deployment settings into the worker image.
 Staging keeps the 100% default; a PR merged into staging changes production
@@ -408,7 +408,7 @@ not raise it. Confirm the increase with Modal support before deployment.
 After deployment, compare monitor launches with accepted results, accounting
 for cancellations and jobs still running. Check launch errors, worker fallback,
 missing archives, and jobs requiring stale-heartbeat cleanup. Restore the
-sample to 40 if these regress, or 0 to disable monitor routing, then deploy
+sample to 70 if these regress, or 0 to disable monitor routing, then deploy
 through the normal release process. Existing monitor attempts continue.
 At 100%, the routing code disables fallback and selects every eligible attempt.
 

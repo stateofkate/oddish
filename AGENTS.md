@@ -1360,12 +1360,22 @@ Handler registration lives in `oddish.workers.jobs` (`registry.py`,
 `ensure_builtin_handlers_registered()` at startup.
 
 Production's `.github/workflows/modal-deploy.yml` sets the oddish-mon sample
-to 70%: trial-ID buckets 0–69 use the in-sandbox monitor on attempt 1, subject
+to 85%: trial-ID buckets 0–84 use the in-sandbox monitor on attempt 1, subject
 to the handler's eligibility checks. Attempt 2 onward uses the worker because
 the fallback limit remains 1. Staging keeps the 100% code default. This
 production setting takes effect only after promotion to `main` and deployment.
-Restore sample 40 to undo this increase, or 0 to disable monitor routing;
+Restore sample 70 to undo this increase, or 0 to disable monitor routing;
 these routing settings do not cancel already-running monitor attempts.
+
+Monitor artifact compression runs off the event loop before requesting a signed
+upload URL, so heartbeats continue and compression does not consume the URL's
+lifetime. Storage HTTP 403/408/429 responses receive up to three fresh grants
+for the same archive. Exhausted refusals still report the finished verdict,
+with artifact loss recorded; existing monitors retain their result contract.
+Accepted results without archives emit a warning and settlement emits a
+log with the job outcome and artifact-upload state. Worker-job
+failure events retain a bounded error summary even when a crashed monitor
+returned no Harbor outcome; this does not change retry classification.
 
 A trial pinned to a non-default Harbor (`harbor_config.variant_id` other than
 `default`, e.g. `ephemeral` from `--harbor org/repo@sha`) stays on the worker
@@ -3702,7 +3712,7 @@ worker and child execution, including platform keys loaded only by Settings.
 From `oddish/`, run:
 
 ```bash
-uv run pytest tests/mon tests/launcher tests/test_provider_startup.py tests/test_verifier_credentials.py tests/test_job_tokens.py tests/test_judge_keys.py tests/test_scoped_model_env_ambient.py -q
+uv run pytest tests/mon tests/launcher tests/test_provider_startup.py tests/test_verifier_credentials.py tests/test_job_tokens.py tests/test_judge_keys.py tests/test_scoped_model_env_ambient.py tests/test_worker_jobs_runner.py -q
 ```
 
 From `backend/`, run:

@@ -1248,6 +1248,55 @@ async def test_non_trial_timeout_is_not_tagged_as_provider_failure(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("retryable", [True, False])
+async def test_monitor_crash_reason_survives_without_a_harbor_outcome(
+    monkeypatch, retryable
+):
+    connection = _FakeConnection()
+    events = []
+
+    async def connect():
+        return connection
+
+    monkeypatch.setattr(worker_job_single_job, "_open_connection", connect)
+    for name in ("log_warning", "log_error"):
+        monkeypatch.setattr(
+            worker_job_single_job,
+            name,
+            lambda message, **attributes: events.append((message, attributes)),
+        )
+    error = (
+        "Monitor startup failed: oddish-mon exited 1\nDocker failed to start\n"
+        + "x" * 600
+    )
+    recorded = await worker_job_single_job.record_outcome(
+        job_id="monitor-job",
+        worker_id="launcher-1",
+        outcome=JobOutcome.fail(error, retryable=retryable),
+        attempts=1,
+        max_attempts=6,
+        kind=WorkerJobKind.TRIAL,
+        subject_table="trials",
+        subject_id="trial-1",
+    )
+    assert recorded == (
+        WorkerJobStatus.RETRYING if retryable else WorkerJobStatus.FAILED
+    )
+    assert len(events) == 1
+    _, attributes = events[0]
+    assert attributes["error_summary"].startswith(
+        "Monitor startup failed: oddish-mon exited 1 Docker failed to start "
+    )
+    assert len(attributes["error_summary"]) == 500
+    assert attributes["error_summary"].endswith("...")
+    assert attributes["worker_job_id"] == "monitor-job"
+    assert attributes["attempt"] == 1
+    assert attributes["failure_class"] is None
+    assert attributes["provider_status_code"] is None
+    assert attributes["tags"] == ("worker-job",)
+
+
+@pytest.mark.asyncio
 async def test_lost_outcome_ownership_emits_no_transition_event(monkeypatch):
     connection = _FakeConnection(update_result="UPDATE 0")
     events = []

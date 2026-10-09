@@ -35,7 +35,6 @@ from oddish.db import (
 )
 from oddish.db.storage import get_storage_client
 from oddish.workers.analysis_trials import ANALYSIS_ARTIFACTS, is_analysis_kind
-from oddish.workers.console import console
 from oddish.workers.harbor.outcome import HarborOutcome
 from oddish.workers.jobs import ensure_builtin_handlers_registered
 from oddish.workers.jobs.registry import get_handler
@@ -251,13 +250,16 @@ async def settle_monitor_result(worker_job_id: str, *, attempt: int) -> SettleOu
         subject_table=claimed.subject_table,
         subject_id=claimed.subject_id,
     )
-    console.print(
-        "metric=monitor_settle outcome=settled "
-        f"job_id={claimed.id} trial_id={trial_id} attempt={claimed.attempts} "
-        f"job_status={getattr(persisted, 'value', persisted)} "
-        f"had_archive={bool(result.get('archive_key'))} "
-        f"upload_error={upload_error is not None} "
-        f"trial_already_settled={trial_already_settled}"
+    logger.info(
+        "metric=monitor_settle outcome=settled job_id=%s trial_id=%s attempt=%s "
+        "job_status=%s had_archive=%s upload_error=%s trial_already_settled=%s",
+        claimed.id,
+        trial_id,
+        claimed.attempts,
+        getattr(persisted, "value", persisted),
+        bool(result.get("archive_key")),
+        upload_error is not None,
+        trial_already_settled,
     )
     await resolve_baseline_gate_after_outcome(
         kind=claimed.kind,

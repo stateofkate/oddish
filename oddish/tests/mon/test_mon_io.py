@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import io
 import json
 import logging
 import os
 import tarfile
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -308,6 +310,85 @@ async def test_a_storage_outage_is_retried_but_a_refused_upload_is_not(
     # artifacts, instead of being dropped as a failed start.
     await runner._deliver_result(_client(api), outcome, None, delay=0)
     assert calls == ["artifacts", "put", "result"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status_code", [403, 408, 429])
+@pytest.mark.parametrize("recovers", [True, False])
+async def test_storage_refusal_refreshes_the_grant_before_losing_artifacts(
+    monkeypatch, tmp_path, status_code, recovers
+):
+    from oddish.mon import runner
+
+    job_dir = tmp_path / "job"
+    job_dir.mkdir()
+    (job_dir / "result.json").write_text('{"reward": 1}')
+    grants, uploaded, results = [], [], []
+
+    def api(request):
+        if request.url.path.endswith("/artifacts"):
+            grants.append(len(grants) + 1)
+            return httpx.Response(
+                200, json={**GRANT, "upload_url": f"https://s3.test/put/{len(grants)}"}
+            )
+        results.append(json.loads(request.content))
+        return httpx.Response(200, json={"accepted": True})
+
+    def s3(request):
+        uploaded.append((request.url.path, request.content))
+        return httpx.Response(200 if recovers and len(uploaded) == 2 else status_code)
+
+    monkeypatch.setattr(
+        artifacts,
+        "upload",
+        functools.partial(artifacts.upload, transport=httpx.MockTransport(s3)),
+    )
+    await runner._deliver_result(_client(api), _Outcome(1.0, 0, job_dir), None, delay=0)
+
+    assert len(grants) == len(uploaded) == (2 if recovers else 3)
+    assert [path for path, _ in uploaded] == [f"/put/{n}" for n in grants]
+    assert len({body for _, body in uploaded}) == 1
+    assert len(results) == 1
+    assert results[0]["archive_uploaded"] is recovers
+    assert results[0]["outcome"]["reward"] == 1.0
+    assert results[0]["execution_error"] is None
+
+
+@pytest.mark.asyncio
+async def test_compression_allows_heartbeats_and_precedes_the_upload_grant(
+    monkeypatch, tmp_path
+):
+    job_dir = tmp_path / "job"
+    job_dir.mkdir()
+    (job_dir / "result.json").write_text("{}")
+    started, heartbeat = threading.Event(), threading.Event()
+    archive_directory = artifacts.archive_directory
+
+    def compress(directory):
+        started.set()
+        assert heartbeat.wait(2), "archive compression blocked the heartbeat loop"
+        return archive_directory(directory)
+
+    async def beat():
+        while not started.is_set():
+            await asyncio.sleep(0)
+        heartbeat.set()
+
+    def api(request):
+        assert heartbeat.is_set(), "upload grant requested before compression finished"
+        return httpx.Response(200, json=GRANT)
+
+    monkeypatch.setattr(artifacts, "archive_directory", compress)
+    beater = asyncio.create_task(beat())
+    try:
+        assert await artifacts.upload(
+            _client(api),
+            _Outcome(1.0, 0, job_dir),
+            transport=httpx.MockTransport(lambda _: httpx.Response(200)),
+        )
+    finally:
+        beater.cancel()
+        await asyncio.gather(beater, return_exceptions=True)
 
 
 def test_status_reports_whether_the_monitor_process_is_alive(tmp_path):
