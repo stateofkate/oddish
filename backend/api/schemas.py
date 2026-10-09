@@ -155,6 +155,8 @@ class APIKeyResponse(BaseModel):
     expires_at: str | None
     last_used_at: str | None
     created_at: str
+    # Made by the caller; the dashboard makes a first key only when none is.
+    mine: bool = False
 
 
 class APIKeyCreateResponse(BaseModel):

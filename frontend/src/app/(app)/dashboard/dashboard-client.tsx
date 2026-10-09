@@ -69,22 +69,17 @@ import { badgeVariants } from "@/components/ui/badge";
 import { UsageSummaryCard } from "@/components/usage-overview";
 import { useIsCustomerOrg } from "@/lib/use-org-access";
 import { QuotaUsageCard } from "@/components/quota-usage-card";
+import { OnboardingSteps } from "@/components/onboarding-steps";
 import { CostLeaderboardStrip } from "@/components/cost-leaderboard";
 import {
-  ArrowRight,
-  Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  Clock,
-  Copy,
   ExternalLink,
   Filter,
   GitPullRequest,
   Trash2,
   Globe,
-  Key,
-  Terminal,
   Users,
   X,
 } from "lucide-react";
@@ -102,79 +97,6 @@ const STATUS_FILTER_OPTIONS = [
   { value: "pending-verdict", label: "Tasks without a verdict" },
   { value: "failed", label: "Failures" },
 ] as const;
-
-function CommandSnippet({ command }: { command: string }) {
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(command);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
-    } catch {
-      setCopied(false);
-    }
-  };
-
-  return (
-    <div className="border-border/80 bg-muted/35 flex items-center gap-2 rounded-md border px-3 py-2">
-      <code className="min-w-0 flex-1 overflow-x-auto font-mono text-xs">
-        {command}
-      </code>
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        className="h-7 px-2 text-xs"
-        onClick={handleCopy}
-        aria-label="Copy command"
-      >
-        {copied ? (
-          <Check className="h-3.5 w-3.5 text-[#5c8e43]" />
-        ) : (
-          <Copy className="h-3.5 w-3.5" />
-        )}
-      </Button>
-    </div>
-  );
-}
-
-function EmptyExperimentsState() {
-  return (
-    <div className="bg-card/60 rounded-lg border border-dashed border-[#6f88b4]/30 p-6">
-      <div className="flex flex-col items-center text-center">
-        <Clock className="text-muted-foreground/70 mb-3 h-11 w-11" />
-        <p className="text-base font-medium">No experiments yet</p>
-      </div>
-
-      <div className="mt-5 grid gap-3 lg:grid-cols-3">
-        <div className="bg-background/80 rounded-lg border border-[#85b85c]/20 p-4">
-          <div className="mb-3 flex items-center gap-2 text-sm font-medium">
-            <Terminal className="h-4 w-4 text-[#5c8e43]" />
-            Install the CLI
-          </div>
-          <CommandSnippet command="uv pip install oddish" />
-        </div>
-
-        <div className="bg-background/80 rounded-lg border border-[#6f88b4]/20 p-4">
-          <div className="mb-3 flex items-center gap-2 text-sm font-medium">
-            <Key className="h-4 w-4 text-[#6f88b4]" />
-            Add an API key
-          </div>
-          <CommandSnippet command={'export ODDISH_API_KEY="ok_..."'} />
-        </div>
-
-        <div className="bg-background/80 rounded-lg border border-[#85b85c]/20 p-4">
-          <div className="mb-3 flex items-center gap-2 text-sm font-medium">
-            <ArrowRight className="h-4 w-4 text-[#5c8e43]" />
-            Submit your first job
-          </div>
-          <CommandSnippet command="oddish run -p my-task -a codex -m openai/gpt-5.4" />
-        </div>
-      </div>
-    </div>
-  );
-}
 
 function MineEmptyExperimentsState({
   onViewOrgExperiments,
@@ -327,7 +249,7 @@ function ExperimentsTableBody({
             onViewOrgExperiments={onViewOrgExperiments}
           />
         ) : (
-          <EmptyExperimentsState />
+          <OnboardingSteps />
         )
       ) : experiments.length === 0 ? (
         <div className="text-muted-foreground py-8 text-center">

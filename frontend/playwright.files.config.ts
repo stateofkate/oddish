@@ -18,6 +18,7 @@ export default defineConfig({
     "qa-evals.spec.ts",
     "qa-feedback.spec.ts",
     "customer-view.spec.ts",
+    "onboarding.spec.ts",
   ],
   workers: 1,
   reporter: "list",

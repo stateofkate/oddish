@@ -31,6 +31,7 @@ export default defineConfig({
     "trajectory-rendering.spec.ts",
     "trial-progress.spec.ts",
     "customer-view.spec.ts",
+    "onboarding.spec.ts",
   ],
   fullyParallel: true,
   forbidOnly: !!process.env.CI,

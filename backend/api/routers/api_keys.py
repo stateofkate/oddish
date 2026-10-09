@@ -59,6 +59,7 @@ async def list_api_keys(
                 expires_at=k.expires_at.isoformat() if k.expires_at else None,
                 last_used_at=k.last_used_at.isoformat() if k.last_used_at else None,
                 created_at=k.created_at.isoformat(),
+                mine=k.created_by_user_id == auth.user_id,
             )
             for k in keys
         ]

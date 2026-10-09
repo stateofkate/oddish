@@ -7,6 +7,7 @@ import { useIncomingShares } from "@/lib/use-org-access";
 import { useOrgHref } from "@/lib/use-org-href";
 import type { SharedExperiment } from "@/lib/types";
 import { formatDate } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
@@ -83,7 +84,12 @@ function SampleCard({
           </p>
         )}
       </div>
-      <div className="grid grid-cols-4 gap-3">
+      <div
+        className={cn(
+          "grid gap-3",
+          sample.show_qa === false ? "grid-cols-3" : "grid-cols-4"
+        )}
+      >
         <Stat label="Tasks" value={String(sample.task_count)} />
         <Stat label="Runs" value={String(sample.run_count)} />
         <Stat label="Score" value={score} />

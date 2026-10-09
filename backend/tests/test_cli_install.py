@@ -117,6 +117,8 @@ async def test_view_only_org_mints_a_read_key_but_nothing_wider(client):
         "/api-keys", json={"name": "cli", "scope": "full"}, headers=SIGNED_IN
     )
     assert full.status_code == 403
+    listed = await client.get("/api-keys", headers=SIGNED_IN)
+    assert [(k["id"], k["mine"]) for k in listed.json()] == [(read.json()["id"], True)]
     # The org can also revoke the key it made.
     revoked = await client.delete(f"/api-keys/{read.json()['id']}", headers=SIGNED_IN)
     assert revoked.status_code == 200, revoked.text

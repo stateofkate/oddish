@@ -17,6 +17,7 @@ export default defineConfig({
     "public-experiment-tasks.spec.ts",
     "public-share-qa.spec.ts",
     "customer-view.spec.ts",
+    "onboarding.spec.ts",
   ],
   workers: 1,
   reporter: "list",
