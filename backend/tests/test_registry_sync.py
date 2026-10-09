@@ -335,3 +335,46 @@ def test_an_alias_added_by_an_earlier_attempt_counts_as_added(registry):
 
     assert failed == []
     assert oddish.tagged == ["added-0000aaaa"]
+
+
+def test_a_tag_assigned_by_an_earlier_attempt_counts_as_tagged(registry):
+    repo = registry[0]
+    oddish = Oddish()
+    client = oddish.client()
+    handle = client._transport.handler
+    reads = []
+
+    def replayed(request):
+        # The first assign landed but its reply was lost; the retry 409s.
+        if request.url.path == "/tags/assign":
+            return httpx.Response(409, json={"detail": "tag cap reached"})
+        if request.url.path.startswith("/tasks/"):
+            reads.append(request.url.path)
+            tags = [{"tag_id": "T1"}] if len(reads) > 1 else []
+            return httpx.Response(200, json={"user_tags": tags})
+        return handle(request)
+
+    client._transport.handler = replayed
+
+    failed = sync.sync_folders(repo, ["tasks/added"], "r~", client, "T1", oddish.upload)
+
+    assert failed == []
+    assert len(reads) == 2
+
+
+def test_a_real_tag_cap_still_fails_the_folder(registry):
+    repo = registry[0]
+    oddish = Oddish()
+    client = oddish.client()
+    handle = client._transport.handler
+
+    def capped(request):
+        if request.url.path == "/tags/assign":
+            return httpx.Response(409, json={"detail": "tag cap reached"})
+        return handle(request)
+
+    client._transport.handler = capped
+
+    assert sync.sync_folders(
+        repo, ["tasks/added"], "r~", client, "T1", oddish.upload
+    ) == ["tasks/added"]

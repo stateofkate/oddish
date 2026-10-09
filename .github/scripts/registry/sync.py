@@ -165,14 +165,22 @@ def sync_folders(
             # Assign 409s once a task holds the org's tag cap, even when this
             # tag is one of them, so only assign a missing tag.
             if all(t["tag_id"] != tag_id for t in task.get("user_tags", [])):
-                client.post(
+                assigned = client.post(
                     "/tags/assign",
                     json={
                         "tag_id": tag_id,
                         "scope": "TASK",
                         "target_id": got["task_id"],
                     },
-                ).raise_for_status()
+                )
+                # A retried POST 409s when its first attempt already assigned
+                # the tag (now at the cap); that tag being there is success.
+                tagged = assigned.status_code == 409 and any(
+                    t["tag_id"] == tag_id
+                    for t in get_task(client, got["task_id"]).get("user_tags", [])
+                )
+                if not tagged:
+                    assigned.raise_for_status()
             unchanged = " (unchanged)" if got.get("content_unchanged") else ""
             print(f"ok {folder} -> {got['task_id']} v{got.get('version')}{unchanged}")
         except (Exception, SystemExit) as exc:  # upload_task exits via typer.Exit

@@ -177,10 +177,13 @@ def shared_tasks_query(org_id: str):
             OrgShareModel,
             OrgShareModel.resource_id == task_experiments.c.experiment_id,
         )
+        .join(ExperimentModel, ExperimentModel.id == task_experiments.c.experiment_id)
         .where(
             *live,
             OrgShareModel.resource_type == "experiment",
             task_experiments.c.deleted_at.is_(None),
+            # A deleted experiment stops sharing its tasks too.
+            ExperimentModel.deleted_at.is_(None),
         )
     )
     return union_all(direct, delivered, in_experiment)

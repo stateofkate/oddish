@@ -470,7 +470,16 @@ async def test_task_refs_hide_experiments_shared_with_other_orgs(world):
 
 @pytest.mark.asyncio
 async def test_share_of_a_deleted_experiment_can_be_revoked(world):
+    from oddish.db import task_experiments
+
     operator = {"Authorization": f"Bearer {world.ids['operator']}"}
+    task_id, _ = await _task(world, "in-experiment")
+    async with get_session() as session:
+        await session.execute(
+            task_experiments.insert().values(
+                task_id=task_id, experiment_id=world.experiment_id
+            )
+        )
     shared = await world.client.post(
         "/org-shares",
         json={
@@ -479,12 +488,17 @@ async def test_share_of_a_deleted_experiment_can_be_revoked(world):
         },
         headers=operator,
     )
+    direct = f"/public/experiments/direct/tasks/{task_id}"
+    assert (await world.get(direct, "cursive")).status_code == 200
     async with get_session() as session:
         await session.execute(
             ExperimentModel.__table__.update()
             .where(ExperimentModel.id == world.experiment_id)
             .values(deleted_at=func.now())
         )
+    # Deleting the experiment stops sharing its tasks as well.
+    assert (await world.get(direct, "cursive")).status_code == 404
+    assert (await world.get("/org-shares/incoming/tasks", "cursive")).json() == []
     revoked = await world.client.delete(
         f"/org-shares/{shared.json()[0]['id']}", headers=operator
     )
