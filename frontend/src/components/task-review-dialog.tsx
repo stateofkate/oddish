@@ -1,8 +1,8 @@
 "use client";
 
-// Extend the existing compact Oddish controls: review one task version without
-// changing the task layout, automated QA, or customer-facing pages.
-import { useState } from "react";
+// Compact Oddish controls: one rating/comment composer and one save.
+// Existing theme tokens and solid filled selections keep the state clear.
+import { useState, type ReactNode } from "react";
 import useSWRInfinite from "swr/infinite";
 import { MessageSquare } from "lucide-react";
 import {
@@ -12,6 +12,14 @@ import {
 } from "@/lib/task-reviews";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -20,6 +28,16 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+
+type Draft = {
+  score: number | null;
+  body: string;
+  editing: ReviewComment | null;
+  requestId: string | null;
+};
+const reviewViews = { write: "write", reviews: "reviews" } as const;
+const reviewTab =
+  "rounded-none border-b-2 border-transparent bg-transparent px-0 py-2 text-sm shadow-none transition-none data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none";
 
 type Version = { id: string; version: number; is_current: boolean };
 
@@ -37,6 +55,7 @@ export function TaskReviewDialog({
   const [open, setOpen] = useState(false);
   const [versionId, setVersionId] = useState(selectedVersionId);
   const [busy, setBusy] = useState(false);
+  const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   return (
     <Dialog
       open={open}
@@ -52,34 +71,48 @@ export function TaskReviewDialog({
           Review task
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-h-[90dvh] overflow-y-auto">
+      <DialogContent className="flex h-[min(28rem,calc(100dvh-2rem))] w-[calc(100%-2rem)] flex-col gap-4 overflow-hidden sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>Review task</DialogTitle>
           <DialogDescription>{taskName} · Internal</DialogDescription>
         </DialogHeader>
-        <label className="flex items-center gap-3 text-sm">
-          Version
-          <select
-            aria-label="Review version"
-            value={versionId}
-            disabled={busy}
-            onChange={(event) => setVersionId(event.target.value)}
-            className="border-input bg-background rounded-md border px-3 py-2"
-          >
-            {versions.map((version) => (
-              <option key={version.id} value={version.id}>
-                v{version.version}
-                {version.is_current ? " · Default" : ""}
-              </option>
-            ))}
-          </select>
-        </label>
         {open && (
           <ReviewForm
             key={`${taskId}:${versionId}`}
             taskId={taskId}
             versionId={versionId}
             onBusy={setBusy}
+            draft={drafts[versionId]}
+            onDraft={(draft) =>
+              setDrafts((current) => {
+                const next = { ...current };
+                if (draft) next[versionId] = draft;
+                else delete next[versionId];
+                return next;
+              })
+            }
+            versionControl={
+              <Select
+                value={versionId}
+                disabled={busy}
+                onValueChange={setVersionId}
+              >
+                <SelectTrigger
+                  aria-label="Review version"
+                  className="w-auto min-w-28 gap-2"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {versions.map((version) => (
+                    <SelectItem key={version.id} value={version.id}>
+                      v{version.version}
+                      {version.is_current ? " · Default" : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            }
           />
         )}
       </DialogContent>
@@ -91,10 +124,16 @@ function ReviewForm({
   taskId,
   versionId,
   onBusy,
+  draft,
+  onDraft,
+  versionControl,
 }: {
   taskId: string;
   versionId: string;
   onBusy: (busy: boolean) => void;
+  draft?: Draft;
+  onDraft: (draft?: Draft) => void;
+  versionControl: ReactNode;
 }) {
   const base = `/api/tasks/${encodeURIComponent(taskId)}/versions/${encodeURIComponent(versionId)}/reviews`;
   const {
@@ -114,15 +153,31 @@ function ReviewForm({
     { revalidateOnFocus: false, shouldRetryOnError: false }
   );
   const data = pages?.[0];
-  const [score, setScore] = useState<number | null | undefined>(undefined);
-  const [body, setBody] = useState("");
-  const [requestId, setRequestId] = useState<string | null>(null);
-  const [editing, setEditing] = useState<ReviewComment | null>(null);
+  const [view, setView] = useState<string>(reviewViews.write);
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState("");
   const [failure, setFailure] = useState("");
-  const chosenScore =
-    score === undefined ? (data?.own_rating?.score ?? null) : score;
+  const ownComment =
+    data?.own_comment ??
+    data?.comments.find(
+      (comment) => comment.reviewer.id === data.current_user_id
+    ) ??
+    null;
+  const editing = draft?.editing ?? ownComment;
+  const chosenScore = draft ? draft.score : (data?.own_rating?.score ?? null);
+  const body = draft?.body ?? editing?.body ?? "";
+  const unchanged =
+    !!editing &&
+    chosenScore === data?.own_rating?.score &&
+    body.trim() === editing.body;
+  const updateDraft = (change: Partial<Draft>) =>
+    onDraft({
+      score: chosenScore,
+      body,
+      editing,
+      requestId: null,
+      ...draft,
+      ...change,
+    });
   async function write(
     path: string,
     method: string,
@@ -133,7 +188,6 @@ function ReviewForm({
     setBusy(true);
     onBusy(true);
     setFailure("");
-    setMessage("");
     try {
       await request(base + path, {
         method,
@@ -141,258 +195,310 @@ function ReviewForm({
         body: JSON.stringify(payload),
       });
       complete();
-      await mutate();
-      setMessage("Saved");
+      await mutate().catch(() => undefined);
     } catch {
       setFailure("Couldn’t save review.");
-      void mutate().catch(() => {});
+      const refreshed = await mutate().catch(() => undefined);
+      if (editing && refreshed) {
+        const latest = refreshed
+          .flatMap((page) => [
+            ...page.comments,
+            ...(page.own_comment ? [page.own_comment] : []),
+          ])
+          .find((comment) => comment.id === editing.id);
+        onDraft({
+          score: chosenScore,
+          body,
+          requestId: null,
+          editing: latest ?? null,
+        });
+      }
     } finally {
       setBusy(false);
       onBusy(false);
     }
   }
-  if (isLoading && !error)
-    return (
-      <p role="status" className="text-muted-foreground text-sm">
-        Loading reviews…
-      </p>
-    );
   if (!data)
     return (
-      <p role="alert" className="text-sm">Couldn’t load reviews.</p>
+      <>
+        <div className="flex justify-end border-b pb-2">{versionControl}</div>
+        <p
+          role={isLoading && !error ? "status" : "alert"}
+          className="text-muted-foreground text-sm"
+        >
+          {isLoading && !error ? "Loading reviews…" : "Couldn’t load reviews."}
+        </p>
+      </>
     );
   const comments = [
+    ...(ownComment ? [ownComment] : []),
     ...new Map(
       (pages ?? [])
         .flatMap((page) => page.comments)
+        .filter((comment) => comment.id !== ownComment?.id)
         .map((comment) => [comment.id, comment])
     ).values(),
   ];
+  const scores = new Map(
+    [...data.ratings, ...(data.own_rating ? [data.own_rating] : [])].map(
+      (rating) => [rating.reviewer.id, rating.score]
+    )
+  );
   return (
-    <div className="space-y-4 text-sm">
-      <div>
-        <strong>
-          Task quality{" "}
-          {data.average_score == null
-            ? "Not rated"
-            : `${data.average_score.toFixed(1)} / 5`}
-        </strong>
-        <p className="text-muted-foreground">
-          {data.rating_count === 0
-            ? "No ratings yet"
-            : `${data.rating_count} ${data.rating_count === 1 ? "rating" : "ratings"}`}{" "}
-          · Rate this version and leave feedback.
-        </p>
+    <Tabs
+      value={view}
+      onValueChange={setView}
+      className="flex min-h-0 flex-1 flex-col gap-4 text-sm"
+    >
+      <div className="flex items-center justify-between gap-2 border-b">
+        <TabsList
+          aria-label="Task reviews"
+          className="h-auto gap-3 rounded-none bg-transparent p-0"
+        >
+          <TabsTrigger value={reviewViews.write} className={reviewTab}>
+            Your review
+          </TabsTrigger>
+          <TabsTrigger value={reviewViews.reviews} className={reviewTab}>
+            Reviews ({data.comment_count})
+          </TabsTrigger>
+        </TabsList>
+        {versionControl}
       </div>
-      <fieldset disabled={busy} className="space-y-2">
-        <legend className="mb-2 font-medium">Your rating</legend>
-        <div className="flex flex-wrap gap-2">
-          {[1, 2, 3, 4, 5].map((value) => (
-            <Button
-              key={value}
-              aria-label={`Rate ${value} out of 5`}
-              aria-pressed={chosenScore === value}
-              variant="outline"
-              className={chosenScore === value ? "border-foreground font-semibold ring-1 ring-foreground" : undefined}
-              size="sm"
-              onClick={() => setScore(value)}
-            >
-              {value}
-            </Button>
-          ))}
-        </div>
-        <p className="text-muted-foreground text-xs">
-          1 · Poor 3 · Adequate 5 · Excellent
-        </p>
-        <div className="flex gap-2">
-          <Button
-            size="sm"
-            disabled={
-              chosenScore === null ||
-              chosenScore === (data.own_rating?.score ?? null)
-            }
-            onClick={() =>
-              void write(
-                "/rating",
-                "PUT",
-                {
-                  score: chosenScore,
-                  expected_revision: data.own_rating_revision,
-                },
-                () => setScore(undefined)
-              )
-            }
-          >
-            Save rating
-          </Button>
-          {data.own_rating && (
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() =>
-                void write(
-                  "/rating",
-                  "PUT",
-                  { score: null, expected_revision: data.own_rating_revision },
-                  () => setScore(undefined)
-                )
+      <TabsContent value={reviewViews.write} className="min-h-0 flex-1">
+        <form
+          className="flex h-full flex-col"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (chosenScore === null || !body.trim()) return;
+            const id = draft?.requestId ?? crypto.randomUUID();
+            updateDraft({ requestId: id });
+            void write(
+              "",
+              "POST",
+              {
+                score: chosenScore,
+                expected_revision: data.own_rating_revision,
+                body: body.trim(),
+                client_request_id: id,
+                ...(editing
+                  ? {
+                      comment_id: editing.id,
+                      comment_revision: editing.revision,
+                    }
+                  : {}),
+              },
+              () => {
+                onDraft();
+                setView(reviewViews.reviews);
               }
-            >
-              Remove rating
-            </Button>
-          )}
-        </div>
-      </fieldset>
-      <form
-        className="space-y-2"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (!body.trim()) return;
-          const id = requestId ?? crypto.randomUUID();
-          setRequestId(id);
-          void write(
-            editing
-              ? `/comments/${encodeURIComponent(editing.id)}`
-              : "/comments",
-            editing ? "PATCH" : "POST",
-            editing
-              ? { body: body.trim(), expected_revision: editing.revision }
-              : { body: body.trim(), client_request_id: id },
-            () => {
-              setBody("");
-              setRequestId(null);
-              setEditing(null);
-            }
-          );
-        }}
-      >
-        <label htmlFor="task-review-comment" className="font-medium">
-          {editing ? "Edit comment" : "Comment"}
-        </label>
-        <Textarea
-          id="task-review-comment"
-          placeholder="Add feedback on this task…"
-          maxLength={10000}
-          value={body}
-          disabled={busy}
-          onChange={(event) => {
-            setBody(event.target.value);
-            setRequestId(null);
+            );
           }}
-        />
-        <div className="flex gap-2">
-          <Button size="sm" disabled={busy || !body.trim()}>
-            {editing ? "Save comment" : "Post comment"}
-          </Button>
-          {editing && (
+        >
+          <fieldset
+            disabled={busy}
+            className="flex min-h-0 flex-1 flex-col gap-4"
+          >
+            <div className="flex flex-wrap items-center gap-3">
+              <span id="review-rating-label">Rating</span>
+              <div
+                className="flex gap-2"
+                role="group"
+                aria-labelledby="review-rating-label"
+              >
+                {[1, 2, 3, 4, 5].map((value) => (
+                  <Button
+                    key={value}
+                    type="button"
+                    aria-label={`Rate ${value} out of 5`}
+                    aria-pressed={chosenScore === value}
+                    variant="outline"
+                    className="aria-pressed:bg-primary aria-pressed:text-primary-foreground aria-pressed:hover:bg-primary w-9 px-0 tabular-nums"
+                    size="sm"
+                    onClick={() =>
+                      updateDraft({ score: value, requestId: null })
+                    }
+                  >
+                    {value}
+                  </Button>
+                ))}
+              </div>
+              {data.own_rating && chosenScore !== data.own_rating.score && (
+                <span className="text-muted-foreground text-xs tabular-nums">
+                  Previously {data.own_rating.score} / 5
+                </span>
+              )}
+            </div>
+            <div className="flex min-h-0 flex-1 flex-col gap-2">
+              <label className="block" htmlFor="task-review-comment">
+                Comment
+              </label>
+              <Textarea
+                id="task-review-comment"
+                className="min-h-0 flex-1 resize-none"
+                required
+                maxLength={10000}
+                value={body}
+                onChange={(event) => {
+                  updateDraft({ body: event.target.value, requestId: null });
+                }}
+              />
+            </div>
+            <div className="flex items-center justify-end gap-3">
+              {failure && (
+                <p role="alert" className="mr-auto text-sm">
+                  {failure}
+                </p>
+              )}
+              <Button
+                size="sm"
+                disabled={chosenScore === null || !body.trim() || unchanged}
+              >
+                {editing ? "Save changes" : "Save review"}
+              </Button>
+            </div>
+          </fieldset>
+        </form>
+      </TabsContent>
+      <TabsContent
+        value={reviewViews.reviews}
+        className="flex min-h-0 flex-1 flex-col gap-3"
+      >
+        <div className="text-muted-foreground flex items-center justify-between gap-3">
+          <span>
+            Average{" "}
+            <span className="text-foreground tabular-nums">
+              {data.average_score == null
+                ? "—"
+                : `${data.average_score.toFixed(1)} / 5`}
+            </span>
+          </span>
+        </div>
+        {(failure || error) && <p role="alert">{failure || error?.message}</p>}
+        <section
+          className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-2"
+          aria-label="Review history"
+        >
+          {comments.length === 0 && data.ratings.length === 0 && (
+            <p className="text-muted-foreground">No reviews yet.</p>
+          )}
+          {data.ratings
+            .filter(
+              (rating) =>
+                !pages?.at(-1)?.next_before &&
+                !comments.some(
+                  (comment) => comment.reviewer.id === rating.reviewer.id
+                )
+            )
+            .map((rating) => (
+              <div
+                className="flex items-center justify-between gap-2"
+                key={rating.id}
+              >
+                <strong>
+                  {rating.reviewer.name}
+                  {rating.reviewer.id === data.current_user_id ? " (you)" : ""}
+                </strong>
+                <span className="font-mono tabular-nums">
+                  {rating.score} / 5
+                </span>
+              </div>
+            ))}
+          {comments.map((comment) => (
+            <article key={comment.id} className="space-y-1 border-b pb-3">
+              <div className="flex items-center justify-between gap-2">
+                <strong>
+                  {comment.reviewer.name}
+                  {comment.reviewer.id === data.current_user_id ? " (you)" : ""}
+                </strong>
+                {scores.has(comment.reviewer.id) && (
+                  <span className="font-mono tabular-nums">
+                    {scores.get(comment.reviewer.id)} / 5
+                  </span>
+                )}
+              </div>
+              <p className="text-muted-foreground text-xs">
+                <time dateTime={comment.created_at}>
+                  {new Date(comment.created_at).toLocaleString()}
+                </time>
+                {comment.revision > 1 ? " · Edited" : ""}
+              </p>
+              <p className="break-words whitespace-pre-wrap">{comment.body}</p>
+              {comment.source_trial_id && (
+                <p className="text-muted-foreground text-xs break-all">
+                  Trial: {comment.source_trial_id}
+                </p>
+              )}
+              {(comment.reviewer.id === data.current_user_id ||
+                data.can_moderate) && (
+                <div className="flex gap-2">
+                  {comment.reviewer.id === data.current_user_id && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={busy}
+                      onClick={() => {
+                        updateDraft({
+                          score: data.own_rating?.score ?? null,
+                          editing: comment,
+                          body: comment.body,
+                          requestId: null,
+                        });
+                        setView(reviewViews.write);
+                      }}
+                    >
+                      Edit
+                    </Button>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={busy}
+                    onClick={() => {
+                      if (
+                        window.confirm(
+                          comment.reviewer.id === data.current_user_id
+                            ? "Delete your review?"
+                            : "Delete this comment?"
+                        )
+                      )
+                        void write(
+                          comment.reviewer.id === data.current_user_id
+                            ? ""
+                            : `/comments/${encodeURIComponent(comment.id)}`,
+                          "DELETE",
+                          {
+                            expected_revision: comment.revision,
+                            ...(comment.reviewer.id === data.current_user_id
+                              ? {
+                                  comment_id: comment.id,
+                                  rating_revision: data.own_rating_revision,
+                                }
+                              : {}),
+                          },
+                          () => {
+                            if (editing?.id === comment.id) onDraft();
+                          }
+                        );
+                    }}
+                  >
+                    Delete
+                  </Button>
+                </div>
+              )}
+            </article>
+          ))}
+          {pages?.at(-1)?.next_before && (
             <Button
-              type="button"
+              variant="outline"
               size="sm"
-              variant="ghost"
-              disabled={busy}
-              onClick={() => {
-                setEditing(null);
-                setBody("");
-              }}
+              disabled={busy || pages.length < size}
+              onClick={() => void setSize(size + 1)}
             >
-              Cancel edit
+              More reviews
             </Button>
           )}
-        </div>
-      </form>
-      {message && <p role="status">{message}</p>}
-      {(failure || error) && <p role="alert">{failure || error?.message}</p>}
-      <section className="space-y-2 border-t pt-4" aria-label="Ratings">
-        <h3 className="font-medium">Ratings</h3>
-        {data.ratings.map((rating) => (
-          <div className="flex flex-wrap justify-between gap-2" key={rating.id}>
-            <span>
-              {rating.reviewer.name}
-              {rating.reviewer.id === data.current_user_id ? " (you)" : ""}
-            </span>
-            <span className="font-mono tabular-nums">{rating.score} / 5</span>
-          </div>
-        ))}
-        {data.rating_count > data.ratings.length && (
-          <p className="text-muted-foreground">
-            Showing the latest {data.ratings.length} ratings.
-          </p>
-        )}
-      </section>
-      <section className="space-y-3 border-t pt-4" aria-label="Comments">
-        <h3 className="font-medium">Comments</h3>
-        {comments.length === 0 && (
-          <p className="text-muted-foreground">No comments yet.</p>
-        )}
-        {comments.map((comment) => (
-          <article key={comment.id} className="space-y-1 border-b pb-3">
-            <strong>
-              {comment.reviewer.name}
-              {comment.reviewer.id === data.current_user_id ? " (you)" : ""}
-            </strong>
-            <p className="text-muted-foreground text-xs">
-              <time dateTime={comment.created_at}>
-                {new Date(comment.created_at).toLocaleString()}
-              </time>
-              {comment.revision > 1 ? " · Edited" : ""}
-            </p>
-            <p className="break-words whitespace-pre-wrap">{comment.body}</p>
-            {comment.source_trial_id && (
-              <p className="text-muted-foreground text-xs break-all">
-                Trial: {comment.source_trial_id}
-              </p>
-            )}
-            {(comment.reviewer.id === data.current_user_id ||
-              data.can_moderate) && (
-              <div className="flex gap-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={busy}
-                  onClick={() => {
-                    setEditing(comment);
-                    setBody(comment.body);
-                    setRequestId(null);
-                  }}
-                >
-                  Edit
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={busy}
-                  onClick={() => {
-                    if (window.confirm("Delete this comment?"))
-                      void write(
-                        `/comments/${encodeURIComponent(comment.id)}`,
-                        "DELETE",
-                        { expected_revision: comment.revision },
-                        () => {
-                          if (editing?.id === comment.id) {
-                            setEditing(null);
-                            setBody("");
-                          }
-                        }
-                      );
-                  }}
-                >
-                  Delete
-                </Button>
-              </div>
-            )}
-          </article>
-        ))}
-        {pages?.at(-1)?.next_before && (
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={busy || pages.length < size}
-            onClick={() => void setSize(size + 1)}
-          >
-            Older comments
-          </Button>
-        )}
-      </section>
-    </div>
+        </section>
+      </TabsContent>
+    </Tabs>
   );
 }

@@ -3878,7 +3878,13 @@ routes, revision checks, and comment cursors. The dashboard
 uses the same API paths in direct mode; no public share route exposes reviews.
 
 The signed-in task detail header opens internal reviews in a version-selectable
-modal. Reviews load only on opening; each version has an independent SWR key.
+modal. Rating and comment share one composer and one save; both are required and
+the combined POST commits them in one transaction. Reviews load only on opening;
+each version has an independent SWR key and draft. “Your review” prefills the latest
+own comment independently of history pagination; “Reviews” contains the average
+and bounded scrolling history, with the latest own review first and comment IDs
+deduplicated across pages. The combined DELETE soft-deletes the owner’s
+comment and rating in the same transaction with revision checks.
 Rating writes use the current revision and comments keep a request UUID across
 retries. Failed writes preserve the draft and refresh cached reviews without retry controls. Public task and
 trial surfaces do not mount this control.

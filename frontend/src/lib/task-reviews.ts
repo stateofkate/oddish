@@ -27,6 +27,8 @@ export type ReviewPage = {
   own_rating_revision: number;
   ratings: Rating[];
   comments: ReviewComment[];
+  own_comment: ReviewComment | null;
+  comment_count: number;
   next_before: string | null;
   next_before_id: string | null;
 };
