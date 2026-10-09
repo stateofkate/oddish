@@ -562,7 +562,7 @@ def test_mini_swe_meta_agent_config_sets_meta_route(monkeypatch) -> None:
     assert agent_config.env["ODDISH_META_EVAL_NAME"] == "SWE Marathon"
     assert "ODDISH_META_SESSION_ID" not in agent_config.env
     assert "OPENAI_API_BASE" not in agent_config.env
-    assert agent_config.kwargs["reasoning_effort"] == "xhigh"
+    assert "reasoning_effort" not in agent_config.kwargs
     # LiteLLM's openai/ provider authenticates from OPENAI_API_KEY.
     assert agent_config.env["OPENAI_API_KEY"] == "${META_API_KEY}"
     assert "AZURE_OPENAI_API_KEY" not in agent_config.env
@@ -586,8 +586,9 @@ def test_mini_swe_meta_agent_config_preserves_explicit_env(monkeypatch) -> None:
     assert agent_config.env["MSWEA_API_KEY"] == "${CUSTOM_META_KEY}"
     assert agent_config.env["OPENAI_BASE_URL"] == "https://custom.meta/v1"
     assert "OPENAI_API_BASE" not in agent_config.env
-    # Meta models always run at xhigh effort, whatever the caller requested.
-    assert agent_config.kwargs == {"reasoning_effort": "xhigh", "cost_limit": "0"}
+    # reasoning_effort is preserved so callers can request a specific effort;
+    # it is forwarded to the model by the mini-swe-agent harness.
+    assert agent_config.kwargs == {"reasoning_effort": "high", "cost_limit": "0"}
 
 
 def test_mini_swe_geometric_agent_config_sets_geometric_route(monkeypatch) -> None:

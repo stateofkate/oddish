@@ -578,20 +578,13 @@ def _apply_meta_mini_swe_agent(agent_config: AgentConfig) -> None:
     agent_config.kwargs = dict(agent_config.kwargs or {})
 
 
-def _apply_meta_model_reasoning_policy(agent_config: AgentConfig) -> None:
-    """Run every Meta model, on any key route, at xhigh reasoning effort."""
+def _apply_meta_tbh_stream_timeout(agent_config: AgentConfig) -> None:
+    """Give tbh on Meta models time for a long first reasoning turn."""
     if not (
         is_meta_model(agent_config.model_name)
         or is_meta_public_model(agent_config.model_name)
     ):
         return
-
-    # xhigh, not max: Meta's API rejects "max" for some models (for example
-    # straw-110_evals_ext accepts only minimal..xhigh), and every Meta harness
-    # (muse-code, tbh, mini-swe-agent) accepts xhigh.
-    kwargs = dict(agent_config.kwargs or {})
-    kwargs["reasoning_effort"] = "xhigh"
-    agent_config.kwargs = kwargs
 
     # Meta sends no stream event until reasoning ends, and a hard planning turn
     # at xhigh can think past tbh's default 180s first-event limit; tbh then
@@ -945,7 +938,7 @@ def _build_routed_agent_config(
     _apply_claude_code_geometric_env(agent_config)
     _apply_claude_code_minimax_env(agent_config)
     _apply_claude_code_moonshot_env(agent_config)
-    _apply_meta_model_reasoning_policy(agent_config)
+    _apply_meta_tbh_stream_timeout(agent_config)
 
     if claude_route:
         agent_config.env = {

@@ -3129,45 +3129,19 @@ def test_build_agent_config_keeps_the_internal_meta_route(monkeypatch, agent):
 
 
 @pytest.mark.parametrize("agent", ["muse-code", "tbh", "mini-swe-agent"])
-@pytest.mark.parametrize(
-    "model",
-    [
-        "meta/goofy_glacier135",
-        "meta/muse-spark-1.3",
-        "meta-public/goofy_glacier135",
-        "meta-public-2/goofy_glacier135",
-    ],
-)
-def test_build_agent_config_forces_xhigh_reasoning_for_meta_models(
-    monkeypatch, agent, model
+def test_build_agent_config_keeps_requested_reasoning_for_meta_models(
+    monkeypatch, agent
 ):
     monkeypatch.setattr(harbor_runner.settings, "openai_provider", "openai")
     monkeypatch.setenv("META_API_KEY", "internal-key")
-    monkeypatch.setenv("META_PUBLIC_API_KEY", "public-key")
-    monkeypatch.setenv("META_PUBLIC_2_API_KEY", "public-key-2")
 
     agent_config = harbor_runner._build_agent_config(
         agent=agent,
-        model=model,
-        raw_harbor_config={
-            "agent_config": {"kwargs": {"reasoning_effort": "low", "keep": "value"}}
-        },
+        model="meta/goofy_glacier135",
+        raw_harbor_config={"agent_config": {"kwargs": {"reasoning_effort": "max"}}},
     )
 
-    assert agent_config.kwargs["reasoning_effort"] == "xhigh"
-    assert agent_config.kwargs["keep"] == "value"
-
-
-def test_build_agent_config_keeps_reasoning_effort_for_non_meta_models(monkeypatch):
-    monkeypatch.setattr(harbor_runner.settings, "openai_provider", "openai")
-
-    agent_config = harbor_runner._build_agent_config(
-        agent="mini-swe-agent",
-        model="openai/gpt-5",
-        raw_harbor_config={"agent_config": {"kwargs": {"reasoning_effort": "low"}}},
-    )
-
-    assert agent_config.kwargs["reasoning_effort"] == "low"
+    assert agent_config.kwargs["reasoning_effort"] == "max"
 
 
 @pytest.mark.parametrize("shape", ["kube-chart", "compose"])
