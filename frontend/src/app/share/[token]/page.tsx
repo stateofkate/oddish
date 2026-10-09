@@ -13,6 +13,7 @@ export default function PublicExperimentPage() {
       <main className="mx-auto w-full max-w-(--breakpoint-2xl) px-4 py-4">
         <SharedExperiment
           shareKey={token}
+          waitForAuth={false}
           pageHref={`/share/${encodeURIComponent(token ?? "")}`}
         />
       </main>

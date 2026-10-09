@@ -432,12 +432,14 @@ async def _pin_to_shipped_version(session, task, response) -> None:
     pinned = await pinned_task_versions(session, task, share_viewer_org_id.get())
     if pinned is None:
         return
-    row = await session.scalar(
+    row = pinned and await session.scalar(
         select(TaskVersionModel).where(
             TaskVersionModel.task_id == task.id,
             TaskVersionModel.version == max(pinned),
         )
     )
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Task {task.id} not found")
     response.current_version = row.version
     response.current_version_id = row.id
     response.verdict = row.verdict

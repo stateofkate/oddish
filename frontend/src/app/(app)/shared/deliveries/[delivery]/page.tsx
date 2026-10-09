@@ -23,10 +23,10 @@ export default function SharedDeliveryPage() {
     ? params.delivery[0]
     : params.delivery;
   const orgHref = useOrgHref();
-  const { isSignedIn } = useAuth();
+  const { isSignedIn, orgId } = useAuth();
   const { data, error } = useSWR<SharedDeliveryBoard>(
-    isSignedIn && id
-      ? `/api/org-shares/incoming/deliveries/${encodeURIComponent(id)}`
+    isSignedIn && orgId && id
+      ? `/api/org-shares/incoming/deliveries/${encodeURIComponent(id)}?org=${encodeURIComponent(orgId)}`
       : null,
     fetcher
   );

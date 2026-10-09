@@ -19,14 +19,18 @@ import { PUBLIC_API_URL } from "@/lib/utils";
 export function SharedExperiment({
   shareKey,
   pageHref,
+  waitForAuth = true,
 }: {
   shareKey: string | undefined;
   /** This page's path; the embedded QA view links back to it. */
   pageHref: string;
+  /** False for public token links, which must open even if Clerk never loads. */
+  waitForAuth?: boolean;
 }) {
   // Wait for Clerk so a signed-in viewer's first request carries its token:
   // signed out, an experiment id answers 404 like an unknown one.
-  const { isLoaded: authLoaded } = useAuth();
+  const { isLoaded } = useAuth();
+  const authLoaded = isLoaded || !waitForAuth;
   const publicBase =
     shareKey && authLoaded
       ? `${PUBLIC_API_URL}/experiments/${encodeURIComponent(shareKey)}`

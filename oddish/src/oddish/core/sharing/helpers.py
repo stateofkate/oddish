@@ -162,6 +162,8 @@ def shared_tasks_query(org_id: str):
             OrgShareModel.resource_type == "delivery",
             DeliveryModel.status == "finalized",
             DeliveryTaskModel.is_visible.is_(True),
+            # No pinned version would read as "every version".
+            DeliveryTaskModel.pinned_version_id.is_not(None),
         )
     )
     in_experiment = (

@@ -219,9 +219,14 @@ async def _clerk_orgs_by_id() -> dict[str, dict]:
 async def _customer_org(
     session: AsyncSession, org_id: str, auth: AuthContext
 ) -> OrganizationModel:
-    """404 for unknown, inactive, or the operator's own org."""
+    """404 for unknown, inactive, internal, or the operator's own org."""
     org = await session.get(OrganizationModel, org_id)
-    if org is None or not org.is_active or org.id == auth.org_id:
+    if (
+        org is None
+        or not org.is_active
+        or org.org_type != "customer"
+        or org.id == auth.org_id
+    ):
         raise HTTPException(status_code=404, detail="Organization not found")
     return org
 

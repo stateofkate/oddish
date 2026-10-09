@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import useSWR from "swr";
+import { useAuth } from "@clerk/nextjs";
 import { Share2, X } from "lucide-react";
 import { apiFetch, fetcher } from "@/lib/api";
 import type { OrgShare, ShareResourceType, ShareableOrg } from "@/lib/types";
@@ -15,17 +16,19 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 
-const ORGS_KEY = "/api/org-shares/orgs";
-
 function orgSharesKey(type: ShareResourceType, id: string): string {
   return `/api/org-shares?${new URLSearchParams({ resource_type: type, resource_id: id })}`;
 }
 
 /** The customer orgs this caller may share with; an error outside the operator org. */
 function useShareableOrgs() {
-  return useSWR<ShareableOrg[]>(ORGS_KEY, fetcher, {
-    shouldRetryOnError: false,
-  });
+  // Keyed by org so switching orgs never shows the last org's answer.
+  const { orgId } = useAuth();
+  return useSWR<ShareableOrg[]>(
+    orgId ? `/api/org-shares/orgs?org=${encodeURIComponent(orgId)}` : null,
+    fetcher,
+    { shouldRetryOnError: false, revalidateOnFocus: false }
+  );
 }
 
 /**
@@ -155,8 +158,8 @@ export function OrgShareButton({
   resourceType: ShareResourceType;
   resourceId: string;
 }) {
-  const { data: orgs } = useShareableOrgs();
-  if (!orgs) return null;
+  const { data: orgs, error } = useShareableOrgs();
+  if (!orgs || error) return null;
   return (
     <Dialog modal={false}>
       <DialogTrigger asChild>

@@ -4,8 +4,12 @@ import { proxyBackendJson, proxyJsonRequest } from "@/lib/backend-response";
 // Every /admin/customer-orgs/<org>/... call; the backend checks operator access.
 type Params = { params: Promise<{ path: string[] }> };
 
+// "." and ".." segments are dropped so a path can't leave /admin/customer-orgs.
 const backendPath = async (params: Params["params"]) =>
-  `admin/customer-orgs/${(await params).path.map(encodeURIComponent).join("/")}`;
+  `admin/customer-orgs/${(await params).path
+    .filter((part) => part !== "." && part !== "..")
+    .map(encodeURIComponent)
+    .join("/")}`;
 
 export const GET = async (request: NextRequest, { params }: Params) =>
   proxyBackendJson({ request, path: await backendPath(params) });

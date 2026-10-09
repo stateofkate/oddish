@@ -72,10 +72,14 @@ async def world(monkeypatch):
     async def fake_auth(request: Request, authorization=None, *_args):
         if not authorization:
             return AuthContext(method=AuthMethod.ANONYMOUS)
+        org_id = authorization.removeprefix("Bearer ")
+        # "bound:<org>" is an analysis sandbox key tied to one trial.
+        bound = org_id.startswith("bound:")
         return AuthContext(
-            method=AuthMethod.CLERK_JWT,
-            org_id=authorization.removeprefix("Bearer "),
+            method=AuthMethod.API_KEY if bound else AuthMethod.CLERK_JWT,
+            org_id=org_id.removeprefix("bound:"),
             user_role=UserRole.ADMIN,
+            bound_analysis_trial_id="trial_qa" if bound else None,
         )
 
     real_get_auth_context = auth.get_auth_context
@@ -241,6 +245,11 @@ async def test_experiment_share_opens_by_id_with_qa_and_cost_switch(world):
     assert (await world.get(by_id, "other")).status_code == 404
     assert (await world.get(by_id)).status_code == 404
     assert (await world.get(by_id, "operator")).json()["show_costs"] is True
+    # A QA sandbox key of the owning org never opens experiments by id.
+    bound = await world.client.get(
+        by_id, headers={"Authorization": f"Bearer bound:{world.ids['operator']}"}
+    )
+    assert bound.status_code == 404, bound.text
     incoming = (await world.get("/org-shares/incoming", "cursive")).json()
     assert [e["id"] for e in incoming] == [experiment_id]
 
@@ -313,6 +322,7 @@ async def test_task_share_opens_the_task_alone(world):
 async def test_finalized_delivery_shares_its_board_and_pinned_tasks(world):
     task_id, version_id = await _task(world, "delivered")
     hidden_id, _ = await _task(world, "hidden")
+    unpinned_id, _ = await _task(world, "unpinned")
     delivery_id = f"del_{uuid.uuid4().hex[:8]}"
     async with get_session() as session:
         session.add(
@@ -320,6 +330,7 @@ async def test_finalized_delivery_shares_its_board_and_pinned_tasks(world):
         )
         await session.flush()
         session.add(DeliveryTaskModel(delivery_id=delivery_id, task_id=task_id))
+        session.add(DeliveryTaskModel(delivery_id=delivery_id, task_id=unpinned_id))
         session.add(
             DeliveryTaskModel(
                 delivery_id=delivery_id, task_id=hidden_id, is_visible=False
@@ -399,6 +410,9 @@ async def test_finalized_delivery_shares_its_board_and_pinned_tasks(world):
     assert (await world.get(f"{direct}/qa", "cursive")).status_code == 404
     hidden = f"/public/experiments/direct/tasks/{hidden_id}"
     assert (await world.get(hidden, "cursive")).status_code == 404
+    # A row finalized without a pinned version grants nothing.
+    unpinned = f"/public/experiments/direct/tasks/{unpinned_id}"
+    assert (await world.get(unpinned, "cursive")).status_code == 404
 
 
 @pytest.mark.asyncio

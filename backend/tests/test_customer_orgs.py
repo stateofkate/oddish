@@ -257,10 +257,19 @@ async def test_domain_failure_still_reports_the_created_org(env):
     assert "Created Cursive" in response.text and "domain taken" in response.text
 
 
+async def _make_customer(org_id: str) -> None:
+    async with get_session() as session:
+        (await session.get(OrganizationModel, org_id)).org_type = "customer"
+
+
 @pytest.mark.asyncio
 async def test_execution_needs_a_budget_and_non_operators_are_refused(env):
     client, runner, _, _, _ = env
     base = f"/admin/customer-orgs/{runner}/access"
+    # An internal org can't be managed (or demoted) from Customers.
+    internal = await client.put(base, json={"access": "viewer"})
+    assert internal.status_code == 404, internal.text
+    await _make_customer(runner)
     no_budget = await client.put(base, json={"access": "execution"})
     assert no_budget.status_code == 422, no_budget.text
     approved = await client.put(
@@ -329,6 +338,7 @@ async def test_members_invitations_domains_and_rename_go_to_clerk(env):
 @pytest.mark.asyncio
 async def test_logo_invite_and_delete_go_to_clerk(env):
     client, runner, _, _, _ = env
+    await _make_customer(runner)
     org = (
         await client.post(
             "/admin/customer-orgs", json={"name": "Cursive", "domain": "cursive.ai"}
@@ -390,6 +400,7 @@ async def test_orgs_that_ran_jobs_cannot_be_deleted_after_a_demotion(env):
     from oddish.db import TaskModel
 
     client, runner, _, _, _ = env
+    await _make_customer(runner)
     task_id = f"task_{runner}"
     async with get_session() as session:
         session.add(

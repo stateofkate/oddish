@@ -349,7 +349,8 @@ async def set_share_viewer(
         auth = await get_auth_context(
             request, authorization, x_clerk_authorization, x_authorization
         )
-        if not auth.is_authenticated:
+        # An analysis sandbox key stays limited to its own trial's routes.
+        if not auth.is_authenticated or auth.bound_analysis_trial_id is not None:
             return
         async with get_read_session() as session:
             await require_signin_org(auth.org_id, session=session)
