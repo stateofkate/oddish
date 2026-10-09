@@ -55,7 +55,8 @@ export function OrgSharePicker({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  if (orgsError || !orgs) return null;
+  // No customer orgs means nothing to share with.
+  if (orgsError || !orgs?.length) return null;
   const sharedIds = new Set(shares?.map((s) => s.grantee_org_id));
   const available = orgs.filter((o) => !sharedIds.has(o.id));
 
@@ -177,7 +178,7 @@ export function OrgShareButton({
   resourceId: string;
 }) {
   const { data: orgs, error } = useShareableOrgs();
-  if (!orgs || error) return null;
+  if (!orgs?.length || error) return null;
   return (
     <Dialog modal={false}>
       <DialogTrigger asChild>

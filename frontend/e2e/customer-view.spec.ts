@@ -148,6 +148,24 @@ test("sharing confirms and then says every customer org has it", async ({
   await expect(page.getByText("No orgs left")).toHaveCount(0);
 });
 
+test("with no customer orgs there is nothing to share with", async ({
+  page,
+}) => {
+  await clerk(page, { isSignedIn: true });
+  let orgsRead = false;
+  await page.route("**/api/org-shares**", async (route) => {
+    if (new URL(route.request().url()).pathname === "/api/org-shares/orgs")
+      orgsRead = true;
+    return route.fulfill({ json: [] });
+  });
+  await page.goto("/share-picker");
+  await expect.poll(() => orgsRead).toBe(true);
+  await expect(page.getByText("Share with orgs")).toHaveCount(0);
+  await expect(page.getByText("Shared with every customer org.")).toHaveCount(
+    0
+  );
+});
+
 test("a public share link loads even when Clerk never does", async ({
   page,
 }) => {

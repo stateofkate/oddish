@@ -25,11 +25,11 @@ from oddish.db import (
     OrgShareModel,
     TaskModel,
     TaskVersionModel,
-    TrialModel,
     get_session,
     task_experiments,
     utcnow,
 )
+from oddish.core.experiment_membership import experiment_trial_scope
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -103,19 +103,8 @@ async def incoming_experiments(
         )
         .scalar_subquery()
     )
-    # Agent runs only; QA and oracle trials are Abundant's checks, not results.
-    runs = (
-        select(func.count())
-        .select_from(TrialModel)
-        .where(
-            TrialModel.experiment_id == ExperimentModel.id,
-            TrialModel.kind == "agent",
-            TrialModel.superseded_by_trial_id.is_(None),
-        )
-        .scalar_subquery()
-    )
     rows = await session.execute(
-        select(ExperimentModel, OrgShareModel.created_at, tasks, runs)
+        select(ExperimentModel, OrgShareModel.created_at, tasks)
         .join(OrgShareModel, OrgShareModel.resource_id == ExperimentModel.id)
         .where(
             OrgShareModel.grantee_org_id == org_id,
@@ -124,17 +113,29 @@ async def incoming_experiments(
         )
         .order_by(OrgShareModel.created_at.desc())
     )
-    return [
-        SharedExperiment(
-            id=experiment.id,
-            name=experiment.name,
-            description=experiment.description,
-            shared_at=at,
-            task_count=task_count,
-            run_count=run_count,
+    result = []
+    for experiment, at, task_count in rows.all():
+        # The same runs the sample's page shows: gathered ones included,
+        # combine copies and QA/oracle trials left out.
+        # ponytail: one count per shared sample; a customer has a handful.
+        # The indexed UNION ALL the experiment page uses, not an OR over trials.
+        scope = experiment_trial_scope(experiment.id, org_id=experiment.org_id)
+        run_count = await session.scalar(
+            select(func.count())
+            .select_from(scope.trials)
+            .where(*scope.visible_predicates())
         )
-        for experiment, at, task_count, run_count in rows.all()
-    ]
+        result.append(
+            SharedExperiment(
+                id=experiment.id,
+                name=experiment.name,
+                description=experiment.description,
+                shared_at=at,
+                task_count=task_count,
+                run_count=run_count or 0,
+            )
+        )
+    return result
 
 
 async def incoming_tasks(session: AsyncSession, org_id: str) -> list[SharedTask]:

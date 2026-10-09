@@ -330,6 +330,39 @@ async def _task(world, name: str) -> tuple[str, str]:
 
 
 @pytest.mark.asyncio
+async def test_sample_run_count_includes_gathered_runs(world):
+    from oddish.db import TrialModel, experiment_trials
+
+    collection = await _private_experiment(world)
+    home = await _private_experiment(world)
+    task_id, version_id = await _task(world, "gathered")
+    async with get_session() as session:
+        session.add(
+            TrialModel(
+                id=f"{task_id}-run",
+                name="run",
+                task_id=task_id,
+                task_version_id=version_id,
+                experiment_id=home,
+                org_id=world.ids["operator"],
+                agent="nop",
+                provider="anthropic",
+                queue_key="test",
+            )
+        )
+        await session.flush()
+        # The run lives in another experiment; the shared one gathers it.
+        await session.execute(
+            experiment_trials.insert().values(
+                experiment_id=collection, trial_id=f"{task_id}-run"
+            )
+        )
+    assert (await _share(world, "experiment", collection)).status_code == 200
+    incoming = (await world.get("/org-shares/incoming", "cursive")).json()
+    assert [(e["id"], e["run_count"]) for e in incoming] == [(collection, 1)]
+
+
+@pytest.mark.asyncio
 async def test_task_share_opens_the_task_alone(world):
     task_id, _ = await _task(world, "shared-task")
     direct = f"/public/experiments/direct/tasks/{task_id}"
