@@ -26,12 +26,11 @@ from oddish.db import (
     TaskModel,
     TaskVersionModel,
     get_session,
-    task_experiments,
     utcnow,
 )
-from oddish.core.experiment_membership import experiment_trial_scope
+from oddish.core.endpoints.experiment_page import experiment_counts
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/org-shares", tags=["Sharing"])
@@ -94,17 +93,8 @@ async def incoming_experiments(
     session: AsyncSession, org_id: str | None
 ) -> list[SharedExperiment]:
     """Experiments shared with ``org_id``, newest share first."""
-    tasks = (
-        select(func.count())
-        .select_from(task_experiments)
-        .where(
-            task_experiments.c.experiment_id == ExperimentModel.id,
-            task_experiments.c.deleted_at.is_(None),
-        )
-        .scalar_subquery()
-    )
     rows = await session.execute(
-        select(ExperimentModel, OrgShareModel.created_at, tasks)
+        select(ExperimentModel, OrgShareModel.created_at)
         .join(OrgShareModel, OrgShareModel.resource_id == ExperimentModel.id)
         .where(
             OrgShareModel.grantee_org_id == org_id,
@@ -114,16 +104,11 @@ async def incoming_experiments(
         .order_by(OrgShareModel.created_at.desc())
     )
     result = []
-    for experiment, at, task_count in rows.all():
-        # The same runs the sample's page shows: gathered ones included,
-        # combine copies and QA/oracle trials left out.
-        # ponytail: one count per shared sample; a customer has a handful.
-        # The indexed UNION ALL the experiment page uses, not an OR over trials.
-        scope = experiment_trial_scope(experiment.id, org_id=experiment.org_id)
-        run_count = await session.scalar(
-            select(func.count())
-            .select_from(scope.trials)
-            .where(*scope.visible_predicates())
+    for experiment, at in rows.all():
+        # The sample page's own summary, so the list never disagrees with it.
+        # ponytail: one summary per shared sample; a customer has a handful.
+        task_count, run_count = await experiment_counts(
+            session, experiment_id=experiment.id, org_id=experiment.org_id
         )
         result.append(
             SharedExperiment(
@@ -132,7 +117,7 @@ async def incoming_experiments(
                 description=experiment.description,
                 shared_at=at,
                 task_count=task_count,
-                run_count=run_count or 0,
+                run_count=run_count,
             )
         )
     return result

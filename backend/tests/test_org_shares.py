@@ -331,7 +331,7 @@ async def _task(world, name: str) -> tuple[str, str]:
 
 @pytest.mark.asyncio
 async def test_sample_run_count_includes_gathered_runs(world):
-    from oddish.db import TrialModel, experiment_trials
+    from oddish.db import TrialModel, experiment_trials, task_experiments
 
     collection = await _private_experiment(world)
     home = await _private_experiment(world)
@@ -351,7 +351,11 @@ async def test_sample_run_count_includes_gathered_runs(world):
             )
         )
         await session.flush()
-        # The run lives in another experiment; the shared one gathers it.
+        # The run lives in another experiment; the shared one gathers it,
+        # linking its task as a collection does.
+        await session.execute(
+            task_experiments.insert().values(task_id=task_id, experiment_id=collection)
+        )
         await session.execute(
             experiment_trials.insert().values(
                 experiment_id=collection, trial_id=f"{task_id}-run"
@@ -359,7 +363,47 @@ async def test_sample_run_count_includes_gathered_runs(world):
         )
     assert (await _share(world, "experiment", collection)).status_code == 200
     incoming = (await world.get("/org-shares/incoming", "cursive")).json()
-    assert [(e["id"], e["run_count"]) for e in incoming] == [(collection, 1)]
+    assert [(e["id"], e["task_count"], e["run_count"]) for e in incoming] == [
+        (collection, 1, 1)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_sample_counts_match_the_sample_page(world):
+    """Runs on an older version of a task are not on the sample page, so
+    the Samples list leaves them out too."""
+    from oddish.db import TrialModel, task_experiments
+
+    sample = await _private_experiment(world)
+    task_id, v1 = await _task(world, "two-versions")
+    async with get_session() as session:
+        session.add(
+            TaskVersionModel(
+                id=f"{task_id}-v2", task_id=task_id, version=2, task_path="/tmp/fake"
+            )
+        )
+        await session.flush()
+        (await session.get(TaskModel, task_id)).current_version_id = f"{task_id}-v2"
+        for version_id in (v1, f"{task_id}-v2"):
+            session.add(
+                TrialModel(
+                    id=f"{version_id}-run",
+                    name="run",
+                    task_id=task_id,
+                    task_version_id=version_id,
+                    experiment_id=sample,
+                    org_id=world.ids["operator"],
+                    agent="nop",
+                    provider="anthropic",
+                    queue_key="test",
+                )
+            )
+        await session.execute(
+            task_experiments.insert().values(task_id=task_id, experiment_id=sample)
+        )
+    assert (await _share(world, "experiment", sample)).status_code == 200
+    incoming = (await world.get("/org-shares/incoming", "cursive")).json()
+    assert [(e["task_count"], e["run_count"]) for e in incoming] == [(1, 1)]
 
 
 @pytest.mark.asyncio

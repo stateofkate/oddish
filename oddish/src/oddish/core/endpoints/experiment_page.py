@@ -563,6 +563,16 @@ async def _experiment_summary(
     return summary, active
 
 
+async def experiment_counts(
+    session: AsyncSession, *, experiment_id: str, org_id: str
+) -> tuple[int, int]:
+    """(task count, run count) exactly as the experiment page reports them."""
+    summary, _active = await _experiment_summary(
+        session, experiment_id=experiment_id, org_id=org_id, include_qa=False
+    )
+    return summary.task_count, summary.trial_count
+
+
 async def get_experiment_open_core(
     session: AsyncSession,
     *,
