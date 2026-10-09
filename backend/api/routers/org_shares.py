@@ -21,16 +21,17 @@ from oddish.core.sharing.helpers import shared_tasks_query
 from oddish.db import (
     CustomerModel,
     DeliveryModel,
-    DeliverySnapshotModel,
     ExperimentModel,
     OrgShareModel,
     TaskModel,
     TaskVersionModel,
+    TrialModel,
     get_session,
+    task_experiments,
     utcnow,
 )
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/org-shares", tags=["Sharing"])
@@ -75,6 +76,8 @@ class SharedExperiment(BaseModel):
     name: str
     description: str | None
     shared_at: datetime
+    task_count: int = 0
+    run_count: int = 0
 
 
 class SharedTask(BaseModel):
@@ -87,38 +90,32 @@ class SharedTask(BaseModel):
     shared_at: datetime | None
 
 
-class SharedDelivery(BaseModel):
-    id: str
-    name: str
-    description: str | None
-    finalized_at: datetime | None
-    task_count: int
-
-
-class SharedDeliveryCheck(BaseModel):
-    label: str
-    status: str
-
-
-class SharedDeliveryTask(BaseModel):
-    task_id: str
-    task_name: str
-    version: int | None
-    customer_note: str | None
-    checks: list[SharedDeliveryCheck]
-    findings: list[str]
-
-
-class SharedDeliveryBoard(SharedDelivery):
-    tasks: list[SharedDeliveryTask]
-
-
 async def incoming_experiments(
     session: AsyncSession, org_id: str | None
 ) -> list[SharedExperiment]:
     """Experiments shared with ``org_id``, newest share first."""
+    tasks = (
+        select(func.count())
+        .select_from(task_experiments)
+        .where(
+            task_experiments.c.experiment_id == ExperimentModel.id,
+            task_experiments.c.deleted_at.is_(None),
+        )
+        .scalar_subquery()
+    )
+    # Agent runs only; QA and oracle trials are Abundant's checks, not results.
+    runs = (
+        select(func.count())
+        .select_from(TrialModel)
+        .where(
+            TrialModel.experiment_id == ExperimentModel.id,
+            TrialModel.kind == "agent",
+            TrialModel.superseded_by_trial_id.is_(None),
+        )
+        .scalar_subquery()
+    )
     rows = await session.execute(
-        select(ExperimentModel, OrgShareModel.created_at)
+        select(ExperimentModel, OrgShareModel.created_at, tasks, runs)
         .join(OrgShareModel, OrgShareModel.resource_id == ExperimentModel.id)
         .where(
             OrgShareModel.grantee_org_id == org_id,
@@ -133,8 +130,10 @@ async def incoming_experiments(
             name=experiment.name,
             description=experiment.description,
             shared_at=at,
+            task_count=task_count,
+            run_count=run_count,
         )
-        for experiment, at in rows.all()
+        for experiment, at, task_count, run_count in rows.all()
     ]
 
 
@@ -177,52 +176,6 @@ async def incoming_tasks(session: AsyncSession, org_id: str) -> list[SharedTask]
         tasks.values(),
         key=lambda t: t.shared_at.timestamp() if t.shared_at else 0,
         reverse=True,
-    )
-
-
-def _shared_deliveries_query(org_id: str):
-    return (
-        select(DeliveryModel)
-        .join(OrgShareModel, OrgShareModel.resource_id == DeliveryModel.id)
-        .where(
-            OrgShareModel.grantee_org_id == org_id,
-            OrgShareModel.resource_type == "delivery",
-            OrgShareModel.deleted_at.is_(None),
-            DeliveryModel.status == "finalized",
-        )
-    )
-
-
-async def _latest_public_board(session: AsyncSession, delivery_id: str) -> dict:
-    snapshot = await session.scalar(
-        select(DeliverySnapshotModel.snapshot)
-        .where(DeliverySnapshotModel.delivery_id == delivery_id)
-        .order_by(DeliverySnapshotModel.created_at.desc())
-        .limit(1)
-    )
-    return (snapshot or {}).get("public") or {"tasks": []}
-
-
-async def incoming_deliveries(
-    session: AsyncSession, org_id: str
-) -> list[SharedDelivery]:
-    deliveries = await session.scalars(
-        _shared_deliveries_query(org_id).order_by(DeliveryModel.finalized_at.desc())
-    )
-    result = []
-    for delivery in deliveries:
-        board = await _latest_public_board(session, delivery.id)
-        result.append(_shared_delivery(delivery, board))
-    return result
-
-
-def _shared_delivery(delivery: DeliveryModel, board: dict) -> SharedDelivery:
-    return SharedDelivery(
-        id=delivery.id,
-        name=delivery.name,
-        description=delivery.description,
-        finalized_at=delivery.finalized_at,
-        task_count=len(board.get("tasks") or []),
     )
 
 
@@ -452,46 +405,3 @@ async def list_incoming_tasks(
     """Tasks shared with the caller's org directly, by delivery, or by experiment."""
     async with authorized_read_session(request, auth) as session:
         return await incoming_tasks(session, auth.org_id)
-
-
-@router.get("/incoming/deliveries", response_model=list[SharedDelivery])
-async def list_incoming_deliveries(
-    request: Request,
-    auth: Annotated[AuthContext, Depends(get_auth_context)],
-) -> list[SharedDelivery]:
-    """Finalized deliveries shared with the caller's org, newest first."""
-    async with authorized_read_session(request, auth) as session:
-        return await incoming_deliveries(session, auth.org_id)
-
-
-@router.get("/incoming/deliveries/{delivery_id}", response_model=SharedDeliveryBoard)
-async def get_incoming_delivery(
-    delivery_id: str,
-    request: Request,
-    auth: Annotated[AuthContext, Depends(get_auth_context)],
-) -> SharedDeliveryBoard:
-    """The board as shipped: no internal notes, no hidden tasks."""
-    async with authorized_read_session(request, auth) as session:
-        delivery = await session.scalar(
-            _shared_deliveries_query(auth.org_id).where(DeliveryModel.id == delivery_id)
-        )
-        if delivery is None:
-            raise HTTPException(status_code=404, detail="Delivery not found")
-        board = await _latest_public_board(session, delivery.id)
-    return SharedDeliveryBoard(
-        **_shared_delivery(delivery, board).model_dump(),
-        tasks=[
-            SharedDeliveryTask(
-                task_id=row["task_id"],
-                task_name=row["task_name"],
-                version=row.get("version"),
-                customer_note=row.get("customer_note"),
-                checks=[
-                    SharedDeliveryCheck(label=c["label"], status=c["status"])
-                    for c in row.get("checks") or []
-                ],
-                findings=[d["title"] for d in row.get("defects") or []],
-            )
-            for row in board.get("tasks") or []
-        ],
-    )

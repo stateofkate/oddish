@@ -53,14 +53,16 @@ export function OrgSharePicker({
   const [selected, setSelected] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   if (orgsError || !orgs) return null;
   const sharedIds = new Set(shares?.map((s) => s.grantee_org_id));
   const available = orgs.filter((o) => !sharedIds.has(o.id));
 
-  const run = async (url: string, init: RequestInit) => {
+  const run = async (url: string, init: RequestInit, done: string) => {
     setBusy(true);
     setError(null);
+    setNotice(null);
     try {
       const res = await apiFetch(url, init);
       const payload = await res.json().catch(() => null);
@@ -69,6 +71,7 @@ export function OrgSharePicker({
       }
       await mutate(payload as OrgShare[], false);
       setSelected("");
+      setNotice(done);
       onChange?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Request failed");
@@ -94,9 +97,11 @@ export function OrgSharePicker({
                 disabled={busy}
                 onClick={() =>
                   confirm(`Stop sharing with ${share.grantee_org_name}?`) &&
-                  run(`/api/org-shares/${encodeURIComponent(share.id)}`, {
-                    method: "DELETE",
-                  })
+                  run(
+                    `/api/org-shares/${encodeURIComponent(share.id)}`,
+                    { method: "DELETE" },
+                    `Stopped sharing with ${share.grantee_org_name}`
+                  )
                 }
               >
                 <X className="h-3.5 w-3.5" />
@@ -105,42 +110,55 @@ export function OrgSharePicker({
           ))}
         </ul>
       )}
-      <div className="flex items-center gap-2">
-        <select
-          id="org-share-select"
-          value={selected}
-          onChange={(e) => setSelected(e.target.value)}
-          disabled={busy || available.length === 0}
-          className="border-input bg-background h-8 flex-1 rounded-md border px-2 text-sm"
-        >
-          <option value="">
-            {available.length === 0 ? "No orgs left" : "Choose an org"}
-          </option>
-          {available.map((org) => (
-            <option key={org.id} value={org.id}>
-              {org.name}
-            </option>
-          ))}
-        </select>
-        <Button
-          type="button"
-          size="sm"
-          disabled={busy || !selected}
-          onClick={() =>
-            run("/api/org-shares", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                grantee_org_id: selected,
-                resource_type: resourceType,
-                resource_id: resourceId,
-              }),
-            })
-          }
-        >
-          Share
-        </Button>
-      </div>
+      {available.length === 0 ? (
+        <p className="text-muted-foreground text-sm">
+          Shared with every customer org.
+        </p>
+      ) : (
+        <div className="flex items-center gap-2">
+          <select
+            id="org-share-select"
+            value={selected}
+            onChange={(e) => setSelected(e.target.value)}
+            disabled={busy}
+            className="border-input bg-background h-8 flex-1 rounded-md border px-2 text-sm"
+          >
+            <option value="">Choose an org</option>
+            {available.map((org) => (
+              <option key={org.id} value={org.id}>
+                {org.name}
+              </option>
+            ))}
+          </select>
+          <Button
+            type="button"
+            size="sm"
+            disabled={busy || !selected}
+            onClick={() =>
+              run(
+                "/api/org-shares",
+                {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    grantee_org_id: selected,
+                    resource_type: resourceType,
+                    resource_id: resourceId,
+                  }),
+                },
+                `Shared with ${orgs.find((o) => o.id === selected)?.name ?? "the org"}`
+              )
+            }
+          >
+            Share
+          </Button>
+        </div>
+      )}
+      {notice && (
+        <p role="status" className="text-xs text-green-600">
+          {notice}
+        </p>
+      )}
       {error && (
         <p role="alert" className="text-xs text-red-500">
           {error}

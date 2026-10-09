@@ -1185,7 +1185,12 @@ class StorageClient:
                 )
             ):
                 record_file_source("expanded")
-                return _TaskListingSource(expanded_prefix, expanded=True)
+                # The matching upload archive stays downloadable as one file.
+                return _TaskListingSource(
+                    expanded_prefix,
+                    expanded=True,
+                    archive_key=archive_key if archive_head is not None else None,
+                )
         if archive_head is not None:
             record_file_source("archive")
             _bytes, files, texts = await self._load_task_archive(
@@ -1214,7 +1219,7 @@ class StorageClient:
     ) -> dict:
         root_prefix = source.root_prefix
         if source.expanded:
-            return await self._list_expanded_task_files(
+            listing = await self._list_expanded_task_files(
                 task_id=task_id,
                 expanded_prefix=root_prefix,
                 prefix=prefix,
@@ -1225,6 +1230,11 @@ class StorageClient:
                 presign_expiration=presign_expiration,
                 inline=inline,
             )
+            if presign and source.archive_key:
+                listing["archive_url"] = await self.get_presigned_url(
+                    source.archive_key, expiration=presign_expiration
+                )
+            return listing
         if source.archive_files is not None:
             relative_prefix = normalize_s3_relative_path(prefix)
             if relative_prefix and not relative_prefix.endswith("/"):

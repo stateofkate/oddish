@@ -17,7 +17,6 @@ from oddish.db import (
     JobStatus,
     CustomerModel,
     DeliveryModel,
-    DeliverySnapshotModel,
     DeliveryTaskModel,
     ExperimentModel,
     OrgShareModel,
@@ -368,7 +367,7 @@ async def test_finalized_delivery_shares_its_board_and_pinned_tasks(world):
         )
     assert (await _share(world, "delivery", delivery_id)).status_code == 200
     # Shared before it ships: nothing to see yet.
-    assert (await world.get("/org-shares/incoming/deliveries", "cursive")).json() == []
+    assert (await world.get("/org-shares/incoming/tasks", "cursive")).json() == []
     direct = f"/public/experiments/direct/tasks/{task_id}"
     assert (await world.get(direct, "cursive")).status_code == 404
 
@@ -381,34 +380,6 @@ async def test_finalized_delivery_shares_its_board_and_pinned_tasks(world):
             .where(DeliveryTaskModel.task_id == task_id)
             .values(pinned_version_id=version_id)
         )
-        session.add(
-            DeliverySnapshotModel(
-                delivery_id=delivery_id,
-                snapshot={
-                    "public": {
-                        "tasks": [
-                            {
-                                "task_id": task_id,
-                                "task_name": "delivered",
-                                "version": 1,
-                                "customer_note": "Hard one",
-                                "internal_note": None,
-                                "checks": [{"label": "QA", "status": "pass"}],
-                                "defects": [{"title": "Typo fixed"}],
-                            }
-                        ]
-                    }
-                },
-            )
-        )
-    listed = (await world.get("/org-shares/incoming/deliveries", "cursive")).json()
-    assert [(d["id"], d["task_count"]) for d in listed] == [(delivery_id, 1)]
-    board = await world.get(f"/org-shares/incoming/deliveries/{delivery_id}", "cursive")
-    assert board.status_code == 200, board.text
-    assert board.json()["tasks"][0]["findings"] == ["Typo fixed"]
-    assert (
-        await world.get(f"/org-shares/incoming/deliveries/{delivery_id}", "other")
-    ).status_code == 404
     tasks = (await world.get("/org-shares/incoming/tasks", "cursive")).json()
     assert [(t["id"], t["version"], t["delivery_name"]) for t in tasks] == [
         (task_id, 1, "Batch 1")

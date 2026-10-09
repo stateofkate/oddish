@@ -106,6 +106,7 @@ export function TaskOverviewPanel({
   readOnly = false,
   version,
   scopeTrials,
+  showRuns = true,
   scopeLoading,
   verdictTask,
   checksFindings,
@@ -140,6 +141,8 @@ export function TaskOverviewPanel({
    *  passes its own; the task page passes the version's). Trials outside
    *  this set still render, marked as from elsewhere. Null = no context. */
   scopeTrials?: Trial[] | null;
+  /** False hides the runs section, for a task shared without any runs. */
+  showRuns?: boolean;
   /** The host is still streaming its trial rows — an empty scope renders
    *  as loading, not as "no trials". */
   scopeLoading?: boolean;
@@ -805,6 +808,7 @@ export function TaskOverviewPanel({
         {findingsBody()}
       </div>
 
+      {showRuns && (
       <div className="flex flex-col gap-3 p-4">
         <div className="flex flex-wrap items-center gap-2">
           {!readOnly && !verdictTask && (
@@ -876,6 +880,7 @@ export function TaskOverviewPanel({
           </section>
         )}
       </div>
+      )}
     </div>
   );
 }

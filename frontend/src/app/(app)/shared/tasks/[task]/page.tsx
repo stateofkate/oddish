@@ -22,7 +22,8 @@ export default function SharedTaskPage() {
   const versionParam = useSearchParams().get("version");
   const version = versionParam ? Number(versionParam) : undefined;
   const orgHref = useOrgHref();
-  const [pane, setPane] = useState<TaskPane>("overview");
+  // The instruction is what a customer reads first; QA is under Overview.
+  const [pane, setPane] = useState<TaskPane>("file");
   // Signed out, a shared task answers 404: wait for the token.
   const { isLoaded } = useAuth();
   const query = new URLSearchParams({ recursive: "false", limit: "1" });
@@ -67,6 +68,8 @@ export default function SharedTaskPage() {
           contentOnly
           loadFilesLazily
           taskVersion={version}
+          initialFilePath="instruction.md"
+          showRuns={false}
         />
       </div>
     </div>

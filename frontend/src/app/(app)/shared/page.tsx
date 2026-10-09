@@ -5,16 +5,18 @@ import { useIncomingShares } from "@/lib/use-org-access";
 import { useOrgHref } from "@/lib/use-org-href";
 import { formatRelativeTime } from "@/lib/utils";
 
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
 export default function SharedPage() {
   const orgHref = useOrgHref();
   const { data, error } = useIncomingShares();
 
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-semibold">Shared with you</h1>
+      <h1 className="text-xl font-semibold">Samples</h1>
       {error ? (
         <p role="alert" className="text-sm text-red-500">
-          Unable to load shared experiments.
+          Unable to load samples.
         </p>
       ) : !data ? (
         <p role="status" className="text-muted-foreground text-sm">
@@ -39,6 +41,10 @@ export default function SharedPage() {
                       {experiment.description}
                     </span>
                   )}
+                  <span className="text-muted-foreground block text-xs">
+                    {plural(experiment.task_count, "task")} ·{" "}
+                    {plural(experiment.run_count, "run")}
+                  </span>
                 </span>
                 <span className="text-muted-foreground shrink-0 text-xs">
                   {formatRelativeTime(experiment.shared_at)}

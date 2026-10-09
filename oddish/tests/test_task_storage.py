@@ -892,6 +892,54 @@ async def test_list_task_files_uses_expanded_layout_when_available(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_expanded_listing_still_links_its_matching_archive(monkeypatch):
+    """Expanded files are listed one by one, and the upload archive they
+    were expanded from stays downloadable as a single file."""
+    storage = storage_mod.StorageClient()
+    storage._client = object()
+    expanded_prefix = "tasks/task-123/v1-files/"
+    archive_key = "tasks/task-123/v1/.oddish-task.tar.gz"
+
+    async def fake_head_object(s3_key: str) -> dict | None:
+        if s3_key in (f"{expanded_prefix}.oddish-manifest.json", archive_key):
+            return {"ETag": s3_key}
+        return None
+
+    async def fake_list_objects_all(prefix: str) -> list[dict]:
+        return _expanded_objects(
+            expanded_prefix, {"instruction.md": 12, ".oddish-manifest.json": 99}
+        )
+
+    async def matches(_manifest_key, _archive_key):
+        return True
+
+    async def fake_presigned(s3_key: str, expiration: int) -> str:
+        return f"https://example.com/{s3_key}"
+
+    async def fake_presigned_batch(s3_keys, expiration):
+        return {key: f"https://example.com/{key}" for key in s3_keys}
+
+    monkeypatch.setattr(storage, "head_object", fake_head_object)
+    monkeypatch.setattr(storage, "list_objects_all", fake_list_objects_all)
+    monkeypatch.setattr(storage, "_expanded_manifest_matches_archive", matches)
+    monkeypatch.setattr(storage, "get_presigned_url", fake_presigned)
+    monkeypatch.setattr(storage, "get_presigned_urls_batch", fake_presigned_batch)
+
+    listing = await storage.list_task_files(
+        task_id="task-123",
+        prefix=None,
+        recursive=True,
+        limit=1000,
+        cursor=None,
+        presign=True,
+        version=1,
+    )
+
+    assert [entry["path"] for entry in listing["files"]] == ["instruction.md"]
+    assert listing["archive_url"] == f"https://example.com/{archive_key}"
+
+
+@pytest.mark.asyncio
 async def test_expanded_tree_listing_skips_contents_and_urls(monkeypatch):
     storage = storage_mod.StorageClient()
     storage._client = object()

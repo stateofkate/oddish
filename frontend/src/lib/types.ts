@@ -1559,6 +1559,8 @@ export interface SharedExperiment {
   name: string;
   description: string | null;
   shared_at: string;
+  task_count: number;
+  run_count: number;
 }
 
 export interface SharedTask {
@@ -1569,25 +1571,6 @@ export interface SharedTask {
   delivery_id: string | null;
   delivery_name: string | null;
   shared_at: string | null;
-}
-
-export interface SharedDelivery {
-  id: string;
-  name: string;
-  description: string | null;
-  finalized_at: string | null;
-  task_count: number;
-}
-
-export interface SharedDeliveryBoard extends SharedDelivery {
-  tasks: {
-    task_id: string;
-    task_name: string;
-    version: number | null;
-    customer_note: string | null;
-    checks: { label: string; status: string }[];
-    findings: string[];
-  }[];
 }
 
 // ---------------------------------------------------------------------------

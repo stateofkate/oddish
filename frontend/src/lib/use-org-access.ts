@@ -35,7 +35,7 @@ export function useIncomingShares() {
 }
 
 /** Tasks and deliveries shared with the active org, cached per org. */
-export function useIncoming<T>(kind: "tasks" | "deliveries") {
+export function useIncoming<T>(kind: "tasks") {
   const { isSignedIn, orgId } = useAuth();
   return useSWR<T>(
     isSignedIn && orgId

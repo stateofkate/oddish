@@ -108,19 +108,13 @@ const SHARED_NAV_LINK: NavLink = {
 const CUSTOMER_NAV_LINKS: NavLink[] = [
   {
     href: "/shared",
-    label: "Experiments",
+    label: "Samples",
     icon: <Inbox className="h-4 w-4" />,
   },
   {
     href: "/shared/tasks",
     label: "Tasks",
     icon: <FileText className="h-4 w-4" />,
-    prefix: true,
-  },
-  {
-    href: "/shared/deliveries",
-    label: "Deliveries",
-    icon: <Package className="h-4 w-4" />,
     prefix: true,
   },
 ];

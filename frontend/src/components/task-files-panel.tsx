@@ -202,6 +202,8 @@ interface TaskFilesPanelProps {
    * Bump the value or pair with a counter to re-trigger navigation to the same path.
    */
   initialFilePath?: string | null;
+  /** False hides the overview's runs section (a task shared without runs). */
+  showRuns?: boolean;
   /**
    * Task id to source the TASK OVERVIEW entry from, for panes that drive file
    * listing via `filesUrl` and pass `taskId={null}` (e.g. the side-by-side
@@ -490,6 +492,7 @@ export function TaskFilesPanel({
   loadFilesLazily = false,
   taskVersion,
   initialFilePath,
+  showRuns,
   staticChecksTaskId,
   onOpenTrial,
   overviewTrialsLoading,
@@ -2227,6 +2230,7 @@ export function TaskFilesPanel({
                         : null
                   }
                   scopeLoading={overviewTrialsLoading || publicTaskLoading}
+                  showRuns={showRuns}
                   // Panes with their own header render the verdict card there;
                   // the filesUrl-driven panes have no header, so the overview
                   // carries the verdict itself.
