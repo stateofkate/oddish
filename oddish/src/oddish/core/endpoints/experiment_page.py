@@ -564,11 +564,11 @@ async def _experiment_summary(
 
 
 async def experiment_page_summary(
-    session: AsyncSession, *, experiment_id: str, org_id: str
+    session: AsyncSession, *, experiment_id: str, org_id: str, include_qa: bool = True
 ) -> ExperimentPageSummary:
     """The experiment page's summary (counts, scores, QA), for list views."""
     summary, _active = await _experiment_summary(
-        session, experiment_id=experiment_id, org_id=org_id
+        session, experiment_id=experiment_id, org_id=org_id, include_qa=include_qa
     )
     return summary
 

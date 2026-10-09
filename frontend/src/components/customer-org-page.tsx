@@ -705,7 +705,22 @@ function SharingSection({
 
   return (
     <div className="space-y-8">
-      <Subsection title="Deliveries">
+      <label className="flex items-center gap-2 text-sm">
+        <Checkbox
+          checked={org.show_shared_qa}
+          disabled={busy}
+          onCheckedChange={(checked) =>
+            run(
+              () =>
+                send(`${base}/shared-qa`, "PUT", { show: checked === true }),
+              refresh
+            )
+          }
+        />
+        Show QA on shared samples
+      </label>
+
+      <Subsection title="Delivery customers">
         <ul className="divide-y rounded-md border text-sm">
           {deliveryCustomers.map((customer) => (
             <li key={customer.id} className="flex items-center gap-3 px-3 py-2">

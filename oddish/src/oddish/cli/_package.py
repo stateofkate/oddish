@@ -17,8 +17,13 @@ from packaging.version import InvalidVersion, Version
 PACKAGE_NAME = "oddish"
 PYPI_JSON_URL = "https://pypi.org/pypi/oddish/json"
 
-Source = Literal["pypi", "editable", "other", "homebrew"]
-Manager = Literal["uv-pip", "pip", "brew"]
+Source = Literal["pypi", "editable", "other", "homebrew", "script"]
+Manager = Literal["uv-pip", "pip", "brew", "script"]
+INSTALL_SCRIPT_URL = "https://abundant-ai--api.modal.run/cli/install.sh"
+RERUN_INSTALL_SCRIPT = (
+    "This install came from the Oddish install script. Re-run it to update: "
+    f"curl -fsSL {INSTALL_SCRIPT_URL} | sh"
+)
 
 
 class PackageError(Exception):
@@ -37,6 +42,8 @@ class InstallInfo:
     def source_label(self) -> str:
         if self.source == "homebrew":
             return "Homebrew"
+        if self.source == "script":
+            return "install script"
         if self.source == "pypi":
             return "PyPI"
         if self.source == "editable":
@@ -45,8 +52,8 @@ class InstallInfo:
 
     @property
     def manager_label(self) -> str:
-        if self.manager == "brew":
-            return "brew"
+        if self.manager in ("brew", "script"):
+            return "brew" if self.manager == "brew" else "install.sh"
         return "uv pip" if self.manager == "uv-pip" else "pip"
 
     def as_dict(self) -> dict[str, Any]:
@@ -80,6 +87,11 @@ def inspect_install(
     editable_path: str | None = None
     try:
         dist = distribution or metadata.distribution(PACKAGE_NAME)
+        # install.sh writes this marker, as the Homebrew formula writes HOMEBREW.
+        if dist.read_text("ODDISH_INSTALL") == "script\n":
+            return InstallInfo(
+                version=version, source="script", manager="script", installer="install.sh"
+            )
         if dist.read_text("HOMEBREW") == "abundant-ai/tap/oddish\n":
             return InstallInfo(version=version, source="homebrew", manager="brew", installer="brew")
         raw_installer = dist.read_text("INSTALLER")
@@ -109,6 +121,8 @@ def upgrade_command(
 ) -> list[str]:
     if info.source == "homebrew":
         raise PackageError("This install is managed by Homebrew. Run `brew upgrade abundant-ai/tap/oddish`.")
+    if info.source == "script":
+        raise PackageError(RERUN_INSTALL_SCRIPT)
     if info.source == "editable":
         location = info.editable_path or "this checkout"
         raise PackageError(

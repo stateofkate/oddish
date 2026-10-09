@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
 import { isOrgAdminRole } from "@/lib/org-roles";
+import { InternalOrgGate } from "@/components/internal-org-gate";
 
 // Server-side gate for /admin and everything under it (tabs, /admin/users/*).
 // Hiding the nav/dashboard links is cosmetic; this stops non-admins who type
@@ -15,5 +16,6 @@ export default async function AdminLayout({
   if (!isOrgAdminRole(orgRole)) {
     redirect("/dashboard");
   }
-  return <>{children}</>;
+  // Customer org admins never see Admin, not even before the redirect.
+  return <InternalOrgGate>{children}</InternalOrgGate>;
 }

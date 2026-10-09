@@ -18,8 +18,8 @@ from auth import (
     allowed_api_key_scopes,
     can_create_api_keys,
     can_manage_api_keys,
-    require_admin,
     require_api_key_creator,
+    require_signed_in_admin,
     require_auth,
 )
 from models import APIKeyModel, create_api_key
@@ -138,7 +138,8 @@ async def create_api_key_endpoint(
 @router.delete("/{key_id}")
 async def revoke_api_key(
     key_id: str,
-    auth: Annotated[AuthContext, Depends(require_admin)],
+    # A view-only org can revoke the read keys it minted.
+    auth: Annotated[AuthContext, Depends(require_signed_in_admin)],
 ) -> dict:
     """Revoke and soft-delete an API key.
 

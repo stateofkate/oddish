@@ -8,6 +8,10 @@ Use the exact email address invited to Abundant Docs. An Oddish task-workspace a
 
 Docs and task access are separate. Ask your Oddish contact for access to your own workspace. Do not request membership in Abundant's internal workspace.
 
+## The install script cannot get the release
+
+"Could not get the CLI release" means the API did not accept `ODDISH_API_KEY`. Check that it is exported in the same shell, has not expired, and was not revoked under **Settings → API keys**. "Checksum mismatch" means the download was altered or cut short; run the command again.
+
 ## Homebrew cannot find or download Oddish
 
 Confirm that your GitHub account has read access to `abundant-ai/homebrew-tap`. Run `gh auth status` to inspect the selected GitHub account. Follow [Installation](getting-started.md) after access is granted.

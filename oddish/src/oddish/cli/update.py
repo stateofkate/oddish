@@ -10,6 +10,7 @@ from typing import Annotated, NoReturn
 import typer
 
 from oddish.cli._package import (
+    RERUN_INSTALL_SCRIPT,
     InstallInfo,
     PackageError,
     fetch_pypi_latest,
@@ -38,6 +39,8 @@ def update_cmd(
     info = inspect_install()
     if info.source == "homebrew":
         _fail("This install is managed by Homebrew. Run `brew upgrade abundant-ai/tap/oddish`.", json_output=json_output, info=info)
+    if info.source == "script":
+        _fail(RERUN_INSTALL_SCRIPT, json_output=json_output, info=info)
     try:
         latest = fetch_pypi_latest()
         pypi_error = None

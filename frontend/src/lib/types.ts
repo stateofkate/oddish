@@ -1502,6 +1502,7 @@ export interface CustomerOrg {
   share_count: number;
   image_url: string | null;
   members_count: number | null;
+  show_shared_qa: boolean;
 }
 
 export interface DeliveryCustomer {
@@ -1562,6 +1563,8 @@ export interface SharedExperiment {
   task_count: number;
   run_count: number;
   summary?: ExperimentPageSummary | null;
+  /** False when Abundant has not opened its QA to this org. */
+  show_qa?: boolean;
 }
 
 export interface SharedTask {

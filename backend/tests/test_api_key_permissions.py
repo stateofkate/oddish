@@ -45,6 +45,15 @@ def test_org_admin_can_create_full_api_keys():
     ]
 
 
+def test_view_only_org_can_create_read_keys_only():
+    from types import SimpleNamespace
+
+    auth = _clerk_auth(role=UserRole.ADMIN)
+    auth.org = SimpleNamespace(execution_enabled=False)
+
+    assert allowed_api_key_scopes(auth) == [APIKeyScope.READ]
+
+
 def test_api_key_creation_is_org_agnostic():
     # No org-slug allowlist: members of any org qualify, not just Abundant.
     for org_slug in ("abundant", "customer", "acme-labs"):

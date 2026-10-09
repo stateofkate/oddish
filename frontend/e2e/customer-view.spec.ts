@@ -65,17 +65,18 @@ test("an internal org stays on its page with the full nav", async ({
   await expect(nav.getByRole("link", { name: "Leaderboard" })).toBeVisible();
 });
 
-test("a customer org that runs jobs gets the full app", async ({ page }) => {
+test("a customer org that runs jobs never sees Abundant's own pages", async ({
+  page,
+}) => {
   await clerk(page, { isSignedIn: true });
-  const reads = await api(page, { org_type: "customer", access: "execution" });
+  await api(page, { org_type: "customer", access: "execution" });
   await page.goto("/leaderboard");
-  await expect
-    .poll(() => reads.some((r) => r.startsWith("/api/org?")))
-    .toBe(true);
-  await expect(page.getByText("Leaderboard fixture")).toBeVisible();
-  await expect(page).toHaveURL(/\/leaderboard$/);
+  await expect(page).toHaveURL(/\/shared$/);
   const nav = page.locator("nav[data-page-sticky-header]");
-  await expect(nav.getByRole("link", { name: "Leaderboard" })).toBeVisible();
+  for (const label of ["Dashboard", "Tasks", "Shared"])
+    await expect(nav.getByRole("link", { name: label })).toBeVisible();
+  for (const label of ["Deliveries", "Leaderboard"])
+    await expect(nav.getByRole("link", { name: label })).toHaveCount(0);
 });
 
 test("shared tasks link to the version that shipped", async ({ page }) => {
@@ -152,6 +153,30 @@ test("samples list what each one holds", async ({ page }) => {
     )
   ).toHaveCount(1);
   await expect(row).toHaveAttribute("href", "/shared/exp-shared");
+});
+
+test("a sample card leaves QA out when it is not opened to the org", async ({
+  page,
+}) => {
+  await clerk(page, { isSignedIn: true });
+  const sample: SharedExperiment = {
+    id: "exp-no-qa",
+    name: "no qa sample",
+    description: null,
+    shared_at: "2026-10-08T12:00:00Z",
+    task_count: 1,
+    run_count: 3,
+    show_qa: false,
+  };
+  await api(
+    page,
+    { org_type: "customer", access: "viewer" },
+    { "/api/org-shares/incoming": [sample] }
+  );
+  await page.goto("/shared");
+  const card = page.getByRole("link", { name: /no qa sample/ });
+  await expect(card).toContainText("Runs3");
+  await expect(card).not.toContainText("QA");
 });
 
 test("sharing confirms and then says every customer org has it", async ({

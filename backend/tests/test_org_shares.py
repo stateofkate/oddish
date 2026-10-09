@@ -267,9 +267,20 @@ async def test_experiment_share_opens_by_id_with_qa_and_cost_switch(world):
     share = shared.json()[0]
     opened = await world.get(by_id, "cursive")
     assert opened.status_code == 200, opened.text
-    # Customers always see QA; costs stay hidden until switched on.
-    assert opened.json()["show_qa"] is True
+    # QA and costs both stay hidden until Abundant switches them on.
+    assert opened.json()["show_qa"] is False
     assert opened.json()["show_costs"] is False
+    incoming = (await world.get("/org-shares/incoming", "cursive")).json()
+    assert incoming[0]["show_qa"] is False
+    assert incoming[0]["summary"]["qa_accepted"] == 0
+    async with get_session() as session:
+        (
+            await session.get(OrganizationModel, world.ids["cursive"])
+        ).show_shared_qa = True
+    assert (await world.get(by_id, "cursive")).json()["show_qa"] is True
+    assert (await world.get("/org-shares/incoming", "cursive")).json()[0]["show_qa"]
+    # The owning org always sees its own QA.
+    assert (await world.get(by_id, "operator")).json()["show_qa"] is True
     assert (await world.get(f"{by_id}/tasks/missing", "cursive")).status_code == 404
     assert (await world.get(by_id, "other")).status_code == 404
     assert (await world.get(by_id)).status_code == 404
@@ -302,6 +313,12 @@ async def test_experiment_share_opens_by_id_with_qa_and_cost_switch(world):
 @pytest.mark.asyncio
 async def test_tag_shares_are_refused(world):
     assert (await _share(world, "tag", "any")).status_code == 422
+
+
+async def _show_qa(world, key: str = "cursive") -> None:
+    """These tests read task QA, which a customer sees only once opened."""
+    async with get_session() as session:
+        (await session.get(OrganizationModel, world.ids[key])).show_shared_qa = True
 
 
 async def _task(world, name: str) -> tuple[str, str]:
@@ -408,6 +425,7 @@ async def test_sample_counts_match_the_sample_page(world):
 
 @pytest.mark.asyncio
 async def test_task_share_opens_the_task_alone(world):
+    await _show_qa(world)
     task_id, _ = await _task(world, "shared-task")
     direct = f"/public/experiments/direct/tasks/{task_id}"
     assert (await world.get(direct, "cursive")).status_code == 404
@@ -426,6 +444,7 @@ async def test_task_share_opens_the_task_alone(world):
 
 @pytest.mark.asyncio
 async def test_finalized_delivery_shares_its_board_and_pinned_tasks(world):
+    await _show_qa(world)
     task_id, version_id = await _task(world, "delivered")
     hidden_id, _ = await _task(world, "hidden")
     unpinned_id, _ = await _task(world, "unpinned")

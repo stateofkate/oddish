@@ -69,6 +69,8 @@ class CustomerOrg(BaseModel):
     share_count: int
     image_url: str | None = None
     members_count: int | None = None
+    # Shared samples show Abundant's QA (verdicts, timeline, categories).
+    show_shared_qa: bool = False
 
 
 class CreateCustomerOrgRequest(BaseModel):
@@ -104,6 +106,10 @@ class CustomerOrgDetail(CustomerOrg):
 
 class LinkDeliveryCustomerRequest(BaseModel):
     linked: bool
+
+
+class SharedQaRequest(BaseModel):
+    show: bool
 
 
 class UpdateOrgRequest(BaseModel):
@@ -200,6 +206,7 @@ def _response(
         share_count=share_count,
         image_url=clerk_org.get("image_url") if clerk_org.get("has_image") else None,
         members_count=clerk_org.get("members_count"),
+        show_shared_qa=org.show_shared_qa,
     )
 
 
@@ -372,6 +379,21 @@ async def get_customer_org(
         month_spend_usd=float(spend),
         delivery_customers=delivery_customers,
     )
+
+
+@router.put("/{org_id}/shared-qa", response_model=dict)
+async def set_shared_qa(
+    org_id: str,
+    payload: SharedQaRequest,
+    auth: Annotated[AuthContext, Depends(require_admin)],
+) -> dict:
+    """Show or hide Abundant's QA on everything shared with this org."""
+    require_operator_org(auth)
+    async with get_session() as session:
+        org = await _customer_org(session, org_id, auth)
+        org.show_shared_qa = payload.show
+        await session.commit()
+    return {"status": "ok"}
 
 
 @router.put("/{org_id}/delivery-customers/{customer_id}", response_model=dict)

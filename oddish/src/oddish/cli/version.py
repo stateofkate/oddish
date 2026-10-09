@@ -8,6 +8,7 @@ from typing import Annotated
 import typer
 
 from oddish.cli._package import (
+    RERUN_INSTALL_SCRIPT,
     PackageError,
     fetch_pypi_latest,
     inspect_install,
@@ -40,12 +41,16 @@ def version_cmd(
     payload = info.as_dict()
     outdated = False
     latest: str | None = None
-    if check and info.source == "homebrew":
-        message = "Run `brew update && brew outdated abundant-ai/tap/oddish` to check Homebrew releases."
+    if check and info.source in ("homebrew", "script"):
+        message = (
+            "Run `brew update && brew outdated abundant-ai/tap/oddish` to check Homebrew releases."
+            if info.source == "homebrew"
+            else RERUN_INSTALL_SCRIPT
+        )
         if json_output:
             typer.echo(json.dumps({**payload, "update_available": None, "message": message}, indent=2))
         else:
-            typer.echo(f"oddish {info.version} (Homebrew)\n{message}")
+            typer.echo(f"oddish {info.version} ({info.source_label})\n{message}")
         return
     if check:
         try:

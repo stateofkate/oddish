@@ -51,6 +51,8 @@ share_viewer_org_id: ContextVar[str | None] = ContextVar(
 )
 # Set per request alongside it: blank cost figures for this viewer.
 share_hides_costs: ContextVar[bool] = ContextVar("share_hides_costs", default=False)
+# False when the viewer is a customer org Abundant has not opened QA to.
+share_shows_qa: ContextVar[bool] = ContextVar("share_shows_qa", default=True)
 
 
 # The share key that opens shared tasks themselves: experiment ids and tokens
@@ -271,9 +273,9 @@ async def get_public_experiment(
         return None
     experiment = found[0]
     if public_token == experiment.id:
-        # Customer orgs see all of Abundant's QA; the per-link opt-in only
+        # The viewer org's QA setting decides; the per-link opt-in only
         # governs anonymous token links. Committed value: never written back.
-        set_committed_value(experiment, "show_qa", True)
+        set_committed_value(experiment, "show_qa", share_shows_qa.get())
     return experiment
 
 
@@ -322,7 +324,7 @@ async def get_public_task_for_experiment(
                 return None
         set_committed_value(task, "trials", [])
         # Unsaved stand-in so every experiment-keyed route serves it unchanged.
-        return ExperimentModel(id=None, show_qa=True), task, set()
+        return ExperimentModel(id=None, show_qa=share_shows_qa.get()), task, set()
     experiment = await get_public_experiment(session, public_token)
     if not experiment:
         return None

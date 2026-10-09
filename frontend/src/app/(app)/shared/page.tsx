@@ -87,7 +87,7 @@ function SampleCard({
         <Stat label="Tasks" value={String(sample.task_count)} />
         <Stat label="Runs" value={String(sample.run_count)} />
         <Stat label="Score" value={score} />
-        <Stat label="QA ✓ / ✗" value={qa} />
+        {sample.show_qa !== false && <Stat label="QA ✓ / ✗" value={qa} />}
       </div>
       <OutcomeBar sample={sample} />
       <div className="text-muted-foreground text-xs">

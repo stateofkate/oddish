@@ -10,7 +10,11 @@ import {
   useUser,
 } from "@clerk/nextjs";
 import { withOrgSlug } from "@/lib/org-path";
-import { useIncomingShares, useIsViewerOrg } from "@/lib/use-org-access";
+import {
+  useIncomingShares,
+  useIsCustomerOrg,
+  useIsViewerOrg,
+} from "@/lib/use-org-access";
 import { useAppPathname, useOrgHref } from "@/lib/use-org-href";
 import { isOrgAdminRole } from "@/lib/org-roles";
 import { Button } from "@/components/ui/button";
@@ -119,6 +123,9 @@ const CUSTOMER_NAV_LINKS: NavLink[] = [
   },
 ];
 
+// Abundant's own pages, which customer orgs never see.
+const ABUNDANT_ONLY_HREFS = new Set(["/deliveries", "/leaderboard"]);
+
 function isNavLinkActive(pathname: string, link: NavLink): boolean {
   return link.prefix ? pathname.startsWith(link.href) : pathname === link.href;
 }
@@ -129,16 +136,23 @@ export function Nav() {
   const { user, isLoaded, isSignedIn } = useUser();
   const { orgRole } = useAuth();
   const { signOut } = useClerk();
-  // Customer orgs get their shared work only, and no Admin.
+  // View-only orgs get their shared work only. Customer orgs that run jobs
+  // get the app without Abundant's own pages, and always the Shared link.
   const viewer = useIsViewerOrg();
-  const isOrgAdmin = isOrgAdminRole(orgRole) && !viewer;
-  // Only orgs that other orgs shared experiments with get the Shared link.
+  const customer = useIsCustomerOrg();
+  const isOrgAdmin = isOrgAdminRole(orgRole) && !viewer && !customer;
+  // Other orgs get the Shared link once something is shared with them.
   const { data: incoming } = useIncomingShares();
   const navLinks = viewer
     ? CUSTOMER_NAV_LINKS
-    : incoming?.length
-      ? [...PRIMARY_NAV_LINKS, SHARED_NAV_LINK]
-      : PRIMARY_NAV_LINKS;
+    : customer
+      ? [
+          ...PRIMARY_NAV_LINKS.filter((l) => !ABUNDANT_ONLY_HREFS.has(l.href)),
+          SHARED_NAV_LINK,
+        ]
+      : incoming?.length
+        ? [...PRIMARY_NAV_LINKS, SHARED_NAV_LINK]
+        : PRIMARY_NAV_LINKS;
 
   return (
     <nav

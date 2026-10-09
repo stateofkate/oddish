@@ -65,6 +65,9 @@ def allowed_api_key_scopes(auth: AuthContext) -> list[APIKeyScope]:
     """Return scopes the current user may mint."""
     if not can_create_api_keys(auth):
         return []
+    # A view-only org can read what is shared with it, so read keys only.
+    if auth.org is not None and not auth.org.execution_enabled:
+        return [APIKeyScope.READ]
     role = auth.user.role if auth.user else auth.user_role
     if role == UserRole.ADMIN:
         return [APIKeyScope.FULL, APIKeyScope.TASKS, APIKeyScope.READ]

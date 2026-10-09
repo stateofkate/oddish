@@ -244,3 +244,26 @@ def test_homebrew_update_never_queries_or_installs_from_pypi(monkeypatch):
 def test_homebrew_upgrade_command_refuses_to_modify_managed_environment():
     with pytest.raises(PackageError, match='brew upgrade'):
         upgrade_command(_info(source='homebrew', manager='brew'))
+
+
+def test_script_install_update_says_rerun_the_script(monkeypatch):
+    import importlib
+    module = importlib.import_module('oddish.cli.update')
+    monkeypatch.setattr(module, 'inspect_install', lambda: _info(source='script', manager='script'))
+    monkeypatch.setattr(module, 'fetch_pypi_latest', lambda: pytest.fail('script installs must not query PyPI'))
+    result = runner.invoke(app, ['update', '--dry-run', '--json'])
+    assert result.exit_code == 1
+    assert '/cli/install.sh' in result.stdout
+    with pytest.raises(PackageError, match='install script'):
+        upgrade_command(_info(source='script', manager='script'))
+
+
+def test_inspect_install_reads_the_install_script_marker():
+    from oddish.cli._package import inspect_install
+
+    class _ScriptDist:
+        def read_text(self, name):
+            return 'script\n' if name == 'ODDISH_INSTALL' else None
+
+    info = inspect_install(distribution=_ScriptDist())
+    assert (info.source, info.manager, info.source_label) == ('script', 'script', 'install script')

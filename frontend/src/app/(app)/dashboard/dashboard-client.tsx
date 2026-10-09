@@ -67,6 +67,7 @@ import {
 } from "@/lib/dashboard-request";
 import { badgeVariants } from "@/components/ui/badge";
 import { UsageSummaryCard } from "@/components/usage-overview";
+import { useIsCustomerOrg } from "@/lib/use-org-access";
 import { QuotaUsageCard } from "@/components/quota-usage-card";
 import { CostLeaderboardStrip } from "@/components/cost-leaderboard";
 import {
@@ -1061,6 +1062,7 @@ function ExperimentTrialFilters() {
 // =============================================================================
 
 export function DashboardClient() {
+  const customer = useIsCustomerOrg();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { userId, orgId } = useAuth();
@@ -1181,9 +1183,14 @@ export function DashboardClient() {
 
   return (
     <div className="space-y-4">
-      <QuotaUsageCard />
-      <UsageSummaryCard />
-      <CostLeaderboardStrip />
+      {/* Customer orgs never see Abundant's quota, budget, or spend. */}
+      {customer === false && (
+        <>
+          <QuotaUsageCard />
+          <UsageSummaryCard />
+          <CostLeaderboardStrip />
+        </>
+      )}
       <RecentTasksCard
         searchQuery={searchQuery}
         onSearchQueryChange={handleSearchChange}

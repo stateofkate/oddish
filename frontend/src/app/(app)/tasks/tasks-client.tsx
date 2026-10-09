@@ -12,6 +12,7 @@ import {
   useTaskBrowseRevalidate,
 } from "@/lib/use-task-browse";
 import { cn } from "@/lib/utils";
+import { useIsCustomerOrg } from "@/lib/use-org-access";
 
 const AUTO_REFRESH_KEY = "oddish.tasks.autoRefresh";
 const REFRESH_MS = 60000;
@@ -20,6 +21,7 @@ const REFRESH_MS = 60000;
 // the space up to the viewport top so no card shows above it. Its height is published
 // as --tasks-header-h so the sticky filter sidebar can sit right below it.
 export function TasksHeader() {
+  const customer = useIsCustomerOrg();
   const { deliveryId, delivery, deliveryError } = useSelection();
   const ref = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -67,7 +69,8 @@ export function TasksHeader() {
             </p>
           ) : null}
         </div>
-        <SelectionBar />
+        {/* Selection feeds deliveries, which are Abundant's own tool. */}
+        {customer !== true && <SelectionBar />}
       </div>
       <TasksToolbar showImport={!deliveryId} />
     </header>

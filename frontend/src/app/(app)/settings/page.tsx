@@ -162,7 +162,11 @@ const SECTIONS: {
   },
 ];
 
-const VIEWER_SECTIONS = new Set<SettingsSection>(["profile", "workspace"]);
+const VIEWER_SECTIONS = new Set<SettingsSection>([
+  "profile",
+  "workspace",
+  "api-keys",
+]);
 
 function isSettingsSection(value: string | null): value is SettingsSection {
   return (
@@ -1495,11 +1499,12 @@ export default function SettingsPage() {
             <SectionContainer active={section === "workspace"}>
               <WorkspaceSection />
             </SectionContainer>
+            {/* View-only orgs mint read keys here too. */}
+            <SectionContainer active={section === "api-keys"}>
+              <APIKeysPanel />
+            </SectionContainer>
             {!viewer && (
               <>
-                <SectionContainer active={section === "api-keys"}>
-                  <APIKeysPanel />
-                </SectionContainer>
                 <SectionContainer active={section === "byok"}>
                   <ByokPanel />
                 </SectionContainer>

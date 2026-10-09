@@ -80,6 +80,7 @@ class SharedExperiment(BaseModel):
     run_count: int = 0
     # Scores and QA as the sample's page shows them; never costs.
     summary: ExperimentPageSummary | None = None
+    show_qa: bool = True
 
 
 class SharedTask(BaseModel):
@@ -106,12 +107,18 @@ async def incoming_experiments(
         )
         .order_by(OrgShareModel.created_at.desc())
     )
+    viewer = await session.get(OrganizationModel, org_id) if org_id else None
+    # Customer orgs see QA only when Abundant has opened it to them.
+    show_qa = viewer is None or viewer.org_type != "customer" or viewer.show_shared_qa
     result = []
     for experiment, at in rows.all():
         # The sample page's own summary, so the list never disagrees with it.
         # ponytail: one summary per shared sample; a customer has a handful.
         summary = await experiment_page_summary(
-            session, experiment_id=experiment.id, org_id=experiment.org_id
+            session,
+            experiment_id=experiment.id,
+            org_id=experiment.org_id,
+            include_qa=show_qa,
         )
         result.append(
             SharedExperiment(
@@ -122,6 +129,7 @@ async def incoming_experiments(
                 task_count=summary.task_count,
                 run_count=summary.trial_count,
                 summary=summary,
+                show_qa=show_qa,
             )
         )
     return result

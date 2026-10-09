@@ -309,6 +309,7 @@ def create_app() -> FastAPI:
     from api.routers import (
         admin,
         api_keys,
+        cli,
         byok,
         clerk_webhooks,
         cost_excluded_experiments,
@@ -346,6 +347,7 @@ def create_app() -> FastAPI:
     api.include_router(ui_layouts.router)
     api.include_router(task_reviews.router)
     api.include_router(api_keys.router)
+    api.include_router(cli.router)
     api.include_router(byok.router)
     api.include_router(monitor.router)
     api.include_router(clerk_webhooks.router)

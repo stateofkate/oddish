@@ -15,6 +15,7 @@ from oddish.core.sharing.helpers import (
     DIRECT_TASK_KEY,
     share_costs_hidden,
     share_hides_costs,
+    share_shows_qa,
     share_viewer_org_id,
 )
 from oddish.db import get_read_session, get_session
@@ -343,6 +344,7 @@ async def set_share_viewer(
     # requests must not hand the previous caller's org to this one.
     share_viewer_org_id.set(None)
     share_hides_costs.set(False)
+    share_shows_qa.set(True)
     if not (authorization or x_clerk_authorization or x_authorization):
         return
     try:
@@ -353,7 +355,7 @@ async def set_share_viewer(
         if not auth.is_authenticated or auth.bound_analysis_trial_id is not None:
             return
         async with get_read_session() as session:
-            await require_signin_org(auth.org_id, session=session)
+            org = await require_signin_org(auth.org_id, session=session)
             key = request.path_params.get("public_token")
             # Directly shared tasks never show what they cost to make.
             hide = key == DIRECT_TASK_KEY or (
@@ -363,6 +365,7 @@ async def set_share_viewer(
         return
     share_viewer_org_id.set(auth.org_id)
     share_hides_costs.set(hide)
+    share_shows_qa.set(org.org_type != "customer" or org.show_shared_qa)
 
 
 async def require_auth(
@@ -372,6 +375,36 @@ async def require_auth(
     """Authorize routes that do not borrow the approval read session."""
     async with authorized_read_session(request, auth):
         return auth
+
+
+async def require_signed_in(
+    request: Request,
+    auth: Annotated[AuthContext, Depends(get_auth_context)],
+) -> AuthContext:
+    """Any approved org, view-only included, for any HTTP method.
+
+    For the few writes a view-only org may make itself (minting a read key) and
+    for reads outside ``authorized_read_session``. Analysis sandbox keys keep
+    their own route allow-list.
+    """
+    if not auth.is_authenticated:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    async with get_read_session() as session:
+        await authorize_bound_analysis_request(request, auth, session)
+        auth.org = await require_signin_org(auth.org_id, session=session)
+    return auth
+
+
+async def require_signed_in_admin(
+    auth: Annotated[AuthContext, Depends(require_signed_in)],
+) -> AuthContext:
+    """``require_admin`` for the writes a view-only org may make (revoking its
+    own keys)."""
+    return await require_admin(auth)
 
 
 async def require_admin(
@@ -397,7 +430,7 @@ async def require_admin(
 
 
 async def require_api_key_creator(
-    auth: Annotated[AuthContext, Depends(require_auth)],
+    auth: Annotated[AuthContext, Depends(require_signed_in)],
 ) -> AuthContext:
     """
     Require a user that may create API keys.
@@ -455,5 +488,7 @@ __all__ = [
     "require_api_key_creator",
     "require_can_manage_quotas",
     "require_auth",
+    "require_signed_in",
+    "require_signed_in_admin",
     "get_auth_context",
 ]

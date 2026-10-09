@@ -125,7 +125,8 @@ async def test_viewer_org_signs_in_but_every_paid_route_is_refused(org_id):
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
-        for path in PAID_ROUTES:
+        # A view-only org may mint read keys (see test_cli_install.py).
+        for path in (p for p in PAID_ROUTES if p != "/api-keys"):
             response = await client.post(path, json={})
             assert response.status_code == 403, (path, response.text)
             assert "view-only" in response.text
