@@ -19,25 +19,25 @@ Six kinds of evidence reject the task on their own. Look for them first. If you 
 * Any reported task defect from the source audit or an execution review, including historical lower-severity findings. Every newly reported defect has tier `must_fix`. This is a delivery requirement; it does not establish causation for an execution. A delivery acknowledgment permits an exception without making the task defect-free.
 * A used leak. A trial read the hidden tests, the solution, or other files the task must keep hidden (subtype `hidden_file_leak`, `test_inspection`, `oracle_copying`, or `unintended_access`).
 * An answer in the instruction. A trial passed with work that copies or restates text from the instruction (subtype `solution_leaked_in_instruction`). The task measures copying, so every pass is meaningless.
-* A found leak. A `must_fix` finding with the dimension `info_leakage`, from the static quality check or from a trial. The finding counts even if no trial used the leak.
+* A found leak. A `must_fix` finding with the dimension `info_leakage`, from the source audit or from a trial. The finding counts even if no trial used the leak.
 * Weak tests. A trial measured that the tests also pass work that does not solve the task. Example: the untouched base model already scores above the pass threshold. Weak tests make every pass meaningless, including the ones labeled GOOD_SUCCESS.
 * A failed baseline. The nop baseline changes nothing, so if it passed, the task was already solved. The oracle baseline applies the reference solution, so if it failed, the reference solution is broken.
 
 ## STEP 2: JUDGE THE REST
 
-If step 1 found nothing, the remaining evidence is opinion — claims like "the instruction is unclear" or "the tests are too strict". One trial's opinion can simply be wrong. Trust an opinion only when most trials agree on it. Harness errors say nothing, so leave them out when you decide what "most trials" means.
+If step 1 found nothing, the remaining evidence is opinion: a trial label that claims a task problem without a reported finding, like "the instruction is unclear" or "the tests are too strict". A reported finding always belongs to step 1. One trial's opinion can simply be wrong. Trust an opinion only when most trials agree on it. Harness errors say nothing, so leave them out when you decide what "most trials" means.
 
 Three rules:
 
-1. A difficult task is not a bad task. A benchmark works best when only 10-40% of trials pass, so failures are expected.
+1. A difficult task is not a bad task. A benchmark works best when only 10-40% of trials pass, so failures are expected. The pass rate alone never decides the verdict.
 2. One fair success proves the task can be solved.
-3. When a trial claims the instruction is missing information, check: could the agent have found that information in the code? If yes, ignore the claim.
+3. When a trial claims the instruction is missing information, check the solver-visible starting files. If one states it, or declares it with the exact name and the same signature or argument count that the test uses, ignore the claim, even if the agent never opened that file.
 
 The decision: reject if most trials show the same task problem, with clear evidence. Accept in every other case. A run where every trial fails, a mixed run, or a single BAD label — all of that is normal for a difficult task.
 
 ## STEP 3: SET THE CONFIDENCE
 
-* An immediate rejection is high confidence. One exception: if the only evidence is a single trial claiming weak tests, and the static quality check has no matching `must_fix` `verifier` finding, use medium.
+* An immediate rejection is high confidence. One exception: if the only evidence is a single trial claiming weak tests, and the source audit has no matching `must_fix` `verifier` finding, use medium.
 * A rejection because most trials show the same problem is high confidence.
 * An accept is high confidence when the trials agree, and low when they disagree.
 
@@ -47,6 +47,6 @@ The enclosing QA brief owns the output file and JSON structure. Fill its `verdic
 
 * Write for the task's author, who reads this once and has seen none of the analyses. Use short sentences, plain words, and no jargon.
 * Wrap every code name in backticks: files, tests, functions, variables, config keys. Use no other formatting.
-* `primary_issue` — null when you accept. When you reject, state the problem with a count: "3/4 trials fail on an error string the instruction never states". Start with "CRITICAL:" when a baseline failed.
-* `recommendations` — at most two small suggestions when you accept. When you reject, three to five specific fixes, most common problem first, no duplicates. "Add the file path to instruction.md line 15" is a fix; "improve the instructions" is not.
+* `primary_issue` — null when you accept. When you reject, state the problem with a count: "3/4 trials fail because `test_io` compares output byte for byte". Start with "CRITICAL:" when a baseline failed.
+* `recommendations` — none when you accept. When you reject, one fix per distinct problem, at most five, most common problem first, no duplicates. A fix keeps the task's goal, inputs, workload, and tolerances. Never recommend telling the solver where the problem is or how to fix it (the file to edit, the function that holds the bug, the algorithm). Never recommend shrinking inputs or removing a check of a requirement that the instruction or a solver-visible starting file states. A fix may state a required name, signature, path, or format that the tests use and that no solver-visible starting file declares. "Make `test_parse` accept any whitespace instead of matching the reference byte for byte" is a fix; "improve the instructions" is not.
 * `reasoning` — what the trials showed. If you rejected immediately, name the evidence. If you disagree with a trial's label, name the trial and say why.

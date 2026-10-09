@@ -29,16 +29,16 @@ class TrialClassificationModel(BaseModel):
         "HARNESS_ERROR", "GOOD_FAILURE", "BAD_FAILURE", "GOOD_SUCCESS", "BAD_SUCCESS"
     ] = Field(description="Top-level classification")
     subtype: str = Field(
-        description="Specific subtype from the taxonomy (e.g., 'Timeout', 'Underspecified Instruction')"
+        description="One subtype listed under the classification, spelled exactly (e.g., 'underspecified_instruction')"
     )
     evidence: str = Field(
-        description="Specific evidence from files: test names, error messages, code snippets"
+        description="One-sentence bullets, one per line, each citing a test name, file and line, or trajectory step"
     )
     root_cause: str = Field(
-        description="1-2 sentence explanation of what caused this outcome"
+        description="What caused this outcome: one sentence for GOOD labels, 1-2 sentences otherwise"
     )
     recommendation: str = Field(
-        description="How to fix the task (if the label marks a task problem), or 'N/A' if task is fine"
+        description="How to fix the task when the label marks a task problem; otherwise exactly 'N/A'"
     )
     action_items: list[ActionItem] = Field(
         default_factory=list,
@@ -62,7 +62,7 @@ class TaskVerdictModel(BaseModel):
     )
     recommendations: list[str] = Field(
         default_factory=list,
-        description="Actionable recommendations (3-5 for rejected tasks)",
+        description="One fix per distinct problem for a rejected task, at most 5; empty when accepted",
     )
     reasoning: str | None = Field(
         default=None, description="1-2 sentence explanation of the verdict (optional)"
@@ -165,9 +165,11 @@ class ActionItem(BaseModel):
     file: str = Field(description="Task-relative path, e.g. 'verifier.py'")
     line_start: int = Field(description="1-indexed first line")
     line_end: int = Field(description="1-indexed last line (== line_start if one line)")
-    title: str = Field(description="Short one-line summary")
+    title: str = Field(description="One full sentence that names the defect")
     detail: str = Field(description="What is wrong")
-    recommendation: str = Field(description="Concrete fix")
+    recommendation: str = Field(
+        description="Concrete fix that keeps the task's goal, inputs, workload, and tolerances; no where-to-look or how-to-fix hints"
+    )
     tier: ActionTier = Field(
         description="New task defects must be must_fix. Historical optional findings remain readable.",
         json_schema_extra={"enum": ["must_fix"]},
@@ -184,7 +186,7 @@ class ActionItem(BaseModel):
         default=None, description="Quote or step reference showing exploitation"
     )
     causal: bool = Field(
-        default=False, description="Did trajectory behavior result from this weakness?"
+        default=False, description="Did this weakness change this trial's outcome?"
     )
 
     @model_validator(mode="before")
@@ -220,7 +222,8 @@ class ExploitationAssessment(BaseModel):
         default=None, description="Quote or step index showing exploitation"
     )
     causal: bool = Field(
-        default=False, description="Did trajectory behavior result from this weakness?"
+        default=False,
+        description="Did the agent's use of this weakness change this trial's outcome?",
     )
 
 

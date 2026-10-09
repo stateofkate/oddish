@@ -117,7 +117,8 @@ def apply_deterministic_verdict_rules(
         confidence="high",
         primary_issue=f"Task review reported {count} must-fix {noun}.",
         recommendations=[
-            "Resolve every reported task defect before accepting the task."
+            "Fix each reported task defect without changing the task's goal, "
+            "inputs, workload, or tolerances."
         ],
         reasoning=(
             "Reported task defects require a fix or an explicit delivery exception. "

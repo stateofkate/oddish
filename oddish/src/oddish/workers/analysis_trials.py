@@ -538,7 +538,7 @@ Run `node /probe-harness/oddish-query --help` first. Fetch the complete, version
 node /probe-harness/oddish-query task fetch --into /tmp/qa-task-source
 ```
 
-Read `/tmp/qa-task-source/instruction.md` and `/tmp/qa-task-source/task.toml` completely. The fetched task source is QA-only evidence. Its presence does not prove that the historical solver could read hidden tests, verifier files, or the reference solution. Only the solver trajectory or a supplied pre-trial finding can prove that access.
+Read `/tmp/qa-task-source/instruction.md` and `/tmp/qa-task-source/task.toml` completely. Before you report that a name, path, signature, or format is missing from the task, search the solver-visible starting files under `/tmp/qa-task-source/environment` for it. The fetched task source is QA-only evidence. Its presence does not prove that the historical solver could read hidden tests, verifier files, or the reference solution. Only the solver trajectory or a supplied pre-trial finding can prove that access.
 
 For every trial ID above, fetch the result, verifier output, and trajectory without truncation and redirect them to files:
 
@@ -590,8 +590,8 @@ Field rules that are easy to confuse:
 
 Valid field examples:
 ```
-"evidence": "- Hidden test calls the undocumented three-argument method.\\n- The task instruction documents only two arguments.",
-"action_items": [{{"source":"post_trial","problem_type":"mismatch","dimension":"verifier","file":"tests/test_api.py","line_start":12,"line_end":12,"title":"Hidden API mismatch","detail":"The hidden test requires an undocumented argument.","recommendation":"Document the required signature.","tier":"must_fix","causal":false}}],
+"evidence": "- The test `test_connect` calls `connect` with three arguments (`tests/test_api.py` line 12).\\n- The instruction and the starting file `api.py` declare `connect` with two arguments (`environment/api.py` line 8).",
+"action_items": [{{"source":"post_trial","problem_type":"mismatch","dimension":"verifier","file":"tests/test_api.py","line_start":12,"line_end":12,"title":"The test passes `connect` a third argument that neither the instruction nor a starting file declares.","detail":"The instruction and `environment/api.py` declare two arguments, but the test passes three. A solver that follows the declared form fails this test.","recommendation":"Make `tests/test_api.py` line 12 call `connect` with the declared two arguments.","tier":"must_fix","causal":false}}],
 "exploitation": [{{"links_to":"audit-item-1","exploited":false,"exploit_evidence":null,"causal":false}}]
 ```
 
