@@ -408,3 +408,191 @@ async def test_version_without_fingerprint_supports_comment_crud(review_api):
         )
     ).status_code == 200
     assert (await client.get(PATH)).json()["comments"] == []
+
+
+@pytest.mark.asyncio
+async def test_single_review_save_requires_both_fields_and_is_atomic(review_api):
+    client, _, _ = review_api
+    payload = {
+        "score": 4,
+        "body": "Clear requirements",
+        "expected_revision": 0,
+        "client_request_id": str(uuid4()),
+    }
+    for missing in ("score", "body"):
+        invalid = {key: value for key, value in payload.items() if key != missing}
+        assert (await client.post(PATH, json=invalid)).status_code == 422
+    assert (await client.post(PATH, json={**payload, "body": "  "})).status_code == 422
+    assert (await client.post(PATH, json={**payload, "score": None})).status_code == 422
+    response = await client.post(PATH, json=payload)
+    assert response.status_code == 200, response.text
+    original = (await client.get(PATH)).json()
+    assert original["own_rating"]["score"] == 4
+    assert original["comments"][0]["body"] == "Clear requirements"
+    comment = original["comments"][0]
+    edit = {
+        **payload,
+        "score": 2,
+        "body": "Needs clearer requirements",
+        "expected_revision": original["own_rating_revision"],
+        "comment_id": comment["id"],
+        "comment_revision": comment["revision"],
+    }
+    assert (
+        await client.post(PATH, json={**edit, "comment_revision": 99})
+    ).status_code == 409
+    after_failure = (await client.get(PATH)).json()
+    assert after_failure["own_rating"] == original["own_rating"]
+    assert after_failure["comments"] == original["comments"]
+    assert (await client.post(PATH, json=edit)).status_code == 200
+    updated = (await client.get(PATH)).json()
+    assert updated["own_rating"]["score"] == 2
+    assert updated["comments"][0]["body"] == "Needs clearer requirements"
+    assert len(updated["comments"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_review_save_cannot_edit_another_reviewer_or_leave_a_rating(review_api):
+    client, auth, _ = review_api
+    payload = {
+        "score": 4,
+        "body": "Feedback",
+        "expected_revision": 0,
+        "client_request_id": str(uuid4()),
+    }
+    assert (await client.post(PATH, json=payload)).status_code == 200
+    review = (await client.get(PATH)).json()
+    auth.user_id = "bob"
+    auth.user_role = UserRole.ADMIN
+    edit = {**payload, "comment_id": review["comments"][0]["id"], "comment_revision": 1}
+    assert (await client.post(PATH, json=edit)).status_code == 403
+    assert (await client.get(PATH)).json()["own_rating"] is None
+    failed = {
+        **payload,
+        "client_request_id": str(uuid4()),
+        "comment_id": "missing",
+        "comment_revision": 1,
+    }
+    assert (await client.post(PATH, json=failed)).status_code == 403
+    assert (await client.get(PATH)).json()["rating_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_own_review_survives_pagination_and_atomic_delete_rolls_back(review_api):
+    client, auth, _ = review_api
+    saved = await client.post(
+        PATH,
+        json={
+            "score": 3,
+            "expected_revision": 0,
+            "body": "My saved review",
+            "client_request_id": str(uuid4()),
+        },
+    )
+    assert saved.status_code == 200
+    own_id = saved.json()["id"]
+    auth.user_id = "bob"
+    for index in range(3):
+        assert (
+            await client.post(
+                PATH + "/comments",
+                json={"body": f"Newer {index}", "client_request_id": str(uuid4())},
+            )
+        ).status_code == 200
+    auth.user_id = "alice"
+    page = (await client.get(PATH + "?limit=1")).json()
+    assert page["comment_count"] == 4
+    assert page["comments"][0]["id"] != own_id
+    assert page["own_comment"]["id"] == own_id
+    assert page["own_comment"]["body"] == "My saved review"
+    assert (
+        await client.request(
+            "DELETE",
+            PATH,
+            json={"comment_id": own_id, "expected_revision": 1, "rating_revision": 0},
+        )
+    ).status_code == 409
+    stale = await client.request(
+        "DELETE",
+        PATH,
+        json={"comment_id": own_id, "expected_revision": 2, "rating_revision": 1},
+    )
+    assert stale.status_code == 409
+    unchanged = (await client.get(PATH)).json()
+    assert unchanged["own_rating"]["score"] == 3
+    assert unchanged["own_comment"]["id"] == own_id
+    auth.user_id = "bob"
+    assert (
+        await client.request(
+            "DELETE",
+            PATH,
+            json={"comment_id": own_id, "expected_revision": 1, "rating_revision": 0},
+        )
+    ).status_code == 403
+    auth.user_id = "alice"
+    assert (
+        await client.request(
+            "DELETE",
+            PATH,
+            json={"comment_id": own_id, "expected_revision": 1, "rating_revision": 1},
+        )
+    ).status_code == 200
+    deleted = (await client.get(PATH)).json()
+    assert deleted["own_rating"] is None and deleted["own_comment"] is None
+    assert deleted["comment_count"] == 3 and deleted["rating_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_combined_delete_uses_latest_rating_revision_with_history(review_api):
+    from datetime import datetime, timezone
+
+    from models import TaskReviewRatingModel
+
+    client, _, sessions = review_api
+    async with sessions.begin() as session:
+        session.add(
+            TaskReviewRatingModel(
+                id="old-rating",
+                org_id="org",
+                task_version_id="v1",
+                reviewer_id="alice",
+                score=1,
+                revision=99,
+                updated_at=datetime(2020, 1, 1, tzinfo=timezone.utc),
+                deleted_at=datetime(2020, 1, 2, tzinfo=timezone.utc),
+            )
+        )
+        session.add(
+            TaskReviewRatingModel(
+                id="current-rating",
+                org_id="org",
+                task_version_id="v1",
+                reviewer_id="alice",
+                score=3,
+                revision=1,
+            )
+        )
+    saved = await client.post(
+        PATH,
+        json={
+            "score": 4,
+            "expected_revision": 1,
+            "body": "Current review",
+            "client_request_id": str(uuid4()),
+        },
+    )
+    assert saved.status_code == 200, saved.text
+    current = (await client.get(PATH)).json()
+    assert current["own_rating_revision"] == 2
+    assert (
+        await client.request(
+            "DELETE",
+            PATH,
+            json={
+                "comment_id": saved.json()["id"],
+                "expected_revision": 1,
+                "rating_revision": 2,
+            },
+        )
+    ).status_code == 200
+    assert (await client.get(PATH)).json()["own_rating"] is None

@@ -24,6 +24,14 @@ CommentBody = Annotated[
 ]
 
 
+class ReviewWrite(RatingWrite):
+    score: int = Field(ge=1, le=5, strict=True)
+    body: CommentBody
+    client_request_id: UUID
+    comment_id: str | None = Field(default=None, max_length=36)
+    comment_revision: int | None = Field(default=None, ge=1, strict=True)
+
+
 class CommentCreate(ReviewInput):
     body: CommentBody
     client_request_id: UUID
@@ -32,6 +40,11 @@ class CommentCreate(ReviewInput):
 
 class CommentDelete(ReviewInput):
     expected_revision: int = Field(ge=1, strict=True)
+
+
+class ReviewDelete(CommentDelete):
+    comment_id: str = Field(max_length=36)
+    rating_revision: int = Field(ge=0, strict=True)
 
 
 class CommentEdit(CommentDelete):
@@ -71,6 +84,8 @@ class ReviewPage(BaseModel):
     own_rating_revision: int
     ratings: list[Rating]
     comments: list[Comment]
+    own_comment: Comment | None = None
+    comment_count: int = 0
     next_before: datetime | None = None
     next_before_id: str | None = None
 

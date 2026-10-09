@@ -3867,6 +3867,11 @@ Internal reviews are hosted-only under `/tasks/{task_id}/versions/{version_id}/r
 Strict Pydantic writes reject caller-supplied identities and stale review revisions.
 Writes lock the task version to serialize concurrent rating updates. Ratings use compare-and-swap revisions and comment POSTs
 use org/reviewer-scoped request UUIDs. No review data is added to share responses.
+The base review POST atomically saves a required rating and comment, or updates
+an owned comment with its revision. Base DELETE soft-deletes the owned comment
+and rating together with revision checks. Existing individual routes remain
+available. GET includes the latest own comment independently of pagination and
+a comment count, so returning reviewers edit their existing feedback.
 
 The authenticated Next.js review proxies preserve the hosted task/version review
 routes, revision checks, and comment cursors. The dashboard
