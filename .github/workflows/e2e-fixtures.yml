@@ -74,7 +74,9 @@ jobs:
         working-directory: frontend
         env:
           E2E_REVIEW_FIXTURES: "1"
-        run: pnpm exec playwright test --config playwright.files.config.ts --output fixture-test-results
+        run: |
+          node --experimental-strip-types --test tests/dashboard-effort.test.ts tests/dashboard-queue-filter.test.ts
+          pnpm exec playwright test --config playwright.files.config.ts --output fixture-test-results
 
       - name: Upload Playwright artifacts
         if: always()

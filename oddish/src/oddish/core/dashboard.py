@@ -24,6 +24,10 @@ from sqlalchemy import (
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
+from oddish.core.task_effort import completed_model_clause, task_effort_columns
+from oddish.core.task_browse_metrics import browse_trial_scope
+from oddish.filters.experiment_effort import ExperimentEffortFilter
+from oddish.schemas import ExperimentEffortSummary
 from oddish.core.baseline_gate import baseline_agent_clause
 from oddish.core.cost_basis import settled_cost_columns, settled_cost_parts
 from oddish.core.verdict_state import (
@@ -498,9 +502,27 @@ def _build_aggregates_for_experiment_ids(
         effective_version.c.task_version_id == TrialModel.task_version_id,
     )
 
+    effort_scope = and_(
+        at_effective_version,
+        *browse_trial_scope(),
+        exists(select(TaskModel.id).where(
+            TaskModel.id == TrialModel.task_id, TaskModel.deleted_at.is_(None)
+        )),
+        or_(
+            TrialModel.task_version_id.is_(None),
+            exists(select(TaskVersionModel.id).where(
+                TaskVersionModel.id == TrialModel.task_version_id,
+                TaskVersionModel.deleted_at.is_(None),
+            )),
+        ),
+    )
+    measured_cost = and_(completed_model_clause(), effort_scope, TrialModel.cost_usd >= 0)
     trial_agg_query = (
         select(
             member.c.experiment_id.label("experiment_id"),
+            *task_effort_columns(effort_scope),
+            func.coalesce(func.sum(TrialModel.cost_usd).filter(measured_cost), 0).label("cost_sum"),
+            func.count().filter(measured_cost).label("cost_trial_count"),
             func.max(TrialModel.created_at).label("last_trial_created_at"),
             func.count(func.distinct(TrialModel.task_id)).label("trial_task_count"),
             func.count(TrialModel.id).label("total_trials"),
@@ -1207,6 +1229,7 @@ async def load_dashboard_experiments(
     experiments_tool_names: Sequence[str] | None = None,
     experiments_tool_count_mins: Mapping[str, int] | None = None,
     experiments_trial_metric_match: str = "any",
+    experiments_effort: ExperimentEffortFilter | None = None,
     experiments_queue: str | None = None,
     experiments_queue_state: str | None = None,
     experiments_author_user_id: str | None = None,
@@ -1378,6 +1401,9 @@ async def load_dashboard_experiments(
         page_query = page_query.where(
             ExperimentSummaryModel.payload.is_not(None), status_predicate
         )
+    page_query = (experiments_effort or ExperimentEffortFilter()).apply(
+        page_query, ExperimentSummaryModel.payload
+    )
     page_query = (
         page_query.order_by(
             nulls_last(ExperimentModel.last_activity_at.desc()),
@@ -1672,6 +1698,8 @@ async def rebuild_dashboard_experiments(
             score_agg.c.avg_score.label("avg_score"),
             task_agg.c.last_task_created_at,
             trial_agg.c.last_trial_created_at,
+            trial_agg.c.effort_completed_trials,
+            *[trial_agg.c[field] for field in ExperimentEffortSummary.model_fields if field != "completed_trials"],
         )
         .select_from(ExperimentModel)
         .outerjoin(task_agg, task_agg.c.experiment_id == ExperimentModel.id)
@@ -1828,6 +1856,10 @@ async def rebuild_dashboard_experiments(
                 "reward_sum": float(merged["reward_sum"] or 0.0),
                 "reward_total": int(merged["reward_total"] or 0),
                 "avg_score": merged["avg_score"],
+                "effort": ExperimentEffortSummary(
+                    completed_trials=int(agg["effort_completed_trials"] or 0) if agg else 0,
+                    **{field: (agg[field] or 0) if agg else 0 for field in ExperimentEffortSummary.model_fields if field != "completed_trials"},
+                ).model_dump(mode="json"),
                 "analysis_tasks": int(merged["analysis_tasks"] or 0),
                 "verdict_good": int(merged["verdict_good"] or 0),
                 "verdict_needs_review": int(merged["verdict_needs_review"] or 0),
@@ -2107,6 +2139,7 @@ async def get_dashboard_core(
     experiments_tool_names: Sequence[str] | None = None,
     experiments_tool_count_mins: Mapping[str, int] | None = None,
     experiments_trial_metric_match: str = "any",
+    experiments_effort: ExperimentEffortFilter | None = None,
     experiments_queue: str | None = None,
     experiments_queue_state: str | None = None,
     experiments_author_user_id: str | None = None,
@@ -2285,6 +2318,7 @@ async def get_dashboard_core(
             experiments_tool_names=experiments_tool_names,
             experiments_tool_count_mins=experiments_tool_count_mins,
             experiments_trial_metric_match=experiments_trial_metric_match,
+            experiments_effort=experiments_effort,
             experiments_queue=experiments_queue,
             experiments_queue_state=experiments_queue_state,
             experiments_author_user_id=experiments_author_user_id,

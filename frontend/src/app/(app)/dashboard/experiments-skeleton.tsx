@@ -1,17 +1,23 @@
+import type { ReactNode } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
   TableBody,
   TableCell,
-  TableHead,
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
 
-// Placeholder rows shown while the experiments list is (re)loading — e.g. when
-// selecting Mine or a member, changing status, or paging. Mirrors
-// the real table's columns so the layout doesn't jump when data arrives.
-export function ExperimentsSkeleton({ rows = 10 }: { rows?: number }) {
+// Reuse the live headers so changing a filter doesn't switch column layouts.
+export function ExperimentsSkeleton({
+  rows = 10,
+  headers,
+  columns,
+}: {
+  rows?: number;
+  headers: ReactNode;
+  columns: number;
+}) {
   return (
     <div
       className="min-h-[560px] overflow-x-hidden"
@@ -20,48 +26,18 @@ export function ExperimentsSkeleton({ rows = 10 }: { rows?: number }) {
     >
       <Table>
         <TableHeader>
-          <TableRow>
-            <TableHead>Experiment</TableHead>
-            <TableHead>Author</TableHead>
-            <TableHead>Last run</TableHead>
-            <TableHead>PR</TableHead>
-            <TableHead>Tasks</TableHead>
-            <TableHead>Trials</TableHead>
-            <TableHead>Avg score</TableHead>
-            <TableHead className="text-right">Last task</TableHead>
-            <TableHead className="text-right">Delete</TableHead>
-          </TableRow>
+          <TableRow>{headers}</TableRow>
         </TableHeader>
         <TableBody>
-          {Array.from({ length: rows }).map((_, i) => (
-            <TableRow key={i}>
-              <TableCell>
-                <Skeleton className="h-3.5 w-40" />
-              </TableCell>
-              <TableCell>
-                <Skeleton className="h-3.5 w-24" />
-              </TableCell>
-              <TableCell>
-                <Skeleton className="h-3.5 w-24" />
-              </TableCell>
-              <TableCell>
-                <Skeleton className="h-5 w-20 rounded-full" />
-              </TableCell>
-              <TableCell>
-                <Skeleton className="h-3.5 w-6" />
-              </TableCell>
-              <TableCell>
-                <Skeleton className="h-3.5 w-16" />
-              </TableCell>
-              <TableCell>
-                <Skeleton className="h-3.5 w-10" />
-              </TableCell>
-              <TableCell className="text-right">
-                <Skeleton className="ml-auto h-3.5 w-20" />
-              </TableCell>
-              <TableCell className="text-right">
-                <Skeleton className="ml-auto h-8 w-8 rounded-md" />
-              </TableCell>
+          {Array.from({ length: rows }, (_, row) => (
+            <TableRow key={row}>
+              {Array.from({ length: columns }, (_, column) => (
+                <TableCell key={column}>
+                  <Skeleton
+                    className={column === 0 ? "h-3.5 w-40" : "h-3.5 w-16"}
+                  />
+                </TableCell>
+              ))}
             </TableRow>
           ))}
         </TableBody>

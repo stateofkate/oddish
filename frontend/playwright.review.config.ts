@@ -9,6 +9,7 @@ export default defineConfig({
     "qa-evals.spec.ts",
     "qa-feedback.spec.ts",
     "dashboard-member-filter.spec.ts",
+    "dashboard-effort.spec.ts",
     "review-meaning.spec.ts",
     "ui-duplication.spec.ts",
     "task-effort-comparison.spec.ts",

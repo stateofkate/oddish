@@ -13,6 +13,7 @@ export default defineConfig({
     "trial-agent-run.spec.ts",
     "robot-recording.spec.ts",
     "dashboard-member-filter.spec.ts",
+    "dashboard-effort.spec.ts",
     "member-picker.spec.ts",
     "delivery-refresh.spec.ts",
     "tasks-picker.spec.ts",

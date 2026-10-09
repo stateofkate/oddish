@@ -8,7 +8,7 @@ import time
 from collections import defaultdict
 from datetime import timedelta
 
-from sqlalchemy import select, text, update
+from sqlalchemy import func, select, text, update
 
 from oddish.db import ExperimentModel, get_session, utcnow
 from oddish.db.models import ExperimentSummaryDirtyModel, ExperimentSummaryModel
@@ -114,7 +114,8 @@ async def refresh_experiment_summaries(*, batch_size: int = 32) -> int:
                 .where(
                     summary.next_attempt_at <= now,
                     (summary.revision > summary.built_revision)
-                    | (summary.refreshed_at < now - timedelta(days=1)),
+                    | (summary.refreshed_at < now - timedelta(days=1))
+                    | func.jsonb_exists(summary.payload, "effort").is_(False),
                 )
                 .order_by(
                     (summary.revision > summary.built_revision).desc(),

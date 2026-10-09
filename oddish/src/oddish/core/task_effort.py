@@ -15,9 +15,9 @@ def completed_model_clause() -> Any:
     )
 
 
-def task_effort_columns() -> list[Any]:
+def task_effort_columns(scope: Any = True) -> list[Any]:
     """Aggregate alongside existing scoped version summaries, inside their lock."""
-    eligible = completed_model_clause()
+    eligible = completed_model_clause() & scope
     steps = TrialModel.total_steps
     tokens = TrialModel.input_tokens + TrialModel.output_tokens
     has_steps = eligible & (steps >= 0)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
+from oddish.filters.experiment_effort import ExperimentEffortFilter, TokenMetric
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import case, func, or_, select
@@ -415,6 +416,14 @@ async def get_dashboard(
     experiments_tags_any: str | None = Query(None, description="CSV tag tokens, OR"),
     experiments_tags_none: str | None = Query(None, description="CSV tag tokens, NOT"),
     experiments_models: str | None = Query(None, description="Trial model CSV"),
+    experiments_min_avg_steps: float | None = Query(None, ge=0, allow_inf_nan=False),
+    experiments_max_avg_steps: float | None = Query(None, ge=0, allow_inf_nan=False),
+    experiments_min_avg_tokens: float | None = Query(None, ge=0, allow_inf_nan=False),
+    experiments_max_avg_tokens: float | None = Query(None, ge=0, allow_inf_nan=False),
+    experiments_min_avg_cost: float | None = Query(None, ge=0, allow_inf_nan=False),
+    experiments_max_avg_cost: float | None = Query(None, ge=0, allow_inf_nan=False),
+    experiments_token_metric: TokenMetric = Query(TokenMetric.TOTAL),
+    experiments_sort: str = Query("recent", pattern="^(recent|avg_(steps|tokens|cost)_(asc|desc))$"),
     experiments_min_steps: int | None = Query(None, ge=0),
     experiments_max_steps: int | None = Query(None, ge=0),
     experiments_min_duration_seconds: float | None = Query(None, ge=0),
@@ -504,6 +513,12 @@ async def get_dashboard(
 
     async with get_read_session() as session:
         try:
+            effort_filter = ExperimentEffortFilter(
+                min_steps=experiments_min_avg_steps, max_steps=experiments_max_avg_steps,
+                min_tokens=experiments_min_avg_tokens, max_tokens=experiments_max_avg_tokens,
+                min_cost=experiments_min_avg_cost, max_cost=experiments_max_avg_cost,
+                token_metric=experiments_token_metric, sort=experiments_sort,
+            )
             metric_filter = TrialMetricFilter.from_query(
                 models=experiments_models,
                 min_steps=experiments_min_steps,
@@ -531,6 +546,7 @@ async def get_dashboard(
             experiments_tags_any=experiments_tags_any,
             experiments_tags_none=experiments_tags_none,
             experiments_models=metric_filter.models,
+            experiments_effort=effort_filter,
             experiments_min_steps=metric_filter.min_steps,
             experiments_max_steps=metric_filter.max_steps,
             experiments_min_duration_seconds=metric_filter.min_duration_seconds,

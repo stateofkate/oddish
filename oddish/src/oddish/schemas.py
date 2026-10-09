@@ -2085,6 +2085,13 @@ class TaskEffortSummary(BaseModel):
     output_tokens_trial_count: int = Field(default=0, ge=0)
 
 
+class ExperimentEffortSummary(TaskEffortSummary):
+    """Completed model effort within an experiment, with recorded cost coverage."""
+
+    cost_sum: float = Field(default=0, ge=0)
+    cost_trial_count: int = Field(default=0, ge=0)
+
+
 class TaskBrowseItem(BaseModel):
     effort: TaskEffortSummary = Field(default_factory=TaskEffortSummary)
     sort_value: float | None = None

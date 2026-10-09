@@ -7,12 +7,18 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { isOrgAdminRole } from "@/lib/org-roles";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { EffortCell } from "@/components/effort-cell";
+import { TokenMetricSelect } from "@/components/token-metric-select";
+import { selectedTokenMetric, setTokenMetric } from "@/lib/token-metrics";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuCheckboxItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
@@ -72,6 +78,9 @@ import { QuotaUsageCard } from "@/components/quota-usage-card";
 import { OnboardingSteps } from "@/components/onboarding-steps";
 import { CostLeaderboardStrip } from "@/components/cost-leaderboard";
 import {
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -151,6 +160,53 @@ function ExperimentsTableBody({
 }) {
   const { userId, orgId } = useAuth();
   const queryParams = useSearchParams();
+  const pathname = usePathname();
+  const tokenMetric = selectedTokenMetric(queryParams);
+  const showDetails = queryParams.get("experiment_details") === "true";
+  const update = (change: (params: URLSearchParams) => void) => {
+    const params = new URLSearchParams(window.location.search);
+    change(params);
+    params.delete("page");
+    window.history.pushState(null, "", `${pathname}?${params}`);
+  };
+  const metricHeader = (label: string, sort: string, token = false) => {
+    const active = queryParams.get("sort")?.startsWith(`${sort}_`);
+    const ascending = active && queryParams.get("sort")?.endsWith("_asc");
+    const Icon = active ? (ascending ? ArrowUp : ArrowDown) : ArrowUpDown;
+    return (
+      <TableHead
+        className="whitespace-nowrap text-right"
+        aria-sort={active ? (ascending ? "ascending" : "descending") : "none"}
+      >
+        {token && (
+          <TokenMetricSelect
+            value={tokenMetric.value}
+            onChange={(value) =>
+              update((params) => {
+                setTokenMetric(params, value);
+              })
+            }
+          />
+        )}
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 py-2 hover:text-foreground"
+          aria-label={`Sort by ${label.toLowerCase()}`}
+          onClick={() =>
+            update((params) =>
+              params.set(
+                "sort",
+                `${sort}_${active && !ascending ? "asc" : "desc"}`,
+              ),
+            )
+          }
+        >
+          {!token && label}
+          <Icon className="h-3 w-3" aria-hidden />
+        </button>
+      </TableHead>
+    );
+  };
   const requestUrl = buildDashboardApiPath(
     dashboardExperimentsRequest(new URLSearchParams(queryParams.toString()))
   );
@@ -227,10 +283,35 @@ function ExperimentsTableBody({
     }
   };
 
-  if (isLoading || (!data && !error)) return <ExperimentsSkeleton />;
+  const headers = (
+    <>
+      <TableHead>Experiment</TableHead>
+      <TableHead>Author</TableHead>
+      {showDetails && <TableHead>Last run</TableHead>}
+      {showDetails && <TableHead>PR</TableHead>}
+      <TableHead>Tasks</TableHead>
+      <TableHead>Trials</TableHead>
+      <TableHead
+        className="cursor-help"
+        title="Average of per-task average reward, nop/oracle excluded"
+      >
+        Avg score
+      </TableHead>
+      {metricHeader("Avg steps", "avg_steps")}
+      {metricHeader(`Avg ${tokenMetric.label} tokens`, tokenMetric.sort, true)}
+      {metricHeader("Avg trial cost", "avg_cost")}
+      {showDetails && <TableHead className="text-right">Last task</TableHead>}
+      <TableHead className="text-right">Delete</TableHead>
+    </>
+  );
+
+  if (isLoading || (!data && !error))
+    return (
+      <ExperimentsSkeleton headers={headers} columns={showDetails ? 12 : 9} />
+    );
 
   return (
-    <>
+    <TooltipProvider>
       <div className="text-muted-foreground mb-3 text-[11px]">
         Showing {experiments.length}
         {" • "}
@@ -258,24 +339,7 @@ function ExperimentsTableBody({
       ) : (
         <div className="min-h-[560px] overflow-x-hidden">
           <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Experiment</TableHead>
-                <TableHead>Author</TableHead>
-                <TableHead>Last run</TableHead>
-                <TableHead>PR</TableHead>
-                <TableHead>Tasks</TableHead>
-                <TableHead>Trials</TableHead>
-                <TableHead
-                  className="cursor-help"
-                  title="Average of per-task average reward, nop/oracle excluded"
-                >
-                  Avg score
-                </TableHead>
-                <TableHead className="text-right">Last task</TableHead>
-                <TableHead className="text-right">Delete</TableHead>
-              </TableRow>
-            </TableHeader>
+            <TableHeader><TableRow>{headers}</TableRow></TableHeader>
             <TableBody className="[&_td]:text-xs">
               {experiments.map((experiment) => {
                 const avgScorePct =
@@ -330,7 +394,7 @@ function ExperimentsTableBody({
                         )}
                       </span>
                     </TableCell>
-                    <TableCell className="text-muted-foreground text-xs whitespace-nowrap">
+                    {showDetails && <><TableCell className="text-muted-foreground text-xs whitespace-nowrap">
                       <span className="text-foreground/80">
                         {formatTaskAuthor(
                           experiment.last_runner ?? experiment.last_author
@@ -382,7 +446,7 @@ function ExperimentsTableBody({
                       ) : (
                         <span className="text-muted-foreground">—</span>
                       )}
-                    </TableCell>
+                    </TableCell></>}
                     <TableCell>
                       {experiment.summary_pending
                         ? "Preparing…"
@@ -438,11 +502,14 @@ function ExperimentsTableBody({
                         </span>
                       )}
                     </TableCell>
-                    <TableCell className="text-muted-foreground text-right text-xs whitespace-nowrap">
+                    {["steps", tokenMetric.field, "cost"].map(metric => <TableCell key={metric} className="text-right">
+                      <EffortCell effort={experiment.effort} metric={metric as "steps" | typeof tokenMetric.field | "cost"} scope="This experiment's selected task versions." />
+                    </TableCell>)}
+                    {showDetails && <TableCell className="text-muted-foreground text-right text-xs whitespace-nowrap">
                       {experiment.last_created_at
                         ? formatShortDateTime(experiment.last_created_at)
                         : "—"}
-                    </TableCell>
+                    </TableCell>}
                     <TableCell className="text-right">
                       <Button
                         variant="ghost"
@@ -541,7 +608,7 @@ function ExperimentsTableBody({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </>
+    </TooltipProvider>
   );
 }
 
@@ -659,6 +726,7 @@ function RecentTasksCard({
               </DropdownMenuRadioGroup>
             </DropdownMenuContent>
           </DropdownMenu>
+          <ExperimentColumns />
           <ExperimentTrialFilters />
         </div>
       </CardHeader>
@@ -677,6 +745,40 @@ function RecentTasksCard({
     </Card>
   );
 }
+
+function ExperimentColumns() {
+  const params = useSearchParams();
+  const pathname = usePathname();
+  return (
+    <DropdownMenu modal={false}>
+      <DropdownMenuTrigger asChild>
+        <Button variant="outline" size="sm" className="h-8">
+          Columns
+          <ChevronDown className="ml-1 h-3.5 w-3.5" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuCheckboxItem
+          checked={params.get("experiment_details") === "true"}
+          onCheckedChange={(checked) => {
+            const next = new URLSearchParams(window.location.search);
+            if (checked) next.set("experiment_details", "true");
+            else next.delete("experiment_details");
+            window.history.pushState(null, "", `${pathname}?${next}`);
+          }}
+        >
+          Last run, PR and last task
+        </DropdownMenuCheckboxItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+const AVERAGE_FILTER_GROUPS = [
+  { label: "Avg steps", keys: ["min_avg_steps", "max_avg_steps"] },
+  { label: "Avg trial cost ($)", keys: ["min_avg_cost", "max_avg_cost"] },
+  { label: "Avg tokens", keys: ["min_avg_tokens", "max_avg_tokens"] },
+];
 
 // Trial filter groups managed by the popover, keyed by their URL params.
 // Mirrors the tasks sidebar's Trial group (label + per-group clear + h-8
@@ -708,6 +810,7 @@ const TRIAL_FILTER_GROUPS: {
 // Every URL param the trial filters own; the Suspense key and empty-state
 // checks read these so metric-filter changes behave like any other filter.
 const TRIAL_FILTER_PARAM_KEYS = [
+  ...AVERAGE_FILTER_GROUPS.flatMap((group) => group.keys),
   ...TRIAL_FILTER_GROUPS.flatMap((group) => group.keys),
   "trial_metric_match",
   "queue_state",
@@ -750,13 +853,13 @@ function ExperimentTrialFilters() {
   }
 
   const commit = (patch: Record<string, string>) => {
-    const next = new URLSearchParams(searchParams.toString());
+    const next = new URLSearchParams(window.location.search);
     for (const [key, value] of Object.entries(patch)) {
       if (value) next.set(key, value);
       else next.delete(key);
     }
     // Keep committed ranges ordered — the server rejects min > max.
-    for (const group of TRIAL_FILTER_GROUPS) {
+    for (const group of [...AVERAGE_FILTER_GROUPS, ...TRIAL_FILTER_GROUPS]) {
       if (group.keys.length !== 2) continue;
       const [minKey, maxKey] = group.keys;
       const min = Number(next.get(minKey));
@@ -786,20 +889,22 @@ function ExperimentTrialFilters() {
   const groupActive = (keys: readonly string[]) =>
     keys.some((key) => searchParams.get(key));
   const activeCount =
-    TRIAL_FILTER_GROUPS.filter((group) => groupActive(group.keys)).length +
+    [...AVERAGE_FILTER_GROUPS, ...TRIAL_FILTER_GROUPS].filter((group) => groupActive(group.keys)).length +
     (mode === "all" ? 1 : 0);
   const clearGroup = (keys: readonly string[]) =>
     commit(Object.fromEntries(keys.map((key) => [key, ""])));
   const help =
     "Any trial matches when one selected-model trial meets every metric constraint. All trials requires every selected-model trial to meet every constraint.";
 
-  const field = (key: string, placeholder: string, numeric: boolean) => (
+  const field = (key: string, placeholder: string, numeric: boolean, label?: string) => (
     <Input
       key={`${key}-${searchParams.get(key) ?? ""}`}
       defaultValue={searchParams.get(key) ?? ""}
       placeholder={placeholder}
       type={numeric ? "number" : "text"}
       min={numeric ? 0 : undefined}
+      step={label ? "any" : undefined}
+      aria-label={label}
       className="h-8 text-xs"
       onBlur={(event) => commit({ [key]: event.target.value.trim() })}
       onKeyDown={(event) => {
@@ -818,7 +923,7 @@ function ExperimentTrialFilters() {
           className="h-8 border-[#6f88b4]/20"
         >
           <Filter className="mr-1 h-3.5 w-3.5" />
-          Trial filters
+          Filters
           {activeCount > 0 ? (
             <span className="text-muted-foreground ml-1 text-[11px]">
               ({activeCount})
@@ -826,11 +931,11 @@ function ExperimentTrialFilters() {
           ) : null}
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-72 p-3">
+      <PopoverContent align="end" className="w-72 max-h-[var(--radix-popover-content-available-height)] overflow-y-auto p-3">
         <div className="mb-2 flex items-center justify-between">
           <span className="flex items-center gap-1.5 text-sm font-medium">
             <Filter className="h-3.5 w-3.5" />
-            Trial filters
+            Filters
             {activeCount > 0 ? (
               <span className="text-muted-foreground text-[11px]">
                 ({activeCount})
@@ -845,6 +950,7 @@ function ExperimentTrialFilters() {
                 commit(
                   Object.fromEntries(
                     [
+                      ...AVERAGE_FILTER_GROUPS.flatMap((group) => group.keys),
                       ...TRIAL_FILTER_GROUPS.flatMap((group) => group.keys),
                       "trial_metric_match",
                     ].map((key) => [key, ""])
@@ -856,7 +962,19 @@ function ExperimentTrialFilters() {
             </button>
           ) : null}
         </div>
-        <div className="space-y-3">
+        <Tabs defaultValue="averages">
+          <TabsList className="mb-3 w-full"><TabsTrigger value="averages" className="flex-1">Averages</TabsTrigger><TabsTrigger value="trials" className="flex-1">Trial metrics</TabsTrigger></TabsList>
+          <TabsContent value="averages" className="space-y-3">
+            <p className="text-xs text-muted-foreground">Completed model trials in this experiment's selected task versions.</p>
+            {AVERAGE_FILTER_GROUPS.map(group => <div key={group.label}>
+              <div className="mb-1.5 flex justify-between text-xs font-medium">
+                <span>{group.label}{group.label === "Avg tokens" && ` · ${selectedTokenMetric(searchParams).label}`}</span>
+                {groupActive(group.keys) && <button type="button" aria-label={`Clear ${group.label} filter`} onClick={() => clearGroup(group.keys)}><X className="h-3 w-3" /></button>}
+              </div>
+              <div className="flex items-center gap-1">{field(group.keys[0], "min", true, `Minimum ${group.label.toLowerCase()}`)}<span className="text-xs text-muted-foreground">–</span>{field(group.keys[1], "max", true, `Maximum ${group.label.toLowerCase()}`)}</div>
+            </div>)}
+          </TabsContent>
+          <TabsContent value="trials" className="space-y-3">
           {TRIAL_FILTER_GROUPS.map((group) => (
             <div
               key={group.label}
@@ -973,7 +1091,8 @@ function ExperimentTrialFilters() {
               ))}
             </div>
           </div>
-        </div>
+        </TabsContent>
+        </Tabs>
       </PopoverContent>
     </Popover>
   );
@@ -1032,7 +1151,7 @@ export function DashboardClient() {
     const status = overrides.status ?? statusFilter;
     const page = overrides.page ?? 1;
     const query = searchQuery.trim();
-    const params = new URLSearchParams(searchParams.toString());
+    const params = new URLSearchParams(window.location.search);
     params.delete("author");
     params.delete("status");
     params.delete("q");

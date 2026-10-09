@@ -17,8 +17,9 @@ import { cn } from "@/lib/utils";
 import type { TaskBrowseItem } from "@/lib/types";
 import { formatCostUsd } from "@/lib/format";
 import { TaskCard, TaskDeliveryHistory, TaskEvidence, TaskSortMetric } from "./task-card";
-import { TOKEN_METRICS, selectedTokenMetric, setTokenMetric } from "@/lib/token-metrics";
-import { TaskEffortCell } from "./task-effort-cell";
+import { selectedTokenMetric, setTokenMetric } from "@/lib/token-metrics";
+import { EffortCell as TaskEffortCell } from "@/components/effort-cell";
+import { TokenMetricSelect } from "@/components/token-metric-select";
 import { TaskRunSummary } from "@/components/task-run-summary";
 import { TaskBrowseLink } from "./task-browse-link";
 import { TasksMatchCount } from "./tasks-client";
@@ -263,14 +264,8 @@ export function RecentTasksResults({
                   const Icon = active ? (ascending ? ArrowUp : ArrowDown) : ArrowUpDown;
                   return <th key={column.label} className={cn("px-3 whitespace-nowrap", column.sort && "text-right")}
                     aria-sort={column.sort ? (active ? (ascending ? "ascending" : "descending") : "none") : undefined}>
-                    {column.label === "Avg tokens" && <select
-                      aria-label="Average token metric"
-                      className="max-w-full cursor-pointer rounded-sm bg-transparent py-2 text-xs hover:text-foreground focus-visible:outline focus-visible:outline-ring"
-                      value={tokenMetric.value}
-                      onChange={event => updateTaskSearchParams(params => { setTokenMetric(params, event.target.value); }, { resetPage: false })}
-                    >
-                      {TOKEN_METRICS.map(metric => <option key={metric.value} value={metric.value}>Avg tokens · {metric.label}</option>)}
-                    </select>}
+                    {column.label === "Avg tokens" && <TokenMetricSelect value={tokenMetric.value}
+                      onChange={value => updateTaskSearchParams(params => { setTokenMetric(params, value); }, { resetPage: false })} />}
                     {column.sort ? <button type="button"
                       aria-label={column.label === "Avg tokens" ? `Sort by average ${tokenMetric.label.toLowerCase()} tokens` : undefined}
                       className="inline-flex items-center gap-1 whitespace-nowrap rounded-sm py-2 hover:text-foreground focus-visible:outline focus-visible:outline-ring"

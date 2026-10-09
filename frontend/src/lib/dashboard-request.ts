@@ -1,3 +1,4 @@
+import { selectedTokenMetric, TOKEN_METRICS } from "./token-metrics.ts";
 import { parseTaskSearch } from "./tag-query.ts";
 type DashboardRequestParams = {
   tasks_limit?: number;
@@ -10,6 +11,14 @@ type DashboardRequestParams = {
   experiments_tags_any?: string;
   experiments_tags_none?: string;
   experiments_models?: string;
+  experiments_min_avg_steps?: number;
+  experiments_max_avg_steps?: number;
+  experiments_min_avg_tokens?: number;
+  experiments_max_avg_tokens?: number;
+  experiments_min_avg_cost?: number;
+  experiments_max_avg_cost?: number;
+  experiments_token_metric?: string;
+  experiments_sort?: string;
   experiments_min_steps?: number;
   experiments_max_steps?: number;
   experiments_min_duration_seconds?: number;
@@ -105,6 +114,8 @@ function buildDashboardSearchParams(
     }
   }
   for (const name of [
+    "experiments_token_metric",
+    "experiments_sort",
     "experiments_models",
     "experiments_trial_metric_match",
     "experiments_tool_names",
@@ -116,6 +127,12 @@ function buildDashboardSearchParams(
     if (value) params.set(name, value);
   }
   for (const name of [
+    "experiments_min_avg_steps",
+    "experiments_max_avg_steps",
+    "experiments_min_avg_tokens",
+    "experiments_max_avg_tokens",
+    "experiments_min_avg_cost",
+    "experiments_max_avg_cost",
     "experiments_min_steps",
     "experiments_max_steps",
     "experiments_min_duration_seconds",
@@ -190,6 +207,23 @@ export function dashboardExperimentsRequest(
     "max_duration_seconds"
   );
   const [minTools, maxTools] = metricRange("min_tool_calls", "max_tool_calls");
+  const averages = Object.fromEntries(
+    ["steps", "tokens", "cost"].flatMap((metric) => {
+      const [min, max] = metricRange(`min_avg_${metric}`, `max_avg_${metric}`);
+      return [
+        [`experiments_min_avg_${metric}`, min],
+        [`experiments_max_avg_${metric}`, max],
+      ];
+    })
+  );
+  const tokenMetric = selectedTokenMetric(searchParams);
+  const rawSort = params.sort ?? "recent";
+  const tokenSort = TOKEN_METRICS.some((metric) =>
+    rawSort === `${metric.sort}_asc` || rawSort === `${metric.sort}_desc`
+  );
+  const sort = tokenSort
+    ? `avg_tokens_${rawSort.endsWith("_asc") ? "asc" : "desc"}`
+    : rawSort;
   const pageNumber = Math.max(1, Number.parseInt(params.page ?? "", 10) || 1);
   const initialOffset = (pageNumber - 1) * DASHBOARD_DEFAULT_EXPERIMENTS_LIMIT;
 
@@ -214,6 +248,11 @@ export function dashboardExperimentsRequest(
       params.queue && QUEUE_STATES.includes(params.queue_state as QueueState)
         ? params.queue_state
         : undefined,
+    ...averages,
+    experiments_token_metric: tokenMetric.value,
+    experiments_sort: /^(recent|avg_(steps|tokens|cost)_(asc|desc))$/.test(sort)
+      ? sort
+      : "recent",
     experiments_min_steps: minSteps,
     experiments_max_steps: maxSteps,
     experiments_min_duration_seconds: minTime,

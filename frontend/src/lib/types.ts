@@ -910,6 +910,7 @@ export interface OrgQuotaUsage {
 }
 
 export interface DashboardExperiment {
+  effort?: TaskEffortSummary & { cost_sum: number; cost_trial_count: number };
   summary_pending?: boolean;
   id: string;
   name: string;
