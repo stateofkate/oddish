@@ -325,6 +325,19 @@ def test_the_audit_policy_still_rejects_model_conditioned_grading():
     assert "Do not report a fixed task only because every tested model fails" in brief
 
 
+def test_the_audit_policy_reports_strict_checks_and_answers_but_not_inputs():
+    """A leak is text that copying would pass on; a supplied method is an
+    input. A check stricter than the stated requirements is a finding whose
+    fix changes the test, not one that adds hints to the instruction."""
+    brief = build_audit_brief(task_name="demo")
+
+    assert "checks more than they state" in brief
+    assert "state how many checks copying passes" in brief
+    assert "is an input, not an answer" in brief
+    assert "Do not report that check as a `mismatch`" in brief
+    assert "Never recommend adding expected values" in brief
+
+
 @pytest.mark.parametrize("kind", ["audit", "qa"])
 def test_both_briefs_distinguish_reference_packaging_from_solver_shortcuts(kind):
     brief = (
