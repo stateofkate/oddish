@@ -196,3 +196,26 @@ async def test_running_checkpoints_do_not_dirty_completed_model_averages(experim
         summary = await session.get(ExperimentSummaryModel, eid)
         assert summary.payload["effort"]["steps_sum"] == 7
         assert summary.payload["effort"]["cost_sum"] == 1
+
+
+@pytest.mark.asyncio
+async def test_prepared_score_sort_is_paginated_and_unknowns_last(session):
+    org = uuid4().hex
+    ids = []
+    for score in (0, 0.8, None, 0.2):
+        exp = ExperimentModel(name=f"score-{score}", org_id=org)
+        session.add(exp)
+        await session.flush()
+        ids.append(exp.id)
+        session.add(ExperimentSummaryModel(experiment_id=exp.id,
+            payload={"avg_score": score}, built_revision=1, revision=1))
+    await session.flush()
+    for direction, expected in (("asc", [0, 3, 1, 2]), ("desc", [1, 3, 0, 2])):
+        seen = []
+        for offset in range(4):
+            rows, _ = await load_dashboard_experiments(session, org_id=org,
+                experiments_limit=1, experiments_offset=offset,
+                experiments_query=None, experiments_status="all",
+                experiments_effort=ExperimentEffortFilter(sort=f"avg_score_{direction}"))
+            seen.extend(row["id"] for row in rows)
+        assert seen == [ids[index] for index in expected]

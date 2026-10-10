@@ -27,7 +27,7 @@ class ExperimentEffortFilter(BaseModel):
     min_cost: float | None = Field(None, ge=0, allow_inf_nan=False)
     max_cost: float | None = Field(None, ge=0, allow_inf_nan=False)
     token_metric: TokenMetric = TokenMetric.TOTAL
-    sort: Literal["recent", "avg_steps_asc", "avg_steps_desc", "avg_tokens_asc", "avg_tokens_desc", "avg_cost_asc", "avg_cost_desc"] = "recent"
+    sort: Literal["recent", "avg_steps_asc", "avg_steps_desc", "avg_tokens_asc", "avg_tokens_desc", "avg_cost_asc", "avg_cost_desc", "avg_score_asc", "avg_score_desc"] = "recent"
 
     @model_validator(mode="after")
     def ordered_ranges(self):
@@ -52,6 +52,6 @@ class ExperimentEffortFilter(BaseModel):
                 query = query.where(average <= high)
         if self.sort != "recent":
             field, direction = self.sort.removeprefix("avg_").rsplit("_", 1)
-            value = averages[field]
+            value = payload["avg_score"].as_float() if field == "score" else averages[field]
             query = query.order_by((value.asc() if direction == "asc" else value.desc()).nulls_last())
         return query

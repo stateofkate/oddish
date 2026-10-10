@@ -815,6 +815,9 @@ policy, GitHub notification hooks, and public sharing / product endpoints.
 Clerk-based auth and org management, and Next.js route handlers that proxy
 requests to the backend.
 
+Dashboard experiment ordering accepts `experiments_sort=avg_score_asc|avg_score_desc`,
+using the displayed prepared average score before pagination, with missing scores last.
+
 The hosted `/admin` dashboard is tenant-scoped even though its core diagnostic
 helpers also serve the global self-hosted/operator view. Ordinary hosted queue
 status, queue health, worker, orphan, cost, per-user cost, and task-expansion

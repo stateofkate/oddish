@@ -244,3 +244,23 @@ test("same-tick control changes retain the live URL's sibling filters", async ({
   await expect(page).toHaveURL(/min_avg_steps=77/);
   await expect(page).toHaveURL(/max_avg_tokens=500/);
 });
+
+for (const [label, metric] of [["avg score", "score"], ["avg trial cost", "cost"]]) {
+  test(`${label} header toggles persisted server ordering`, async ({ page }) => {
+    const requests: string[] = [];
+    page.on("request", (req) => {
+      if (req.url().includes("/api/dashboard?")) requests.push(req.url());
+    });
+    await page.goto("/dashboard?token_metric=output&page=2");
+    const button = page.getByRole("button", { name: `Sort by ${label}`, exact: true });
+    await button.click();
+    await expect(page).toHaveURL(new RegExp(`sort=avg_${metric}_desc`));
+    await expect(page).not.toHaveURL(/page=2/);
+    await expect.poll(() => requests.some(url => new URL(url).searchParams.get("experiments_sort") === `avg_${metric}_desc`)).toBe(true);
+    await button.click();
+    await expect(page).toHaveURL(new RegExp(`sort=avg_${metric}_asc`));
+    await page.reload();
+    await expect(page.getByRole("columnheader").filter({ has: button })).toHaveAttribute("aria-sort", "ascending");
+    await expect(page.getByLabel("Average token metric")).toHaveValue("output");
+  });
+}

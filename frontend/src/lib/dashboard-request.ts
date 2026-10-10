@@ -250,7 +250,7 @@ export function dashboardExperimentsRequest(
         : undefined,
     ...averages,
     experiments_token_metric: tokenMetric.value,
-    experiments_sort: /^(recent|avg_(steps|tokens|cost)_(asc|desc))$/.test(sort)
+    experiments_sort: /^(recent|avg_(steps|tokens|cost|score)_(asc|desc))$/.test(sort)
       ? sort
       : "recent",
     experiments_min_steps: minSteps,

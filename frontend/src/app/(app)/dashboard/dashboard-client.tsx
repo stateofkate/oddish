@@ -169,13 +169,14 @@ function ExperimentsTableBody({
     params.delete("page");
     window.history.pushState(null, "", `${pathname}?${params}`);
   };
-  const metricHeader = (label: string, sort: string, token = false) => {
+  const metricHeader = (label: string, sort: string, token = false, title?: string) => {
     const active = queryParams.get("sort")?.startsWith(`${sort}_`);
     const ascending = active && queryParams.get("sort")?.endsWith("_asc");
     const Icon = active ? (ascending ? ArrowUp : ArrowDown) : ArrowUpDown;
     return (
       <TableHead
         className="w-px whitespace-nowrap text-right"
+        title={title}
         aria-sort={active ? (ascending ? "ascending" : "descending") : "none"}
       >
         <div className="inline-flex items-center gap-1 [&_select]:field-sizing-content [&_select]:max-w-48">
@@ -297,12 +298,7 @@ function ExperimentsTableBody({
       {metricHeader(`Avg ${tokenMetric.label} tokens`, tokenMetric.sort, true)}
       {metricHeader("Avg trial cost", "avg_cost")}
       {showDetails && <TableHead className="text-right">Last task</TableHead>}
-      <TableHead
-        className="cursor-help"
-        title="Average of per-task average reward, nop/oracle excluded"
-      >
-        Avg score
-      </TableHead>
+      {metricHeader("Avg score", "avg_score", false, "Average of per-task average reward, nop/oracle excluded")}
       <TableHead className="text-right">Delete</TableHead>
     </>
   );

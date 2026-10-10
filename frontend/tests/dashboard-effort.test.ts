@@ -57,3 +57,11 @@ test("invalid token sort uses recent ordering", () => {
   );
   assert.equal(request.experiments_sort, "recent");
 });
+
+for (const direction of ["asc", "desc"]) {
+  test(`score ${direction} ordering reaches the paginated API`, () => {
+    const params = request(new URLSearchParams(`sort=avg_score_${direction}&page=2`));
+    assert.equal(params.get("experiments_sort"), `avg_score_${direction}`);
+    assert.equal(params.get("experiments_offset"), "25");
+  });
+}

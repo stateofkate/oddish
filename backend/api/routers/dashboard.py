@@ -423,7 +423,7 @@ async def get_dashboard(
     experiments_min_avg_cost: float | None = Query(None, ge=0, allow_inf_nan=False),
     experiments_max_avg_cost: float | None = Query(None, ge=0, allow_inf_nan=False),
     experiments_token_metric: TokenMetric = Query(TokenMetric.TOTAL),
-    experiments_sort: str = Query("recent", pattern="^(recent|avg_(steps|tokens|cost)_(asc|desc))$"),
+    experiments_sort: str = Query("recent", pattern="^(recent|avg_(steps|tokens|cost|score)_(asc|desc))$"),
     experiments_min_steps: int | None = Query(None, ge=0),
     experiments_max_steps: int | None = Query(None, ge=0),
     experiments_min_duration_seconds: float | None = Query(None, ge=0),
