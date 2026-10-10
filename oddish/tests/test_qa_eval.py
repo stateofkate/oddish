@@ -481,14 +481,20 @@ async def test_importer_requires_exactly_one_source_trial(monkeypatch):
     assert "exactly one" in eval_trial.analysis_error
 
 
-def _patch_create(monkeypatch, *, goldens=(), version=None) -> dict:
+def _patch_create(monkeypatch, *, goldens=(), version=None, sources=None) -> dict:
     """Fake the golden and prompt lookups and the trial writes; returns what
     the endpoint admitted and created."""
     seen: dict = {"admitted": [], "payloads": []}
 
     async def fake_counted_goldens(_session, org_id, stage):
         seen["goldens_for"] = (org_id, stage)
-        return {trial_id: SimpleNamespace(expected={"classification": "GOOD_FAILURE"}) for trial_id in goldens}
+        return {
+            trial_id: SimpleNamespace(
+                expected={"classification": "GOOD_FAILURE"},
+                source=(sources or {}).get(trial_id),
+            )
+            for trial_id in goldens
+        }
 
     async def fake_prompt_version(_session, org_id, stage, sha256):
         seen["version_for"] = (org_id, stage, sha256)
@@ -600,6 +606,38 @@ async def test_a_goldens_run_with_no_counted_goldens_is_refused(monkeypatch):
     assert session.added_experiment is None
 
 
+@pytest.mark.asyncio
+async def test_a_goldens_run_can_replay_one_source(monkeypatch):
+    second = _source()
+    second.id = "source-2"
+    seen = _patch_create(
+        monkeypatch,
+        goldens=["source-1", "source-2"],
+        sources={"source-1": "batch-a", "source-2": "batch-b"},
+    )
+    body = {"goldens": True, "prompt_name": "c", "prompt_text": "Classify."}
+
+    response = await _create(
+        _CreateSession(_source(), second), golden_source="batch-b", **body
+    )
+    assert [t.source_trial_id for t in response.trials] == ["source-2"]
+    # Fewer cases than the full set: kept off the charts with subset runs.
+    [payload] = seen["payloads"]
+    assert payload["subset"] is True
+
+    session = _CreateSession(_source(), second)
+    with pytest.raises(HTTPException) as caught:
+        await _create(session, golden_source="batch-c", **body)
+    assert caught.value.status_code == 422
+    assert "goldens to replay from batch-c" in caught.value.detail
+
+    with pytest.raises(ValueError, match="golden_source requires goldens"):
+        QAEvalCreateRequest(
+            name="r", source_trial_ids=["source-1"], golden_source="batch-a",
+            prompt_name="c", prompt_text="Classify.",
+        )
+
+
 def test_an_older_replay_body_keeps_its_idempotency_hash():
     request = QAEvalCreateRequest(
         name="replay",
@@ -608,7 +646,7 @@ def test_an_older_replay_body_keeps_its_idempotency_hash():
         prompt_text="classify this",
     )
     legacy = request.model_dump(
-        mode="json", exclude={"stage", "goldens", "prompt_sha256", "agent", "agent_config", "timeout_minutes", "preflight", "preflight_run_id"}
+        mode="json", exclude={"stage", "goldens", "golden_source", "prompt_sha256", "agent", "agent_config", "timeout_minutes", "preflight", "preflight_run_id"}
     )
     assert compute_request_hash(request) == _canonical_digest(legacy)
     by_hash = QAEvalCreateRequest(name="replay", goldens=True, prompt_sha256="abc")

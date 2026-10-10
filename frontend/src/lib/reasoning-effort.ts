@@ -55,9 +55,11 @@ export function reasoningEffortOptions(agent: string, model: string): string[] {
     }
     if (!modelRouted) return [];
   }
+  // Haiku 5.x takes effort (QA evals ran Haiku 5.5 at medium and high);
+  // Haiku 4.5 does not.
   if (
     (agent === "claude-code" || modelRouted) &&
-    /claude-(opus|sonnet)-/.test(model)
+    /claude-(?:opus-|sonnet-|haiku-5)/.test(model)
   ) {
     return /claude-(?:opus-(5|4-7)|sonnet-5[.-]5(?:$|[-@[]))/.test(model)
       ? EXTENDED_EFFORTS

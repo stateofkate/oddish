@@ -11,13 +11,36 @@ for (const comparisonModel of ["openai/gpt-6-sol", "anthropic/claude-sonnet-5-5"
     let passed = false;
     let failLuna = true;
     await page.route("**/api/qa-evals**", async (route) => {
+      if (route.request().url().endsWith("/models")) {
+        return route.fulfill({
+          json: {
+            production_model: "anthropic/claude-sonnet-5",
+            models: [comparisonModel, "openai/gpt-6-luna", "xai/grok-4.6"].map(
+              (model) => ({
+                model,
+                health: model.startsWith("xai") ? "failing" : "healthy",
+                last_checked_at: "2026-10-09T00:00:00Z",
+              })
+            ),
+          },
+        });
+      }
       if (route.request().method() === "GET") {
         return route.fulfill({
           json: {
             execution_configurable: true,
             replayable: true,
             production_prompt_sha256: sha,
-            goldens: { counted: 25, waiting: 0, stale: 0, labels: [] },
+            goldens: {
+              counted: 25,
+              waiting: 0,
+              stale: 0,
+              labels: [],
+              sources: [
+                { label: "original25", count: 19 },
+                { label: "batch-b", count: 6 },
+              ],
+            },
             cost_per_trial: 0.5,
             frontier: [],
             models: [],
@@ -51,10 +74,13 @@ for (const comparisonModel of ["openai/gpt-6-sol", "anthropic/claude-sonnet-5-5"
       return route.fulfill({ json: { experiment_id: id } });
     });
     await page.goto("/qa-evals");
-    await page
-      .getByLabel("Models (one per line)")
-      .fill(`${comparisonModel}\nopenai/gpt-6-luna`);
-    await page.getByLabel("Reasoning effort").selectOption("max");
+    await page.getByLabel("Eval set").selectOption("batch-b");
+    await page.getByLabel(/^Production/).uncheck();
+    await expect(page.getByLabel("xai/grok-4.6")).toBeDisabled();
+    for (const model of [comparisonModel, "openai/gpt-6-luna"]) {
+      await page.getByLabel(model, { exact: true }).check();
+      await page.getByLabel(`Reasoning effort for ${model}`).selectOption("max");
+    }
     await page
       .getByRole("button", { name: "Check one golden per model" })
       .click();
@@ -67,23 +93,24 @@ for (const comparisonModel of ["openai/gpt-6-sol", "anthropic/claude-sonnet-5-5"
         ({ body }) =>
           body.preflight &&
           body.goldens &&
+          body.golden_source === "batch-b" &&
           body.agent === "claude-code" &&
           body.agent_config.kwargs.reasoning_effort === "max"
       )
     ).toBe(true);
     passed = true;
     await expect(
-      page.getByRole("button", { name: "Replay 25 trials per model" })
+      page.getByRole("button", { name: "Replay 6 trials per model" })
     ).toBeEnabled();
     await page.screenshot({ path: "test-results/qa-evals-checks-passed.png" });
     await page
-      .getByRole("button", { name: "Replay 25 trials per model" })
+      .getByRole("button", { name: "Replay 6 trials per model" })
       .click();
     await expect(page.getByRole("alert")).toContainText(
       "Temporary submit failure"
     );
     await page
-      .getByRole("button", { name: "Replay 25 trials per model" })
+      .getByRole("button", { name: "Replay 6 trials per model" })
       .click();
     await expect(page.getByRole("dialog")).toHaveCount(0);
     const full = requests.filter(({ body }) => !body.preflight);

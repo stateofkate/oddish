@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import useSWR from "swr";
 import { VersionPicker } from "@/components/qa-evals/version-picker";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,7 +13,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import {
   REASONING_EFFORT_AGENTS,
   reasoningEffortOptions,
@@ -21,6 +21,7 @@ import { fetcher } from "@/lib/api";
 import { formatCostUsd } from "@/lib/format";
 import {
   shortSha,
+  type QAEvalModels,
   type QAEvalStart,
   type QAEvalStatus,
   type QAPromptVersion,
@@ -37,6 +38,9 @@ type RunDialogProps = {
   onClose: () => void;
   onStarted: (experimentId: string) => void;
 };
+
+/** One model to run: null is the deployed production QA model. */
+type ModelPick = { model: string | null; agent: string; effort: string };
 
 type RunRequest = {
   body: QAEvalStart;
@@ -76,28 +80,16 @@ function RunForm({
       ? defaultVersion
       : versions.findLast((v) => v.text_available)
   );
-  const [models, setModels] = useState("");
-  const [agent, setAgent] = useState("claude-code");
-  const [effort, setEffort] = useState("default");
+  const [picks, setPicks] = useState<ModelPick[]>([
+    { model: null, agent: "claude-code", effort: "default" },
+  ]);
+  const [goldenSource, setGoldenSource] = useState("");
   const [config, setConfig] = useState("");
   const [name, setName] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [batch, setBatch] = useState<RunRequest[] | null>(null);
-  const selectedModels = [
-    ...new Set(
-      models
-        .split("\n")
-        .map((m) => m.trim())
-        .filter(Boolean)
-    ),
-  ];
-  const efforts = reasoningEffortOptions(agent, selectedModels[0] ?? "").filter(
-    (value) =>
-      selectedModels.every((model) =>
-        reasoningEffortOptions(agent, model).includes(value)
-      )
-  );
+  const sources = status.goldens.sources ?? [];
   const passed = batch?.every(
     (item) =>
       status.runs.find((run) => run.experiment_id === item.check)
@@ -107,7 +99,11 @@ function RunForm({
   const [stamp] = useState(() =>
     new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "")
   );
-  const count = trials?.length ?? status.goldens.counted;
+  const count =
+    trials?.length ??
+    (goldenSource
+      ? (sources.find((s) => s.label === goldenSource)?.count ?? 0)
+      : status.goldens.counted);
   const countTrials = `${count} ${count === 1 ? "trial" : "trials"}`;
   const defaultName = version
     ? `qa-eval-${shortSha(version.sha256)}${trials ? "-rerun" : ""}-${stamp}`
@@ -128,11 +124,11 @@ function RunForm({
       }
       const requests: RunRequest[] = batch
         ? [...batch]
-        : (selectedModels.length ? selectedModels : [null]).map((model) => ({
+        : picks.map(({ model, agent, effort }) => ({
             key: crypto.randomUUID(),
             body: {
               stage,
-              name: `${name.trim() || defaultName}${model ? `-${model}` : ""}`,
+              name: `${name.trim() || defaultName}${model ? `-${model.replace(/[^\w.-]+/g, "-")}` : ""}`,
               prompt_sha256: version.sha256,
               agent,
               model,
@@ -145,7 +141,10 @@ function RunForm({
               },
               ...(trials
                 ? { source_trial_ids: trials }
-                : { goldens: true as const }),
+                : {
+                    goldens: true as const,
+                    ...(goldenSource && { golden_source: goldenSource }),
+                  }),
             },
           }));
       setBatch([...requests]);
@@ -187,12 +186,14 @@ function RunForm({
     <>
       <DialogHeader>
         <DialogTitle>
-          {trials ? "Rerun picked trials" : "New run over all goldens"}
+          {trials
+            ? "Rerun picked trials"
+            : `New run over ${goldenSource || "all goldens"}`}
         </DialogTitle>
         <DialogDescription>
           {perTrial === null
             ? "No past runs to estimate the cost from."
-            : `About ${formatCostUsd(perTrial * (count + 1) * Math.max(selectedModels.length, 1))} including checks, based on past runs. Model and settings affect cost.`}
+            : `About ${formatCostUsd(perTrial * (count + 1) * Math.max(picks.length, 1))} including checks, based on past runs. Model and settings affect cost.`}
         </DialogDescription>
       </DialogHeader>
       <fieldset
@@ -210,48 +211,24 @@ function RunForm({
             }
           />
         </label>
-        <label className="block space-y-1">
-          <span>Harness</span>
-          <Input
-            value={agent}
-            onChange={(event) => {
-              setAgent(event.target.value);
-              setEffort("default");
-            }}
-            list="qa-agents"
-          />
-          <datalist id="qa-agents">
-            {REASONING_EFFORT_AGENTS.map((value) => (
-              <option key={value} value={value} />
-            ))}
-          </datalist>
-        </label>
-        <label className="block space-y-1">
-          <span>Models (one per line)</span>
-          <Textarea
-            rows={3}
-            value={models}
-            onChange={(event) => {
-              setModels(event.target.value);
-              setEffort("default");
-            }}
-            placeholder="the production QA model"
-          />
-        </label>
-        <label className="block space-y-1">
-          <span>Reasoning effort</span>
-          <select
-            className="bg-background w-full rounded-md border p-2"
-            value={effort}
-            onChange={(event) => setEffort(event.target.value)}
-          >
-            {["default", ...efforts].map((value) => (
-              <option key={value} value={value}>
-                {value === "default" ? "Agent default" : value}
-              </option>
-            ))}
-          </select>
-        </label>
+        {!trials && sources.length > 0 && (
+          <label className="flex items-center justify-between gap-3">
+            Eval set
+            <select
+              className="bg-background rounded-md border p-2"
+              value={goldenSource}
+              onChange={(event) => setGoldenSource(event.target.value)}
+            >
+              <option value="">All goldens ({status.goldens.counted})</option>
+              {sources.map(({ label, count }) => (
+                <option key={label} value={label}>
+                  {label} ({count})
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <ModelPicker picks={picks} onChange={setPicks} />
         <details>
           <summary>Agent settings</summary>
           <label className="block space-y-1">
@@ -303,7 +280,7 @@ function RunForm({
           disabled={
             !status.execution_configurable ||
             !version ||
-            !agent.trim() ||
+            picks.length === 0 ||
             submitting ||
             count === 0 ||
             Boolean(checked && !passed)
@@ -320,5 +297,138 @@ function RunForm({
         </Button>
       </DialogFooter>
     </>
+  );
+}
+
+const HEALTH_DOTS = {
+  healthy: "bg-emerald-500",
+  unchecked: "bg-slate-400",
+  failing: "bg-red-500",
+};
+
+/** The endpoint monitor's models, healthy first, then a harness and effort
+ * per picked model. A failing model cannot be picked; one the monitor does
+ * not check can be added by name. */
+function ModelPicker({
+  picks,
+  onChange,
+}: {
+  picks: ModelPick[];
+  onChange: (picks: ModelPick[]) => void;
+}) {
+  const { data } = useSWR<QAEvalModels>("/api/qa-evals/models", fetcher, {
+    revalidateOnFocus: false,
+  });
+  const [filter, setFilter] = useState("");
+  const query = filter.trim();
+  const monitored = data?.models ?? [];
+  const rows = [
+    {
+      model: null,
+      name: `Production${data ? ` (${data.production_model})` : ""}`,
+      health: undefined,
+    },
+    ...monitored.map((m) => ({ ...m, name: m.model })),
+    ...picks
+      .filter((p) => p.model && !monitored.some((m) => m.model === p.model))
+      .map((p) => ({ model: p.model, name: p.model!, health: undefined })),
+  ].filter((row) => row.name.toLowerCase().includes(query.toLowerCase()));
+  const toggle = (model: string | null) =>
+    onChange(
+      picks.some((p) => p.model === model)
+        ? picks.filter((p) => p.model !== model)
+        : [...picks, { model, agent: "claude-code", effort: "default" }]
+    );
+  const update = (model: string | null, change: Partial<ModelPick>) =>
+    onChange(picks.map((p) => (p.model === model ? { ...p, ...change } : p)));
+
+  return (
+    <div className="space-y-2">
+      <span>Models</span>
+      <Input
+        value={filter}
+        onChange={(event) => setFilter(event.target.value)}
+        placeholder="Filter or add a model"
+        aria-label="Filter models"
+      />
+      <ul className="max-h-48 overflow-y-auto rounded-md border p-1">
+        {rows.map((row) => (
+          <li key={row.model ?? ""}>
+            <label className="hover:bg-muted flex items-center gap-2 rounded px-2 py-1">
+              <input
+                type="checkbox"
+                checked={picks.some((p) => p.model === row.model)}
+                disabled={row.health === "failing"}
+                onChange={() => toggle(row.model)}
+              />
+              <span className="truncate font-mono text-xs">{row.name}</span>
+              {row.health && (
+                <span
+                  title={row.health}
+                  className={`ml-auto h-2 w-2 shrink-0 rounded-full ${HEALTH_DOTS[row.health]}`}
+                />
+              )}
+            </label>
+          </li>
+        ))}
+        {query && !rows.some((row) => row.name === query) && (
+          <li>
+            <button
+              type="button"
+              className="hover:bg-muted w-full rounded px-2 py-1 text-left text-xs"
+              onClick={() => {
+                toggle(query);
+                setFilter("");
+              }}
+            >
+              Add {query}
+            </button>
+          </li>
+        )}
+      </ul>
+      {picks.map((pick) => {
+        const label = pick.model ?? "Production";
+        const efforts = reasoningEffortOptions(
+          pick.agent,
+          pick.model ?? data?.production_model ?? ""
+        );
+        return (
+          <div key={pick.model ?? ""} className="flex items-center gap-2">
+            <span className="min-w-0 flex-1 truncate font-mono text-xs">
+              {label}
+            </span>
+            <select
+              aria-label={`Harness for ${label}`}
+              className="bg-background rounded-md border p-1 text-xs"
+              value={pick.agent}
+              onChange={(event) =>
+                update(pick.model, {
+                  agent: event.target.value,
+                  effort: "default",
+                })
+              }
+            >
+              {REASONING_EFFORT_AGENTS.map((agent) => (
+                <option key={agent}>{agent}</option>
+              ))}
+            </select>
+            <select
+              aria-label={`Reasoning effort for ${label}`}
+              className="bg-background rounded-md border p-1 text-xs"
+              value={pick.effort}
+              onChange={(event) =>
+                update(pick.model, { effort: event.target.value })
+              }
+            >
+              {["default", ...efforts].map((value) => (
+                <option key={value} value={value}>
+                  {value === "default" ? "Agent default" : value}
+                </option>
+              ))}
+            </select>
+          </div>
+        );
+      })}
+    </div>
   );
 }

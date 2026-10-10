@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from datetime import timedelta
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,6 +13,7 @@ from httpx import ASGITransport, AsyncClient
 from auth import require_auth
 from auth.types import AuthContext, AuthMethod
 from models import APIKeyScope, UserRole
+from oddish.db import utcnow
 from oddish.analyze.qa_stages import QAStage, shipped_prompt, shipped_prompt_sha256
 from oddish.schemas import (
     QAEvalCase,
@@ -133,8 +135,9 @@ async def test_every_qa_eval_route_needs_an_org_admin(monkeypatch, auth):
             await client.get("/qa-evals/status"),
             await client.get(f"/qa-evals/versions/{'0' * 64}"),
             await client.get("/qa-evals/runs/experiment-1"),
+            await client.get("/qa-evals/models"),
         ]
-    assert [r.status_code for r in responses] == [403] * 4
+    assert [r.status_code for r in responses] == [403] * 5
 
 
 @pytest.mark.asyncio
@@ -258,3 +261,48 @@ async def test_a_run_is_returned_with_its_cases(monkeypatch):
     assert response.status_code == 200, response.text
     assert QAEvalRunResponse.model_validate(response.json()) == run
     assert captured == [{"org_id": "org-1", "experiment_id": "experiment-1"}]
+
+
+@pytest.mark.asyncio
+async def test_models_rank_monitored_models_by_health(monkeypatch):
+    now = utcnow()
+    rows = [
+        ("xai/grok-4.6", "failure", now),
+        ("openai/gpt-6-luna", "success", now - timedelta(hours=2)),
+        ("deepseek/deepseek-v4-flash", "monitor_error", now),
+        ("anthropic/claude-sonnet-5-5", "success", now),
+        ("google/gemini-3.7-flash", None, None),
+    ]
+
+    class _Monitors(_EmptySession):
+        async def execute(self, _statement):
+            return SimpleNamespace(all=lambda: rows)
+
+    @asynccontextmanager
+    async def monitors():
+        yield _Monitors()
+
+    async with _client(monkeypatch) as client:
+        monkeypatch.setattr(qa_eval, "get_read_session", monitors)
+        monkeypatch.setattr(qa_eval, "require_operator_org", lambda _auth: None)
+        monkeypatch.setattr(qa_eval.settings, "qa_model", "anthropic/claude-sonnet-5")
+        response = await client.get("/qa-evals/models")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["production_model"] == "anthropic/claude-sonnet-5"
+    # A stale success and a broken check are unchecked, not healthy.
+    assert [(m["model"], m["health"]) for m in body["models"]] == [
+        ("anthropic/claude-sonnet-5-5", "healthy"),
+        ("deepseek/deepseek-v4-flash", "unchecked"),
+        ("google/gemini-3.7-flash", "unchecked"),
+        ("openai/gpt-6-luna", "unchecked"),
+        ("xai/grok-4.6", "failing"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_models_need_the_operator_org(monkeypatch):
+    async with _client(monkeypatch) as client:
+        response = await client.get("/qa-evals/models")
+    assert response.status_code == 403

@@ -103,6 +103,7 @@ _ADDED_QA_EVAL_FIELD_DEFAULTS = {
     "preflight": False,
     "preflight_run_id": None,
     "goldens": False,
+    "golden_source": None,
     "prompt_sha256": None,
     "stage": "post_trial",
 }

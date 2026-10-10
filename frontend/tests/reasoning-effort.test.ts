@@ -14,6 +14,7 @@ for (const [agent, model, expected] of [
   ["claude-code", "anthropic/claude-sonnet-5-5", extended],
   ["claude-code", "global.anthropic.claude-sonnet-5-5", extended],
   ["claude-code", "claude-sonnet-5", standard],
+  ["claude-code", "anthropic/claude-haiku-5-5", standard],
   ["codex", "openai/gpt-5.6", extended],
   ["codex", "openai/gpt-5.4-codex", extended],
   ["codex", "openai/o3", standard],
@@ -101,4 +102,11 @@ test("devin is offered for runs but has no effort choices", () => {
   assert.ok(RUN_AGENTS.includes("devin"));
   assert.ok(!REASONING_EFFORT_AGENTS.includes("devin"));
   assert.deepEqual(reasoningEffortOptions("devin", "devin/swe-2"), []);
+});
+
+test("claude-code offers no effort for Haiku 4.5", () => {
+  assert.deepEqual(
+    reasoningEffortOptions("claude-code", "anthropic/claude-haiku-4-5"),
+    []
+  );
 });

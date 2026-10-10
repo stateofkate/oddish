@@ -514,6 +514,11 @@ async def qa_eval_status_core(
         for _, golden, state in goldens
         if state == "counted"
     )
+    sources = Counter(
+        golden.source
+        for _, golden, state in goldens
+        if state == "counted" and golden.source
+    )
     spend_by_model: dict[str, float] = defaultdict(float)
     for run in summaries:
         spend_by_model[run.model_name] += run.cost_usd
@@ -527,6 +532,10 @@ async def qa_eval_status_core(
             labels=[
                 QALabelCount(label=label, count=count)
                 for label, count in labels.most_common()
+            ],
+            sources=[
+                QALabelCount(label=source, count=count)
+                for source, count in sources.most_common()
             ],
         ),
         cost_per_trial=sum(costs) / len(costs) if costs else None,

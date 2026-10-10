@@ -216,6 +216,7 @@ async def _seed(session) -> dict:
                 task_version_id=ids["version"],
                 task_version_content_hash="h1",
                 expected={"classification": label},
+                source="batch-a",
                 reviewed_at=ids["now"] if reviewed else None,
             )
         )
@@ -280,6 +281,8 @@ async def test_status_scores_each_run_on_the_counted_goldens(session):
         ("BAD_FAILURE", 1),
         ("GOOD_FAILURE", 1),
     ]
+    # The golden waiting for review is not counted under its source.
+    assert [(c.label, c.count) for c in goldens.sources] == [("batch-a", 2)]
 
     shipped, candidate = status.runs
     assert shipped.title == f"production {SHIPPED[:8]}"

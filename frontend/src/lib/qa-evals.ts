@@ -94,6 +94,18 @@ export interface QAGoldensSummary {
   waiting: number;
   stale: number;
   labels: { label: string; count: number }[];
+  /** Counted goldens per source (the import they came from), largest first. */
+  sources?: { label: string; count: number }[];
+}
+
+/** GET /qa-evals/models: the monitored models, healthy first. */
+export interface QAEvalModels {
+  production_model: string;
+  models: {
+    model: string;
+    health: "healthy" | "failing" | "unchecked";
+    last_checked_at: string | null;
+  }[];
 }
 
 export interface QAPromptVersion {
@@ -362,7 +374,10 @@ export type QAEvalStart = {
   agent_config?: { kwargs?: Record<string, unknown>; [key: string]: unknown };
   preflight?: boolean;
   preflight_run_id?: string;
-} & ({ goldens: true } | { source_trial_ids: string[] });
+} & (
+  | { goldens: true; golden_source?: string }
+  | { source_trial_ids: string[] }
+);
 
 export function configurationKey(run: QAEvalRun): string {
   // The execution fingerprint preserves request spelling and is used for

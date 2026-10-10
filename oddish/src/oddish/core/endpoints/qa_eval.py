@@ -89,11 +89,21 @@ async def create_qa_eval_core(
 
     source_trial_ids = request.source_trial_ids
     goldens = await counted_goldens(session, org_id, stage)
+    # A run over one source's goldens is a subset run: its accuracy covers
+    # fewer cases than the full runs it would be charted against.
+    partial = False
     if request.goldens:
-        source_trial_ids = sorted(goldens)
+        source_trial_ids = sorted(
+            subject
+            for subject, golden in goldens.items()
+            if request.golden_source in (None, golden.source)
+        )
+        partial = len(source_trial_ids) < len(goldens)
         if not source_trial_ids:
             raise HTTPException(
-                status_code=422, detail=f"no counted {stage.value} goldens to replay"
+                status_code=422,
+                detail=f"no counted {stage.value} goldens to replay"
+                + (f" from {request.golden_source}" if request.golden_source else ""),
             )
     source_rows = (
         (
@@ -301,7 +311,7 @@ async def create_qa_eval_core(
                 "stage": stage.value,
                 "prompt_name": prompt_name,
                 "prompt_sha256": prompt_hash,
-                "subset": not request.goldens or request.preflight,
+                "subset": not request.goldens or partial or request.preflight,
                 "preflight": request.preflight,
                 "configuration_sha256": configuration_hash,
                 "golden_set_sha256": golden_hash,

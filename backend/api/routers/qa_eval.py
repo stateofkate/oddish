@@ -1,10 +1,14 @@
 """QA eval endpoints for org admins: replay QA prompts and read their scores."""
 
-from typing import Annotated
+from datetime import datetime
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Header
+from pydantic import BaseModel
+from sqlalchemy import text
 
 from auth import AuthContext, require_admin
+from auth.permissions import require_operator_org
 from oddish.analyze.qa_stages import QAStage
 from oddish.core.dashboard import invalidate_dashboard_cache
 from oddish.core.idempotency import IdempotencyReplay, compute_request_hash
@@ -14,7 +18,8 @@ from oddish.core.qa_eval_scores import (
     get_qa_eval_run_core,
     qa_eval_status_core,
 )
-from oddish.db import get_read_session, get_session
+from oddish.config import settings
+from oddish.db import get_read_session, get_session, utcnow
 from oddish.schemas import (
     QAEvalCreateRequest,
     QAEvalCreateResponse,
@@ -27,6 +32,21 @@ from idempotency_store import SubmissionIdempotencyStore
 router = APIRouter(tags=["QA evaluations"])
 
 Admin = Annotated[AuthContext, Depends(require_admin)]
+
+
+class QAEvalModelOption(BaseModel):
+    # The queue key a trial runs under, e.g. anthropic/claude-sonnet-5-5.
+    model: str
+    # healthy: the latest scheduled check passed within the stale window;
+    # failing: it failed; unchecked: no recent check, or the check itself broke.
+    health: Literal["healthy", "failing", "unchecked"]
+    last_checked_at: datetime | None
+
+
+class QAEvalModels(BaseModel):
+    production_model: str
+    # Healthy first, then by name.
+    models: list[QAEvalModelOption]
 
 
 @router.post("/qa-evals", response_model=QAEvalCreateResponse)
@@ -52,6 +72,36 @@ async def create_qa_eval(
         await session.commit()
     invalidate_dashboard_cache(org_id=auth.org_id)
     return result
+
+
+@router.get("/qa-evals/models", response_model=QAEvalModels)
+async def get_qa_eval_models(auth: Admin) -> QAEvalModels:
+    """The models the endpoint monitor checks, for choosing what a run uses."""
+    from endpoint_health import STALE_AFTER
+
+    require_operator_org(auth)
+    now = utcnow()
+    async with get_read_session() as session:
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT name, last_outcome, last_checked_at "
+                    "FROM endpoint_monitors WHERE enabled"
+                )
+            )
+        ).all()
+    options = []
+    for name, outcome, checked_at in rows:
+        fresh = checked_at is not None and now - checked_at <= STALE_AFTER
+        health = "unchecked"
+        if fresh and outcome in ("success", "failure"):
+            health = "healthy" if outcome == "success" else "failing"
+        options.append(
+            QAEvalModelOption(model=name, health=health, last_checked_at=checked_at)
+        )
+    order = {"healthy": 0, "unchecked": 1, "failing": 2}
+    options.sort(key=lambda option: (order[option.health], option.model))
+    return QAEvalModels(production_model=settings.qa_model, models=options)
 
 
 @router.get("/qa-evals/status", response_model=QAEvalStatusResponse)

@@ -654,6 +654,11 @@ class QAEvalCreateRequest(TrialSpec):
         False,
         description="Replay every counted golden's trial instead of source_trial_ids.",
     )
+    golden_source: str | None = Field(
+        None,
+        max_length=128,
+        description="With goldens, replay only the counted goldens from this source.",
+    )
     prompt_name: str | None = Field(
         None,
         max_length=128,
@@ -710,6 +715,9 @@ class QAEvalCreateRequest(TrialSpec):
             raise ValueError("prompt_name is required with prompt_text")
         if self.goldens == bool(self.source_trial_ids):
             raise ValueError("give exactly one of goldens and source_trial_ids")
+        self.golden_source = (self.golden_source or "").strip() or None
+        if self.golden_source and not self.goldens:
+            raise ValueError("golden_source requires goldens")
         if self.model is not None:
             self.model = self.model.strip() or None
         self.agent = self.agent.strip()
@@ -1812,6 +1820,8 @@ class QAGoldensSummary(BaseModel):
     stale: int
     # Counted goldens per StageSpec.label, largest first.
     labels: list[QALabelCount]
+    # Counted goldens per source (the import they came from), largest first.
+    sources: list[QALabelCount] = Field(default_factory=list)
 
 
 class QAEvalModelSpend(BaseModel):
