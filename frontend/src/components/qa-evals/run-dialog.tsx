@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { VersionPicker } from "@/components/qa-evals/version-picker";
 import { Button } from "@/components/ui/button";
@@ -182,6 +182,12 @@ function RunForm({
     }
   };
 
+  // The full set starts itself once every check passes; closing the dialog stops it.
+  useEffect(() => {
+    if (passed && !submitting && !error && !batch?.every((item) => item.run))
+      void start();
+  });
+
   return (
     <>
       <DialogHeader>
@@ -253,10 +259,10 @@ function RunForm({
         {!status.execution_configurable
           ? "Deploy the QA execution-configuration update before running checks."
           : batch
-          ? passed
-            ? "Checks passed. Each harness produced a valid QA result."
-            : "Checks are saved in Runs. The full set requires every check to pass."
-          : "First run one golden per model. Then replay the full set with the same settings."}
+            ? passed
+              ? "Checks passed. Each harness produced a valid QA result."
+              : "Checks are saved in Runs. The full set starts when every check passes."
+            : "First run one golden per model. Then the full set replays with the same settings."}
       </p>
       {batch && (
         <Button
@@ -293,7 +299,7 @@ function RunForm({
               ? `Replay ${countTrials} per model`
               : checked
                 ? "Waiting for checks"
-                : "Check one golden per model"}
+                : `Check, then replay ${count}`}
         </Button>
       </DialogFooter>
     </>

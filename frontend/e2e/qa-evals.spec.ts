@@ -81,9 +81,10 @@ for (const comparisonModel of ["openai/gpt-6-sol", "anthropic/claude-sonnet-5-5"
       await page.getByLabel(model, { exact: true }).check();
       await page.getByLabel(`Reasoning effort for ${model}`).selectOption("max");
     }
-    await page
-      .getByRole("button", { name: "Check one golden per model" })
-      .click();
+    await page.screenshot({
+      path: "test-results/qa-evals-check-then-replay.png",
+    });
+    await page.getByRole("button", { name: "Check, then replay 6" }).click();
     await expect(
       page.getByRole("button", { name: "Waiting for checks" })
     ).toBeDisabled();
@@ -99,13 +100,6 @@ for (const comparisonModel of ["openai/gpt-6-sol", "anthropic/claude-sonnet-5-5"
       )
     ).toBe(true);
     passed = true;
-    await expect(
-      page.getByRole("button", { name: "Replay 6 trials per model" })
-    ).toBeEnabled();
-    await page.screenshot({ path: "test-results/qa-evals-checks-passed.png" });
-    await page
-      .getByRole("button", { name: "Replay 6 trials per model" })
-      .click();
     await expect(page.getByRole("alert")).toContainText(
       "Temporary submit failure"
     );
