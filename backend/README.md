@@ -1169,5 +1169,5 @@ within the review transaction. The scheduled sender delivers them using
 `SLACK_ALERT_BOT_TOKEN` and its existing identity lookup and retry behavior.
 `ODDISH_ENABLE_SLACK_EXPENSE_NOTIFICATIONS` also gates this producer, so staging
 and previews remain silent by default. Apply `task_review_alert_001` before deployment;
-Settings → Notifications includes a Task reviews toggle. Deletes, self-reviews
-and unresolvable authors do not enqueue messages; no historical reviews are sent.
+Settings → Notifications includes a Task reviews toggle. Self-reviews notify the
+author too. Deletes and unresolvable authors do not enqueue messages; no historical reviews are sent.

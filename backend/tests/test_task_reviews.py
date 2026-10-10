@@ -692,7 +692,7 @@ async def test_review_slack_outbox_is_atomic_and_uses_current_rating(
         "blank_email",
     ],
 )
-async def test_review_slack_skips_ineligible_recipients(review_api, monkeypatch, case):
+async def test_review_slack_recipient_rules(review_api, monkeypatch, case):
     from models import SlackExpenseAlertModel, UserAlertPreferencesModel
     from sqlalchemy import select
 
@@ -759,7 +759,12 @@ async def test_review_slack_skips_ineligible_recipients(review_api, monkeypatch,
     )
     assert response.status_code == 200, response.text
     async with sessions() as session:
-        assert (await session.scalars(select(SlackExpenseAlertModel))).all() == []
+        alerts = (await session.scalars(select(SlackExpenseAlertModel))).all()
+        if case == "self":
+            assert len(alerts) == 1
+            assert alerts[0].recipient_email == "alice@example.test"
+        else:
+            assert alerts == []
 
 
 @pytest.mark.asyncio

@@ -67,7 +67,6 @@ async def queue_review_notification(session: AsyncSession, comment_id: str) -> N
     if (
         not author
         or author.deleted_at
-        or author.id == comment.reviewer_id
         or not (author.email or "").strip()
     ):
         return

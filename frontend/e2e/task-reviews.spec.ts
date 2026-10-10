@@ -28,6 +28,8 @@ test("day zero, rating, comment and version selection stay scoped", async ({
 }, testInfo) => {
   const writes: Array<{ url: string; body: Record<string, unknown> }> = [];
   let saved = false;
+  let releaseRefresh!: () => void;
+  const refresh = new Promise<void>((resolve) => { releaseRefresh = resolve; });
   await page.route(
     "**/api/tasks/review-task/versions/*/reviews**",
     async (route) => {
@@ -38,6 +40,7 @@ test("day zero, rating, comment and version selection stay scoped", async ({
         return route.fulfill({ json: { id: "saved", revision: 1 } });
       }
       const old = req.url().includes("/v1/");
+      if (saved && !old) await refresh;
       return route.fulfill({
         json: {
           ...empty,
@@ -116,7 +119,12 @@ test("day zero, rating, comment and version selection stay scoped", async ({
     .toBe(saveColor);
   await page.screenshot({ path: testInfo.outputPath("desktop.png") });
   await page.getByRole("button", { name: "Save review" }).click();
+  await expect.poll(() => writes.length).toBe(1);
+  await expect(page.getByRole("tab", { name: "Your review", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByLabel("Comment", { exact: true })).toHaveValue("The requirements are ambiguous.");
+  releaseRefresh();
   await expect(page.getByText("Mark (you)")).toBeVisible();
+  await expect(page.locator("article")).toHaveCSS("padding-bottom", "24px");
   await page.getByRole("tab", { name: "Your review", exact: true }).click();
   await expect(page.getByLabel("Comment", { exact: true })).toHaveValue(
     "The requirements are ambiguous."

@@ -194,8 +194,8 @@ function ReviewForm({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      complete();
       await mutate().catch(() => undefined);
+      complete();
     } catch {
       setFailure("Couldn’t save review.");
       const refreshed = await mutate().catch(() => undefined);
@@ -404,7 +404,7 @@ function ReviewForm({
               </div>
             ))}
           {comments.map((comment) => (
-            <article key={comment.id} className="space-y-1 border-b pb-3">
+            <article key={comment.id} className="space-y-1 border-b pb-6">
               <div className="flex items-center justify-between gap-2">
                 <strong>
                   {comment.reviewer.name}
