@@ -54,6 +54,11 @@ SLACK_EXPENSE_SECRET_ENVIRONMENT = os.environ.get(
 # `{workspace}-{environment}--{label}.modal.run` subdomain. Production keeps
 # the historical "api" label; previews derive a unique one from the app name.
 API_WEBHOOK_LABEL = "api" if MODAL_APP_NAME == "oddish" else f"{MODAL_APP_NAME}-api"
+# Production also answers on api.oddish.app so public docs and the CLI need not
+# show the Modal hostname. Only production claims it: a domain can belong to one
+# app, so previews and staging keep their *.modal.run URLs. The domain must be
+# registered in the Modal workspace settings before a deploy can use it.
+API_CUSTOM_DOMAINS = ["api.oddish.app"] if MODAL_APP_NAME == "oddish" else []
 # Keep database-heavy API reads near the hosted PostgreSQL database in US East.
 # This is a deploy-time setting; other deployments can select their DB's region.
 API_REGION = os.environ.get("ODDISH_MODAL_API_REGION", "us-east")

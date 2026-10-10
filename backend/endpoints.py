@@ -45,6 +45,7 @@ from modal_app import (  # noqa: E402
     API_CONCURRENCY_MAX,
     API_CONCURRENCY_TARGET,
     API_CPU,
+    API_CUSTOM_DOMAINS,
     API_MAX_CONTAINERS,
     API_MEMORY_MB,
     API_MIN_CONTAINERS,
@@ -100,7 +101,7 @@ api = create_asgi_app()
     target_inputs=API_CONCURRENCY_TARGET,
     max_inputs=API_CONCURRENCY_MAX,
 )
-@modal.asgi_app(label=API_WEBHOOK_LABEL)
+@modal.asgi_app(label=API_WEBHOOK_LABEL, custom_domains=API_CUSTOM_DOMAINS)
 def api_app():
     """Single ASGI endpoint for all API routes."""
     return api
