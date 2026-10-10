@@ -37,7 +37,13 @@ export function DocsView({
       ? VIEWER_PAGES.has(p.slug)
       : !customer || !HIDDEN_FROM_CUSTOMERS.has(p.slug)
   );
-  const shown = visible.some((p) => p.slug === slug);
+  const slugs = new Set(visible.map((p) => p.slug));
+  const shown = slugs.has(slug);
+  // Links to pages this org can't open keep their text and lose the link.
+  const body = content.replace(
+    /\[([^\]]*)\]\(\/docs\/([^)#]+)(#[^)]*)?\)/g,
+    (link, text: string, target: string) => (slugs.has(target) ? link : text)
+  );
 
   return (
     <div className="flex flex-col gap-6 sm:flex-row">
@@ -55,7 +61,7 @@ export function DocsView({
       </nav>
       <article className="max-w-3xl min-w-0 flex-1">
         {shown ? (
-          <MarkdownRenderer content={content} fileName={slug} />
+          <MarkdownRenderer content={body} fileName={slug} />
         ) : (
           <p className="text-muted-foreground text-sm">Page not found.</p>
         )}
