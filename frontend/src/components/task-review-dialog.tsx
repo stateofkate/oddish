@@ -3,7 +3,7 @@
 // Compact Oddish controls: one rating/comment composer and one save.
 // Existing theme tokens and solid filled selections keep the state clear.
 import { useState, type ReactNode } from "react";
-import useSWRInfinite from "swr/infinite";
+import useSWRInfinite, { type SWRInfiniteResponse } from "swr/infinite";
 import { MessageSquare } from "lucide-react";
 import {
   reviewRequest as request,
@@ -56,6 +56,17 @@ export function TaskReviewDialog({
   const [versionId, setVersionId] = useState(selectedVersionId);
   const [busy, setBusy] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
+  const activeVersionId = open ? versionId : selectedVersionId;
+  const base = `/api/tasks/${encodeURIComponent(taskId)}/versions/${encodeURIComponent(activeVersionId)}/reviews`;
+  const reviews = useSWRInfinite<ReviewPage>(
+    (index, previous: ReviewPage | null) => {
+      if (index === 0) return base;
+      if (!previous?.next_before || !previous.next_before_id) return null;
+      return `${base}?${new URLSearchParams({ before: previous.next_before, before_id: previous.next_before_id })}`;
+    },
+    request<ReviewPage>,
+    { revalidateOnFocus: false, shouldRetryOnError: false }
+  );
   return (
     <Dialog
       open={open}
@@ -68,7 +79,9 @@ export function TaskReviewDialog({
       <DialogTrigger asChild>
         <Button variant="outline" size="sm">
           <MessageSquare aria-hidden />
-          Review task
+          {reviews.data?.[0]?.comment_count
+            ? `Reviews (${reviews.data[0].comment_count})`
+            : "Review task"}
         </Button>
       </DialogTrigger>
       <DialogContent className="flex h-[min(28rem,calc(100dvh-2rem))] w-[calc(100%-2rem)] flex-col gap-4 overflow-hidden sm:max-w-xl">
@@ -81,6 +94,7 @@ export function TaskReviewDialog({
             key={`${taskId}:${versionId}`}
             taskId={taskId}
             versionId={versionId}
+            reviews={reviews}
             onBusy={setBusy}
             draft={drafts[versionId]}
             onDraft={(draft) =>
@@ -124,34 +138,21 @@ function ReviewForm({
   taskId,
   versionId,
   onBusy,
+  reviews,
   draft,
   onDraft,
   versionControl,
 }: {
   taskId: string;
   versionId: string;
+  reviews: SWRInfiniteResponse<ReviewPage>;
   onBusy: (busy: boolean) => void;
   draft?: Draft;
   onDraft: (draft?: Draft) => void;
   versionControl: ReactNode;
 }) {
   const base = `/api/tasks/${encodeURIComponent(taskId)}/versions/${encodeURIComponent(versionId)}/reviews`;
-  const {
-    data: pages,
-    error,
-    isLoading,
-    size,
-    setSize,
-    mutate,
-  } = useSWRInfinite<ReviewPage>(
-    (index, previous: ReviewPage | null) => {
-      if (index === 0) return base;
-      if (!previous?.next_before || !previous.next_before_id) return null;
-      return `${base}?${new URLSearchParams({ before: previous.next_before, before_id: previous.next_before_id })}`;
-    },
-    request<ReviewPage>,
-    { revalidateOnFocus: false, shouldRetryOnError: false }
-  );
+  const { data: pages, error, isLoading, size, setSize, mutate } = reviews;
   const data = pages?.[0];
   const [view, setView] = useState<string>(reviewViews.write);
   const [busy, setBusy] = useState(false);

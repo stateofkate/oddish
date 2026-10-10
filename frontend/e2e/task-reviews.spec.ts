@@ -80,7 +80,7 @@ test("day zero, rating, comment and version selection stay scoped", async ({
     }
   );
   await page.goto("/task-reviews");
-  await page.getByRole("button", { name: "Review task" }).click();
+  await page.getByRole("button", { name: /^(Review task|Reviews \(\d+\))$/ }).click();
   await page.getByRole("tab", { name: "Reviews (0)", exact: true }).click();
   await expect(page.getByText("No reviews yet.")).toBeVisible();
   await page.getByRole("tab", { name: "Your review", exact: true }).click();
@@ -125,6 +125,9 @@ test("day zero, rating, comment and version selection stay scoped", async ({
   releaseRefresh();
   await expect(page.getByText("Mark (you)")).toBeVisible();
   await expect(page.locator("article")).toHaveCSS("padding-bottom", "24px");
+  await page.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Reviews (1)", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Reviews (1)", exact: true }).click();
   await page.getByRole("tab", { name: "Your review", exact: true }).click();
   await expect(page.getByLabel("Comment", { exact: true })).toHaveValue(
     "The requirements are ambiguous."
@@ -201,7 +204,7 @@ test("others' reviews, older comments, conflict and mobile layout", async ({
     }
   );
   await page.goto("/task-reviews");
-  await page.getByRole("button", { name: "Review task" }).click();
+  await page.getByRole("button", { name: /^(Review task|Reviews \(\d+\))$/ }).click();
   await page.getByRole("tab", { name: /^Reviews/ }).click();
   await expect(page.getByText(comment.body)).toBeVisible();
   await expect(page.getByText("Kyle", { exact: true })).toHaveCount(0);
@@ -279,7 +282,7 @@ test("own comments can be edited and removed without changing another review", a
     }
   );
   await page.goto("/task-reviews");
-  await page.getByRole("button", { name: "Review task" }).click();
+  await page.getByRole("button", { name: /^(Review task|Reviews \(\d+\))$/ }).click();
   await expect(page.getByLabel("Comment", { exact: true })).toHaveValue(
     "Original"
   );
@@ -299,6 +302,8 @@ test("own comments can be edited and removed without changing another review", a
   page.on("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Delete", exact: true }).click();
   await expect(page.getByText("No reviews yet.")).toBeVisible();
+  await page.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Review task", exact: true })).toBeVisible();
 });
 
 test("failed loads stay stable without preparation copy or retry controls", async ({
@@ -315,7 +320,7 @@ test("failed loads stay stable without preparation copy or retry controls", asyn
     }
   );
   await page.goto("/task-reviews");
-  await page.getByRole("button", { name: "Review task" }).click();
+  await page.getByRole("button", { name: /^(Review task|Reviews \(\d+\))$/ }).click();
   await expect(page.getByRole("alert")).toHaveText("Couldn’t load reviews.");
   await expect(
     page.getByRole("button", { name: /Try again|Reload reviews/ })
@@ -347,7 +352,7 @@ test("a pending review load leaves the version selector available", async ({
     }
   );
   await page.goto("/task-reviews");
-  await page.getByRole("button", { name: "Review task" }).click();
+  await page.getByRole("button", { name: /^(Review task|Reviews \(\d+\))$/ }).click();
   await expect(page.getByRole("status")).toHaveText("Loading reviews…");
   await page.getByRole("combobox", { name: "Review version" }).click();
   await page.getByRole("option", { name: "v1", exact: true }).click();
@@ -410,7 +415,8 @@ test("saved review edits, rating baseline and per-version drafts remain compact"
     }
   );
   await page.goto("/task-reviews");
-  await page.getByRole("button", { name: "Review task" }).click();
+  await expect(page.getByRole("button", { name: "Reviews (100)", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Reviews (100)", exact: true }).click();
   await expect(page.getByLabel("Comment", { exact: true })).toHaveValue(
     "Saved review"
   );
@@ -531,7 +537,7 @@ test("a conflict preserves the draft and a subsequent manual save uses refreshed
     }
   );
   await page.goto("/task-reviews");
-  await page.getByRole("button", { name: "Review task" }).click();
+  await page.getByRole("button", { name: /^(Review task|Reviews \(\d+\))$/ }).click();
   await page.getByLabel("Comment", { exact: true }).fill("My retained edit");
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect(page.getByRole("alert")).toContainText("Couldn’t save review.");

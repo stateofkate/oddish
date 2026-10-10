@@ -3900,7 +3900,7 @@ uses the same API paths in direct mode; no public share route exposes reviews.
 
 The signed-in task detail header opens internal reviews in a version-selectable
 modal. Rating and comment share one composer and one save; both are required and
-the combined POST commits them in one transaction. Reviews load only on opening;
+the combined POST commits them in one transaction. The trigger shows the selected version’s comment count before opening;
 each version has an independent SWR key and draft. “Your review” prefills the latest
 own comment independently of history pagination; “Reviews” contains the average
 and bounded scrolling history, with the latest own review first and comment IDs
