@@ -257,6 +257,8 @@ def test_the_production_classifier_uses_the_query_evidence_contract():
     assert "Never recommend adding expected values" in brief
     assert "state a required name, signature, path, or format" not in brief
     assert "`action_items[].causal` is required" in brief
+    assert "GOOD_SUCCESS may contain a `must_fix` item only when `causal` is" in brief
+    assert "A GOOD_FAILURE may contain" not in brief
     assert "whether or not the defect decided this run" not in brief
     for ambiguous in (
         "inferable",
@@ -1795,7 +1797,11 @@ def test_the_validator_rejects_invalid_analyses_and_summaries():
     assert any("components" in e for e in errors)
 
 
-def test_the_validator_uses_post_trial_causality_for_good_failure():
+@pytest.mark.parametrize(
+    ("good_label", "bad_label"),
+    [("GOOD_FAILURE", "BAD_FAILURE"), ("GOOD_SUCCESS", "BAD_SUCCESS")],
+)
+def test_the_validator_uses_post_trial_causality_for_good_labels(good_label, bad_label):
     from oddish.worker.analysis_result_check import check_analysis_result
 
     must_fix_item = {
@@ -1815,7 +1821,7 @@ def test_the_validator_uses_post_trial_causality_for_good_failure():
     entry = _good_qa_entry("t-1")
     entry["analysis"] = {
         **entry["analysis"],
-        "classification": "GOOD_FAILURE",
+        "classification": good_label,
         "action_items": [must_fix_item],
     }
 
@@ -1827,9 +1833,12 @@ def test_the_validator_uses_post_trial_causality_for_good_failure():
 
     entry["analysis"]["action_items"][0]["causal"] = True
     errors = check_analysis_result({"trials": [entry], "verdict": None}, expected)
-    assert any("causal post-trial must-fix" in error for error in errors)
+    assert any(
+        f"cannot be {good_label} when a causal post-trial must-fix" in error
+        for error in errors
+    )
 
-    entry["analysis"]["classification"] = "BAD_FAILURE"
+    entry["analysis"]["classification"] = bad_label
     assert check_analysis_result({"trials": [entry], "verdict": None}, expected) == []
 
 

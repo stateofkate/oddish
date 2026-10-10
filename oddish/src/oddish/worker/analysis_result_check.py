@@ -266,12 +266,12 @@ def _check_classification(
             ):
                 has_causal_post_trial_must_fix = True
         if (
-            analysis.get("classification") == "GOOD_FAILURE"
+            classification in ("GOOD_FAILURE", "GOOD_SUCCESS")
             and has_causal_post_trial_must_fix
         ):
             errors.append(
-                f"{where}.classification cannot be GOOD_FAILURE when a causal "
-                "post-trial must-fix finding changed the outcome"
+                f"{where}.classification cannot be {classification} when a causal "
+                "post-trial must-fix finding decided the reward"
             )
     exploitation = analysis.get("exploitation")
     if not isinstance(exploitation, list):
