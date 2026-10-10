@@ -94,9 +94,9 @@ confirmed defect from an unproven risk or a missing fact.
 | Upload label | Meaning |
 | --- | --- |
 | `GOOD_SUCCESS` | The agent legitimately satisfied the task. |
-| `GOOD_FAILURE` | The agent failed a fair requirement. |
-| `BAD_SUCCESS` | A recorded pass was invalid, such as an exploit or inadequate tests. |
-| `BAD_FAILURE` | A task defect caused failure or invalidated this trial's grade. |
+| `GOOD_FAILURE` | The agent's own work decided the failure. |
+| `BAD_SUCCESS` | A recorded pass was invalid: an exploit, inadequate tests, or copying solver-visible text would also pass most checks. |
+| `BAD_FAILURE` | A task defect, not the agent's work, decided the failure. |
 | `HARNESS_ERROR` | Execution infrastructure made the recorded score uninformative. |
 
 Use the authoritative reward in `facts.json`, not execution status or a score
@@ -105,12 +105,25 @@ label or `HARNESS_ERROR`. For partial reward, inspect both passed and failed
 conditions and explain the missing credit. If no usable reward exists, inspect
 the execution/grading failure; do not invent a score or approve without evidence.
 
-For a task defect, cite the instruction and grading/source lines. Explain
-causation: if only the defect were removed and the agent's work stayed the same,
-would that work still fail a stated requirement? An unrelated defect does not
-turn a fair agent failure into `BAD_FAILURE`. Inspect conditions skipped after
-the first verifier error. Hidden tests or reference code alone cannot establish
-a agent requirement; cite the instruction or an observed pre-edit declaration.
+For a task defect, cite the instruction and grading/source lines. Judge
+causation only from checks that ran; never predict the result of a skipped
+check. A defect decides a failure when the graded work holds the agent's attempt
+(edits it did not revert), a check that ran rejected that work because of the
+defect, the defect would reject any work that meets the instruction and the
+solver-visible starting files, and no check that ran failed on the agent's own
+error, such as its own build error. No edits, or reverted edits, is
+`GOOD_FAILURE`. An unrelated defect does not turn a fair agent failure into
+`BAD_FAILURE`; record it as a finding. Inspect conditions skipped after the
+first verifier error to find defects, not to predict their result.
+
+For a pass, apply the copy test: if copying solver-visible text (the
+instruction, a starting README, or a supplied paper) without the requested
+computation would pass most of the checks this agent passed, the pass is
+`BAD_SUCCESS`. Methods, formulas, conventions, fixed parameters, and supplied
+documents are inputs, not answers. If the tests skip a stated requirement,
+check the agent's final code against it. Hidden tests or reference code alone
+cannot establish an agent requirement; cite the instruction, a solver-visible
+starting file, or an observed pre-edit declaration.
 
 Prove hidden-file access from agent actions, not from those files existing in
 the review packet. `AgentTimeoutError` means the configured agent time budget

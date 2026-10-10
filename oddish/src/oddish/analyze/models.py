@@ -90,7 +90,7 @@ class TrialClassification:
     @property
     def is_task_problem(self) -> bool:
         # A HARNESS_ERROR hidden_file_leak voids the run, but the exposure
-        # itself is a task defect (verdict rule: any leak -> is_good=false).
+        # itself is a task defect, so it counts as a task problem.
         if (
             self.classification is Classification.HARNESS_ERROR
             and self.subtype == "hidden_file_leak"
@@ -180,13 +180,21 @@ class ActionItem(BaseModel):
         default=None, description="pre_trial ActionItem.id this relates to"
     )
     exploited: bool = Field(
-        default=False, description="Did the trajectory exploit this weakness?"
+        default=False,
+        description=(
+            "Did a cited trajectory step use this weakness? Using an input the "
+            "task gives is not exploitation."
+        ),
     )
     exploit_evidence: str | None = Field(
         default=None, description="Quote or step reference showing exploitation"
     )
     causal: bool = Field(
-        default=False, description="Did this weakness change this trial's outcome?"
+        default=False,
+        description=(
+            "Did this weakness decide this trial's reward? Judge a failure only "
+            "from checks that ran."
+        ),
     )
 
     @model_validator(mode="before")
@@ -217,13 +225,21 @@ class ExploitationAssessment(BaseModel):
     """Whether a pre-trial action item was exploited by this trial."""
 
     links_to: str = Field(description="Pre-trial ActionItem.id this assesses")
-    exploited: bool = Field(description="Did the trajectory exploit this weakness?")
+    exploited: bool = Field(
+        description=(
+            "Did a cited trajectory step use this weakness? Using an input the "
+            "task gives is not exploitation."
+        )
+    )
     exploit_evidence: str | None = Field(
         default=None, description="Quote or step index showing exploitation"
     )
     causal: bool = Field(
         default=False,
-        description="Did the agent's use of this weakness change this trial's outcome?",
+        description=(
+            "True only when exploited is true and that use decided this trial's "
+            "reward."
+        ),
     )
 
 

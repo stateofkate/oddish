@@ -205,6 +205,14 @@ def test_the_qa_brief_tells_the_agent_everything_it_needs():
     assert "`/tmp/qa-task-source/instruction.md`" in brief
     assert "`/tmp/qa-task-source/task.toml`" in brief
     assert "does not prove that the historical solver could read hidden tests" in brief
+    # A GOOD label describes the trial, not the task, and fixes never add hints.
+    assert "treat it as a reported finding" in brief
+    for removed in (
+        "The task is good.",
+        "went against the intent of the task",
+        "state a required name, signature, path, or format",
+    ):
+        assert removed not in brief
 
 
 def test_the_production_classifier_uses_the_query_evidence_contract():
@@ -232,7 +240,11 @@ def test_the_production_classifier_uses_the_query_evidence_contract():
     assert "The exact exception `AgentTimeoutError`" in brief
     assert "it is not HARNESS_ERROR" in brief
     assert "check every failed verifier condition" in brief
-    assert "leaving the agent's final work unchanged" in brief
+    # Causation is judged from checks that ran, never from predicted ones.
+    assert "leaving the agent's final work unchanged" not in brief
+    assert "judge only checks that ran" in brief
+    assert "Never predict the result of a check that did not run" in brief
+    assert "holds the agent's attempt at the task" in brief
     assert "The first verifier error is not enough" in brief
     assert "skipped by an earlier build or compile failure" in brief
     assert "one logical stream across all write calls" in brief
@@ -240,6 +252,10 @@ def test_the_production_classifier_uses_the_query_evidence_contract():
     assert "found only in the verifier, hidden tests, or reference solution" in brief
     assert "Do not let an unrelated task defect change" in brief
     assert "Oracle copying or other proven unintended access is BAD_SUCCESS" in brief
+    assert "Apply the copy test to every pass" in brief
+    assert "is an input, not an answer" in brief
+    assert "Never recommend adding expected values" in brief
+    assert "state a required name, signature, path, or format" not in brief
     assert "`action_items[].causal` is required" in brief
     assert "whether or not the defect decided this run" not in brief
     for ambiguous in (

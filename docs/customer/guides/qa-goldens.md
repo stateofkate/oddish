@@ -5,9 +5,9 @@ A trial is one agent's attempt at one task. After a trial finishes, Oddish's QA 
 | Classification  | Meaning                                                                 |
 | --------------- | ----------------------------------------------------------------------- |
 | `GOOD_SUCCESS`  | The agent passed, and the pass is legitimate.                           |
-| `GOOD_FAILURE`  | The agent failed a fair requirement.                                    |
-| `BAD_SUCCESS`   | The agent passed, but the pass is invalid (for example, weak tests).    |
-| `BAD_FAILURE`   | A defect in the task caused the failure.                                |
+| `GOOD_FAILURE`  | The agent's own work caused the failure.                                |
+| `BAD_SUCCESS`   | The agent passed, but the pass is invalid (for example, weak tests, or the task text gives away the answers). |
+| `BAD_FAILURE`   | A defect in the task, not the agent's work, caused the failure.         |
 | `HARNESS_ERROR` | The machines running the trial broke, so the score means nothing.      |
 
 A golden is the classification a person decided is correct for one trial. The golden set is every golden in your workspace. Oddish measures QA's accuracy by comparing QA's classification with the golden on each golden trial.

@@ -585,12 +585,12 @@ The command runs the same contract checker as the final verifier. If it rejects 
 Field rules that are easy to confuse:
 - `evidence` is one non-empty JSON string. Put multiple bullet sentences inside that string separated by `\\n`. An array such as `["first fact", "second fact"]` is invalid.
 - `action_items[].problem_type` accepts only `"incompleteness"` or `"mismatch"`. A classification subtype such as `"underspecified_instruction"` is invalid here.
-- `action_items[].causal` is required on every post-trial finding. Set it to `true` only when that task weakness changed this trial's outcome. A GOOD_FAILURE may contain a `must_fix` item only when `causal` is `false`.
-- `exploitation[].causal` means the agent's exploitation changed the outcome. If `exploited` is `false`, `causal` must also be `false`.
+- `action_items[].causal` is required on every post-trial finding. Set it to `true` only when that task weakness decided this trial's reward. For a failure, judge only checks that ran. A GOOD_FAILURE may contain a `must_fix` item only when `causal` is `false`. In the example below, the agent's own syntax error stopped the build, so the test's extra argument did not decide the reward.
+- `exploitation[].causal` means the agent's use of that weakness decided this trial's reward. If `exploited` is `false`, `causal` must also be `false`.
 
 Valid field examples:
 ```
-"evidence": "- The test `test_connect` calls `connect` with three arguments (`tests/test_api.py` line 12).\\n- The instruction and the starting file `api.py` declare `connect` with two arguments (`environment/api.py` line 8).",
+"evidence": "- The agent's last edit leaves a syntax error in `api.py`, so the build fails before `test_connect` runs (trajectory step 31).\\n- The test `test_connect` passes `connect` a third argument that neither the instruction nor `environment/api.py` declares (`tests/test_api.py` line 12).",
 "action_items": [{{"source":"post_trial","problem_type":"mismatch","dimension":"verifier","file":"tests/test_api.py","line_start":12,"line_end":12,"title":"The test passes `connect` a third argument that neither the instruction nor a starting file declares.","detail":"The instruction and `environment/api.py` declare two arguments, but the test passes three. A solver that follows the declared form fails this test.","recommendation":"Make `tests/test_api.py` line 12 call `connect` with the declared two arguments.","tier":"must_fix","causal":false}}],
 "exploitation": [{{"links_to":"audit-item-1","exploited":false,"exploit_evidence":null,"causal":false}}]
 ```

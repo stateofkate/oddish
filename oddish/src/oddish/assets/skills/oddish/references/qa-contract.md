@@ -65,10 +65,13 @@ three agents); generating a verdict does not itself qualify a task for delivery.
 
 Per-trial classifications are:
 
-- `GOOD_SUCCESS`: the verifier passed and QA accepts the task/run behavior.
-- `BAD_SUCCESS`: the verifier passed but QA found a task defect or invalid pass.
-- `GOOD_FAILURE`: the verifier failed without showing a task defect.
-- `BAD_FAILURE`: the verifier failed because QA found a task defect.
+- `GOOD_SUCCESS`: the verifier passed and the agent's own work earned the pass.
+- `BAD_SUCCESS`: the verifier passed, but the pass is invalid: an exploit, weak
+  tests that accepted broken work, or copying solver-visible text would also
+  pass most checks.
+- `GOOD_FAILURE`: the agent's own work decided the failure. A recorded task
+  defect can coexist with this label and still rejects the task.
+- `BAD_FAILURE`: a task defect, not the agent's work, decided the failure.
 - `HARNESS_ERROR`: execution evidence indicates a harness or infrastructure
   failure rather than an ordinary verifier outcome. Exception: a
   `HARNESS_ERROR` with `subtype = "hidden_file_leak"` counts as a task
@@ -176,4 +179,4 @@ report suggestions, speculation, or review execution failures as findings.
 Active deliveries require an individual acknowledgment for every historical
 reported defect as well. Acknowledgments and sign-off are bound to the reviewed
 version; unchanged-byte re-analysis cannot erase a defect. A task defect changes
-an execution classification only if it affected that execution's outcome.
+an execution classification only if it decided that execution's reward.
