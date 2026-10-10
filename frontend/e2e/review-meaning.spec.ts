@@ -1645,3 +1645,59 @@ test("overview links the audit and QA runs stored outside the experiment", async
   if (process.env.SCREENSHOT_PATH)
     await page.screenshot({ path: process.env.SCREENSHOT_PATH });
 });
+
+for (const trialPane of [false, true]) {
+  test(`experiment review opens the represented task version (${trialPane ? "trial" : "task"} pane)`, async ({ page }, testInfo) => {
+    test.skip(process.env.E2E_REVIEW_FIXTURES !== "1");
+    await page.route("**/api/tasks/task-a/versions", (route) => route.fulfill({
+      json: [
+        { id: "task-a-v7", version: 7, is_current: true },
+        { id: "task-a-v4", version: 4, is_current: false },
+      ],
+    }));
+    const requests: string[] = [];
+    await page.route("**/api/tasks/task-a/versions/*/reviews**", (route) => {
+      requests.push(route.request().url());
+      return route.fulfill({ json: {
+        current_user_id: "me", can_moderate: false, average_score: null,
+        rating_count: 0, own_rating: null, own_comment: null, comment_count: 0,
+        own_rating_revision: 0, ratings: [], comments: [], next_before: null,
+        next_before_id: null,
+      } });
+    });
+    await page.goto(`/experiments/review-demo?scenario=older-trials&task=task-a${trialPane ? "&trial=task-a-trial" : ""}`);
+    await expect(page.getByRole("button", { name: "Review task", exact: true })).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath("experiment-review-entry.png"), animations: "disabled" });
+    await page.getByRole("button", { name: "Review task", exact: true }).click();
+    await expect(page.getByRole("combobox", { name: "Review version" })).toHaveText("v4");
+    await expect(page.getByText("Task A · Internal", { exact: true })).toBeVisible();
+    await expect.poll(() => requests.length).toBeGreaterThan(0);
+    expect(requests.every((url) => url.includes("/task-a-v4/reviews"))).toBe(true);
+  });
+}
+
+test("read-only experiments do not expose or fetch internal review resources", async ({ page }) => {
+  test.skip(process.env.E2E_REVIEW_FIXTURES !== "1");
+  const requests: string[] = [];
+  page.on("request", (request) => {
+    if (/\/versions(?:\?|$)|\/reviews/.test(request.url())) requests.push(request.url());
+  });
+  await page.goto("/experiments/review-demo?scenario=read-only&task=task-a&trial=task-a-trial");
+  await expect(page.getByText("Task definition", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Review task", exact: true })).toHaveCount(0);
+  expect(requests).toEqual([]);
+});
+
+test("single-task experiments expose reviews without opening a panel", async ({ page }) => {
+  test.skip(process.env.E2E_REVIEW_FIXTURES !== "1");
+  await page.route("**/api/tasks/task-a/versions/*/reviews**", (route) => route.fulfill({ json: {
+    current_user_id: "me", can_moderate: false, average_score: null,
+    rating_count: 0, own_rating: null, own_comment: null, comment_count: 0,
+    own_rating_revision: 0, ratings: [], comments: [], next_before: null,
+    next_before_id: null,
+  } }));
+  await page.goto("/experiments/review-demo?scenario=single-task");
+  await expect(page.getByRole("button", { name: "Review task", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Review task", exact: true }).click();
+  await expect(page.getByText("Task A · Internal", { exact: true })).toBeVisible();
+});

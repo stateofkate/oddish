@@ -81,6 +81,7 @@ import { expandTrialParam } from "@/lib/trial-url";
 
 type DrawerMode = "task" | "trial";
 
+import { ExperimentTaskReview } from "@/components/experiment-task-review";
 import { ExperimentRunDialog } from "@/components/experiment-run-dialog";
 
 const TrialDetailPanel = dynamic(
@@ -1890,6 +1891,12 @@ export function ExperimentDetailView({
                 onToggleShowPassAtK={() => setShowPassAtKOverride(!showPassAtK)}
                 headerRight={
                   <>
+                    {!readOnly &&
+                      !drawerState?.isOpen &&
+                      pageSummary?.task_count === 1 &&
+                      tasksForExperiment[0] && (
+                        <ExperimentTaskReview task={tasksForExperiment[0]} />
+                      )}
                     {!readOnly && allowRetry && experimentId && (
                       <ExperimentRunDialog
                         experimentId={experimentId}
@@ -2071,6 +2078,11 @@ export function ExperimentDetailView({
           showTrial={showTrial}
           onShowTaskChange={handleShowTaskChange}
           onShowTrialChange={handleShowTrialChange}
+          taskHeaderAction={
+            !readOnly && drawerState.isOpen ? (
+              <ExperimentTaskReview task={drawerState.task} />
+            ) : null
+          }
           sideBySideLeft={
             <TaskFilesPanel
               // This tells the panel whether the pane is actually visible
@@ -2110,6 +2122,11 @@ export function ExperimentDetailView({
               activePane={activeTaskPane}
               onActivePaneChange={selectTaskPane}
               taskId={drawerState.task.id}
+              headerAction={
+                !readOnly && drawerState.isOpen ? (
+                  <ExperimentTaskReview task={drawerState.task} />
+                ) : null
+              }
               task={drawerState.task}
               taskVersion={resolveExperimentTaskVersion(drawerState.task)}
               orderedTasks={drawerState.orderedTasks}

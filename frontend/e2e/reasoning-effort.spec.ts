@@ -293,6 +293,9 @@ test("experiment view refreshes open drawer groups when the URL grouping changes
   page,
 }) => {
   await page.route("**/api/**", (route) => route.fulfill({ json: {} }));
+  await page.route("**/api/tasks/*/versions", (route) =>
+    route.fulfill({ json: [] })
+  );
   await page.goto(
     "/effort?sample=mixed&detail=1&task=repair-queue&trial=repair-queue-low-2"
   );

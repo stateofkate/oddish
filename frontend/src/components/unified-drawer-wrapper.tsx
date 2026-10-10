@@ -32,6 +32,7 @@ interface UnifiedDrawerWrapperProps {
   onShowTaskChange?: (next: boolean) => void;
   onShowTrialChange?: (next: boolean) => void;
   sideBySideLeft?: React.ReactNode;
+  taskHeaderAction?: React.ReactNode;
   /** Shares of the window width (0–1) used until the account drags the edge. */
   defaultWidth?: number;
   sideBySideWidth?: number;
@@ -55,6 +56,7 @@ export function UnifiedDrawerWrapper({
   onShowTaskChange,
   onShowTrialChange,
   sideBySideLeft,
+  taskHeaderAction,
   defaultWidth = 0.6,
   sideBySideWidth = 0.85,
   minWidth = 420,
@@ -124,7 +126,10 @@ export function UnifiedDrawerWrapper({
         <span className="text-muted-foreground pl-2 text-[10px] font-semibold tracking-wider uppercase">
           Task definition
         </span>
-        {trialsToggle}
+        <div className="ml-auto flex items-center gap-2">
+          {taskHeaderAction}
+          {trialsToggle}
+        </div>
       </div>
       <div className="flex flex-1 flex-col overflow-hidden">
         {sideBySideLeft}

@@ -11,6 +11,7 @@ export function FixtureExperiment() {
     if (scenario === "layout-deep-link") setFixtureAccount("alice", "org-a");
   }, [scenario]);
   const visibleTasks: Task[] = tasks.flatMap((task) => {
+    if (scenario === "single-task") return task.id === "task-a" ? [task] : [];
     if (scenario === "unreviewed-only")
       return task.id === "unreviewed" || task.id === "stale-review"
         ? [task]
@@ -124,6 +125,7 @@ export function FixtureExperiment() {
   return (
     <ExperimentDetailView
       experimentId="review-demo"
+      readOnly={scenario === "read-only"}
       qaIssues={{
         baseHref: "/experiments/review-demo",
         apiHref: "/api/experiments/review-demo/qa-issues",

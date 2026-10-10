@@ -157,6 +157,7 @@ interface TaskFilesPanelProps {
   onClose: () => void;
   taskId: string | null;
   task?: Task | null;
+  headerAction?: React.ReactNode;
   /**
    * Verdict shared with a host that also renders it, such as the task page.
    * The drawer shows its own full report when both name the same QA run, and
@@ -474,6 +475,7 @@ export function TaskFilesPanel({
   onClose,
   taskId,
   task: taskSnapshot,
+  headerAction,
   verdictTask,
   orderedTasks,
   taskIndex,
@@ -2329,7 +2331,8 @@ export function TaskFilesPanel({
         {(onNavigateToFirstTrial ||
           hasNavigation ||
           (!readOnly && allowRetry) ||
-          canRunQA) && (
+          canRunQA ||
+          headerAction) && (
           <div className="text-muted-foreground space-y-2 pt-2 text-xs">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex flex-wrap items-center gap-3">
@@ -2388,6 +2391,7 @@ export function TaskFilesPanel({
               </div>
 
               <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+                {headerAction}
                 <div className="border-border bg-muted/30 rounded-md border px-3 py-1.5 text-right">
                   <div className="font-mono text-[9px] leading-none font-semibold tracking-[0.09em] text-[color:var(--paper-ink-3)] uppercase">
                     Avg score
