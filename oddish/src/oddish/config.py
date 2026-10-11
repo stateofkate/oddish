@@ -1597,7 +1597,7 @@ def infer_model_provider_prefix(model_name: str | None) -> str | None:
 # Canonical deployed-backend API base URLs (single source of truth; the CLI in
 # ``oddish.cli.config`` re-exports these). Forks override via the env vars.
 DEFAULT_API_URL = os.environ.get(
-    "ODDISH_DEFAULT_API_URL", "https://abundant-ai--api.modal.run"
+    "ODDISH_DEFAULT_API_URL", "https://api.oddish.app"
 )
 # Format string for a PR-preview API URL. ``{n}`` is the PR number.
 PREVIEW_URL_TEMPLATE = os.environ.get(

@@ -12,7 +12,7 @@ Your API key is all you need. Apple Silicon macOS and Linux x86_64 are supported
 
 ```bash
 export ODDISH_API_KEY=ok_...
-curl -fsSL https://abundant-ai--api.modal.run/cli/install.sh | sh
+curl -fsSL https://api.oddish.app/cli/install.sh | sh
 oddish version
 ```
 

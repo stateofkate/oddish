@@ -120,11 +120,11 @@ async def install_script() -> PlainTextResponse:
 INSTALL_SH = r"""#!/bin/sh
 # Install the Oddish CLI with your Oddish API key.
 #   export ODDISH_API_KEY=ok_...
-#   curl -fsSL https://abundant-ai--api.modal.run/cli/install.sh | sh
+#   curl -fsSL https://api.oddish.app/cli/install.sh | sh
 # Re-run it to update. Installs to ~/.oddish/cli and links ~/.local/bin/oddish.
 set -eu
 
-API="${ODDISH_API_URL:-https://abundant-ai--api.modal.run}"
+API="${ODDISH_API_URL:-https://api.oddish.app}"
 [ -n "${ODDISH_API_KEY:-}" ] || { echo "Set ODDISH_API_KEY first (Oddish Settings > API keys)." >&2; exit 1; }
 
 case "$(uname -s)/$(uname -m)" in

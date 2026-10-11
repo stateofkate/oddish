@@ -18,7 +18,7 @@ import { apiFetch, fetcher } from "@/lib/api";
 import { useOrgHref } from "@/lib/use-org-href";
 import { cn } from "@/lib/utils";
 
-const PROD_API_URL = "https://abundant-ai--api.modal.run";
+const PROD_API_URL = "https://api.oddish.app";
 // The install script and CLI default to production; other deployments
 // (staging, previews) need the CLI pointed at them.
 const API_URL = (() => {

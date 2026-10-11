@@ -119,7 +119,7 @@ def _sql_tables() -> set[str]:
 
 
 def _cfg() -> tuple[str, dict]:
-    url = os.environ.get("ODDISH_API_URL", "https://abundant-ai--api.modal.run")
+    url = os.environ.get("ODDISH_API_URL", "https://api.oddish.app")
     return url.rstrip("/"), {"Authorization": f"Bearer {os.environ['ODDISH_API_KEY']}"}
 
 

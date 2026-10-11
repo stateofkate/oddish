@@ -54,7 +54,8 @@ def get_api_url() -> str:
 
 
 def is_modal_api_url(api_url: str) -> bool:
-    """Return True if the API URL targets Modal Cloud."""
+    """Return True if the API URL targets Modal Cloud, by its Modal hostname
+    or by the custom domain that production's Modal app serves."""
     try:
         from urllib.parse import urlparse
 
@@ -62,7 +63,7 @@ def is_modal_api_url(api_url: str) -> bool:
         host = (parsed.hostname or "").lower()
     except Exception:
         return False
-    return host.endswith(".modal.run")
+    return host.endswith(".modal.run") or host == "api.oddish.app"
 
 
 def get_dashboard_url(api_url: str | None = None) -> str:

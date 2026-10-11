@@ -215,7 +215,7 @@ async def main(args: argparse.Namespace) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--api", default="https://abundant-ai--api.modal.run")
+    parser.add_argument("--api", default="https://api.oddish.app")
     parser.add_argument("--api-key-env", default="ODDISH_API_KEY")
     parser.add_argument("--trials", type=Path, action="append", default=[])
     parser.add_argument("--comparison-run", type=Path, action="append", default=[])

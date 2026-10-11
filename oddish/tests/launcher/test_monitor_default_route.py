@@ -180,7 +180,7 @@ async def test_launch_that_settled_here_reports_the_settled_outcome(monkeypatch)
             "oddish-staging",
             "https://abundant-ai-staging--oddish-staging-api.modal.run",
         ),
-        (None, None, "oddish", "https://abundant-ai--api.modal.run"),
+        (None, None, "oddish", "https://api.oddish.app"),
         (None, None, "someone-elses-app", ""),
         (None, None, None, ""),
     ],

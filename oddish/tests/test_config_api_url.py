@@ -53,3 +53,15 @@ def test_cli_config_reexports_constants():
 
     assert cli_config.DEFAULT_API_URL == DEFAULT_API_URL
     assert cli_config.PREVIEW_URL_TEMPLATE == PREVIEW_URL_TEMPLATE
+
+
+def test_production_custom_domain_counts_as_hosted_modal():
+    # Production's Modal app also serves api.oddish.app (the CLI default), so
+    # the hosted-only gates in `oddish run` and `oddish delete` must apply there.
+    from oddish.cli.config import is_modal_api_url
+
+    assert is_modal_api_url(DEFAULT_API_URL)
+    assert is_modal_api_url("https://api.oddish.app/")
+    assert is_modal_api_url(STAGING_API_URL)
+    assert not is_modal_api_url("http://localhost:8000")
+    assert not is_modal_api_url("https://api.oddish.app.example.com")

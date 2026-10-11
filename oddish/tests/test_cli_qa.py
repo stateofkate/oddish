@@ -263,6 +263,7 @@ def test_search_parses_like_the_page(case):
             "https://staging.oddish.app",
         ),
         ("https://abundant-ai--api.modal.run", "https://www.oddish.app"),
+        ("https://api.oddish.app", "https://www.oddish.app"),
         (
             "https://abundant-ai-preview--oddish-pr-x-api.modal.run",
             "https://www.oddish.app",

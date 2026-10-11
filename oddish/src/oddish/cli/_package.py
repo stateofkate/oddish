@@ -19,7 +19,7 @@ PYPI_JSON_URL = "https://pypi.org/pypi/oddish/json"
 
 Source = Literal["pypi", "editable", "other", "homebrew", "script"]
 Manager = Literal["uv-pip", "pip", "brew", "script"]
-INSTALL_SCRIPT_URL = "https://abundant-ai--api.modal.run/cli/install.sh"
+INSTALL_SCRIPT_URL = "https://api.oddish.app/cli/install.sh"
 RERUN_INSTALL_SCRIPT = (
     "This install came from the Oddish install script. Re-run it to update: "
     f"curl -fsSL {INSTALL_SCRIPT_URL} | sh"
