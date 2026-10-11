@@ -24,30 +24,33 @@ def browse_trial_scope() -> tuple[Any, ...]:
     )
 
 
-def trial_bucket_label() -> Any:
-    """SQL reward/error bucket matching frontend ``getMatrixStatus``."""
+def trial_bucket_label(trials: Any = TrialModel) -> Any:
+    """SQL reward/error bucket matching frontend ``getMatrixStatus``.
+
+    ``trials`` is ``TrialModel``, an alias of it, or a subquery's ``.c``.
+    """
     is_timeout = and_(
-        TrialModel.error_message.isnot(None),
-        or_(*(TrialModel.error_message.like(p) for p in _AGENT_TIMEOUT_LIKE)),
+        trials.error_message.isnot(None),
+        or_(*(trials.error_message.like(p) for p in _AGENT_TIMEOUT_LIKE)),
     )
-    has_reward = TrialModel.reward.isnot(None)
+    has_reward = trials.reward.isnot(None)
     reward_bucket = case(
-        (TrialModel.reward == 1, "pass"),
-        (TrialModel.reward == 0, "fail"),
+        (trials.reward == 1, "pass"),
+        (trials.reward == 0, "fail"),
         else_="partial",
     )
     return case(
-        (TrialModel.status == TrialStatus.SKIPPED, "skipped"),
+        (trials.status == TrialStatus.SKIPPED, "skipped"),
         (
-            and_(TrialModel.error_message.isnot(None), ~and_(is_timeout, has_reward)),
+            and_(trials.error_message.isnot(None), ~and_(is_timeout, has_reward)),
             "harness",
         ),
         (
-            TrialModel.status == TrialStatus.FAILED,
+            trials.status == TrialStatus.FAILED,
             case((and_(is_timeout, has_reward), reward_bucket), else_="harness"),
         ),
         (
-            TrialModel.status == TrialStatus.SUCCESS,
+            trials.status == TrialStatus.SUCCESS,
             case((has_reward, reward_bucket), else_="scoreless"),
         ),
         else_="other",

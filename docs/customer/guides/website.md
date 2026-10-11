@@ -18,6 +18,7 @@ Open an experiment from the dashboard.
 
 - The tiles at the top show **Avg score**, **Trials finished**, **Tasks**, **QA verdicts** (click a count to list those tasks) and run cost.
 - The table has one row per task and one column per agent and model. Each cell holds that agent's trials, colored by status: **PASS**, **FAIL**, **ERROR**, **SCORELESS** (finished without a score), **QUEUED**, **RUNNING**.
+- Each task row shows **Avg steps** and **Avg tokens** over its completed agent runs in the shown columns, counted as on the task page.
 - **Search tasks (comma-separated)** filters rows. **View** shows **All**, **Any error**, **Any failed** or **All failed** rows.
 - Select rows to **Rerun trials**, **Cancel**, **Tag** or **Generate QA verdicts**. **Copy TSV** copies the table for a spreadsheet.
 - **Run trials** starts more trials on the experiment's tasks with a model you choose.

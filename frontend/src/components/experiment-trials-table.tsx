@@ -36,6 +36,7 @@ import {
 } from "@/components/ui/popover";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { NewTaskVersionBadge } from "@/components/new-task-version-badge";
+import { EffortChip } from "@/components/task-effort-chip";
 import { TagPicker } from "@/components/tag-picker-lazy";
 import { TrialGridSkeleton } from "@/components/trial-grid-skeleton";
 import {
@@ -2662,6 +2663,7 @@ export function ExperimentTrialsTable({
                                     onPrefetch={() => prefetchTask(task)}
                                   />
                                 )}
+                                <EffortChip trials={orderedTrials} />
                                 <NewTaskVersionBadge
                                   task={task}
                                   readOnly={readOnly}

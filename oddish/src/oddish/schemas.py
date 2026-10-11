@@ -1241,9 +1241,12 @@ class ExperimentTrialCell(BaseModel):
     max_attempts: int
     harbor_stage: str | None = None
     reward: float | None = None
+    # trial_bucket_label(): pass, partial, fail, scoreless, harness, skipped, other.
+    outcome: str | None = None
     input_tokens: int | None = None
     cache_tokens: int | None = None
     output_tokens: int | None = None
+    total_steps: int | None = None
     cost_usd: float | None = None
     cost_is_estimated: bool | None = None
     is_billed: bool = False

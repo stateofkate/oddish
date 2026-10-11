@@ -1074,7 +1074,8 @@ need repository metadata or task-owner identity. The anonymous `/open` and
 `/focus` SQL projections must not select `tasks.user`; hiding owner fields in
 React is not an access-control boundary. `/trial-page` returns at most 250
 projected trials and omits full analysis, errors, results, phase timing, Harbor
-config, and ORM relationships.
+config, and ORM relationships. In place of the error text, each cell carries
+`outcome`, the `trial_bucket_label()` bucket the task page counts with.
 Experiment pages use `/results` for initial and incremental loading. Task and
 trial collections each use one SQL `DECLARE`/`FETCH` cursor, fetched in batches
 of 500 rows, within a read-only repeatable-read transaction so totals and rows agree.

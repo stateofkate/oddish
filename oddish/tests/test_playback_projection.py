@@ -44,6 +44,7 @@ async def test_playback_projection_keeps_unknown_absent_and_present_distinct(
         status=TrialStatus.SUCCESS,
         input_tokens=5_714_326_425,
         output_tokens=42,
+        total_steps=17,
         result={
             "large_metric": "x" * 100_000,
             **({"_playback": playback} if playback is not None else {}),
@@ -73,3 +74,4 @@ async def test_playback_projection_keeps_unknown_absent_and_present_distinct(
     cell = build_experiment_trial_cell(row, exclusions=None)
     assert cell.model_dump()["playback"] == expected
     assert cell.input_tokens == 5_714_326_425
+    assert cell.total_steps == 17

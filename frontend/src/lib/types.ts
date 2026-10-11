@@ -162,6 +162,10 @@ export interface Trial {
   harbor_source?: string | null;
   reward: number | null;
   error_message?: string | null;
+  /** The server's outcome bucket (pass, partial, fail, scoreless, harness,
+   *  skipped, other). Experiment grid cells only: they omit error_message,
+   *  which getMatrixStatus needs to tell a graded timeout from a harness error. */
+  outcome?: string | null;
   result?: Record<string, unknown> | null;
   analysis_status?: JobStatus | null;
   analysis?: TrialAnalysis | null;

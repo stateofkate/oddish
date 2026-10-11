@@ -181,6 +181,7 @@ def _trial_page_row(
     row = {column.key: getattr(trial, column.key) for column in _TRIAL_PAGE_COLUMNS}
     row.update(
         task_path="tasks/task-001",
+        outcome="pass",  # _trial() is a rewarded success
         analysis_classification=classification,
         analysis_subtype=subtype,
         analysis_evidence=evidence,

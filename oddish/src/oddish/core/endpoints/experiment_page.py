@@ -49,6 +49,7 @@ from oddish.core.sharing.public_projection import (
     apply_public_trial_cell_qa_visibility,
     public_task_github_meta,
 )
+from oddish.core.task_browse_metrics import trial_bucket_label
 from oddish.db import (
     ACTIVE_TRIAL_STATUSES,
     ExperimentModel,
@@ -96,6 +97,7 @@ _TRIAL_PAGE_COLUMNS = tuple(
     TrialModel.cache_tokens.label("cache_tokens"),
     TrialModel.cache_write_tokens.label("cache_write_tokens"),
     TrialModel.output_tokens.label("output_tokens"),
+    TrialModel.total_steps,
 )
 
 
@@ -143,9 +145,11 @@ def build_experiment_trial_cell(
         max_attempts=int(row["max_attempts"]),
         harbor_stage=row["harbor_stage"],
         reward=row["reward"],
+        outcome=row["outcome"],
         input_tokens=row["input_tokens"],
         cache_tokens=row["cache_tokens"],
         output_tokens=row["output_tokens"],
+        total_steps=row["total_steps"],
         cost_usd=cost_usd,
         cost_is_estimated=cost_is_estimated,
         is_billed=row["billed_user_id"] is not None,
@@ -709,6 +713,8 @@ def _experiment_trial_projection(trials: Any):
                 for column in _TRIAL_PAGE_COLUMNS
             ),
             TaskModel.task_path,
+            # Cells omit error_message, so the task page's outcome rule runs here.
+            trial_bucket_label(getattr(trials, "c", trials)).label("outcome"),
             func.left(analysis["classification"].astext, 100).label(
                 "analysis_classification"
             ),
@@ -724,7 +730,8 @@ def _experiment_trial_rows_query(*, experiment_id: str, org_id: str):
     """Grid-visible trial rows, plus the columns callers filter and order on."""
     scope = experiment_trial_scope(experiment_id, org_id=org_id)
     visible = experiment_visible_trials_selectable(
-        scope, columns=(*_TRIAL_PAGE_COLUMNS, TrialModel.analysis)
+        scope,
+        columns=(*_TRIAL_PAGE_COLUMNS, TrialModel.analysis, TrialModel.error_message),
     )
     query = _experiment_trial_projection(visible).where(
         or_(
