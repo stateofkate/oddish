@@ -62,6 +62,7 @@ from oddish.core.analysis_payload import (
     audit_snapshot_matches,
     parse_analysis_payload,
     qa_trial_evidence,
+    without_exploitation_annotations,
 )
 from oddish.core.trial_artifacts import (
     TrialArtifactMode,
@@ -432,8 +433,12 @@ def build_qa_brief(
     classify = classification_prompt or _prompt(STAGES[QAStage.POST_TRIAL].prompt_file)
     verdict = _prompt("verdict_prompt.txt")
     summary = render_summary_instructions(_prompt("prompts/trajectory_summary.txt"))
+    # Stored audit items carry exploitation stamps from earlier QA runs. Showing
+    # them would hand this run another run's answer for the same trial.
     pre_trial = (
-        json.dumps(pre_trial_items, indent=1) if pre_trial_items else "(none recorded)"
+        json.dumps(without_exploitation_annotations(pre_trial_items), indent=1)
+        if pre_trial_items
+        else "(none recorded)"
     )
     evidence = trial_evidence or [
         {

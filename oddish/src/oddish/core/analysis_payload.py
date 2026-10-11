@@ -23,20 +23,28 @@ def qa_trial_evidence(trial: TrialModel) -> dict:
     }
 
 
+EXPLOITATION_ANNOTATION_KEYS = frozenset({"exploited", "exploit_evidence"})
+
+
+def without_exploitation_annotations(items: list[dict]) -> list[dict]:
+    """Copy audit items without the exploitation stamps that QA writes back later.
+
+    A stamp is an earlier QA run's judgment of one trial, so a QA brief must not
+    show it. The stored items are not changed.
+    """
+    return [
+        {k: v for k, v in item.items() if k not in EXPLOITATION_ANNOTATION_KEYS}
+        for item in items
+    ]
+
+
 def audit_fingerprint(version: TaskVersionModel) -> str:
     """Pin source bytes and an audit attempt, excluding later exploitation annotations."""
     audit = version.pre_trial
     if isinstance(audit, dict):
         audit = {
             **audit,
-            "items": [
-                {
-                    k: v
-                    for k, v in item.items()
-                    if k not in {"exploited", "exploit_evidence"}
-                }
-                for item in audit.get("items", [])
-            ],
+            "items": without_exploitation_annotations(audit.get("items", [])),
         }
     encoded = json.dumps(
         [

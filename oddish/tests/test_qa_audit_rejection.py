@@ -315,6 +315,30 @@ def test_fingerprint_pins_the_audit_but_not_later_exploitation_annotations():
     assert not audit_snapshot_matches(version, expected)
 
 
+def test_the_qa_brief_hides_exploitation_stamps_from_earlier_qa_runs():
+    """A stamp is an earlier run's judgment of one trial, so a replay of that
+    trial must judge exploitation without it."""
+    stamped = [
+        {
+            "id": "finding",
+            **FINDING,
+            "exploited": True,
+            "exploit_evidence": "step 12 copied the README formula",
+        }
+    ]
+    brief = analysis_trials.build_qa_brief(
+        task_name="demo",
+        trial_ids=["t-1"],
+        pre_trial_items=stamped,
+        with_verdict=False,
+    )
+    block = brief.split("(do not repeat these as per-trial action items):\n", 1)[1]
+    block = block.split("\n\nDeterministic nop/oracle", 1)[0]
+    assert json.loads(block) == [{"id": "finding", **FINDING}]
+    assert "step 12 copied the README formula" not in brief
+    assert stamped[0]["exploited"] is True
+
+
 @pytest.mark.parametrize(
     "must_fix,baselines,rejected",
     [
