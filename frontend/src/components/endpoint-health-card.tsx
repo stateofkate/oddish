@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { CheckCircle2, CircleX, TriangleAlert, Clock3 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -146,6 +146,91 @@ export function EndpointHealthCard() {
     }
   }
 
+  // SWR keeps stale data after a failed refresh, so rows can be hidden
+  // while `visible` still lists them.
+  const rowsShown = !error && !!data?.enabled;
+  const selectedVisible = rowsShown && visible.some((m) => m.id === selectedId);
+  const historyPanel = (
+    <section
+      aria-label="Endpoint check history"
+      className="space-y-3 rounded-md border px-3 py-3"
+    >
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="font-medium">
+          Recent checks{selected ? `: ${selected.name}` : ""}
+        </h3>
+        <Button size="sm" variant="ghost" onClick={() => selectMonitor(null)}>
+          Close history
+        </Button>
+      </div>
+      <p className="text-muted-foreground text-xs">
+        Latest 100 checks from the past 30 days. Times use your local timezone.
+      </p>
+      {selected && (
+        <div className="space-y-1 text-sm">
+          {selected.error && <p>{selected.error}</p>}
+          <p className="text-muted-foreground text-xs">
+            Request model: {selected.model} · Credential:{" "}
+            {selected.credential_ref}
+          </p>
+          <p className="text-muted-foreground text-xs">
+            Last check:{" "}
+            {selected.last_checked_at
+              ? new Date(selected.last_checked_at).toLocaleString()
+              : "No completed checks"}
+          </p>
+        </div>
+      )}
+      {historyError ? (
+        <div role="alert">
+          Could not load check history.{" "}
+          <Button size="sm" variant="outline" onClick={() => retryHistory()}>
+            Retry history
+          </Button>
+        </div>
+      ) : !history ? (
+        <p role="status">Loading checks…</p>
+      ) : history.checks.length === 0 ? (
+        <p>No recorded checks.</p>
+      ) : (
+        <ol className="max-h-96 space-y-3 overflow-y-auto text-sm">
+          {history.checks.map((check) => {
+            const style = checkStyles[check.outcome];
+            const StatusIcon = style.icon;
+            return (
+              <li key={check.id} className="space-y-2 border-b pb-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge
+                    variant="outline"
+                    className={cn("gap-1.5", style.badge)}
+                  >
+                    <StatusIcon aria-hidden="true" className="size-3.5" />
+                    {style.label}
+                  </Badge>
+                  <span>
+                    {new Date(check.checked_at).toLocaleString()} ·{" "}
+                    {check.latency_ms} ms
+                  </span>
+                </div>
+                {check.error && (
+                  <p>
+                    {check.error}
+                    {check.status_code && ` (HTTP ${check.status_code})`}
+                  </p>
+                )}
+                {check.request_id && (
+                  <p className="text-muted-foreground text-xs break-all">
+                    Provider request: {check.request_id}
+                  </p>
+                )}
+              </li>
+            );
+          })}
+        </ol>
+      )}
+    </section>
+  );
+
   return (
     <Card>
       <CardHeader>
@@ -200,81 +285,86 @@ export function EndpointHealthCard() {
               const style = checkStyles[status];
               const StatusIcon = style.icon;
               return (
-                <div
-                  key={m.id}
-                  className={cn(
-                    "flex items-center gap-3 rounded-md border border-l-4 px-3 py-2",
-                    style.row
-                  )}
-                >
-                  <StatusIcon
-                    aria-hidden="true"
-                    className={cn("size-4 shrink-0", style.iconColor)}
-                  />
-                  <span
-                    className="min-w-0 flex-1 truncate font-medium"
-                    title={m.name}
+                <Fragment key={m.id}>
+                  <div
+                    className={cn(
+                      "flex items-center gap-3 rounded-md border border-l-4 px-3 py-2",
+                      style.row
+                    )}
                   >
-                    {m.name}
-                  </span>
-                  <Badge
-                    variant="outline"
-                    className={cn("shrink-0 whitespace-nowrap", style.badge)}
-                    title={m.error ?? undefined}
-                  >
-                    {status === "overdue"
-                      ? "Checks overdue"
-                      : m.last_outcome === "monitor_error"
-                        ? "Check could not run"
-                        : m.incident_id
-                          ? "Repeated failures"
-                          : m.last_outcome === "failure"
-                            ? "Confirming failure"
-                            : "Healthy"}
-                  </Badge>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="shrink-0"
-                    onClick={() => selectMonitor(m.id)}
-                  >
-                    Inspect checks
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="shrink-0"
-                    disabled={
-                      checkRequest?.id === m.id &&
-                      (checkRequest.state === "sending" ||
-                        (checkRequest.state === "scheduled" &&
-                          checkRequest.observedAt === m.last_checked_at))
-                    }
-                    onClick={() => requestCheck(m.id)}
-                  >
+                    <StatusIcon
+                      aria-hidden="true"
+                      className={cn("size-4 shrink-0", style.iconColor)}
+                    />
+                    <span
+                      className="min-w-0 flex-1 truncate font-medium"
+                      title={m.name}
+                    >
+                      {m.name}
+                    </span>
+                    <Badge
+                      variant="outline"
+                      className={cn("shrink-0 whitespace-nowrap", style.badge)}
+                      title={m.error ?? undefined}
+                    >
+                      {status === "overdue"
+                        ? "Checks overdue"
+                        : m.last_outcome === "monitor_error"
+                          ? "Check could not run"
+                          : m.incident_id
+                            ? "Repeated failures"
+                            : m.last_outcome === "failure"
+                              ? "Confirming failure"
+                              : "Healthy"}
+                    </Badge>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="shrink-0"
+                      aria-expanded={m.id === selectedId}
+                      onClick={() =>
+                        selectMonitor(m.id === selectedId ? null : m.id)
+                      }
+                    >
+                      {m.id === selectedId ? "Hide checks" : "Inspect checks"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="shrink-0"
+                      disabled={
+                        checkRequest?.id === m.id &&
+                        (checkRequest.state === "sending" ||
+                          (checkRequest.state === "scheduled" &&
+                            checkRequest.observedAt === m.last_checked_at))
+                      }
+                      onClick={() => requestCheck(m.id)}
+                    >
+                      {checkRequest?.id === m.id &&
+                      checkRequest.state === "sending"
+                        ? "Requesting…"
+                        : checkRequest?.id === m.id &&
+                            checkRequest.state === "scheduled" &&
+                            checkRequest.observedAt === m.last_checked_at
+                          ? "Queued"
+                          : "Check again"}
+                    </Button>
                     {checkRequest?.id === m.id &&
-                    checkRequest.state === "sending"
-                      ? "Requesting…"
-                      : checkRequest?.id === m.id &&
-                          checkRequest.state === "scheduled" &&
-                          checkRequest.observedAt === m.last_checked_at
-                        ? "Queued"
-                        : "Check again"}
-                  </Button>
-                  {checkRequest?.id === m.id &&
-                    checkRequest.state === "scheduled" &&
-                    checkRequest.observedAt === m.last_checked_at && (
-                      <span role="status" className="sr-only">
-                        Check requested; waiting for the monitor.
-                      </span>
-                    )}
-                  {checkRequest?.id === m.id &&
-                    checkRequest.state === "error" && (
-                      <span role="alert" className="text-destructive text-xs">
-                        Request failed. Try again.
-                      </span>
-                    )}
-                </div>
+                      checkRequest.state === "scheduled" &&
+                      checkRequest.observedAt === m.last_checked_at && (
+                        <span role="status" className="sr-only">
+                          Check requested; waiting for the monitor.
+                        </span>
+                      )}
+                    {checkRequest?.id === m.id &&
+                      checkRequest.state === "error" && (
+                        <span role="alert" className="text-destructive text-xs">
+                          Request failed. Try again.
+                        </span>
+                      )}
+                  </div>
+                  {m.id === selectedId && historyPanel}
+                </Fragment>
               );
             })}
             <Button
@@ -288,95 +378,7 @@ export function EndpointHealthCard() {
             </Button>
           </>
         )}
-        {selectedId && (
-          <section
-            aria-label="Endpoint check history"
-            className="space-y-3 border-t pt-4"
-          >
-            <div className="flex items-center justify-between gap-2">
-              <h3 className="font-medium">
-                Recent checks{selected ? `: ${selected.name}` : ""}
-              </h3>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => selectMonitor(null)}
-              >
-                Close history
-              </Button>
-            </div>
-            <p className="text-muted-foreground text-xs">
-              Latest 100 checks from the past 30 days. Times use your local
-              timezone.
-            </p>
-            {selected && (
-              <div className="space-y-1 text-sm">
-                {selected.error && <p>{selected.error}</p>}
-                <p className="text-muted-foreground text-xs">
-                  Request model: {selected.model} · Credential:{" "}
-                  {selected.credential_ref}
-                </p>
-                <p className="text-muted-foreground text-xs">
-                  Last check:{" "}
-                  {selected.last_checked_at
-                    ? new Date(selected.last_checked_at).toLocaleString()
-                    : "No completed checks"}
-                </p>
-              </div>
-            )}
-            {historyError ? (
-              <div role="alert">
-                Could not load check history.{" "}
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => retryHistory()}
-                >
-                  Retry history
-                </Button>
-              </div>
-            ) : !history ? (
-              <p role="status">Loading checks…</p>
-            ) : history.checks.length === 0 ? (
-              <p>No recorded checks.</p>
-            ) : (
-              <ol className="max-h-96 space-y-3 overflow-y-auto text-sm">
-                {history.checks.map((check) => {
-                  const style = checkStyles[check.outcome];
-                  const StatusIcon = style.icon;
-                  return (
-                    <li key={check.id} className="space-y-2 border-b pb-3">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Badge
-                          variant="outline"
-                          className={cn("gap-1.5", style.badge)}
-                        >
-                          <StatusIcon aria-hidden="true" className="size-3.5" />
-                          {style.label}
-                        </Badge>
-                        <span>
-                          {new Date(check.checked_at).toLocaleString()} ·{" "}
-                          {check.latency_ms} ms
-                        </span>
-                      </div>
-                      {check.error && (
-                        <p>
-                          {check.error}
-                          {check.status_code && ` (HTTP ${check.status_code})`}
-                        </p>
-                      )}
-                      {check.request_id && (
-                        <p className="text-muted-foreground text-xs break-all">
-                          Provider request: {check.request_id}
-                        </p>
-                      )}
-                    </li>
-                  );
-                })}
-              </ol>
-            )}
-          </section>
-        )}
+        {selectedId && !selectedVisible && historyPanel}
       </CardContent>
     </Card>
   );

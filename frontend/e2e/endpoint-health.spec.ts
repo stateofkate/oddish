@@ -100,11 +100,22 @@ test.describe("Operator endpoint monitoring", () => {
     await page.getByRole("button", { name: "Inspect checks" }).click();
     await expect(page).toHaveURL(/endpoint=healthy/);
     await expect(page.getByText("Provider request: request-1")).toBeVisible();
+    // History opens directly under the row that was clicked.
+    await expect(
+      page.locator(
+        'div:has(> span[title="Healthy connection"]) + section[aria-label="Endpoint check history"]'
+      )
+    ).toBeVisible();
     await page.getByRole("button", { name: "Check again" }).click();
     await expect(
       page.getByRole("button", { name: "Queued", exact: true })
     ).toBeDisabled();
     expect(posts).toBe(1);
+    await page.getByRole("button", { name: "Hide checks" }).click();
+    await expect(page).not.toHaveURL(/endpoint=/);
+    await expect(
+      page.getByRole("region", { name: "Endpoint check history" })
+    ).toHaveCount(0);
   });
 
   test("failure is first, direct links open evidence, and recovery leaves history", async ({
@@ -161,6 +172,28 @@ test.describe("Operator endpoint monitoring", () => {
     await expect(
       page.getByRole("region", { name: "Endpoint check history" })
     ).toContainText("Provider request timed out.");
+  });
+
+  test("history stays open when monitor rows are hidden", async ({ page }) => {
+    await page.route("**/api/admin/endpoint-health", (route) =>
+      route.fulfill({
+        json: {
+          enabled: false,
+          timestamp: new Date().toISOString(),
+          monitors: [failed],
+        },
+      })
+    );
+    await page.route("**/api/admin/endpoint-health/failed/checks", (route) =>
+      route.fulfill({ json: { checks: [] } })
+    );
+    await page.goto("/admin?endpoint=failed");
+    await expect(
+      page.getByText("Endpoint monitoring is disabled for this environment.")
+    ).toBeVisible();
+    await expect(
+      page.getByRole("region", { name: "Endpoint check history" })
+    ).toContainText("No recorded checks.");
   });
 
   for (const [name, enabled, monitors, expected] of [
