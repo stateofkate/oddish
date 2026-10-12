@@ -1259,7 +1259,7 @@ export function TaskDetailClient({
               <CostMetricSelect compact value={costMetric.value} onChange={value => {
                 const params = new URLSearchParams(window.location.search);
                 setCostMetric(params, value);
-                window.history.replaceState(null, "", `${window.location.pathname}?${params}`);
+                window.history.replaceState(null, "", urlWithSearch(params.toString()));
               }} />
               <CostEffortCell cost={selectedVersion?.effort?.cost} metric={costMetric.value} />
             </span></TooltipProvider>}
