@@ -196,7 +196,7 @@ export function TaskCard({ task, disabled = false }: { task: TaskBrowseItem; dis
   return (
     <Card
       className={cn(
-        "min-w-0 gap-0 self-start bg-card/95 border-[#6f88b4]/20 shadow-xs transition-colors hover:border-[#6f88b4]/40",
+        "min-w-0 gap-0 bg-card/95 border-[#6f88b4]/20 shadow-xs transition-colors hover:border-[#6f88b4]/40",
         selected && "border-[#6f88b4]/70 ring-1 ring-[#6f88b4]/40"
       )}
     >

@@ -17,9 +17,11 @@ import { useIsCustomerOrg } from "@/lib/use-org-access";
 const AUTO_REFRESH_KEY = "oddish.tasks.autoRefresh";
 const REFRESH_MS = 60000;
 
-// Stays pinned under the nav while the grid scrolls; the ::before strip fills
-// the space up to the viewport top so no card shows above it. Its height is published
-// as --tasks-header-h so the sticky filter sidebar can sit right below it.
+// Stays pinned under the nav while the grid scrolls. The negative top margin
+// cancels <main>'s top padding so the header starts where it pins (no jump on
+// the first scroll), and the ::before paints the nav's surface edge to edge so
+// nav and header read as one bar. Its height is published as --tasks-header-h
+// so the sticky filter sidebar can sit right below it.
 export function TasksHeader() {
   const customer = useIsCustomerOrg();
   const { deliveryId, delivery, deliveryError } = useSelection();
@@ -41,7 +43,7 @@ export function TasksHeader() {
     <header
       ref={ref}
       data-testid="tasks-header"
-      className="bg-background before:bg-background sticky top-[calc(var(--preview-banner-h,0px)+3.5rem)] z-30 -mx-3 before:pointer-events-none before:absolute before:inset-x-0 before:bottom-full before:h-[calc(var(--preview-banner-h,0px)+3.5rem)] before:content-[''] flex flex-wrap items-start justify-between gap-3 px-3 py-3 sm:-mx-4 sm:px-4"
+      className="sticky top-[calc(var(--preview-banner-h,0px)+3.5rem)] z-30 -mx-3 -mt-3 before:pointer-events-none before:absolute before:inset-y-0 before:left-1/2 before:-z-10 before:w-screen before:-translate-x-1/2 before:border-b before:border-[#6f88b4]/15 before:bg-card/80 before:backdrop-blur-xs before:content-[''] flex flex-wrap items-start justify-between gap-3 px-3 py-3 sm:-mx-4 sm:-mt-4 sm:px-4"
     >
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <div>

@@ -305,18 +305,17 @@ for (const [width, height] of [[1440, 900], [768, 600]]) {
     } }));
     await page.goto("/picker?view=cards");
     await expect(page.getByRole("link", { name: "Task 23", exact: true })).toBeAttached();
-    await page.evaluate(() => window.scrollTo(0, 800));
     const header = page.getByTestId("tasks-header");
+    // The header starts where it pins, so the first scroll doesn't move it.
+    expect(await header.evaluate(el => el.getBoundingClientRect().top)).toBe(56);
+    if (width >= 768) {
+      expect(await page.getByTestId("tasks-filters").evaluate(el => el.getBoundingClientRect().bottom)).toBeLessThanOrEqual(height);
+    }
+    await page.screenshot({ path: testInfo.outputPath("top-of-page.png") });
+    await page.evaluate(() => window.scrollTo(0, 800));
     await expect.poll(() => header.evaluate(el => el.getBoundingClientRect().top)).toBe(56);
     await expect(header.getByRole("heading", { name: "Tasks" })).toBeInViewport();
     await expect(header.getByTestId("tasks-selection-bar")).toBeInViewport();
-    // Nothing from the grid may peek out above the pinned header.
-    const cover = await header.evaluate(el => {
-      const style = getComputedStyle(el, "::before");
-      return { height: style.height, background: style.backgroundColor, top: el.getBoundingClientRect().top };
-    });
-    expect(cover.height).toBe(`${cover.top}px`);
-    expect(cover.background).not.toBe("rgba(0, 0, 0, 0)");
     const headerBottom = await header.evaluate(el => el.getBoundingClientRect().bottom);
     const filters = page.getByTestId("tasks-filters");
     await expect.poll(() => filters.evaluate(el => el.getBoundingClientRect().top)).toBe(headerBottom + 8);
