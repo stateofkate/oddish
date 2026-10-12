@@ -171,8 +171,9 @@ Do not assume an `experiment_id` field is present merely because
 `experiment_url` is present.
 
 `run -m` is sent as typed; the server owns alias canonicalization and provider
-routing. An unknown Fireworks or DeepSeek id fails the submission with HTTP 422
-and a message listing the known ids; `--allow-unknown-model` sends it anyway.
+routing. An unknown Fireworks, DeepSeek, or Relace id fails the submission with
+HTTP 422 and a message listing the known ids; `--allow-unknown-model` sends it
+anyway.
 
 `status --json` is a single snapshot even if `--watch` is also supplied:
 

@@ -29,6 +29,7 @@ from oddish.config import (
     META_PUBLIC_API_KEY_ENVS,
     is_minimax_model,
     is_moonshot_model,
+    is_relace_model,
     is_vertex_ai_claude_model,
     is_vertex_ai_model,
     is_xai_model,
@@ -45,6 +46,9 @@ from oddish.config import (
     minimax_api_model_id,
     minimax_bare_model_id,
     moonshot_bare_model_id,
+    relace_api_model_id,
+    relace_base_url,
+    relace_openai_base_url,
     settings,
     to_anthropic_api_model_id,
     to_anthropic_hdo_model_id,
@@ -52,6 +56,7 @@ from oddish.config import (
     to_fireworks_model_id,
     to_minimax_model_id,
     to_moonshot_model_id,
+    to_relace_model_id,
     to_vertex_ai_model_id,
     to_xai_model_id,
     to_zai_model_id,
@@ -78,6 +83,9 @@ _ODDISH_META_MINI_SWE_IMPORT_PATH = (
 )
 _ODDISH_GEOMETRIC_MINI_SWE_IMPORT_PATH = (
     "oddish.workers.agents.mini_swe_agent:OddishGeometricMiniSweAgent"
+)
+_ODDISH_RELACE_MINI_SWE_IMPORT_PATH = (
+    "oddish.workers.agents.mini_swe_agent:OddishRelaceMiniSweAgent"
 )
 _ODDISH_HUNYUAN_MINI_SWE_IMPORT_PATH = (
     "oddish.workers.agents.mini_swe_agent:OddishHunyuanMiniSweAgent"
@@ -355,6 +363,34 @@ def _apply_claude_code_geometric_env(agent_config: AgentConfig) -> None:
     # touches ``agent_config.kwargs``, so a caller's ``--agent-kwarg
     # reasoning_effort=high`` still reaches Claude Code's ``--effort`` flag
     # unchanged; only the DEFAULT differs from z.ai (which setdefault()s them).
+
+
+def _apply_claude_code_relace_env(agent_config: AgentConfig) -> None:
+    """Point Claude Code at Relace's Anthropic-compatible ``/v1/messages``.
+
+    Every Relace model has a 1M context and reasons before answering, so this
+    takes z.ai's long-generation env (128k output, hour-long timeouts, 1M
+    compaction window). Relace accepts the key as a Bearer token, which is
+    what ANTHROPIC_AUTH_TOKEN sends.
+    """
+    if not _is_claude_code_agent(agent_config):
+        return
+    if not is_relace_model(agent_config.model_name):
+        return
+
+    _apply_anthropic_compat_env(
+        agent_config,
+        base_url=relace_base_url(),
+        auth_token="${RELACE_API_KEY}",
+        model=relace_api_model_id(agent_config.model_name or ""),
+        recommended_env=_GEOMETRIC_RECOMMENDED_ENV,
+    )
+    # Relace turns reasoning on only when asked (thinking enabled/adaptive).
+    # Effort is left to the model default: Relace maps it per model, and
+    # forcing ``max`` is unverified there. --agent-kwarg still overrides both.
+    kwargs = dict(agent_config.kwargs or {})
+    kwargs.setdefault("thinking", "adaptive")
+    agent_config.kwargs = kwargs
 
 
 _MINIMAX_RECOMMENDED_ENV: dict[str, str] = {
@@ -655,6 +691,34 @@ def _apply_geometric_mini_swe_agent(agent_config: AgentConfig) -> None:
     agent_config.kwargs = dict(agent_config.kwargs or {})
 
 
+def _apply_relace_mini_swe_agent(agent_config: AgentConfig) -> None:
+    """Route Relace model evals through mini-swe-agent on Relace's OpenAI API."""
+    if agent_config.import_path is not None:
+        return
+    if not _is_mini_swe_agent(agent_config):
+        return
+    if not is_relace_model(agent_config.model_name):
+        return
+
+    agent_config.name = None
+    agent_config.import_path = _ODDISH_RELACE_MINI_SWE_IMPORT_PATH
+
+    # Same env contract as settings.get_geometric_agent_env: litellm's
+    # ``openai/`` provider reads OPENAI_API_KEY / OPENAI_BASE_URL, the key stays
+    # a ${RELACE_API_KEY} template, and litellm has no price for these ids.
+    env = dict(agent_config.env or {})
+    for key, value in {
+        "MSWEA_API_KEY": "${RELACE_API_KEY}",
+        "OPENAI_API_KEY": "${RELACE_API_KEY}",
+        "OPENAI_BASE_URL": relace_openai_base_url(),
+        "MSWEA_CONFIGURED": "true",
+        "MSWEA_COST_TRACKING": "ignore_errors",
+    }.items():
+        env.setdefault(key, value)
+    agent_config.env = env
+    agent_config.kwargs = dict(agent_config.kwargs or {})
+
+
 def _apply_hunyuan_mini_swe_agent(agent_config: AgentConfig) -> None:
     """Route Hunyuan model evals through mini-swe-agent with Hunyuan API settings."""
     if agent_config.import_path is not None:
@@ -860,6 +924,8 @@ def _build_routed_agent_config(
 
     if is_fireworks_model(agent_config.model_name):
         agent_config.model_name = to_fireworks_model_id(agent_config.model_name)
+    elif is_relace_model(agent_config.model_name):
+        agent_config.model_name = to_relace_model_id(agent_config.model_name)
     elif is_meta_model(agent_config.model_name):
         agent_config.model_name = to_meta_model_id(agent_config.model_name)
     elif is_meta_public_model(agent_config.model_name):
@@ -934,6 +1000,7 @@ def _build_routed_agent_config(
             )
     _apply_claude_code_openrouter_env(agent_config)
     _apply_claude_code_fireworks_env(agent_config)
+    _apply_claude_code_relace_env(agent_config)
     _apply_claude_code_zai_env(agent_config)
     _apply_claude_code_geometric_env(agent_config)
     _apply_claude_code_minimax_env(agent_config)
@@ -1003,6 +1070,7 @@ def _build_agent_config(
     _apply_antigravity_cli_oddish_wrapper(agent_config)
     _apply_meta_mini_swe_agent(agent_config)
     _apply_geometric_mini_swe_agent(agent_config)
+    _apply_relace_mini_swe_agent(agent_config)
     _apply_hunyuan_mini_swe_agent(agent_config)
     _apply_mini_swe_agent(agent_config)
     if (

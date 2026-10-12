@@ -1833,10 +1833,10 @@ Keep these routing rules in sync with `oddish/src/oddish/config.py` and
 - OpenAI-family jobs default to Azure OpenAI. Use
   `ODDISH_OPENAI_PROVIDER=openai` plus `OPENAI_API_KEY` only when intentionally
   routing to public OpenAI.
-- z.ai, MiniMax, Moonshot/Kimi, Fireworks, xAI, Meta, Geometric, Hunyuan, and
-  Anthropic HDO each have explicit canonical provider prefixes and queue keys:
-  `zai/`, `minimax/`, `moonshot/`, `fireworks/`, `xai/`, `meta/`,
-  `meta-public/`, `geometric/`, `hunyuan/`, and `anthropic-hdo/`. Add or change provider aliases in
+- z.ai, MiniMax, Moonshot/Kimi, Fireworks, Relace, xAI, Meta, Geometric,
+  Hunyuan, and Anthropic HDO each have explicit canonical provider prefixes and
+  queue keys: `zai/`, `minimax/`, `moonshot/`, `fireworks/`, `relace/`, `xai/`,
+  `meta/`, `meta-public/`, `geometric/`, `hunyuan/`, and `anthropic-hdo/`. Add or change provider aliases in
   `config.py`, then update env injection in the Harbor runner and the network
   allowlist notes.
 - Google Vertex AI is the `vertex_ai/<model>` provider (aliases `vertex/`,
@@ -1909,10 +1909,17 @@ Keep these routing rules in sync with `oddish/src/oddish/config.py` and
   a bare `glm-5.3` keeps routing to z.ai and selecting Geometric takes an
   explicit `geometric/glm-5.3` (or the `gm/` alias) — the same opt-in rule
   Fireworks uses to take over GLM/MiniMax/Kimi ids.
+- Relace (`relace/<id>`, `RELACE_API_KEY`) is prefix-only too and serves both
+  dialects from `https://models.relace.ai`: claude-code calls `/v1/messages`,
+  mini-swe-agent calls `/v1/chat/completions` (`OddishRelaceMiniSweAgent`).
+  `RELACE_MODEL_IDS` (`config.py`) maps each stored lowercase id to Relace's
+  case-sensitive wire id, and `RELACE_PRICING` (`model_pricing.py`) prices it
+  ahead of LiteLLM. A new Relace model is one row in each table.
 - The CLI sends `-m` as typed; model routing is a pure function of agent and
-  model string on the server and never reads provider credentials. Fireworks
-  and DeepSeek ids are **curated**: `curated_model_error` (`config.py`) checks
-  them against `_FIREWORKS_SHORT_MODEL_IDS` / `_DEEPSEEK_MODEL_ALIASES`, and
+  model string on the server and never reads provider credentials. Fireworks,
+  DeepSeek, and Relace ids are **curated**: `curated_model_error` (`config.py`)
+  checks them against `_FIREWORKS_SHORT_MODEL_IDS` / `_DEEPSEEK_MODEL_ALIASES` /
+  `RELACE_MODEL_IDS`, and
   `validate_sweep_submission` returns 422 only when a config sends
   `allow_unknown_model: false`. Current CLIs always send the flag
   (`--allow-unknown-model` sets it true); older CLIs and the dashboard omit it
@@ -1976,7 +1983,7 @@ Keep these routing rules in sync with `oddish/src/oddish/config.py` and
   remains on its existing paths.
 - Provider secrets are referenced by env var name (`AWS_BEARER_TOKEN_BEDROCK`,
   `ANTHROPIC_HDO_API_KEY`, `ZAI_API_KEY`, `MINIMAX_API_KEY`, `MOONSHOT_API_KEY`,
-  `FIREWORKS_API_KEY`, `XAI_API_KEY`, `XAI_PUBLIC_API_KEY`, `META_API_KEY`,
+  `FIREWORKS_API_KEY`, `RELACE_API_KEY`, `XAI_API_KEY`, `XAI_PUBLIC_API_KEY`, `META_API_KEY`,
   `META_PUBLIC_API_KEY`, `META_PUBLIC_2_API_KEY`, `VERTEX_AI_CREDENTIALS_JSON`,
   `VERTEX_AI_API_KEY`) and
   must not be persisted on trial rows. The Vertex service-account JSON never

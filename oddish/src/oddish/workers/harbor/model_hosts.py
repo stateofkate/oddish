@@ -35,11 +35,13 @@ from oddish.config import (
     is_meta_public_model,
     is_minimax_model,
     is_moonshot_model,
+    is_relace_model,
     is_vertex_ai_model,
     is_xai_model,
     is_xai_public_model,
     is_zai_model,
     looks_like_bedrock_model_id,
+    relace_base_url,
     settings,
 )
 from oddish.vendor_harnesses import CURSOR_CLI, vendor_harness_for_model_prefix
@@ -61,6 +63,7 @@ GEOMETRIC_BASE_URL_KEYS = ("GEOMETRIC_BASE_URL",)
 HUNYUAN_BASE_URL_KEYS = ("HUNYUAN_BASE_URL",)
 OPENROUTER_BASE_URL_KEYS = ("OPENROUTER_BASE_URL",)
 FIREWORKS_BASE_URL_KEYS = ("FIREWORKS_BASE_URL",)
+RELACE_BASE_URL_KEYS = ("RELACE_BASE_URL",)
 ZAI_BASE_URL_KEYS = ("ZAI_BASE_URL",)
 MINIMAX_BASE_URL_KEYS = ("MINIMAX_BASE_URL",)
 MOONSHOT_BASE_URL_KEYS = ("MOONSHOT_BASE_URL",)
@@ -97,6 +100,7 @@ _BASE_URL_ENV_KEYS = (
     *HUNYUAN_BASE_URL_KEYS,
     *OPENROUTER_BASE_URL_KEYS,
     *FIREWORKS_BASE_URL_KEYS,
+    *RELACE_BASE_URL_KEYS,
     *ZAI_BASE_URL_KEYS,
     *MINIMAX_BASE_URL_KEYS,
     *MOONSHOT_BASE_URL_KEYS,
@@ -517,7 +521,7 @@ def outbound_hosts_for_model(
     # resolve a bare id to its host. This covers providers that have a bare-id
     # heuristic in infer_model_provider_prefix (e.g. xai/grok-*, zai/glm-*,
     # minimax, moonshot/kimi-*) plus bare Bedrock ids; prefix-only providers
-    # (meta, geometric, fireworks, anthropic-hdo) still require an explicit prefix,
+    # (meta, geometric, fireworks, relace, anthropic-hdo) still require an explicit prefix,
     # as before.
     # The single-container union path leaves bare ids untouched (infer_bare_provider
     # is False there), so it does not widen beyond the routed transport.
@@ -545,6 +549,10 @@ def outbound_hosts_for_model(
         host = _default_host(
             os.environ.get("FIREWORKS_BASE_URL") or FIREWORKS_DEFAULT_BASE_URL
         )
+        if host:
+            hosts.append(host)
+    elif is_relace_model(model_name):
+        host = _default_host(relace_base_url())
         if host:
             hosts.append(host)
     elif is_zai_model(model_name):

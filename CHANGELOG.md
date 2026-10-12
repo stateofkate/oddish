@@ -18,6 +18,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Relace is a model provider: `--model relace/<id>` runs GLM 5.2 / 5.3 /
+  5.3 Flash, Kimi K3, and DeepSeek V4 / V4.1 models hosted at
+  `models.relace.ai` on claude-code (Anthropic `/v1/messages`) or
+  mini-swe-agent (OpenAI `/v1/chat/completions`), with its own queue bucket,
+  egress allowlist, endpoint monitor, and Relace list-price costs. Set
+  `RELACE_API_KEY` on the worker.
+
 - `oddish run --modal-gvisor` runs Modal trials in Modal's default gVisor
   sandbox instead of a Modal VM. It sets the Harbor environment kwarg
   `modal_vm_runtime=false`, implies `--no-archil`, and keeps those trials on

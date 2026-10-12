@@ -475,6 +475,9 @@ def _model_transport_base_url_keys(model_name: str | None) -> tuple[str, ...]:
         "hunyuan": ("HUNYUAN_BASE_URL", *_OPENAI_BASE_URL_KEYS),
         "openrouter": ("OPENROUTER_BASE_URL",),
         "fireworks": ("FIREWORKS_BASE_URL",),
+        # claude-code gets ANTHROPIC_BASE_URL from the route itself; mini-swe
+        # reads the OpenAI keys, like Geometric's two surfaces.
+        "relace": ("RELACE_BASE_URL", *_OPENAI_BASE_URL_KEYS),
         "zai": ("ZAI_BASE_URL",),
         "minimax": ("MINIMAX_BASE_URL",),
         "moonshot": ("MOONSHOT_BASE_URL",),
@@ -967,6 +970,9 @@ _COMPATIBILITY_PROFILES: dict[str, _RestrictedAgentSpec] = {
         _RestrictedAgentSpec(_mini_swe_profile, _mini_swe_base_url_keys)
     ),
     "oddish.workers.agents.mini_swe_agent:OddishHunyuanMiniSweAgent": (
+        _RestrictedAgentSpec(_mini_swe_profile, _mini_swe_base_url_keys)
+    ),
+    "oddish.workers.agents.mini_swe_agent:OddishRelaceMiniSweAgent": (
         _RestrictedAgentSpec(_mini_swe_profile, _mini_swe_base_url_keys)
     ),
 }

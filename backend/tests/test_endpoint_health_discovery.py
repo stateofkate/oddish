@@ -84,6 +84,7 @@ async def test_discovery_uses_azure_mapping_not_every_azure_deployment(platform)
             "anthropic/accounts/fireworks/models/glm-5p3",
             "FIREWORKS_API_KEY",
         ),
+        ("relace/glm-5.3", "anthropic/z-ai/glm-5.3", "RELACE_API_KEY"),
         ("meta-public/muse-spark-1.3", "openai/muse-spark-1.3", "META_PUBLIC_API_KEY"),
         (
             "meta-public-2/muse-spark-1.3",

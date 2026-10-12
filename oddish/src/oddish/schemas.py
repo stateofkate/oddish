@@ -198,7 +198,7 @@ class AgentModelPair(TrialSpec):
     allow_unknown_model: bool | None = Field(
         None,
         description=(
-            "False rejects a Fireworks/DeepSeek model id missing from the "
+            "False rejects a Fireworks/DeepSeek/Relace model id missing from the "
             "curated catalog; true sends it anyway. Omitted (older clients) "
             "skips the check."
         ),

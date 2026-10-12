@@ -21,6 +21,7 @@ _ODDISH_PROVIDER_ENV_KEYS = {
     "minimax": "MINIMAX_API_KEY",
     "moonshot": "MOONSHOT_API_KEY",
     "fireworks": "FIREWORKS_API_KEY",
+    "relace": "RELACE_API_KEY",
     # Never let this fall through to Harbor's PROVIDER_KEYS, which names the
     # (non-secret) VERTEXAI_PROJECT for this provider.
     "vertex_ai": "VERTEX_AI_CREDENTIALS_JSON",

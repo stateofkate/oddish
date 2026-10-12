@@ -92,6 +92,7 @@ _BEDROCK_AUTH_ENV = (
 # Names as in runner._PROVIDER_RUNTIME_SECRET_KEYS.
 _AMBIENT_PROVIDER_KEYS: dict[str, tuple[str, ...]] = {
     "fireworks": ("FIREWORKS_API_KEY",),
+    "relace": ("RELACE_API_KEY",),
     "zai": ("ZAI_API_KEY",),
     "minimax": ("MINIMAX_API_KEY",),
     "moonshot": ("MOONSHOT_API_KEY",),

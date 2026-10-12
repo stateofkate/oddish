@@ -383,7 +383,7 @@ def run(
         typer.Option(
             "--allow-unknown-model",
             help=(
-                "Submit a Fireworks/DeepSeek model id that is not in the "
+                "Submit a Fireworks/DeepSeek/Relace model id that is not in the "
                 "server's curated catalog."
             ),
         ),

@@ -12,9 +12,12 @@ from oddish.config import (
     GEOMETRIC_DEFAULT_BASE_URL,
     HUNYUAN_DEFAULT_BASE_URL,
     META_DEFAULT_BASE_URL,
+    RELACE_DEFAULT_BASE_URL,
     require_geometric_served_model_id,
     require_hunyuan_served_model_id,
     meta_bare_model_id,
+    relace_api_model_id,
+    relace_openai_base_url,
     settings,
 )
 from oddish.workers.agents.mini_swe_trajectory import restore_mini_swe_reasoning
@@ -25,6 +28,7 @@ _CONFIG_PATH = "/tmp/oddish-mini-swe-agent.yaml"
 _META_CONFIG_PATH = "/tmp/oddish-meta-mini-swe-agent.yaml"
 _GEOMETRIC_CONFIG_PATH = "/tmp/oddish-geometric-mini-swe-agent.yaml"
 _HUNYUAN_CONFIG_PATH = "/tmp/oddish-hunyuan-mini-swe-agent.yaml"
+_RELACE_CONFIG_PATH = "/tmp/oddish-relace-mini-swe-agent.yaml"
 _META_API_DOMAIN = "api.ai.meta.com"
 _TASK_FLAG = "--task="
 _AWS_PROVIDER_CHAIN_ENV = (
@@ -420,3 +424,31 @@ class OddishHunyuanMiniSweAgent(_OpenAiCompatMiniSweAgent):
     @staticmethod
     def _oddish_bare_model_id(model_name: str) -> str:
         return require_hunyuan_served_model_id(model_name)
+
+
+class OddishRelaceMiniSweAgent(_OpenAiCompatMiniSweAgent):
+    """mini-swe-agent wrapper for Relace's OpenAI-compatible endpoint.
+
+    Plain OpenAI-compatible shape like Geometric. The model is sent as
+    ``openai/<relace id>`` (``openai/z-ai/glm-5.3``), so litellm dials
+    ``OPENAI_BASE_URL`` (``https://models.relace.ai/v1``).
+    """
+
+    _oddish_config_path = _RELACE_CONFIG_PATH
+    _oddish_base_url_env_keys = (
+        "RELACE_BASE_URL",
+        "OPENAI_BASE_URL",
+        "OPENAI_API_BASE",
+    )
+
+    @classmethod
+    def _oddish_configured_base_urls(cls) -> set[str | None]:
+        return {
+            RELACE_DEFAULT_BASE_URL,
+            relace_openai_base_url(),
+            os.environ.get("RELACE_BASE_URL"),
+        }
+
+    @staticmethod
+    def _oddish_bare_model_id(model_name: str) -> str:
+        return relace_api_model_id(model_name)

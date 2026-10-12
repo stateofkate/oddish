@@ -100,6 +100,34 @@ PRICING_TABLE: list[tuple[str, ModelPricing]] = [
     ("composer", ModelPricing(input=5e-7, output=2.5e-6, cache_read=2e-7)),
 ]
 
+
+def _relace(per_m_in: float, per_m_out: float, per_m_cached: float) -> ModelPricing:
+    """Relace prices as listed (USD per million tokens). Cache writes are free."""
+    return ModelPricing(
+        input=per_m_in / 1e6,
+        output=per_m_out / 1e6,
+        cache_read=per_m_cached / 1e6,
+        cache_write=0.0,
+    )
+
+
+# Relace list prices (docs.relace.ai/docs/open-models/quickstart, 2026-10-12),
+# keyed by the canonical id after ``relace/``. Checked before LiteLLM: the same
+# open model costs different amounts on different hosts, so a LiteLLM entry for
+# another host's ``glm-5.3`` must never price a Relace trial. A reserve-rate
+# contract replaces these numbers.
+RELACE_PRICING: dict[str, ModelPricing] = {
+    "glm-5.2": _relace(1.40, 4.40, 0.26),
+    "glm-5.3": _relace(1.40, 4.40, 0.26),
+    "glm-5.3-flash": _relace(0.09, 0.30, 0.018),
+    "kimi-k3": _relace(3.00, 15.00, 0.30),
+    "deepseek-v4-flash-0423": _relace(0.065, 0.18, 0.016),
+    "deepseek-v4-flash-0731": _relace(0.065, 0.18, 0.016),
+    "deepseek-v4-pro": _relace(0.90, 2.70, 0.09),
+    "deepseek-v4-pro-0813": _relace(0.66, 1.98, 0.022),
+    "deepseek-v4.1-flash": _relace(0.15, 0.60, 0.015),
+}
+
 _DATED_SUFFIX_RE = re.compile(r"-(20\d{6}|\d{4}-\d{2}-\d{2})$")
 _VERSIONED_SUFFIX_RE = re.compile(r"-v\d+(?::\d+)?$")
 # Vertex AI spells dated Claude ids with an ``@`` (``claude-haiku-4-5@20251001``).
@@ -138,6 +166,7 @@ _CLAUDE_CODE_PASSTHROUGH_PROVIDERS: frozenset[str] = frozenset(
     {
         "fireworks",
         "fireworks_ai",
+        "relace",
         "zai",
         "minimax",
         "moonshot",
@@ -336,8 +365,20 @@ def _find_local_pricing(model_name: str) -> ModelPricing | None:
     return None
 
 
+def _find_relace_pricing(model_name: str) -> ModelPricing | None:
+    from oddish.config import is_relace_model, relace_bare_model_id
+
+    if not is_relace_model(model_name):
+        return None
+    return RELACE_PRICING.get(relace_bare_model_id(model_name))
+
+
 def _find_pricing(model_name: str) -> ModelPricing | None:
-    return _find_litellm_pricing(model_name) or _find_local_pricing(model_name)
+    return (
+        _find_relace_pricing(model_name)
+        or _find_litellm_pricing(model_name)
+        or _find_local_pricing(model_name)
+    )
 
 
 def get_model_pricing(model_name: str | None) -> ModelPricing | None:

@@ -276,6 +276,11 @@ def test_reserved_branches_skip_resources_only_in_the_same_repo(
         ),
         f"{PREVIEW_URL.replace('-api.', '-api-qa-model.')}\n{PREVIEW_URL}",
         f"{PREVIEW_URL}\n{PREVIEW_URL}",
+        # Region-labelled output from newly created Modal endpoints.
+        PREVIEW_URL.replace(".modal.run", ".us-east.modal.run"),
+        PREVIEW_URL.replace(".modal.run", ".us-east.modal.run")
+        + "\n"
+        + PREVIEW_URL.replace("-api.", "-api-qa-model.us-east."),
     ],
 )
 def test_extract_modal_api_url_ignores_gateway_and_duplicate_output(tmp_path, log):

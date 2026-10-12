@@ -650,8 +650,85 @@ def to_fireworks_model_id(model: str | None) -> str | None:
     return f"{FIREWORKS_PROVIDER}/{canonical}"
 
 
+# Relace routing. Relace hosts open-weight models (GLM, DeepSeek, Kimi) at one
+# base URL that speaks both dialects: Anthropic ``/v1/messages`` for claude-code
+# and OpenAI ``/v1/chat/completions`` for mini-swe-agent, with one RELACE_API_KEY.
+# Prefix-only opt-in like Fireworks: ``relace/glm-5.3`` routes here, while a bare
+# ``glm-5.3`` keeps its z.ai route. Docs: docs.relace.ai/docs/open-models/quickstart
+RELACE_PROVIDER = "relace"
+# Without ``/v1``: Claude Code appends ``/v1/messages`` itself, and the
+# OpenAI-compatible route adds ``/v1`` in relace_openai_base_url.
+RELACE_DEFAULT_BASE_URL = "https://models.relace.ai"
+# Canonical Oddish id (stored, queued, priced) -> the id Relace serves. Relace
+# ids are case-sensitive and nested (``deepseek-ai/DeepSeek-V4-Pro``) while
+# stored ids are lowercased, so this table is the only way back to the wire id.
+RELACE_MODEL_IDS: dict[str, str] = {
+    "glm-5.2": "z-ai/glm-5.2",
+    "glm-5.3": "z-ai/glm-5.3",
+    "glm-5.3-flash": "z-ai/glm-5.3-flash",
+    "kimi-k3": "moonshotai/kimi-k3",
+    "deepseek-v4-flash-0423": "deepseek-ai/DeepSeek-V4-Flash-0423",
+    "deepseek-v4-flash-0731": "deepseek-ai/DeepSeek-V4-Flash-0731",
+    "deepseek-v4-pro": "deepseek-ai/DeepSeek-V4-Pro",
+    "deepseek-v4-pro-0813": "deepseek-ai/DeepSeek-V4-Pro-0813",
+    "deepseek-v4.1-flash": "deepseek-ai/DeepSeek-V4.1-Flash",
+}
+# Relace's own slugs are accepted too (``relace/z-ai/glm-5.3``), so an id copied
+# from their docs lands in the same bucket as the short spelling.
+_RELACE_ALIASES: dict[str, str] = {
+    **{short: short for short in RELACE_MODEL_IDS},
+    **{wire.lower(): short for short, wire in RELACE_MODEL_IDS.items()},
+}
+
+
+def is_relace_model(model: str | None) -> bool:
+    """Return True for an explicit ``relace/`` provider prefix."""
+    if not model:
+        return False
+    provider_prefix, _ = split_provider_model_name(model.strip().lower())
+    return provider_prefix == RELACE_PROVIDER
+
+
+def relace_bare_model_id(model: str) -> str:
+    """``relace/z-ai/glm-5.3`` -> ``glm-5.3``; unknown ids pass through lowercased."""
+    raw = model.strip()
+    if is_relace_model(raw):
+        raw = split_provider_model_name(raw)[1]
+    low = raw.strip().lower()
+    return _RELACE_ALIASES.get(low, low)
+
+
+def relace_api_model_id(model: str) -> str:
+    """The id Relace serves for a ``relace/`` (or bare) reference.
+
+    An id outside the table (submitted with --allow-unknown-model) is sent as
+    given, lowercased by storage.
+    """
+    bare = relace_bare_model_id(model)
+    return RELACE_MODEL_IDS.get(bare, bare)
+
+
+def to_relace_model_id(model: str | None) -> str | None:
+    """Canonicalize a Relace reference to ``relace/<short-id>``."""
+    if not is_relace_model(model):
+        return model
+    assert model is not None
+    return f"{RELACE_PROVIDER}/{relace_bare_model_id(model)}"
+
+
+def relace_base_url() -> str:
+    """Anthropic-compatible base (no ``/v1``); RELACE_BASE_URL overrides."""
+    base = (os.environ.get("RELACE_BASE_URL") or RELACE_DEFAULT_BASE_URL).rstrip("/")
+    return base.removesuffix("/v1")
+
+
+def relace_openai_base_url() -> str:
+    """OpenAI-compatible base for litellm's ``openai/`` provider (with ``/v1``)."""
+    return f"{relace_base_url()}/v1"
+
+
 def curated_model_error(model: str | None) -> str | None:
-    """Return why a Fireworks/DeepSeek id is not in the curated catalog, else None.
+    """Return why a Fireworks/DeepSeek/Relace id is not in its catalog, else None.
 
     Depends only on the model string and the alias tables above, never on which
     provider credentials this process holds. Full ``accounts/...`` Fireworks
@@ -668,6 +745,9 @@ def curated_model_error(model: str | None) -> str | None:
     elif is_deepseek_model(cleaned):
         provider, known = DEEPSEEK_PROVIDER, _DEEPSEEK_MODEL_ALIASES
         bare = deepseek_bare_model_id(cleaned).lower()
+    elif is_relace_model(cleaned):
+        provider, known = RELACE_PROVIDER, _RELACE_ALIASES
+        bare = relace_bare_model_id(cleaned)
     else:
         return None
     if bare in known:
@@ -1455,6 +1535,8 @@ _MODEL_PROVIDER_ALIASES: dict[str, str] = {
     # ``fireworks`` provider bucket, distinct from the per-vendor direct routes.
     "fireworks": FIREWORKS_PROVIDER,
     "fw": FIREWORKS_PROVIDER,
+    # Relace: GLM / DeepSeek / Kimi hosted at models.relace.ai, one bucket.
+    "relace": RELACE_PROVIDER,
     # xAI / Grok Build. Keep xAI off OpenAI-compatible fallback routing so Grok
     # Build gets a stable first-party provider bucket.
     "xai": XAI_PROVIDER,
@@ -2489,11 +2571,13 @@ class Settings(BaseSettings):
         # they get their own provider/queue bucket instead of claude-code's
         # fixed Bedrock fallback.
         #
-        # Fireworks is checked first: an explicit ``fireworks/`` prefix
-        # consolidates GLM/MiniMax/Kimi onto Fireworks and must win over the
+        # Fireworks and Relace are checked first: their explicit prefix moves
+        # GLM/MiniMax/Kimi/DeepSeek onto that host and must win over the
         # bare-id direct-provider routes below.
         if is_fireworks_model(cleaned):
             return to_fireworks_model_id(cleaned)
+        if is_relace_model(cleaned):
+            return to_relace_model_id(cleaned)
         if is_meta_model(cleaned):
             return to_meta_model_id(cleaned)
         if is_meta_public_model(cleaned):
