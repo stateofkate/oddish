@@ -131,6 +131,8 @@ def fold_task_open_groups(
             continue
 
         for field in type(selected.effort).model_fields:
+            if field == "cost":
+                continue
             setattr(
                 selected.effort,
                 field,

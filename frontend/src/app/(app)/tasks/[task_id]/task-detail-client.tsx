@@ -1,5 +1,9 @@
 "use client";
 
+import { CostMetricSelect } from "@/components/cost-metric-select";
+import { CostEffortCell } from "@/components/cost-effort-cell";
+import { selectedCostMetric, setCostMetric } from "@/lib/cost-metrics";
+
 import { OrgShareButton } from "@/components/org-share-picker";
 import { TaskReviewDialog } from "@/components/task-review-dialog";
 import { TaskRunSummary } from "@/components/task-run-summary";
@@ -883,6 +887,7 @@ export function TaskDetailClient({
   // ?taskFile= / ?taskLines= address the task pane's file and line range
   // (the trial pane's ?file= / ?lines= are handled inside TrialDetailPanel).
   const searchParams = useSearchParams();
+  const costMetric = selectedCostMetric(searchParams);
   const taskPaneFile = searchParams.get("taskFile");
   const taskPaneLines = parseLineRange(searchParams.get("taskLines"));
   const pane = searchParams.get("taskPane");
@@ -1250,13 +1255,14 @@ export function TaskDetailClient({
           </KpiTile>
           <KpiTile
             label={`Spent on ${versionLabel}`}
-            hint={
-              versionSummary.costTrialCount > 0
-                ? `${versionSummary.costTrialCount} trial${
-                    versionSummary.costTrialCount === 1 ? "" : "s"
-                  }`
-                : "no cost data"
-            }
+            hint={<TooltipProvider><span className="inline-flex items-center gap-1">
+              <CostMetricSelect compact value={costMetric.value} onChange={value => {
+                const params = new URLSearchParams(window.location.search);
+                setCostMetric(params, value);
+                window.history.replaceState(null, "", `${window.location.pathname}?${params}`);
+              }} />
+              <CostEffortCell cost={selectedVersion?.effort?.cost} metric={costMetric.value} />
+            </span></TooltipProvider>}
           >
             <CostBadge
               cost={versionSummary.costUsd}

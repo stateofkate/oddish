@@ -158,7 +158,7 @@ async def test_effort_uses_exact_selected_version_completed_model_measurements()
             "pre_trial_must_fix_count": 0,
         }
         _, selected, _ = fold_task_open_groups(row["groups"], identity, 0)
-        assert selected.effort.model_dump() == {
+        assert selected.effort.model_dump(exclude={"cost"}) == {
             "completed_trials": 5,
             "steps_sum": 30,
             "steps_trial_count": 4,
@@ -171,7 +171,7 @@ async def test_effort_uses_exact_selected_version_completed_model_measurements()
             "output_tokens_sum": 80,
             "output_tokens_trial_count": 5,
         }
-        assert browse_effort == selected.effort
+        assert browse_effort.model_dump(exclude={"cost"}) == selected.effort.model_dump(exclude={"cost"})
     finally:
         await engine.dispose()
         await admin.execute(f'DROP DATABASE "{name}" WITH (FORCE)')

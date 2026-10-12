@@ -22,6 +22,7 @@ const rows: TaskBrowseItem[] = [
     id: "a",
     name: "Measured task",
     effort: {
+      cost: { completed_trials: 2, trial_sum: 10, trial_count: 2, qa_sum: .6, qa_jobs: 2, qa_unpriced_jobs: 0, qa_unattributed_jobs: 0 },
       completed_trials: 2,
       steps_sum: 40,
       steps_trial_count: 2,
@@ -57,6 +58,7 @@ test("averages follow results; sorting preserves filters and resets pagination",
     "Trials",
     "Avg steps",
     "Avg tokens · TotalAvg tokens · Uncached inputAvg tokens · Cached inputAvg tokens · Output",
+    "Avg cost per trialTrial + QATrial onlyQA only",
     "Delivery history",
     "Details",
   ]);
@@ -127,8 +129,8 @@ test("token selector switches values, coverage, sort and URL without extra colum
   await expect(measured.getByText("400K", { exact: true })).toBeVisible();
   await selector.selectOption("output");
   await expect(measured.getByText("0", { exact: true })).toBeVisible();
-  await expect(page.getByRole("row").filter({ hasText: "Unmeasured task" }).getByText("—", { exact: true })).toHaveCount(2);
-  await expect(page.getByRole("columnheader")).toHaveCount(8);
+  await expect(page.getByRole("row").filter({ hasText: "Unmeasured task" }).getByText("—", { exact: true })).toHaveCount(3);
+  await expect(page.getByRole("columnheader")).toHaveCount(9);
 });
 
 test("narrow table keeps selector accessible without widening the page", async ({ page }, testInfo) => {
@@ -162,4 +164,27 @@ test("saved views persist and restore token metric with cohort filters", async (
   await page.getByRole("button", { name: "Cache comparison", exact: true }).click();
   await expect(page.getByRole("combobox", { name: "Average token metric" })).toHaveValue("cached_input");
   expect(new URL(page.url()).searchParams.get("models")).toBe("grok");
+});
+
+
+test("cost selector switches components and sorting, persists URL and excludes missing data", async ({page}) => {
+  await page.goto("/comparison?view=table&sort=avg_total_cost_desc&offset=24&models=grok");
+  const row=page.getByRole("row").filter({hasText:"Measured task"});
+  const selector=page.getByRole("combobox",{name:"Average cost type"});
+  await expect(selector).toHaveValue("total");
+  await expect(row.getByText("$5.30",{exact:true})).toBeVisible();
+  await selector.selectOption("qa");
+  await expect(row.getByText("$0.30",{exact:true})).toBeVisible();
+  await expect(page).toHaveURL(/sort=avg_qa_cost_desc/);
+  expect(new URL(page.url()).searchParams.has("offset")).toBe(false);
+  expect(new URL(page.url()).searchParams.get("models")).toBe("grok");
+  await page.reload();
+  await expect(selector).toHaveValue("qa");
+  await page.getByRole("button",{name:"Sort by average cost",exact:true}).click();
+  await expect(page).toHaveURL(/sort=avg_qa_cost_asc/);
+  await selector.selectOption("trial");
+  await expect(row.getByText("$5.00",{exact:true})).toBeVisible();
+  await selector.selectOption("total");
+  await expect(row.getByText("$5.30",{exact:true})).toBeVisible();
+  expect(new URL(page.url()).searchParams.has("cost_metric")).toBe(false);
 });

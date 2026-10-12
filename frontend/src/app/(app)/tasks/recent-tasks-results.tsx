@@ -19,6 +19,9 @@ import { formatCostUsd } from "@/lib/format";
 import { TaskCard, TaskDeliveryHistory, TaskEvidence, TaskSortMetric } from "./task-card";
 import { selectedTokenMetric, setTokenMetric } from "@/lib/token-metrics";
 import { EffortCell as TaskEffortCell } from "@/components/effort-cell";
+import { CostMetricSelect } from "@/components/cost-metric-select";
+import { CostEffortCell } from "@/components/cost-effort-cell";
+import { selectedCostMetric, setCostMetric } from "@/lib/cost-metrics";
 import { TokenMetricSelect } from "@/components/token-metric-select";
 import { TaskRunSummary } from "@/components/task-run-summary";
 import { TaskBrowseLink } from "./task-browse-link";
@@ -63,6 +66,8 @@ const TASK_COLUMNS: { label: string; sort?: string; render: (task: TaskBrowseIte
     label: "Avg tokens", sort: "avg_tokens",
     render: task => <TaskEffortCell effort={task.effort} metric="tokens" />,
   },
+
+  { label: "Avg cost", sort: "avg_total_cost", render: task => <CostEffortCell cost={task.effort?.cost} metric="total" /> },
   { label: "Agents", render: (task: TaskBrowseItem) => task.agent_count ?? 0 },
   {
     label: "Delivery history",
@@ -82,7 +87,7 @@ const TASK_COLUMNS: { label: string; sort?: string; render: (task: TaskBrowseIte
   },
 ];
 
-const DEFAULT_COLUMNS = ["QA outcome", "Trials", "Avg steps", "Avg tokens", "Delivery history"];
+const DEFAULT_COLUMNS = ["QA outcome", "Trials", "Avg steps", "Avg tokens", "Avg cost", "Delivery history"];
 
 const pagerClass =
   "inline-flex h-8 items-center gap-1 rounded-md border border-[#6f88b4]/30 px-3 text-[11px] transition-colors";
@@ -102,6 +107,7 @@ export function RecentTasksResults({
   const expanded = searchParams.get("expanded");
   const sort = searchParams.get("sort");
   const tokenMetric = selectedTokenMetric(searchParams);
+  const costMetric = selectedCostMetric(searchParams);
   const view = searchParams.get("view") === "table" || (expanded && !searchParams.has("view")) ? "table" : "cards";
   const columns = TASK_COLUMNS.map((column) => column.label);
   const visibleColumns = searchParams.has("columns")
@@ -113,7 +119,7 @@ export function RecentTasksResults({
     ...column,
     sort: tokenMetric.sort,
     render: (task: TaskBrowseItem) => <TaskEffortCell effort={task.effort} metric={tokenMetric.field} />,
-  } : column);
+  } : column.label === "Avg cost" ? { ...column, sort: costMetric.sort, render: (task: TaskBrowseItem) => <CostEffortCell cost={task.effort?.cost} metric={costMetric.value} /> } : column);
   const sp = new URLSearchParams(searchParams.toString());
   const offset = Math.max(Number(sp.get("offset") ?? "0") || 0, 0);
   const { data, error, isLoading, mutate } = useTaskBrowse(sp);
@@ -266,11 +272,13 @@ export function RecentTasksResults({
                     aria-sort={column.sort ? (active ? (ascending ? "ascending" : "descending") : "none") : undefined}>
                     {column.label === "Avg tokens" && <TokenMetricSelect value={tokenMetric.value}
                       onChange={value => updateTaskSearchParams(params => { setTokenMetric(params, value); }, { resetPage: false })} />}
+                    {column.label === "Avg cost" && <CostMetricSelect value={costMetric.value}
+                      onChange={value => updateTaskSearchParams(params => { setCostMetric(params, value); }, { resetPage: false })} />}
                     {column.sort ? <button type="button"
-                      aria-label={column.label === "Avg tokens" ? `Sort by average ${tokenMetric.label.toLowerCase()} tokens` : undefined}
+                      aria-label={column.label === "Avg cost" ? "Sort by average cost" : column.label === "Avg tokens" ? `Sort by average ${tokenMetric.label.toLowerCase()} tokens` : undefined}
                       className="inline-flex items-center gap-1 whitespace-nowrap rounded-sm py-2 hover:text-foreground focus-visible:outline focus-visible:outline-ring"
                       onClick={() => updateTaskSearchParams(params => params.set("sort", `${column.sort}_${active && !ascending ? "asc" : "desc"}`))}>
-                      {column.label !== "Avg tokens" && column.label}<Icon className="h-3 w-3" aria-hidden />
+                      {!["Avg tokens", "Avg cost"].includes(column.label) && column.label}<Icon className="h-3 w-3" aria-hidden />
                     </button> : column.label}
                   </th>;
                 })}

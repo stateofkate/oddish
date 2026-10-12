@@ -1699,7 +1699,7 @@ async def rebuild_dashboard_experiments(
             task_agg.c.last_task_created_at,
             trial_agg.c.last_trial_created_at,
             trial_agg.c.effort_completed_trials,
-            *[trial_agg.c[field] for field in ExperimentEffortSummary.model_fields if field != "completed_trials"],
+            *[trial_agg.c[field] for field in ExperimentEffortSummary.model_fields if field not in ("completed_trials", "cost")],
         )
         .select_from(ExperimentModel)
         .outerjoin(task_agg, task_agg.c.experiment_id == ExperimentModel.id)
@@ -1858,7 +1858,7 @@ async def rebuild_dashboard_experiments(
                 "avg_score": merged["avg_score"],
                 "effort": ExperimentEffortSummary(
                     completed_trials=int(agg["effort_completed_trials"] or 0) if agg else 0,
-                    **{field: (agg[field] or 0) if agg else 0 for field in ExperimentEffortSummary.model_fields if field != "completed_trials"},
+                    **{field: (agg[field] or 0) if agg else 0 for field in ExperimentEffortSummary.model_fields if field not in ("completed_trials", "cost")},
                 ).model_dump(mode="json"),
                 "analysis_tasks": int(merged["analysis_tasks"] or 0),
                 "verdict_good": int(merged["verdict_good"] or 0),

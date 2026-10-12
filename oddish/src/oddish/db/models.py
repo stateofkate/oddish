@@ -43,6 +43,7 @@ from sqlalchemy.ext.asyncio import AsyncAttrs  # type: ignore[attr-defined]
 from sqlalchemy.orm import Mapped, attributes, column_property, relationship
 from sqlalchemy.orm import DeclarativeBase, mapped_column  # type: ignore[attr-defined]
 
+from oddish.db.task_cost_v2 import COST_SUMMARY_STATEMENTS
 from oddish.reasoning_effort import (
     configured_reasoning_effort,
     reasoning_effort_expression,
@@ -3648,3 +3649,13 @@ register_soft_delete_models(
     OrgShareModel,
     QAGoldenCaseModel,
 )
+
+# Match the additive migrated cost summary when tests use create_all.
+for _cost_statement in COST_SUMMARY_STATEMENTS:
+    sa_event.listen(
+        Base.metadata,
+        "after_create",
+        DDL(_cost_statement.replace("%", "%%")).execute_if(
+            callable_=lambda ddl, target, bind, **kw: not os.environ.get("ODDISH_ALEMBIC_RUNNING")
+        ),
+    )

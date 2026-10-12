@@ -621,7 +621,18 @@ export interface TaskOpenAgentModelSummary {
   duration_trial_count: number;
 }
 
+export interface TaskCostSummary {
+  completed_trials: number;
+  trial_sum: number;
+  trial_count: number;
+  qa_sum: number;
+  qa_jobs: number;
+  qa_unpriced_jobs: number;
+  qa_unattributed_jobs: number;
+}
+
 export interface TaskEffortSummary {
+  cost?: TaskCostSummary | null;
   uncached_input_tokens_sum?: number;
   uncached_input_tokens_trial_count?: number;
   cached_input_tokens_sum?: number;

@@ -2173,6 +2173,12 @@ async def browse_tasks_core(
         sort_value = metric
         aggregate_order.append(nulls_last(metric.asc() if sort.endswith("_asc") else metric.desc()))
 
+    if effort_sort in ("avg_total_cost", "avg_trial_cost", "avg_qa_cost") and sort.endswith(("_asc", "_desc")):
+        from oddish.core.task_cost import CostMetric, cost_average_expression
+        metric = cost_average_expression(TaskBrowseSummaryModel.effort["cost"], CostMetric(effort_sort.removeprefix("avg_").removesuffix("_cost")))
+        sort_value = metric
+        aggregate_order.append(nulls_last(metric.asc() if sort.endswith("_asc") else metric.desc()))
+
     if sort in ("model_score_asc", "model_score_desc", "last_model_activity_desc"):
         model = TaskBrowseSummaryModel.run_summary["model"]
         metric = (

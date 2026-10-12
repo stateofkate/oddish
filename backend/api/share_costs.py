@@ -17,7 +17,9 @@ def strip_costs(value: Any) -> Any:
     if isinstance(value, dict):
         return {
             key: (
-                0
+                None
+                if key == "cost" and isinstance(item, dict)
+                else 0
                 if "cost" in key
                 and isinstance(item, (int, float))
                 and not isinstance(item, bool)

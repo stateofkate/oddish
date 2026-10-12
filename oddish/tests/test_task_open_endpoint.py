@@ -221,6 +221,7 @@ def _aggregate(
         "qa_cost_usd": qa_cost,
         "verifier_cost_usd": verifier_cost,
         "active_qa_trial": active_qa,
+        "version_cost": {},
     }
 
 

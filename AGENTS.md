@@ -3927,3 +3927,28 @@ from that version's recorded trial cohort in the same transaction. Existing step
 and total fields remain the writer's values; a NULL snapshot reconstructs those
 base fields too. New writers skip the extra query.
 Downgrade removes the compatibility trigger/function and keeps additive JSON keys.
+
+## Version-scoped average cost selector
+
+The internal task detail cost cell and Tasks table share Total (Trial + QA), Trial,
+and QA averages. `task_cost_summary_001` fills `effort.cost` in the existing version
+browse snapshot and retains it when older workers replace the JSON. The frozen
+`task_cost_summary_v1` SQL function supplies both that snapshot and task-open.
+The denominator is the selected version's completed model trials, with the existing
+baseline/infrastructure/copy exclusions. Trial averages use recorded nonnegative
+prices; combined averages require every model trial to be priced. Version-linked
+legacy analysis charges and production QA/audit/summarize runs contribute QA spend;
+QA-evaluation replays are excluded. QA without a price or historical task-only QA
+without a version makes combined/QA averages unknown rather than free. No-QA versions
+with no unattributed charges have zero QA spend. Sorts use the snapshot before pagination.
+
+The `task_cost_settled_002` migration refreshes the cost cohort for current,
+settled QA records. Superseded/deleted QA sources and pending analysis charges
+are excluded from these averages, without changing all-version spend totals.
+Frozen v2 derives the narrowed SQL from v1, retaining its SQL function signature
+for existing callers. The cache cohort marker allows resumable refreshes after
+v1 has already been applied.
+Native QA/audit/summarize settlement and late metering updates use the existing
+transactional `refresh_task_browse_summaries` call in `_store_trial_results`;
+trial imports refresh their version too. Cost repairs that write trial rows
+outside these canonical paths must refresh that version's browse summary.

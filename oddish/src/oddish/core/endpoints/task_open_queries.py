@@ -331,6 +331,7 @@ AGGREGATE_SQL = text(f"""
            ) e), '[]'::jsonb) AS experiments,
            (SELECT COALESCE(sum(cost), 0.0) FROM qa_rows) AS qa_cost_usd,
            (SELECT COALESCE(sum(cost), 0.0) FROM verifier_rows) AS verifier_cost_usd,
+           task_cost_summary_v1(CAST(:version_id AS text)) AS version_cost,
            (SELECT to_jsonb(q) FROM active_qa q) AS active_qa_trial
     """)
 

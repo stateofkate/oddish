@@ -9,7 +9,12 @@ from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from oddish.core.sharing.helpers import share_hides_costs
 
-PAYLOAD = {"cost_usd": 1.5, "show_costs": True, "trials": [{"qa_cost_usd": 2}]}
+PAYLOAD = {
+    "cost_usd": 1.5,
+    "show_costs": True,
+    "trials": [{"qa_cost_usd": 2}],
+    "effort": {"steps_sum": 20, "cost": {"trial_sum": 10, "qa_sum": 2}},
+}
 
 
 def _app(hide: bool) -> FastAPI:
@@ -43,7 +48,12 @@ def _app(hide: bool) -> FastAPI:
 @pytest.mark.parametrize("hide", [True, False])
 async def test_costs_zeroed_only_when_hidden(hide):
     expected = (
-        {"cost_usd": 0, "show_costs": True, "trials": [{"qa_cost_usd": 0}]}
+        {
+            "cost_usd": 0,
+            "show_costs": True,
+            "trials": [{"qa_cost_usd": 0}],
+            "effort": {"steps_sum": 20, "cost": None},
+        }
         if hide
         else PAYLOAD
     )

@@ -168,6 +168,8 @@ async def test_effort_migration_is_resumable_and_matches_runtime(db, fresh_colum
         ScriptDirectory.from_config(config).get_revision("task_effort_tokens_001").module
     )
     async with engine.begin() as connection:
+        if fresh_column:
+            await connection.execute(text("DROP TRIGGER task_effort_z_cost_compat ON task_version_browse_summaries"))
         await connection.execute(
             text(
                 "ALTER TABLE task_version_browse_summaries DROP COLUMN effort"
@@ -184,6 +186,8 @@ async def test_effort_migration_is_resumable_and_matches_runtime(db, fresh_colum
                 original = ScriptDirectory.from_config(config).get_revision("task_effort_001").module
                 original.upgrade()
             migration.upgrade()
+            ScriptDirectory.from_config(config).get_revision("task_cost_summary_001").module.upgrade()
+            ScriptDirectory.from_config(config).get_revision("task_cost_settled_002").module.upgrade()
 
     for _ in range(2):
         async with engine.connect() as connection:
@@ -312,7 +316,7 @@ async def test_old_summary_writers_keep_breakdown_current(db, empty):  # noqa: F
             TaskBrowseSummaryModel.task_version_id == version,
         ))).scalar_one()
         assert {key: effort[key] for key in old} == old
-        fields = set(effort) - set(old)
+        fields = set(effort) - set(old) - {"cost"}
         assert len(fields) == 6
         row = (await session.execute(AGGREGATE_SQL, {
             "task_id": task, "org_id": None,
@@ -330,7 +334,7 @@ async def test_old_summary_writers_keep_breakdown_current(db, empty):  # noqa: F
         null_effort = (await session.execute(select(TaskBrowseSummaryModel.effort).where(
             TaskBrowseSummaryModel.task_version_id == version,
         ))).scalar_one()
-        for field in null_effort:
+        for field in set(null_effort) - {"cost"}:
             assert null_effort[field] == sum(
                 group[f"effort_{field}"] for group in row["groups"] or []
             )

@@ -2078,6 +2078,16 @@ class TaskRunSummary(BaseModel):
     nop: TaskRunGroup = Field(default_factory=TaskRunGroup)
 
 
+class TaskCostSummary(BaseModel):
+    completed_trials: int = 0
+    trial_sum: float = 0
+    trial_count: int = 0
+    qa_sum: float = 0
+    qa_jobs: int = 0
+    qa_unpriced_jobs: int = 0
+    qa_unattributed_jobs: int = 0
+
+
 class TaskEffortSummary(BaseModel):
     """Recorded effort of completed model trials on the selected version.
 
@@ -2085,6 +2095,7 @@ class TaskEffortSummary(BaseModel):
     of input. Each measurement has its own denominator; missing is not zero.
     """
 
+    cost: TaskCostSummary | None = None
     completed_trials: int = Field(default=0, ge=0)
     steps_sum: int = Field(default=0, ge=0)
     steps_trial_count: int = Field(default=0, ge=0)

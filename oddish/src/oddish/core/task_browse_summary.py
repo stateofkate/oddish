@@ -182,7 +182,7 @@ async def refresh_task_browse_summaries(
             **{
                 key: row[key]
                 for key in TaskEffortSummary.model_fields
-                if key != "completed_trials"
+                if key not in ("completed_trials", "cost")
             },
         ).model_dump(mode="json")
 

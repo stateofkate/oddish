@@ -26,6 +26,7 @@ from oddish.core.endpoints.task_open_queries import (
 )
 from oddish.db import TaskStatus
 from oddish.schemas import (
+    TaskCostSummary,
     TaskRunSummary,
     TaskOpenResponse,
     TaskOpenTask,
@@ -74,6 +75,7 @@ async def get_task_open_core(
         float(aggregate.get("verifier_cost_usd") or 0.0),
     )
     if selected is not None:
+        selected.effort.cost = TaskCostSummary.model_validate(aggregate["version_cost"])
         selected.run_summary = (
             TaskRunSummary.model_validate(identity["run_summary"])
             if identity["run_summary"] is not None else None
