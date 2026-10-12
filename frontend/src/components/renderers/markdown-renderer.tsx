@@ -41,6 +41,11 @@ interface MarkdownRendererProps {
   selectedLines?: LineRange | null;
   onSelectLines?: (range: LineRange | null) => void;
   className?: string;
+  /**
+   * Prose mode for hand-written guides (the /docs pages): source line breaks
+   * reflow instead of rendering as <br>, and code blocks drop line numbers.
+   */
+  prose?: boolean;
 }
 
 /** Position payload remark attaches to every node it parsed from source. */
@@ -164,9 +169,11 @@ const LANGUAGE_MAP: Record<string, string> = {
 function CodeBlock({
   language,
   children,
+  lineNumbers = true,
 }: {
   language: string;
   children: string;
+  lineNumbers?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
   const isDark = useIsDark();
@@ -214,9 +221,11 @@ function CodeBlock({
           <pre className="overflow-x-auto p-3 text-xs leading-relaxed">
             {tokens.map((line, i) => (
               <div key={i} {...getLineProps({ line })} className="table-row">
-                <span className="table-cell w-[3ch] select-none pr-3 text-right text-muted-foreground/40">
-                  {i + 1}
-                </span>
+                {lineNumbers && (
+                  <span className="table-cell w-[3ch] select-none pr-3 text-right text-muted-foreground/40">
+                    {i + 1}
+                  </span>
+                )}
                 <span className="table-cell">
                   {line.map((token, key) => (
                     <span key={key} {...getTokenProps({ token })} />
@@ -237,6 +246,7 @@ export function MarkdownRenderer({
   selectedLines,
   onSelectLines,
   className,
+  prose = false,
 }: MarkdownRendererProps) {
   const anchorsEnabled = onSelectLines !== undefined || selectedLines != null;
   const containerRef = useRef<HTMLDivElement>(null);
@@ -360,7 +370,7 @@ export function MarkdownRenderer({
       )}
     >
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkBreaks]}
+        remarkPlugins={prose ? [remarkGfm] : [remarkGfm, remarkBreaks]}
         rehypePlugins={[rehypeMarkRootBlocks]}
         components={{
           h1: ({ node, children }) =>
@@ -491,7 +501,7 @@ export function MarkdownRenderer({
 
             return anchored(
               node,
-              <CodeBlock language={match?.[1] || ""}>
+              <CodeBlock language={match?.[1] || ""} lineNumbers={!prose}>
                 {String(children)}
               </CodeBlock>
             );

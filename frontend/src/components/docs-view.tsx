@@ -47,7 +47,7 @@ export function DocsView({
 
   return (
     <div className="flex flex-col gap-6 sm:flex-row">
-      <nav className="flex shrink-0 flex-col gap-0.5 text-sm sm:w-56">
+      <nav className="flex shrink-0 flex-col gap-0.5 text-sm sm:sticky sm:top-[calc(var(--preview-banner-h,0px)+4.5rem)] sm:max-h-[calc(100vh-var(--preview-banner-h,0px)-5.5rem)] sm:w-56 sm:self-start sm:overflow-y-auto">
         {visible.map((page) => (
           <Link
             key={page.slug}
@@ -61,7 +61,12 @@ export function DocsView({
       </nav>
       <article className="max-w-3xl min-w-0 flex-1">
         {shown ? (
-          <MarkdownRenderer content={body} fileName={slug} />
+          <MarkdownRenderer
+            content={body}
+            fileName={slug}
+            prose
+            className="text-[15px] [&_p]:leading-7"
+          />
         ) : (
           <p className="text-muted-foreground text-sm">Page not found.</p>
         )}
