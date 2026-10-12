@@ -53,6 +53,7 @@ from oddish.costs.modal_cost import (
     provider_default_request,
 )
 from oddish.core.harbor_artifacts import write_trial_selection_manifest
+from oddish.core.harbor_source import UNIKRAFT_ENVIRONMENT
 from oddish.runtime.ec2_policy import (
     LAUNCH_TOKEN_TAG_KEY,
     SANDBOX_RUN_ID_TAG_KEY,
@@ -1074,6 +1075,18 @@ def _daytona_compose_restriction_kind(
     return "static"
 
 
+# These providers enforce egress on the VM, including Compose sidecars.
+_VM_EGRESS_ENVIRONMENTS: tuple[EnvironmentType, ...] = tuple(
+    environment
+    for environment in (
+        EnvironmentType.THUNDER,
+        EnvironmentType.ARCHIL,
+        UNIKRAFT_ENVIRONMENT,
+    )
+    if environment is not None
+)
+
+
 def _supports_auto_restricted_agent_network(
     *,
     task_path: Path,
@@ -1085,14 +1098,12 @@ def _supports_auto_restricted_agent_network(
     if environment_config.type not in (
         EnvironmentType.DAYTONA,
         EnvironmentType.MODAL,
-        EnvironmentType.THUNDER,
-        EnvironmentType.ARCHIL,
         EnvironmentType.DOCKER,
+        *_VM_EGRESS_ENVIRONMENTS,
     ):
         return False
 
-    # These providers enforce egress on the VM, including Compose sidecars.
-    if environment_config.type in (EnvironmentType.THUNDER, EnvironmentType.ARCHIL):
+    if environment_config.type in _VM_EGRESS_ENVIRONMENTS:
         return _task_has_dynamic_restricted_agent_phase(task_path)
 
     environment_dir = task_path / "environment"

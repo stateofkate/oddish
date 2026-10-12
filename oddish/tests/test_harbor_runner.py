@@ -26,6 +26,7 @@ from harbor.models.trial.config import (
     EnvironmentConfig as HarborEnvironmentConfig,
 )
 from harbor.trial.network_policy import resolve_agent_phase_policy
+from oddish.core.harbor_source import UNIKRAFT_ENVIRONMENT
 from oddish.task_timeouts import TaskTimeoutValidationError
 from oddish.workers.agents.codex import AzureCompatibleCodex, OddishCodex
 from oddish.workers.agents.cursor_cli import OddishCursorCli
@@ -108,6 +109,12 @@ user = "agent"
     return task_path
 
 
+# The pinned Harbor may predate the Unikraft environment.
+_requires_unikraft = pytest.mark.skipif(
+    UNIKRAFT_ENVIRONMENT is None, reason="pinned Harbor lacks the environment"
+)
+
+
 @pytest.mark.parametrize(
     "environment_type",
     [
@@ -115,6 +122,7 @@ user = "agent"
         EnvironmentType.MODAL,
         EnvironmentType.THUNDER,
         EnvironmentType.ARCHIL,
+        pytest.param(UNIKRAFT_ENVIRONMENT, marks=_requires_unikraft),
     ],
 )
 def test_inject_restricted_agent_model_hosts_for_restricted_direct_task(
@@ -181,7 +189,12 @@ def test_docker_restricted_agent_phase_matches_daytona(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "environment_type", [EnvironmentType.THUNDER, EnvironmentType.ARCHIL]
+    "environment_type",
+    [
+        EnvironmentType.THUNDER,
+        EnvironmentType.ARCHIL,
+        pytest.param(UNIKRAFT_ENVIRONMENT, marks=_requires_unikraft),
+    ],
 )
 def test_inject_restricted_agent_model_hosts_for_vm_boundary_compose(
     monkeypatch, tmp_path, environment_type
@@ -1541,6 +1554,14 @@ def test_restricted_cursor_does_not_allow_underlying_model_provider(tmp_path):
         (EnvironmentType.DAYTONA, "no-network", "no-network", False),
         (EnvironmentType.DAYTONA, "public", "no-network", True),
         (EnvironmentType.MODAL, "public", "no-network", True),
+        # A restricted baseline blocks the agent's install, on any provider.
+        pytest.param(
+            UNIKRAFT_ENVIRONMENT,
+            "no-network",
+            "no-network",
+            True,
+            marks=_requires_unikraft,
+        ),
     ],
 )
 def test_inject_restricted_agent_model_hosts_skips_unsupported_shapes(

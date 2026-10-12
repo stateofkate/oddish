@@ -75,6 +75,7 @@ def test_image_ref_matches_harbor_unikraft_environment(tmp_path: Path):
     env.task_env_config = EnvironmentConfig()
     env._image_namespace = "acme"
     env._registry = None
+    env._compose_mode = False
     assert prebuild.task_image_ref(task, namespace="acme") == env._image_ref()
 
 
@@ -270,3 +271,162 @@ def test_prebuild_builds_missing_analysis_images(monkeypatch):
     assert sorted(runs.dockerfiles) == sorted(ANALYSIS_DOCKERFILES)
     output_refs = {c[-1] for c in runs.calls if c[1] == "build"}
     assert output_refs == set(prebuild.analysis_image_refs("acme"))
+
+
+def _write_compose_task(tmp_path: Path, name: str = "compose") -> Path:
+    task = _write_task(tmp_path / name)
+    (task / "environment" / "docker-compose.yaml").write_text(
+        "services:\n  web:\n    image: nginx:1.27-alpine\n"
+    )
+    return task
+
+
+def test_dind_image_ref_matches_harbor_unikraft_environment():
+    unikraft = pytest.importorskip("harbor.environments.unikraft")
+    if not hasattr(unikraft, "dind_image_tag"):
+        pytest.skip("the pinned Harbor runs no Compose tasks on Unikraft")
+    ref, dockerfile_text = prebuild.dind_image_ref("acme")
+    assert prebuild.DEFAULT_DIND_IMAGE == unikraft.DEFAULT_DIND_IMAGE
+    assert dockerfile_text == unikraft.dind_dockerfile(unikraft.DEFAULT_DIND_IMAGE)
+    tag = unikraft.dind_image_tag(unikraft.DEFAULT_DIND_IMAGE)
+    assert ref == f"acme/{unikraft.DIND_IMAGE_NAME}:{tag}"
+
+
+def test_prebuild_pushes_the_dind_image_instead_of_a_compose_task_image(
+    tmp_path: Path, monkeypatch
+):
+    compose = _write_compose_task(tmp_path)
+    monkeypatch.setenv("UKC_USER", "acme")
+    monkeypatch.setenv(prebuild.UNIKRAFT_CLI_ENV, "/opt/unikraft")
+    runs = _Runs(exists=False)
+    monkeypatch.setattr(prebuild.subprocess, "run", runs)
+    prebuild.prebuild_task_images([compose], quiet=True)
+
+    dind_ref, dind_dockerfile = prebuild.dind_image_ref("acme")
+    built = {c[-1] for c in runs.calls if c[1] == "build"}
+    assert built == {*prebuild.analysis_image_refs("acme"), dind_ref}
+    assert dind_dockerfile in runs.dockerfiles
+    # Harbor builds the Compose services in the VM, so no task image is pushed.
+    assert prebuild.task_image_ref(compose, namespace="acme") not in built
+
+
+def test_prebuild_checks_the_dind_image_once_for_many_compose_tasks(
+    tmp_path: Path, monkeypatch
+):
+    tasks = [_write_compose_task(tmp_path, f"compose-{i}") for i in range(2)]
+    tasks.append(_write_task(tmp_path / "single"))
+    monkeypatch.setenv("UKC_USER", "acme")
+    monkeypatch.setenv(prebuild.UNIKRAFT_CLI_ENV, "/opt/unikraft")
+    runs = _Runs(exists=True)
+    monkeypatch.setattr(prebuild.subprocess, "run", runs)
+    prebuild.prebuild_task_images(tasks, quiet=True)
+
+    checked = [c[3] for c in runs.calls if c[1:3] == ["images", "get"]]
+    assert checked.count(prebuild.dind_image_ref("acme")[0]) == 1
+    assert prebuild.task_image_ref(tasks[2], namespace="acme") in checked
+    assert not [c for c in runs.calls if c[1] == "build"]
+
+
+def _write_separate_verifier(task: Path, *, compose_env: bool = False) -> Path:
+    """Add a separate-verifier environment (its own tests/Dockerfile) to a task."""
+    toml = task / "task.toml"
+    toml.write_text(toml.read_text() + '\n[verifier]\nenvironment_mode = "separate"\n')
+    tests = task / "tests"
+    tests.mkdir(exist_ok=True)
+    (tests / "Dockerfile").write_text("FROM alpine:3.20\nRUN echo verifier\n")
+    (tests / "test.sh").write_text("#!/bin/sh\necho 1 > /logs/verifier/reward.txt\n")
+    if compose_env:
+        (task / "environment" / "docker-compose.yaml").write_text(
+            "services:\n  web:\n    image: nginx:1.27-alpine\n"
+        )
+    return task
+
+
+def test_prebuild_pushes_the_separate_verifier_image(tmp_path: Path, monkeypatch):
+    task = _write_separate_verifier(_write_task(tmp_path))
+    monkeypatch.setenv("UKC_USER", "acme")
+    monkeypatch.setenv(prebuild.UNIKRAFT_CLI_ENV, "/opt/unikraft")
+    runs = _Runs(exists=False)
+    monkeypatch.setattr(prebuild.subprocess, "run", runs)
+    prebuild.prebuild_task_images([task], quiet=True)
+
+    verifier_ref = prebuild._env_image_ref(task / "tests", None, "acme")
+    built = {c[-1] for c in runs.calls if c[1] == "build"}
+    # Both the agent environment and the separate verifier environment are pushed.
+    assert prebuild.task_image_ref(task, namespace="acme") in built
+    assert verifier_ref in built
+    # The verifier ref hashes the tests/ directory, as Harbor derives it.
+    from harbor.environments.definition import (
+        SNAPSHOT_HASH_LEN,
+        environment_content_hash,
+    )
+
+    tag = environment_content_hash(task / "tests", docker_image=None)[
+        :SNAPSHOT_HASH_LEN
+    ]
+    assert verifier_ref == f"acme/harbor-task:{tag}"
+
+
+def test_shared_verifier_task_pushes_no_verifier_image(tmp_path: Path, monkeypatch):
+    # A plain task (no [verifier] environment) runs its verifier in the agent
+    # environment, so only the one environment image is pushed.
+    task = _write_task(tmp_path)
+    monkeypatch.setenv("UKC_USER", "acme")
+    monkeypatch.setenv(prebuild.UNIKRAFT_CLI_ENV, "/opt/unikraft")
+    runs = _Runs(exists=False)
+    monkeypatch.setattr(prebuild.subprocess, "run", runs)
+    prebuild.prebuild_task_images([task], quiet=True)
+
+    built = {c[-1] for c in runs.calls if c[1] == "build"}
+    env_ref = prebuild.task_image_ref(task, namespace="acme")
+    assert built == {*prebuild.analysis_image_refs("acme"), env_ref}
+
+
+def test_compose_task_with_separate_verifier_pushes_dind_and_verifier(
+    tmp_path: Path, monkeypatch
+):
+    task = _write_separate_verifier(_write_task(tmp_path), compose_env=True)
+    monkeypatch.setenv("UKC_USER", "acme")
+    monkeypatch.setenv(prebuild.UNIKRAFT_CLI_ENV, "/opt/unikraft")
+    runs = _Runs(exists=False)
+    monkeypatch.setattr(prebuild.subprocess, "run", runs)
+    prebuild.prebuild_task_images([task], quiet=True)
+
+    built = {c[-1] for c in runs.calls if c[1] == "build"}
+    dind_ref, _ = prebuild.dind_image_ref("acme")
+    verifier_ref = prebuild._env_image_ref(task / "tests", None, "acme")
+    # The compose agent env builds in the VM (DinD), but the single-container
+    # separate verifier still needs its own prebuilt image.
+    assert dind_ref in built
+    assert verifier_ref in built
+    assert prebuild.task_image_ref(task, namespace="acme") not in built
+
+
+def test_steps_sharing_tests_dir_push_one_verifier_image_per_base_image(
+    tmp_path: Path, monkeypatch
+):
+    # Both steps read tests/, but their verifier base images differ, so the
+    # content hashes differ too and each one needs its own image.
+    task = _write_task(tmp_path)
+    toml = task / "task.toml"
+    toml.write_text(
+        toml.read_text()
+        + '\n[verifier]\nenvironment_mode = "separate"\n'
+        + "".join(
+            f'\n[[steps]]\nname = "{name}"\n'
+            f'[steps.verifier.environment]\ndocker_image = "{image}"\n'
+            for name, image in (("one", "alpine:3.20"), ("two", "alpine:3.21"))
+        )
+    )
+    (task / "tests").mkdir()
+    (task / "tests" / "test.sh").write_text("#!/bin/sh\n")
+    monkeypatch.setenv("UKC_USER", "acme")
+    monkeypatch.setenv(prebuild.UNIKRAFT_CLI_ENV, "/opt/unikraft")
+    runs = _Runs(exists=False)
+    monkeypatch.setattr(prebuild.subprocess, "run", runs)
+    prebuild.prebuild_task_images([task], quiet=True)
+
+    built = {c[-1] for c in runs.calls if c[1] == "build"}
+    for image in ("alpine:3.20", "alpine:3.21"):
+        assert prebuild._env_image_ref(task / "tests", image, "acme") in built
+        assert f"FROM {image}\n" in runs.dockerfiles

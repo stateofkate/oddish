@@ -13,6 +13,9 @@ image with the `unikraft` CLI first; it needs that CLI plus `UKC_TOKEN`,
 `UKC_METRO` and `UKC_USER`. `oddish run --task <id> --env unikraft` appends
 trials without local task files, so the image must already exist from an
 earlier submission of that task version (remote builds are coming soon).
+A Docker Compose task gets no task image: Harbor builds its services in the
+microVM, which boots from a shared Docker-in-Docker image that the CLI pushes
+once.
 
 Customer guides are maintained in [docs/customer](docs/customer/getting-started.md). Read the guides at https://docs.abundant.dev/docs/oddish. The website requires a separate Abundant Docs account with Oddish documentation access. A docs account grants no task-workspace membership.
 

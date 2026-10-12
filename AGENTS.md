@@ -1944,13 +1944,13 @@ Keep these routing rules in sync with `oddish/src/oddish/config.py` and
   each agent the spelling its LLM client expects (litellm agents in
   `_LITELLM_MODEL_ID_AGENTS`, Vercel AI SDK agents in
   `_AI_SDK_MODEL_ID_AGENTS`); add a new agent to the set matching its client.
-- Dockerfile-only tasks on Modal, Daytona, and Archil support public setup
+- Dockerfile-only tasks on Modal, Daytona, Archil, and Unikraft support public setup
   followed by a restricted agent phase. Oddish adds the selected model and
   agent runtime hosts to the agent-phase allowlist and disables supported
   server-side web tools. This does not widen a restricted environment baseline:
   legacy `allow_internet=false` still blocks agent installation unless its
-  dependencies are already available or explicitly allowed. Archil applies the same host injection to Compose tasks because its VM
-  enforces egress. Docker Compose tasks, including those executed as Docker by
+  dependencies are already available or explicitly allowed. Archil and Unikraft apply the same host injection to Compose tasks because their VMs
+  enforce egress. Docker Compose tasks, including those executed as Docker by
   the Modal monitor, also receive agent-phase model/runtime hosts: Harbor routes
   their services through its filtered network namespace. The separate verifier
   retains its own network policy. Other custom Compose tasks use the separate
