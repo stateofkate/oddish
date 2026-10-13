@@ -109,6 +109,23 @@ async def test_discovery_keeps_provider_and_credential_identity(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "configured",
+    [None, "https://models.relace.ai/v1", "https://models.relace.ai/v1/"],
+)
+async def test_discovery_relace_base_matches_trials(platform, monkeypatch, configured):
+    _, stored = platform
+    stored.return_value = {"relace/glm-5.3": 8}
+    if configured is None:
+        monkeypatch.delenv("RELACE_BASE_URL", raising=False)
+    else:
+        monkeypatch.setenv("RELACE_BASE_URL", configured)
+    (target,) = await health.platform_targets(None)
+    assert target.api_base == "https://models.relace.ai"
+    assert target.api_base_env is None
+
+
+@pytest.mark.asyncio
 async def test_discovery_bedrock_uses_existing_aws_region(platform, monkeypatch):
     _, stored = platform
     stored.return_value = {"global.anthropic.claude-sonnet-5": 8}

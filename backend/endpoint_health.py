@@ -100,7 +100,6 @@ async def platform_targets(session: AsyncSession) -> list[EndpointTarget]:
         MINIMAX_DEFAULT_BASE_URL,
         MOONSHOT_DEFAULT_BASE_URL,
         NOP_ORACLE_QUEUE_KEY,
-        RELACE_DEFAULT_BASE_URL,
         VERDICT_PIPELINE_QUEUE_KEY,
         ZAI_DEFAULT_BASE_URL,
         deepseek_bare_model_id,
@@ -108,6 +107,7 @@ async def platform_targets(session: AsyncSession) -> list[EndpointTarget]:
         infer_model_provider_prefix,
         minimax_api_model_id,
         relace_api_model_id,
+        relace_base_url,
         settings,
         to_anthropic_api_model_id,
     )
@@ -137,7 +137,6 @@ async def platform_targets(session: AsyncSession) -> list[EndpointTarget]:
             "FIREWORKS_BASE_URL",
             FIREWORKS_DEFAULT_BASE_URL,
         ),
-        "relace": ("RELACE_API_KEY", "RELACE_BASE_URL", RELACE_DEFAULT_BASE_URL),
     }
     for queue_key, limit in sorted(limits.items()):
         if limit <= 0:
@@ -205,13 +204,18 @@ async def platform_targets(session: AsyncSession) -> list[EndpointTarget]:
                 bare = minimax_api_model_id(bare)
             elif provider == "fireworks":
                 bare = fireworks_api_model_id(bare)
-            elif provider == "relace":
-                bare = relace_api_model_id(bare)
             fields.update(model=f"anthropic/{bare}", api_key_env=key)
             if os.environ.get(base_env):
                 fields["api_base_env"] = base_env
             else:
                 fields["api_base"] = default_base
+        elif provider == "relace":
+            # Same normalizer as trials: RELACE_BASE_URL may end in /v1.
+            fields.update(
+                model=f"anthropic/{relace_api_model_id(bare)}",
+                api_key_env="RELACE_API_KEY",
+                api_base=relace_base_url(),
+            )
         elif provider == "deepseek":
             # dsh sends DeepSeek's OpenAI-compatible API, not its /anthropic one.
             fields.update(
