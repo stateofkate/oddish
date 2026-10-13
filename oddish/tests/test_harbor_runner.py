@@ -6154,6 +6154,39 @@ def test_gemini_cli_environment_hosts_follow_a_custom_gemini_route():
     assert "raw.githubusercontent.com" in hosts
 
 
+def test_codex_environment_hosts_span_install_and_model():
+    """Regression: closed-internet codex trials died at nvm/apt with 0 tokens.
+
+    codex self-installs during agent SETUP (apt-get curl/ripgrep, then
+    nvm -> Node 22 -> ``npm install -g @openai/codex``), which runs under the
+    environment baseline -- the same install chain as opencode/gemini-cli, so
+    an agent-phase allowlist can never cover it. The environment-baseline hosts
+    must span both the install bootstrap and the OpenAI model transport.
+    """
+    hosts = harbor_runner._codex_environment_hosts(
+        HarborAgentConfig(name="codex", model_name="openai/gpt-5-codex")
+    )
+
+    assert "raw.githubusercontent.com" in hosts  # nvm install.sh
+    assert "registry.npmjs.org" in hosts  # @openai/codex package
+    assert "nodejs.org" in hosts  # Node runtime
+    assert "api.openai.com" in hosts  # ...and inference still works
+
+
+def test_codex_environment_hosts_follow_custom_base_url():
+    """A trial pinning ``OPENAI_BASE_URL`` allowlists that host too."""
+    hosts = harbor_runner._codex_environment_hosts(
+        HarborAgentConfig(
+            name="codex",
+            model_name="openai/gpt-5-codex",
+            env={"OPENAI_BASE_URL": "https://gateway.internal.example/v1"},
+        )
+    )
+
+    assert "gateway.internal.example" in hosts
+    assert "raw.githubusercontent.com" in hosts
+
+
 def test_antigravity_environment_hosts_span_install_and_model():
     """agy self-installs at agent-setup, same lifecycle shape as opencode.
 

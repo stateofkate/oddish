@@ -84,6 +84,7 @@ from .agent_config import (
 from .model_hosts import (
     ANTIGRAVITY_INSTALL_HOSTS,
     ANTIGRAVITY_RUNTIME_HOSTS,
+    CODEX_INSTALL_HOSTS,
     GEMINI_BASE_URL_KEYS,
     GEMINI_CLI_INSTALL_HOSTS,
     GEMINI_OAUTH_ENV_KEYS,
@@ -1682,6 +1683,23 @@ def _gemini_cli_environment_hosts(agent_config: HarborAgentConfig) -> list[str]:
     ]
 
 
+def _codex_environment_hosts(agent_config: HarborAgentConfig) -> list[str]:
+    """Hosts codex needs across install *and* run.
+
+    codex self-installs (apt-get curl/ripgrep, then nvm -> Node -> the
+    ``@openai/codex`` npm package) during agent SETUP, which runs under the
+    ENVIRONMENT baseline -- the same install chain and lifecycle problem as the
+    opencode arm above, same solution: allow install + model hosts via the
+    environment baseline, which spans install and run. On a legacy closed task
+    this is also the only channel that grants the OpenAI model transport host,
+    so resolve it here too.
+    """
+    return [
+        *CODEX_INSTALL_HOSTS,
+        *outbound_hosts_for_model(agent_config.model_name, agent_env=agent_config.env),
+    ]
+
+
 def _is_grok_build_agent(
     *, agent: str | None, agent_config: HarborAgentConfig | None
 ) -> bool:
@@ -2611,6 +2629,27 @@ async def _run_harbor_trial_async_impl(
             )
         ):
             hosts = _gemini_cli_environment_hosts(agent_config)
+            env_config.extra_allowed_hosts = [
+                *env_config.extra_allowed_hosts,
+                *[h for h in hosts if h not in env_config.extra_allowed_hosts],
+            ]
+
+        # codex self-installs (apt-get curl/ripgrep -> nvm -> Node ->
+        # @openai/codex) at agent-setup, under the environment baseline -- same
+        # lifecycle problem and solution as the opencode/gemini-cli arms above.
+        # Without it a legacy closed task dies at apt exit 100, then at
+        # ``curl: (6) Could not resolve host: raw.githubusercontent.com``.
+        if (
+            (agent or "").strip().lower() == "codex"
+            or "codex:"
+            in (getattr(agent_config, "import_path", None) or "").strip().lower()
+        ) and not (
+            _supports_daytona_compose_restricted_agent_network(
+                task_path=effective_task_path,
+                environment_config=env_config,
+            )
+        ):
+            hosts = _codex_environment_hosts(agent_config)
             env_config.extra_allowed_hosts = [
                 *env_config.extra_allowed_hosts,
                 *[h for h in hosts if h not in env_config.extra_allowed_hosts],

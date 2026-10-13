@@ -212,6 +212,11 @@ OPENCODE_INSTALL_HOSTS: tuple[str, ...] = (
 # environment baseline, before a restricted agent-phase profile exists, so the
 # runner must add this chain to that baseline.
 GEMINI_CLI_INSTALL_HOSTS: tuple[str, ...] = OPENCODE_INSTALL_HOSTS
+# codex uses Harbor's same nvm/Node bootstrap as OpenCode, then installs
+# ``@openai/codex`` with npm during agent setup. Same lifecycle as the
+# OpenCode/Gemini-CLI arms, so the runner must add this chain to the
+# environment baseline.
+CODEX_INSTALL_HOSTS: tuple[str, ...] = OPENCODE_INSTALL_HOSTS
 # agy has no pre-baked worker image: Harbor's ``AntigravityCli.install``
 # fetches install.sh from antigravity.google, which resolves a manifest on
 # the auto-updater Cloud Run host and downloads the binary tarball from GCS.
