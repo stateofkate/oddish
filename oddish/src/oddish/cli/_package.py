@@ -180,7 +180,11 @@ def fetch_api_latest(api_url: str, api_key: str) -> str:
         raise PackageError(
             f"Oddish API answered {response.status_code} for /cli/latest. Check ODDISH_API_KEY."
         )
-    version = response.json().get("version")
+    try:
+        payload = response.json()
+    except ValueError:  # JSONDecodeError and bad UTF-8 both subclass it
+        payload = None
+    version = payload.get("version") if isinstance(payload, dict) else None
     if not isinstance(version, str) or not version.strip():
         raise PackageError("The Oddish API did not return a CLI version.")
     return version.strip()

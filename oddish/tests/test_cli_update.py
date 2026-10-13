@@ -315,3 +315,18 @@ def test_script_install_already_latest_skips_install(monkeypatch):
     )
     result = runner.invoke(app, ["update"])
     assert result.exit_code == 0 and "already up to date" in result.stdout
+
+
+@pytest.mark.parametrize(
+    "body", [b"<html>502</html>", b"", b"[]", b'"0.1.20"', b'{"version": 1}', b"\xff"]
+)
+def test_fetch_api_latest_bad_body_is_package_error(monkeypatch, body):
+    import httpx
+    from oddish.cli._package import fetch_api_latest
+
+    monkeypatch.setattr(
+        "oddish.cli._package.httpx.get",
+        lambda *_a, **_k: httpx.Response(200, content=body),
+    )
+    with pytest.raises(PackageError, match="did not return a CLI version"):
+        fetch_api_latest("https://api.example.test", "ok_test")
