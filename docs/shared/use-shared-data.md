@@ -8,8 +8,8 @@ Sign in at [oddish.app](https://oddish.app) with your work email. People at your
 
 The navigation has two pages:
 
-- **Samples** lists groups of tasks shared with you, newest first, with how many tasks and runs each holds. Open one to see its tasks and the runs Abundant made on them, with logs and files.
-- **Tasks** lists every task you can open, whether it was shared on its own or as part of a sample. A delivered task shows its delivery name and the version that shipped.
+- **Deliveries** lists groups of tasks shared with you, newest first, with how many tasks and runs each holds. Open one to see its tasks and the runs Abundant made on them, with logs and files.
+- **Tasks** lists every task you can open, whether it was shared on its own or as part of a delivery. A delivered task shows its delivery name and the version that shipped.
 
 ## Download a task
 
@@ -38,7 +38,7 @@ harbor run -p ./task-7f3a -a claude-code -m anthropic/claude-opus-5-5
 
 ## What you do not see
 
-Abundant chooses for each thing it shares whether you see its QA results (shown unless Abundant turned them off) and its costs (hidden unless Abundant turned them on), so one sample can show QA while another does not. Other customers' work and Abundant's internal notes never appear.
+Abundant chooses for each thing it shares whether you see its QA results (shown unless Abundant turned them off) and its costs (hidden unless Abundant turned them on), so one delivery can show QA while another does not. Other customers' work and Abundant's internal notes never appear.
 
 ## Access
 

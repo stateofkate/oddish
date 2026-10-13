@@ -12,7 +12,9 @@ import {
   useTaskBrowseRevalidate,
 } from "@/lib/use-task-browse";
 import { cn } from "@/lib/utils";
-import { useIsCustomerOrg } from "@/lib/use-org-access";
+import { useIncoming, useIsCustomerOrg } from "@/lib/use-org-access";
+import { SharedTaskList } from "@/components/shared-task-list";
+import type { SharedTask } from "@/lib/types";
 
 const AUTO_REFRESH_KEY = "oddish.tasks.autoRefresh";
 const REFRESH_MS = 60000;
@@ -76,6 +78,27 @@ export function TasksHeader() {
       </div>
       <TasksToolbar showImport={!deliveryId} />
     </header>
+  );
+}
+
+// Tasks Abundant shared with this org (directly, in a delivery, or in a shared
+// experiment) live in Abundant's org, so the grid below never lists them.
+// Shown above it, open by default, once anything is shared.
+export function SharedTasksSection() {
+  const { deliveryId } = useSelection();
+  const { data } = useIncoming<SharedTask[]>("tasks");
+  if (deliveryId || !data?.length) return null;
+  return (
+    <details open data-testid="shared-tasks">
+      <summary className="cursor-pointer text-sm font-medium">
+        Shared with you{" "}
+        <span className="text-muted-foreground font-normal">{data.length}</span>
+      </summary>
+      <SharedTaskList
+        tasks={data}
+        className="bg-card mt-2 max-h-80 overflow-y-auto"
+      />
+    </details>
   );
 }
 

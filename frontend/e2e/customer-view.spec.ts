@@ -45,9 +45,13 @@ test("a customer org is sent to /shared and its nav lists only shared views", as
   const nav = page.locator("nav[data-page-sticky-header]");
   // Docs leads the nav for every org, view-only ones included.
   await expect(nav.getByRole("link", { name: "Docs" })).toBeVisible();
-  for (const label of ["Samples", "Tasks"])
+  for (const label of ["Deliveries", "Tasks"])
     await expect(nav.getByRole("link", { name: label })).toBeVisible();
-  await expect(nav.getByRole("link", { name: "Deliveries" })).toHaveCount(0);
+  // Its Deliveries are what was shared, never Abundant's own /deliveries.
+  await expect(nav.getByRole("link", { name: "Deliveries" })).toHaveAttribute(
+    "href",
+    "/shared"
+  );
   await expect(nav.getByRole("link", { name: "Leaderboard" })).toHaveCount(0);
   await expect(nav.getByRole("link", { name: "Dashboard" })).toHaveCount(0);
 });
@@ -107,7 +111,46 @@ test("shared tasks link to the version that shipped", async ({ page }) => {
   await expect(link).toContainText("Batch 1 · v3");
 });
 
-test("samples list what each one holds", async ({ page }) => {
+test("tasks shared with an org that runs jobs show on its Tasks page", async ({
+  page,
+}) => {
+  await clerk(page, { isSignedIn: true });
+  const tasks: SharedTask[] = [
+    {
+      id: "task-shipped",
+      name: "Shipped task",
+      version: 3,
+      delivery_id: "del-1",
+      delivery_name: "Batch 1",
+      shared_at: "2026-10-08T12:00:00Z",
+    },
+  ];
+  await api(
+    page,
+    { org_type: "customer", access: "execution" },
+    { "/api/org-shares/incoming/tasks": tasks }
+  );
+  await page.goto("/tasks");
+  const section = page.getByTestId("shared-tasks");
+  await expect(section).toContainText("Shared with you 1");
+  await expect(
+    section.getByRole("link", { name: /Shipped task/ })
+  ).toHaveAttribute("href", "/shared/tasks/task-shipped?version=3");
+});
+
+test("the Tasks page shows no shared section when nothing is shared", async ({
+  page,
+}) => {
+  await clerk(page, { isSignedIn: true });
+  const reads = await api(page, { org_type: "internal", access: "execution" });
+  await page.goto("/tasks");
+  await expect
+    .poll(() => reads.some((r) => r.startsWith("/api/org-shares/incoming/tasks")))
+    .toBe(true);
+  await expect(page.getByTestId("shared-tasks")).toHaveCount(0);
+});
+
+test("shared deliveries list what each one holds", async ({ page }) => {
   await clerk(page, { isSignedIn: true });
   const samples: SharedExperiment[] = [
     {
@@ -144,7 +187,9 @@ test("samples list what each one holds", async ({ page }) => {
     { "/api/org-shares/incoming": samples }
   );
   await page.goto("/shared");
-  await expect(page.getByRole("heading", { name: "Samples" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Deliveries" })
+  ).toBeVisible();
   const row = page.getByRole("link", { name: /gpu sample/ });
   for (const text of ["Tasks2", "Runs14", "Score64%", "1 / 1"])
     await expect(row).toContainText(text);
@@ -157,7 +202,7 @@ test("samples list what each one holds", async ({ page }) => {
   await expect(row).toHaveAttribute("href", "/shared/exp-shared");
 });
 
-test("a sample card leaves QA out when it is not opened to the org", async ({
+test("a delivery card leaves QA out when it is not opened to the org", async ({
   page,
 }) => {
   await clerk(page, { isSignedIn: true });

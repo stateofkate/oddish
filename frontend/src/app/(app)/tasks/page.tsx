@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { clearTaskFilters, setTaskFilters, updateTaskSearchParams } from "@/lib/tasks-filters";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { TasksHeader } from "./tasks-client";
+import { SharedTasksSection, TasksHeader } from "./tasks-client";
 import { TasksFilters } from "./tasks-filters";
 import { SelectionProvider } from "./selection-context";
 import { RecentTasksResults } from "./recent-tasks-results";
@@ -68,6 +68,7 @@ export default function TasksPage() {
       <TooltipProvider>
         <div className="space-y-2" data-testid="tasks-browser">
           <TasksHeader />
+          <SharedTasksSection />
           <div className="grid items-start gap-6 md:grid-cols-[280px_minmax(0,1fr)]">
           <TasksFilters
             searchQuery={searchQuery}

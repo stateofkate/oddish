@@ -34,6 +34,8 @@ QA reviews each task after its trials finish. A task's verdict is one of **Verdi
 
 **Tasks** lists every task in your workspace. The sidebar searches and filters by model, agent, run state, review state, experiment and author; **Sort** orders by last run, name, failures, cost and more. **Copy view link** saves the current filters as a link. **Table** and **Cards** switch the layout.
 
+When another organization has shared tasks with yours, they are listed above the grid under **Shared with you**, newest first. A task that shipped in a delivery shows the delivery name and opens at the version that shipped.
+
 Open a task to see its cost, trials per agent, linked experiments and versions. **View task files** opens its files and its QA overview. **Make default** chooses which version new runs use.
 
 Next: [Settings and API keys](settings.md).

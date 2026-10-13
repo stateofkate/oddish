@@ -110,14 +110,14 @@ export default function SharedPage() {
   return (
     <div className="space-y-5">
       <div className="flex items-baseline gap-3">
-        <h1 className="text-xl font-semibold">Samples</h1>
+        <h1 className="text-xl font-semibold">Deliveries</h1>
         {data && data.length > 0 && (
           <span className="text-muted-foreground text-sm">{data.length}</span>
         )}
       </div>
       {error ? (
         <p role="alert" className="text-sm text-red-500">
-          Unable to load samples.
+          Unable to load deliveries.
         </p>
       ) : !data ? (
         <div role="status" className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">

@@ -19,11 +19,15 @@ import { useOrgHref } from "@/lib/use-org-href";
 import { cn } from "@/lib/utils";
 
 const PROD_API_URL = "https://api.oddish.app";
+// Production's Modal hostname, which the app calls; users see the custom domain.
+const PROD_MODAL_API_URL = "https://abundant-ai--api.modal.run";
 // The install script and CLI default to production; other deployments
 // (staging, previews) need the CLI pointed at them.
 const API_URL = (() => {
   const configured = (process.env.NEXT_PUBLIC_API_URL ?? "").replace(/\/$/, "");
-  return configured.startsWith("https://") ? configured : PROD_API_URL;
+  return configured.startsWith("https://") && configured !== PROD_MODAL_API_URL
+    ? configured
+    : PROD_API_URL;
 })();
 const INSTALL_COMMAND = `curl -fsSL ${API_URL}/cli/install.sh | sh`;
 const FIRST_RUN_COMMAND = "oddish run -p my-task -a codex -m openai/gpt-5.4";
