@@ -12,13 +12,24 @@ from __future__ import annotations
 
 
 import hashlib
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select
+from botocore.exceptions import ClientError
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from oddish.db import TaskModel, TaskVersionModel, TrialModel, TrialStatus
+from oddish.db import (
+    TaskModel,
+    TaskVersionModel,
+    TrialModel,
+    TrialStatus,
+    VerdictStatus,
+    is_active_trial_status,
+    utcnow,
+)
+from oddish.db.storage import is_missing_object
 
 # Retain the stored/API kind; this executes the real task, not a QA overlay.
 ADVERSARIAL_TRIAL_KIND = "adversarial"
@@ -214,15 +225,19 @@ async def read_leak_check(storage: Any, replay: Any) -> list[str]:
     """Protected task files the replay's exploit copied out, as task paths."""
     from oddish.core.trial_artifacts import resolve_trial_artifact_layout
 
+    layout = await resolve_trial_artifact_layout(replay, storage)
+    if layout.artifact_prefix is None:
+        return []
     try:
-        layout = await resolve_trial_artifact_layout(replay, storage)
-        if layout.artifact_prefix is None:
-            return []
         text = await storage.download_text(
             f"{layout.artifact_prefix}{LEAK_CHECK_ARTIFACT}"
         )
-    except Exception:  # noqa: BLE001 -- no file means nothing was copied out
-        return []
+    except ClientError as exc:
+        # No file means nothing was copied out. Any other storage error is
+        # raised so the healer retries the hook instead of recording no leak.
+        if is_missing_object(exc):
+            return []
+        raise
     return sorted({line.strip() for line in text.splitlines() if line.strip()})
 
 
@@ -321,8 +336,12 @@ async def read_exploit_script(storage: Any, attack: Any) -> str | None:
         script = await storage.download_text(
             f"{layout.artifact_prefix}{EXPLOIT_ARTIFACT}"
         )
-    except Exception:  # noqa: BLE001 -- a missing script means nothing to replay
-        return None
+    except ClientError as exc:
+        # A missing script means nothing to replay. Any other storage error is
+        # raised so the healer retries the hook instead of skipping the replay.
+        if is_missing_object(exc):
+            return None
+        raise
     return script if has_exploit(script) else None
 
 
@@ -381,3 +400,152 @@ async def queue_exploit_replay(
         max_attempts=REPLAY_MAX_ATTEMPTS,
     )
     return replay
+
+
+# Markers the settle hooks leave on a trial's adversarial pins, so QA admission
+# and the healer can tell a handled attack or replay from one still pending.
+REPLAY_CHECKED = "replay_checked_attempt"
+FINDINGS_RECORDED = "findings_recorded"
+# A hook that keeps failing stops holding QA back this long after its trial ended.
+HOOK_DEADLINE = timedelta(hours=1)
+# The sweep gives up on a claimed launch that keeps failing after this long.
+LAUNCH_DEADLINE = timedelta(hours=1)
+
+
+def mark_adversarial(trial: TrialModel, **values: Any) -> None:
+    """Merge ``values`` into the trial's adversarial pins (reassigned for JSONB)."""
+    config = dict(trial.harbor_config or {})
+    config[ADVERSARIAL_TRIAL_KIND] = {
+        **(config.get(ADVERSARIAL_TRIAL_KIND) or {}),
+        **values,
+    }
+    trial.harbor_config = config
+
+
+def auto_selected(version_id: str) -> bool:
+    """Whether this version is in ``adversarial_auto_percent``; stable per id."""
+    from oddish.config import settings
+
+    bucket = int.from_bytes(hashlib.sha256(version_id.encode()).digest()[:2], "big")
+    return bucket % 100 < settings.adversarial_auto_percent
+
+
+async def maybe_claim_adversarial(
+    session: AsyncSession, *, task: TaskModel, task_version_id: str | None
+) -> bool:
+    """Once per task version, CAS adversarial_status None -> QUEUED.
+
+    The cleanup sweep launches the attacks: the launch transfers the task
+    archive with no transaction open, so it cannot run inside a submission.
+    """
+    version_id = task_version_id or task.current_version_id
+    if version_id is None or not task.run_analysis or not auto_selected(version_id):
+        return False
+    # Same lock reasoning as the audit claim: an UPDATE, not FOR UPDATE, so it
+    # stays compatible with the KEY SHARE locks of concurrent trial inserts.
+    claimed = await session.scalar(
+        update(TaskVersionModel)
+        .where(
+            TaskVersionModel.id == version_id,
+            TaskVersionModel.adversarial_status.is_(None),
+        )
+        .values(
+            adversarial_status=VerdictStatus.QUEUED,
+            adversarial_started_at=utcnow(),
+            adversarial_error=None,
+        )
+        .returning(TaskVersionModel.id)
+    )
+    return claimed is not None
+
+
+def _handled(status: Any, harbor_stage: str | None) -> bool:
+    """A terminal trial whose settle hook has nothing to do."""
+    return status not in (TrialStatus.SUCCESS, TrialStatus.FAILED) or (
+        harbor_stage == "cancelled"
+    )
+
+
+async def adversarial_unsettled(
+    session: AsyncSession, task_id: str, version_id: str
+) -> bool:
+    """True while an attack, its replay, or either's settle hook is outstanding."""
+    rows = (
+        await session.execute(
+            select(
+                TrialModel.id,
+                TrialModel.agent,
+                TrialModel.status,
+                TrialModel.harbor_stage,
+                TrialModel.attempts,
+                TrialModel.finished_at,
+                TrialModel.harbor_config,
+            ).where(*adversarial_conditions(task_id, version_id, replays=None))
+        )
+    ).all()
+    replays = {
+        replay_target(row.harbor_config): row for row in rows if row.agent == REPLAY_AGENT
+    }
+    expired = utcnow() - HOOK_DEADLINE
+
+    def pending(row: Any, marker: str, value: Any) -> bool:
+        if is_active_trial_status(row.status):
+            return True
+        if _handled(row.status, row.harbor_stage):
+            return False
+        pins = (row.harbor_config or {}).get(ADVERSARIAL_TRIAL_KIND) or {}
+        return pins.get(marker) != value and not (
+            row.finished_at is not None and row.finished_at < expired
+        )
+
+    for attack in rows:
+        if attack.agent == REPLAY_AGENT:
+            continue
+        attempt = int(attack.attempts or 0)
+        if pending(attack, REPLAY_CHECKED, attempt):
+            return True
+        replay = replays.get((attack.id, attempt))
+        if replay is not None and pending(replay, FINDINGS_RECORDED, True):
+            return True
+    return False
+
+
+async def task_adversarial_pending(session: AsyncSession, task: TaskModel) -> bool:
+    """QA admission waits for a claimed or running adversarial QA of the version."""
+    if task.current_version_id is None:
+        return False
+    status = await session.scalar(
+        select(TaskVersionModel.adversarial_status).where(
+            TaskVersionModel.id == task.current_version_id
+        )
+    )
+    if status == VerdictStatus.QUEUED:
+        return True
+    if status != VerdictStatus.RUNNING:
+        return False
+    return await adversarial_unsettled(session, task.id, task.current_version_id)
+
+
+async def settle_adversarial_version(
+    session: AsyncSession, *, task_id: str, version_id: str | None
+) -> None:
+    """Close the version's adversarial QA once settled; re-enter QA admission.
+
+    The caller holds the task lock, so concurrent hooks of one task serialize.
+    """
+    from oddish.queue import maybe_start_task_qa_stage
+
+    if version_id is None:
+        return
+    await session.flush()
+    if await adversarial_unsettled(session, task_id, version_id):
+        return
+    await session.execute(
+        update(TaskVersionModel)
+        .where(
+            TaskVersionModel.id == version_id,
+            TaskVersionModel.adversarial_status == VerdictStatus.RUNNING,
+        )
+        .values(adversarial_status=VerdictStatus.SUCCESS)
+    )
+    await maybe_start_task_qa_stage(session, task_id)

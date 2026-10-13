@@ -90,7 +90,11 @@ from oddish.worker.probe_staging import (
 )
 from oddish.core.adversarial import (
     ADVERSARIAL_TRIAL_KIND,
+    FINDINGS_RECORDED,
     REPLAY_AGENT,
+    REPLAY_CHECKED,
+    mark_adversarial,
+    settle_adversarial_version,
     queue_exploit_replay,
     replay_target,
     read_exploit_script,
@@ -1034,15 +1038,19 @@ async def _queue_attack_replay(trial_id: str) -> None:
         task = await session.get(TaskModel, task_id, with_for_update=True)
         attack = await session.get(TrialModel, trial_id, with_for_update=True)
         if (
-            script is not None
-            and task is not None
-            and attack is not None
-            and attack.status in (TrialStatus.SUCCESS, TrialStatus.FAILED)
-            and attack.harbor_stage != "cancelled"
+            attack is None
+            or attack.status not in (TrialStatus.SUCCESS, TrialStatus.FAILED)
+            or attack.harbor_stage == "cancelled"
         ):
+            return
+        if script is not None and task is not None:
             await queue_exploit_replay(
                 session, task=task, attack=attack, script=script
             )
+        mark_adversarial(attack, **{REPLAY_CHECKED: int(attack.attempts or 0)})
+        await settle_adversarial_version(
+            session, task_id=attack.task_id, version_id=attack.task_version_id
+        )
 
 
 async def _record_replay_findings(trial_id: str) -> None:
@@ -1055,9 +1063,23 @@ async def _record_replay_findings(trial_id: str) -> None:
             else []
         )
     async with get_session() as session:
-        replay = await session.get(TrialModel, trial_id)
-        if replay is not None and replay.harbor_stage != "cancelled":
+        task_id = await session.scalar(
+            select(TrialModel.task_id).where(TrialModel.id == trial_id)
+        )
+        if task_id is None:
+            return
+        await session.get(TaskModel, task_id, with_for_update=True)
+        replay = await session.get(TrialModel, trial_id, with_for_update=True)
+        if (
+            replay is not None
+            and replay.status in (TrialStatus.SUCCESS, TrialStatus.FAILED)
+            and replay.harbor_stage != "cancelled"
+        ):
             await record_replay_findings(session, replay, leaked)
+            mark_adversarial(replay, **{FINDINGS_RECORDED: True})
+            await settle_adversarial_version(
+                session, task_id=replay.task_id, version_id=replay.task_version_id
+            )
 
 
 async def _run_post_trial_hooks(trial_id: str) -> None:

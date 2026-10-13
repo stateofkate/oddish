@@ -985,6 +985,10 @@ ENV_VARS = {
         "ODDISH_ARCHIL_TRAFFIC_PERCENT",
         LOCAL_DOTENV_VARS.get("ODDISH_ARCHIL_TRAFFIC_PERCENT", "0"),
     ),
+    "ODDISH_ADVERSARIAL_AUTO_PERCENT": os.environ.get(
+        "ODDISH_ADVERSARIAL_AUTO_PERCENT",
+        LOCAL_DOTENV_VARS.get("ODDISH_ADVERSARIAL_AUTO_PERCENT", "100"),
+    ),
     # region=zone sandbox port domains Harbor forwards Muse/tbh model calls under.
     "ARCHIL_FORWARD_ZONES": _deploy_value(
         "ARCHIL_FORWARD_ZONES", os.environ, LOCAL_DOTENV_VARS
@@ -1108,6 +1112,7 @@ runtime_secrets.append(
                 "ODDISH_RELEASE",
                 "ODDISH_HARBOR_ENVIRONMENT",
                 "ODDISH_ARCHIL_TRAFFIC_PERCENT",
+                "ODDISH_ADVERSARIAL_AUTO_PERCENT",
                 "ARCHIL_FORWARD_ZONES",
                 "ARCHIL_MAX_THROTTLE_WAIT",
                 "ODDISH_MODAL_WORKER_CPU",

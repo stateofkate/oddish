@@ -22,6 +22,7 @@ from oddish.core.adversarial import (
     ATTACK_PROMPT_VERSION,
     ATTACKS_PER_LAUNCH,
     adversarial_conditions,
+    adversarial_unsettled,
     attack_prompt,
     replay_target,
 )
@@ -872,6 +873,10 @@ async def launch_adversarial_trial_core(
                 org_id=task.org_id,
                 max_attempts=max_trial_attempts,
             )
+        # QA admission waits for these attacks and their replays.
+        version.adversarial_status = VerdictStatus.RUNNING
+        version.adversarial_error = None
+        version.adversarial_started_at = utcnow()
         # The published verdict stays: QA never reads attacks.
         # Keep the snapshot on an ambiguous commit outcome; deleting committed
         # execution evidence would be worse than leaving an unreferenced object.
@@ -927,6 +932,17 @@ async def _existing_adversarial_result(
                 .limit(1)
             )
         ).one_or_none()
+        if live is None and await adversarial_unsettled(session, task_id, version_id):
+            # Attacks settled but their replay or findings hook has not: the
+            # batch is still in flight, so a rerun must not start another.
+            live = (
+                await session.execute(
+                    select(TrialModel.id, TrialModel.harbor_config)
+                    .where(*adversarial_conditions(task_id, version_id))
+                    .order_by(TrialModel.created_at.desc(), TrialModel.id.desc())
+                    .limit(1)
+                )
+            ).one_or_none()
         if live is None:
             return None
         target = replay_target(live.harbor_config)

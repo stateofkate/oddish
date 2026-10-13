@@ -967,9 +967,13 @@ async def create_task(
     await bulk_enqueue_worker_jobs(session, worker_job_requests)
     await refresh_task_browse_summaries(session, [version_id])
 
+    from oddish.core.adversarial import maybe_claim_adversarial
     from oddish.workers.analysis_trials import maybe_enqueue_audit_trial
 
     await maybe_enqueue_audit_trial(
+        session, task=task, task_version_id=task.current_version_id
+    )
+    await maybe_claim_adversarial(
         session, task=task, task_version_id=task.current_version_id
     )
 
@@ -1242,12 +1246,16 @@ async def append_trials_to_task(
     await _bulk_insert_trials(session, new_trial_rows)
     await bulk_enqueue_worker_jobs(session, worker_job_requests)
 
+    from oddish.core.adversarial import maybe_claim_adversarial
     from oddish.workers.analysis_trials import maybe_enqueue_audit_trial
 
     # Audit the version these trials run, not the task default: an append
     # pinned to an older version would otherwise audit content no trial
     # used and mark the wrong version audited.
     await maybe_enqueue_audit_trial(
+        session, task=task, task_version_id=current_version_id
+    )
+    await maybe_claim_adversarial(
         session, task=task, task_version_id=current_version_id
     )
 
@@ -1718,6 +1726,12 @@ async def maybe_start_task_qa_stage(
     # A terminal audit job can still await import. Import completion (including
     # cleanup re-import after a crash) re-enters admission after storing findings.
     if await task_audit_pending(session, task):
+        return TaskQAStageAdmission()
+    # Attack findings must reach the verdict too. The last attack or replay
+    # hook (or the cleanup sweep, for a failed launch) re-enters admission.
+    from oddish.core.adversarial import task_adversarial_pending
+
+    if await task_adversarial_pending(session, task):
         return TaskQAStageAdmission()
     if await live_analysis_trial_id(session, task_id, kind="qa") is not None:
         return TaskQAStageAdmission()

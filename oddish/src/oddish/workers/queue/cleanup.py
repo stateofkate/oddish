@@ -24,7 +24,7 @@ import logging
 from datetime import timedelta
 from typing import Any, cast
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select, text, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import DBAPIError, SQLAlchemyError
 
@@ -33,7 +33,13 @@ from oddish.config import (
     ORPHANED_ANALYSIS_ERROR_PREFIX,
     settings,
 )
-from oddish.core.adversarial import ADVERSARIAL_TRIAL_KIND, REPLAY_AGENT
+from oddish.core.adversarial import (
+    ADVERSARIAL_TRIAL_KIND,
+    FINDINGS_RECORDED,
+    LAUNCH_DEADLINE,
+    REPLAY_AGENT,
+    REPLAY_CHECKED,
+)
 from oddish.core.tags.ownership_transfer import sweep_orphaned_tag_owners
 from oddish.core.task_browse_summary import refresh_task_browse_summaries
 from oddish.core.verdict_state import fail_verdict, queue_verdict
@@ -794,6 +800,7 @@ async def _reconcile_orphaned_queue_state(
             if not reimport_deadline.expired():
                 raise
 
+    adversarial_launched = await _launch_claimed_adversarial()
     adversarial_hooks_rerun = await _rerun_adversarial_hooks()
 
     # Re-run after the ledger transaction commits only when it closed rows. They
@@ -891,6 +898,7 @@ async def _reconcile_orphaned_queue_state(
         "stale_analysis_imports_deferred": len(analysis_reimport_trial_ids)
         - stale_analysis_imports_healed - stale_analysis_import_errors,
         "stale_summarize_imports_queued": len(summarize_reimport_trial_ids),
+        "adversarial_launched": adversarial_launched,
         "adversarial_hooks_rerun": adversarial_hooks_rerun,
         "stuck_analyzing_advanced": stuck_analyzing_advanced,
         "stuck_analyzing_finalized": stuck_analyzing_finalized,
@@ -2292,16 +2300,88 @@ async def _heal_stale_audit_imports(session) -> list[str]:
     return [str(trial_id) for (trial_id,) in stale]
 
 
+async def _launch_claimed_adversarial() -> int:
+    """Launch the attacks claimed at submission (adversarial_status QUEUED).
+
+    The launch moves the version to RUNNING. A launch the API rejects, or one
+    still failing after ``LAUNCH_DEADLINE``, moves it to FAILED with the reason,
+    and QA admission stops waiting for it.
+    """
+    from fastapi import HTTPException
+
+    from oddish.core.endpoints.qa import launch_adversarial_trial_core
+    from oddish.queue import maybe_start_task_qa_stage
+
+    async with get_session() as session:
+        rows = (
+            await session.execute(
+                select(
+                    TaskVersionModel.id,
+                    TaskVersionModel.task_id,
+                    TaskVersionModel.adversarial_started_at,
+                )
+                .where(TaskVersionModel.adversarial_status == VerdictStatus.QUEUED)
+                .order_by(TaskVersionModel.adversarial_started_at)
+                .limit(50)
+            )
+        ).all()
+    launched = 0
+    for version_id, task_id, claimed_at in rows:
+        error = None
+        try:
+            async with get_session() as session:
+                org_id = await session.scalar(
+                    select(TaskModel.org_id).where(TaskModel.id == task_id)
+                )
+                # A deterministic request id: a crash after the launch commits
+                # returns the same attacks on the next sweep.
+                result = await launch_adversarial_trial_core(
+                    session,
+                    task_id=task_id,
+                    expected_version_id=version_id,
+                    request_id=f"auto:{version_id}",
+                    org_id=org_id,
+                )
+            launched += result["status"] == "queued"
+        except HTTPException as exc:
+            error = str(exc.detail)
+        except Exception as exc:  # noqa: BLE001 -- next sweep retries
+            logger.exception("healer: adversarial launch for %s failed", version_id)
+            if claimed_at is None or utcnow() - claimed_at < LAUNCH_DEADLINE:
+                continue
+            error = f"Adversarial QA could not launch: {exc}"
+        try:
+            async with get_session() as session:
+                # Task lock first, the order every settle hook uses.
+                await session.get(TaskModel, task_id, with_for_update=True)
+                await session.execute(
+                    update(TaskVersionModel)
+                    .where(
+                        TaskVersionModel.id == version_id,
+                        TaskVersionModel.adversarial_status == VerdictStatus.QUEUED,
+                    )
+                    .values(
+                        # An existing or already-running batch counts as launched.
+                        adversarial_status=VerdictStatus.FAILED
+                        if error
+                        else VerdictStatus.RUNNING,
+                        adversarial_error=error,
+                    )
+                )
+            async with get_session() as session:
+                await maybe_start_task_qa_stage(session, task_id)
+        except Exception:  # noqa: BLE001 -- one task must not stop the sweep
+            logger.exception("healer: adversarial claim of %s not closed", version_id)
+    return launched
+
+
 async def _rerun_adversarial_hooks() -> int:
-    """Re-run the settle hooks of attacks and replays that finished in the last hour.
+    """Re-run settle hooks of finished attacks and replays that left no marker.
 
     The settle path logs and drops a hook failure, which would leave an attack
-    with no replay or a replay with no findings. Both hooks are idempotent: one
-    replay per attack attempt, one finding per id.
+    with no replay or a replay with no findings, and hold QA back. Both hooks
+    are idempotent: one replay per attack attempt, one finding per id.
     """
-    # ponytail: re-reads exploit.sh / leak_check.txt for every adversarial
-    # trial settled in the last hour on every sweep; add a hooks-done marker
-    # if that volume ever matters.
     from oddish.workers.queue.trial_handler import (
         _queue_attack_replay,
         _record_replay_findings,
@@ -2316,14 +2396,24 @@ async def _rerun_adversarial_hooks() -> int:
                     FROM trials
                     WHERE kind = :kind
                       AND deleted_at IS NULL
+                      AND superseded_by_trial_id IS NULL
                       AND status::text IN ('SUCCESS', 'FAILED')
                       AND COALESCE(harbor_stage, '') != 'cancelled'
-                      AND finished_at > NOW() - INTERVAL '1 hour'
+                      AND CASE WHEN agent = :replay_agent
+                        THEN harbor_config->'adversarial'->>:findings IS NULL
+                        ELSE (harbor_config->'adversarial'->>:checked)
+                          IS DISTINCT FROM COALESCE(attempts, 0)::text
+                      END
                     ORDER BY finished_at
                     LIMIT 200
                     """
                 ),
-                {"replay_agent": REPLAY_AGENT, "kind": ADVERSARIAL_TRIAL_KIND},
+                {
+                    "replay_agent": REPLAY_AGENT,
+                    "kind": ADVERSARIAL_TRIAL_KIND,
+                    "findings": FINDINGS_RECORDED,
+                    "checked": REPLAY_CHECKED,
+                },
             )
         ).all()
     rerun = 0

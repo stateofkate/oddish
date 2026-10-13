@@ -21,8 +21,13 @@ from sqlalchemy import select, text
 from oddish.core.adversarial import (
     ADVERSARIAL_TRIAL_KIND,
     ATTACK_PROMPT_VERSION,
+    FINDINGS_RECORDED,
+    HOOK_DEADLINE,
     REPLAY_AGENT,
+    REPLAY_CHECKED,
     attack_prompt,
+    mark_adversarial,
+    maybe_claim_adversarial,
     replay_findings,
 )
 from oddish.schemas import TrialSpec
@@ -188,7 +193,11 @@ async def qa_trials(task_id):
 async def settle_attack(
     trial_id, *, reward=1.0, status=TrialStatus.SUCCESS, confirmed=True
 ):
-    """Finish an attack; ``confirmed`` also records a replay that scored 1."""
+    """Finish an attack; ``confirmed`` also records a replay that scored 1.
+
+    With ``confirmed`` both settle hooks are marked done, as the worker would;
+    without it the caller drives the hooks.
+    """
     async with get_session() as session:
         trial = await session.get(TrialModel, trial_id)
         trial.status = status
@@ -197,6 +206,7 @@ async def settle_attack(
         trial.has_trajectory = True
         trial.finished_at = utcnow()
         if confirmed:
+            mark_adversarial(trial, **{REPLAY_CHECKED: 1})
             session.add(
                 TrialModel(
                     id=f"{trial_id}-replay",
@@ -216,6 +226,7 @@ async def settle_attack(
                         ADVERSARIAL_TRIAL_KIND: {
                             "replay_of": trial_id,
                             "attack_attempt": 1,
+                            FINDINGS_RECORDED: True,
                         }
                     },
                 )
@@ -299,6 +310,25 @@ async def test_an_explicit_rerun_after_the_run_finished_creates_a_new_trial(
     assert rerun["status"] == "queued"
     assert rerun["trial_id"] != first["trial_id"]
     assert len(await attack_trials(task_id)) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_settled_attack_whose_replay_hook_has_not_run_blocks_a_rerun(
+    attack_task,
+):
+    task_id, version_id, _ = attack_task
+    attack_id = (await launch(task_id, version_id))["trial_id"]
+    # Settled, but exploit.sh is still downloading: no replay row yet.
+    await settle_attack(attack_id, confirmed=False)
+    other = await launch(task_id, version_id, request_id="req-2")
+    assert other["status"] == "already_running"
+    assert other["trial_ids"] == [attack_id]
+    async with get_session() as session:
+        mark_adversarial(
+            await session.get(TrialModel, attack_id), **{REPLAY_CHECKED: 1}
+        )
+    rerun = await launch(task_id, version_id, request_id="req-2")
+    assert rerun["status"] == "queued"
 
 
 @pytest.mark.asyncio
@@ -418,17 +448,182 @@ def qa_payload(qa):
     return qa.harbor_config["analysis_payload"]
 
 
+async def finish_trial(trial_id, *, reward):
+    async with get_session() as session:
+        row = await session.get(TrialModel, trial_id)
+        row.status = TrialStatus.SUCCESS
+        row.reward = reward
+        row.attempts = 1
+        row.has_trajectory = True
+        row.finished_at = utcnow()
+
+
+async def version_row(version_id):
+    async with get_session() as session:
+        return await session.get(TaskVersionModel, version_id)
+
+
 @pytest.mark.asyncio
-async def test_qa_neither_waits_for_nor_reads_attacks(attack_task):
+async def test_qa_waits_for_attacks_and_replays_but_reads_only_solvers(
+    attack_task, monkeypatch
+):
+    from oddish.workers.queue import trial_handler
+
+    task_id, version_id, _ = attack_task
+    await make_solver_active(task_id)
+    attack_id = (await launch(task_id, version_id))["trial_id"]
+    assert (await version_row(version_id)).adversarial_status == VerdictStatus.RUNNING
+    await finish_solver(task_id)
+    # The attack is still queued, so QA waits.
+    assert (await admit(task_id)).advanced is False
+
+    script = "#!/bin/sh\nprintf 'x' > /app/answer.py\n"
+    monkeypatch.setattr(
+        trial_handler, "read_exploit_script", AsyncMock(return_value=script)
+    )
+    await finish_trial(attack_id, reward=1.0)
+    await trial_handler._run_post_trial_hooks(attack_id)
+    [replay] = await replay_trials(task_id)
+    # The replay is queued, so QA still waits.
+    assert await qa_trials(task_id) == []
+    assert (await admit(task_id)).advanced is False
+
+    monkeypatch.setattr(trial_handler, "read_leak_check", AsyncMock(return_value=[]))
+    await finish_trial(replay.id, reward=1.0)
+    await trial_handler._run_post_trial_hooks(replay.id)
+    # The replay hook recorded the finding, then started QA itself.
+    version = await version_row(version_id)
+    assert version.adversarial_status == VerdictStatus.SUCCESS
+    assert [r["finding"]["id"] for r in version.reported_findings] == [
+        "adversarial-verifier"
+    ]
+    [qa] = await qa_trials(task_id)
+    assert qa_payload(qa)["trial_ids"] == [f"{task_id}-solver"]
+    assert attack_id not in str(qa_payload(qa))
+
+
+@pytest.mark.asyncio
+async def test_an_attack_without_exploit_releases_qa(attack_task, monkeypatch):
+    from oddish.workers.queue import trial_handler
+
     task_id, version_id, _ = attack_task
     await make_solver_active(task_id)
     attack_id = (await launch(task_id, version_id))["trial_id"]
     await finish_solver(task_id)
-    # The attack is still queued; QA starts on the solvers alone.
+    monkeypatch.setattr(
+        trial_handler, "read_exploit_script", AsyncMock(return_value=None)
+    )
+    await finish_trial(attack_id, reward=0.0)
+    await trial_handler._run_post_trial_hooks(attack_id)
+    assert await replay_trials(task_id) == []
+    assert (await version_row(version_id)).adversarial_status == VerdictStatus.SUCCESS
+    assert len(await qa_trials(task_id)) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_failing_hook_holds_qa_until_its_deadline(attack_task, monkeypatch):
+    from oddish.workers.queue import trial_handler
+
+    task_id, version_id, _ = attack_task
+    await make_solver_active(task_id)
+    attack_id = (await launch(task_id, version_id))["trial_id"]
+    await finish_solver(task_id)
+    down = AsyncMock(side_effect=RuntimeError("storage down"))
+    monkeypatch.setattr(trial_handler, "read_exploit_script", down)
+    await finish_trial(attack_id, reward=0.0)
+    await trial_handler._run_post_trial_hooks(attack_id)
+    assert (await admit(task_id)).advanced is False
+    async with get_session() as session:
+        row = await session.get(TrialModel, attack_id)
+        row.finished_at = utcnow() - HOOK_DEADLINE - timedelta(minutes=1)
     assert (await admit(task_id)).advanced is True
-    [qa] = await qa_trials(task_id)
-    assert qa_payload(qa)["trial_ids"] == [f"{task_id}-solver"]
-    assert attack_id not in str(qa_payload(qa))
+
+
+@pytest.mark.asyncio
+async def test_submission_claims_each_selected_version_once(attack_task, monkeypatch):
+    from oddish.config import settings
+
+    task_id, version_id, _ = attack_task
+    async with get_session() as session:
+        task = await session.get(TaskModel, task_id)
+        monkeypatch.setattr(settings, "adversarial_auto_percent", 0)
+        assert not await maybe_claim_adversarial(
+            session, task=task, task_version_id=version_id
+        )
+        monkeypatch.setattr(settings, "adversarial_auto_percent", 100)
+        task.run_analysis = False
+        assert not await maybe_claim_adversarial(
+            session, task=task, task_version_id=version_id
+        )
+        task.run_analysis = True
+        assert await maybe_claim_adversarial(
+            session, task=task, task_version_id=version_id
+        )
+        assert not await maybe_claim_adversarial(
+            session, task=task, task_version_id=version_id
+        )
+    version = await version_row(version_id)
+    assert version.adversarial_status == VerdictStatus.QUEUED
+    assert version.adversarial_started_at is not None
+
+
+async def claim(task_id, version_id):
+    async with get_session() as session:
+        task = await session.get(TaskModel, task_id)
+        assert await maybe_claim_adversarial(
+            session, task=task, task_version_id=version_id
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_claimed_version_holds_qa_until_the_sweep_launches_it(
+    attack_task, monkeypatch
+):
+    from oddish.config import settings
+    from oddish.workers.queue import cleanup
+
+    monkeypatch.setattr(settings, "adversarial_auto_percent", 100)
+    task_id, version_id, _ = attack_task
+    await make_solver_active(task_id)
+    await claim(task_id, version_id)
+    await finish_solver(task_id)
+    assert (await admit(task_id)).advanced is False
+
+    assert await cleanup._launch_claimed_adversarial() >= 1
+    [attack] = await attack_trials(task_id)
+    assert attack.harbor_config[ADVERSARIAL_TRIAL_KIND]["request_id"] == (
+        f"auto:{version_id}"
+    )
+    assert (await version_row(version_id)).adversarial_status == VerdictStatus.RUNNING
+    # A second sweep finds nothing claimed and launches nothing more.
+    await cleanup._launch_claimed_adversarial()
+    assert len(await attack_trials(task_id)) == 1
+    assert (await admit(task_id)).advanced is False
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_launch_fails_the_claim_and_releases_qa(
+    attack_task, monkeypatch
+):
+    from oddish.config import settings
+    from oddish.workers.queue import cleanup
+
+    monkeypatch.setattr(settings, "adversarial_auto_percent", 100)
+    task_id, version_id, _ = attack_task
+    await make_solver_active(task_id)
+    await claim(task_id, version_id)
+    await finish_solver(task_id)
+    monkeypatch.setattr(
+        "oddish.core.endpoints.qa.launch_adversarial_trial_core",
+        AsyncMock(side_effect=HTTPException(402, "Organization QA budget exhausted")),
+    )
+    await cleanup._launch_claimed_adversarial()
+    version = await version_row(version_id)
+    assert version.adversarial_status == VerdictStatus.FAILED
+    assert version.adversarial_error == "Organization QA budget exhausted"
+    assert await attack_trials(task_id) == []
+    # The sweep re-entered admission, so QA started without attacks.
+    assert len(await qa_trials(task_id)) == 1
 
 
 @pytest.mark.asyncio

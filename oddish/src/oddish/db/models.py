@@ -983,6 +983,16 @@ class TaskVersionModel(TimestampedMixin, Base):
     pre_trial_finished_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Adversarial QA of this version: QUEUED until the cleanup sweep launches
+    # the attacks, RUNNING until every attack's replay has settled. QA waits
+    # for both, as it waits for the pre-trial audit.
+    adversarial_status: Mapped[VerdictStatus | None] = mapped_column(
+        SQLEnum(VerdictStatus), nullable=True
+    )
+    adversarial_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    adversarial_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     # The last QA verdict published for this version. ``tasks.verdict`` holds
     # only the newest one, so a version whose verdict was replaced by a later
     # version's still has its own here.

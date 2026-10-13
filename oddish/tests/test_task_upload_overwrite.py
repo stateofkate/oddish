@@ -159,6 +159,7 @@ async def test_complete_overwrite_updates_row_and_invalidates_derived_state(
         pre_trial_error="old error",
         pre_trial_started_at=object(),
         pre_trial_finished_at=object(),
+        adversarial_status=None,
     )
     task = SimpleNamespace(
         id="task-1",
@@ -247,6 +248,7 @@ async def test_complete_overwrite_commit_failure_does_not_replace_canonical_arch
         pre_trial_error=None,
         pre_trial_started_at=None,
         pre_trial_finished_at=None,
+        adversarial_status=None,
     )
     task = SimpleNamespace(
         id="task-1",
@@ -423,4 +425,44 @@ async def test_complete_overwrite_rejects_current_version_trial_history(
 
     history_sql = str(session.scalar_queries[-1].compile())
     assert "trials.task_version_id" in history_sql
+    assert storage.copied == []
+
+
+@pytest.mark.asyncio
+async def test_complete_overwrite_rejects_a_version_under_adversarial_qa(
+    monkeypatch,
+) -> None:
+    # No agent trials, but attacks ran (or are claimed) against the old bytes.
+    version = SimpleNamespace(
+        id="task-1-v2", content_hash="old-hash", adversarial_status="RUNNING"
+    )
+    task = SimpleNamespace(
+        id="task-1",
+        org_id="org-1",
+        current_version_id=version.id,
+        verdict=None,
+        verdict_status=None,
+        verdict_started_at=None,
+    )
+    session = _Session(task=task, current=version, trial_count=0)
+    storage = _Storage()
+    monkeypatch.setattr(tasks, "get_session", _session_context(session))
+    monkeypatch.setattr(tasks, "get_storage_client", lambda: storage)
+
+    with pytest.raises(HTTPException, match="cannot be overwritten in place"):
+        await tasks.complete_task_upload(
+            task_id="task-1",
+            task_name="task",
+            version=2,
+            content_hash="new-hash",
+            org_id="org-1",
+            overwrite_current_version=True,
+            staging_key=f"task-upload-staging/task-1/{'8' * 32}.tar.gz",
+            overwrite_base_content_hash="old-hash",
+        )
+
+    history_sql = str(
+        session.scalar_queries[-1].compile(compile_kwargs={"literal_binds": True})
+    )
+    assert "'adversarial'" in history_sql
     assert storage.copied == []

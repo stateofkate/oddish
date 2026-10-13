@@ -606,17 +606,23 @@ async def complete_task_upload(
                 )
             # Agent trials only: the pre-trial audit is created concurrently
             # at task creation, so counting analysis trials here would make
-            # every version refuse in-place overwrite immediately.
+            # every version refuse in-place overwrite immediately. Attacks are
+            # counted: they and their findings describe the old bytes, and
+            # QA admission waits on them.
             existing_trial_count = await session.scalar(
                 select(func.count(TrialModel.id)).where(
                     TrialModel.task_id == task_id,
                     TrialModel.task_version_id == version_id,
-                    TrialModel.kind == AGENT_TRIAL_KIND,
+                    TrialModel.kind.in_((AGENT_TRIAL_KIND, "adversarial")),
                 )
             )
-            if existing_trial_count or any(
-                getattr(existing_task, field, None) is not None
-                for field in ("verdict", "verdict_status", "verdict_started_at")
+            if (
+                existing_trial_count
+                or version_row.adversarial_status is not None
+                or any(
+                    getattr(existing_task, field, None) is not None
+                    for field in ("verdict", "verdict_status", "verdict_started_at")
+                )
             ):
                 raise HTTPException(
                     status_code=409,

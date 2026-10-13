@@ -48,6 +48,15 @@ def _mon_status_in_tmp(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_automatic_adversarial_qa(monkeypatch):
+    """Submissions claim no attacks, so QA admission does not wait on a sweep.
+    Adversarial tests opt back in with ``adversarial_auto_percent = 100``."""
+    from oddish.config import settings
+
+    monkeypatch.setattr(settings, "adversarial_auto_percent", 0)
+
+
+@pytest.fixture(autouse=True)
 def _fresh_cost_exclusions():
     """Cost exclusions are cached per process for a minute; tests that insert
     exclusion rows must not see another test's (or their own earlier) snapshot."""

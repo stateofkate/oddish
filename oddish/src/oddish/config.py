@@ -1846,6 +1846,10 @@ class Settings(BaseSettings):
     # adding identity defaults. Zero leaves automatic Archil routing disabled.
     archil_traffic_percent: int = Field(0, ge=0, le=100)
 
+    # Share of new task versions that get adversarial QA automatically, chosen
+    # by a hash of the version id. QA waits for the attacks. Zero disables it.
+    adversarial_auto_percent: int = Field(100, ge=0, le=100)
+
     # Live tail of agent output for running trials
     live_tail_enabled: bool = True
     live_tail_interval_sec: float = 30.0
