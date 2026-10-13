@@ -6,9 +6,25 @@ from collections.abc import Iterable
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from oddish.config import MAX_MODEL_CONCURRENCY, settings
+from oddish.config import (
+    ANALYSIS_PIPELINE_QUEUE_KEY,
+    MAX_MODEL_CONCURRENCY,
+    NOP_ORACLE_QUEUE_KEY,
+    VERDICT_PIPELINE_QUEUE_KEY,
+    settings,
+)
 
 logger = logging.getLogger(__name__)
+
+# Queues that lease slots like models but never name one.
+_NON_MODEL_QUEUE_KEYS = frozenset(
+    {
+        NOP_ORACLE_QUEUE_KEY,
+        ANALYSIS_PIPELINE_QUEUE_KEY,
+        VERDICT_PIPELINE_QUEUE_KEY,
+        settings.get_task_expand_queue_key(),
+    }
+)
 
 
 async def get_model_concurrency_overrides(
@@ -26,6 +42,25 @@ async def get_model_concurrency_overrides(
         params = {"queue_keys": normalized}
     rows = (await session.execute(text(query), params)).all()
     return {str(row.queue_key): int(row.concurrency_limit) for row in rows}
+
+
+async def get_configured_model_limits(session: AsyncSession) -> dict[str, int]:
+    """Models an operator set a positive limit for, deploy or database.
+
+    A database override replaces the deploy value for its queue. Any other
+    model id still runs at the default limit; these are the deliberate ones.
+    """
+    limits = {
+        settings.normalize_queue_key(key): int(limit)
+        for key, limit in settings.model_concurrency_overrides.items()
+    }
+    for key, limit in (await get_model_concurrency_overrides(session)).items():
+        limits[settings.normalize_queue_key(key)] = limit
+    return {
+        key: limit
+        for key, limit in limits.items()
+        if limit > 0 and key not in _NON_MODEL_QUEUE_KEYS
+    }
 
 
 async def get_effective_model_concurrency_limits(

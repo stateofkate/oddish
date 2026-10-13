@@ -87,6 +87,13 @@ not authorize a later mutation.
    the output; the `experiment` field is the experiment name, not a guaranteed
    identifier.
 
+   Choose paid models from `oddish models --json` instead of guessing ids.
+   Pass an entry's `model` as `-m` or a sweep's `model_name`, and prefer
+   `health == "healthy"`. `limit` is how many of its trials run at once;
+   `running` and `queued` show the current backlog. Only Abundant
+   organization keys can read the list; others get 403 and should ask their
+   Oddish contact which models are enabled.
+
    Without `--env`, hosted CPU runs use Modal
    or enabled Numinous provider; a CPU task with `environment/chart/Chart.yaml`
    (a Helm chart) uses EC2. Explicit environments choose initial placement;

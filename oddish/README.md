@@ -47,7 +47,7 @@ Update with `brew update` followed by `brew upgrade abundant-ai/tap/oddish`. New
 
 Replace `PATH` with a local folder and `ID` with an identifier returned by Oddish. Run `oddish COMMAND --help` for installed options. Submitting or retrying trials can incur charges. `collect` publishes by default; pass `--no-publish` for a private collection.
 
-Customer guides have one maintained source in [docs/customer](../docs/customer/getting-started.md). [DOCS.md](../DOCS.md) indexes them and retained internal references. The website rollout and invitation requirements are recorded there. Operator commands such as `admin concurrency` and `cost-exclusions` belong in the [internal CLI reference](../docs/cli-advanced-internal.md).
+Customer guides have one maintained source in [docs/customer](../docs/customer/getting-started.md). [DOCS.md](../DOCS.md) indexes them and retained internal references. The website rollout and invitation requirements are recorded there. Operator commands such as `admin concurrency`, `cost-exclusions`, and `models` belong in the [internal CLI reference](../docs/cli-advanced-internal.md).
 
 Delivery QA: `oddish delivery qa rerun NAME --dry-run` previews the tasks; `oddish delivery qa rerun NAME` requests both review stages; `oddish delivery qa status NAME` reads their progress. Use `--limit 100 --offset 0` to select a batch in task-ID order; keep delivery membership unchanged between batches. See the [internal delivery QA reference](../docs/cli-advanced-internal.md#rerun-qa-for-a-delivery).
 

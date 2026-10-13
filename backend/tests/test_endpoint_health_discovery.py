@@ -49,6 +49,32 @@ async def test_discovery_merges_limits_excludes_disabled_and_deduplicates(platfo
 
 
 @pytest.mark.asyncio
+async def test_index_maps_aliases_to_their_shared_connection(platform):
+    _, stored = platform
+    stored.return_value = {
+        "google/gemini-3.5-flash": 4,
+        "gemini/gemini-3.5-flash": 4,
+        "xai/grok-4.6": 8,
+    }
+    targets, target_ids = await health.platform_target_index(None)
+    assert len(targets) == 2
+    assert (
+        target_ids["google/gemini-3.5-flash"] == target_ids["gemini/gemini-3.5-flash"]
+    )
+    assert set(target_ids.values()) == {t.id for t in targets}
+
+
+@pytest.mark.asyncio
+async def test_monitor_cap_applies_to_registration_not_the_index(platform):
+    _, stored = platform
+    stored.return_value = {f"xai/grok-test-{i}": 1 for i in range(101)}
+    targets, target_ids = await health.platform_target_index(None)
+    assert len(targets) == len(target_ids) == 101
+    with pytest.raises(ValueError, match="At most 100"):
+        await health.platform_targets(None)
+
+
+@pytest.mark.asyncio
 async def test_discovery_uses_azure_mapping_not_every_azure_deployment(platform):
     config, stored = platform
     config.openai_provider = "azure"

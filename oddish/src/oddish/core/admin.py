@@ -6,13 +6,18 @@ import asyncio
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timedelta, timezone
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StringConstraints
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from oddish.config import MAX_MODEL_CONCURRENCY, normalize_model_id, settings
+from oddish.config import (
+    MAX_MODEL_CONCURRENCY,
+    infer_model_provider_prefix,
+    normalize_model_id,
+    settings,
+)
 from oddish.core.cost_basis import (
     first_party_spend_filter,
     settled_cost_columns,
@@ -21,6 +26,7 @@ from oddish.core.cost_basis import (
 )
 from oddish.core.dashboard import EXPERIMENTS_UNATTRIBUTED_OWNER
 from oddish.core.model_concurrency import (
+    get_configured_model_limits,
     get_model_concurrency_overrides,
     set_model_concurrency_override,
 )
@@ -1204,6 +1210,62 @@ async def get_cached_load_snapshot(ttl: float = LOAD_CACHE_TTL_SECONDS) -> LoadS
         _load_cache = await _refresh_load_snapshot()
         _load_cache_at = _monotonic()
         return _load_cache
+
+
+ModelHealth = Literal["healthy", "failing", "unchecked"]
+_MODEL_HEALTH_ORDER: dict[str, int] = {"healthy": 0, "unchecked": 1, "failing": 2}
+
+
+class ConfiguredModel(BaseModel):
+    # The id to pass as ``oddish run -m`` or a sweep's ``model_name``.
+    model: str
+    provider: str | None
+    # Most trials of this model that run at once.
+    limit: int
+    running: int
+    queued: int
+    # The hosted endpoint monitor's latest fresh probe. Stale, broken, and
+    # unmonitored checks (self-hosted servers run no monitor) are unchecked.
+    health: ModelHealth = "unchecked"
+    last_checked_at: datetime | None = None
+
+
+class ConfiguredModelsResponse(BaseModel):
+    models: list[ConfiguredModel]
+    timestamp: str
+
+
+async def get_configured_models_core(
+    session: AsyncSession,
+    *,
+    snapshot: LoadSnapshot,
+    health: Mapping[str, tuple[ModelHealth, datetime | None]] | None = None,
+) -> ConfiguredModelsResponse:
+    """Configured models with their limits and live load, healthiest first.
+
+    ``snapshot`` is the cached ``/load`` snapshot, read before the caller opens
+    ``session`` so the request never holds two connections. ``health`` maps a
+    queue key to its monitor's state and last check time.
+    """
+    limits = await get_configured_model_limits(session)
+    load = {queue.queue_key: queue for queue in snapshot.queues}
+    models = []
+    for key, limit in limits.items():
+        state, checked_at = (health or {}).get(key, ("unchecked", None))
+        queue = load.get(key)
+        models.append(
+            ConfiguredModel(
+                model=key,
+                provider=infer_model_provider_prefix(key),
+                limit=limit,
+                running=queue.running if queue else 0,
+                queued=queue.queued if queue else 0,
+                health=state,
+                last_checked_at=checked_at,
+            )
+        )
+    models.sort(key=lambda model: (_MODEL_HEALTH_ORDER[model.health], model.model))
+    return ConfiguredModelsResponse(models=models, timestamp=snapshot.timestamp)
 
 
 # ---------------------------------------------------------------------------

@@ -151,6 +151,35 @@ async def test_failure_confirmation_one_incident_and_recovery(db):
 
 
 @pytest.mark.asyncio
+async def test_monitor_health_trusts_only_fresh_provider_outcomes(db):
+    targets = {
+        name: EndpointTarget(
+            name=name, model=f"openai/{name}", api_key_env="TEST_PROVIDER_KEY"
+        )
+        for name in ("healthy", "failing", "stale", "broken")
+    }
+    now = utcnow() + timedelta(seconds=1)
+    claimed = {row["id"]: row for row in await claim(db, now, list(targets.values()))}
+    for name, outcome, when in (
+        ("healthy", "success", now),
+        ("failing", "failure", now),
+        ("stale", "success", now - health.STALE_AFTER - timedelta(minutes=1)),
+        ("broken", "monitor_error", now),
+    ):
+        await save(db, [claimed[targets[name].id]], outcome, when)
+
+    async with db.session() as session:
+        states = await health.monitor_health(session)
+
+    assert {monitor.name: monitor.health for monitor in states.values()} == {
+        "healthy": "healthy",
+        "failing": "failing",
+        "stale": "unchecked",
+        "broken": "unchecked",
+    }
+
+
+@pytest.mark.asyncio
 async def test_concurrent_claims_skip_locked_rows(db):
     async with db.session() as session:
         await health.sync_targets(session, [TARGET])

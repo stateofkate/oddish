@@ -67,10 +67,13 @@ from oddish.core.progress_history import read_progress_history
 from oddish.progress import ProgressHistory
 from oddish.schemas import TrialRetryRequest
 from oddish.core.admin import (
+    ConfiguredModelsResponse,
     QueueHealthResponse,
     QueueSlotsResponse,
     QueueStatusResponse,
     OrphanedStateResponse,
+    get_cached_load_snapshot,
+    get_configured_models_core,
     get_queue_health_core,
     get_queue_slots_core,
     get_queue_status_core,
@@ -1174,6 +1177,14 @@ async def admin_queue_health() -> QueueHealthResponse:
     """Throughput, per-queue-key capacity fill, and component heartbeats."""
     async with get_read_session() as session:
         return await get_queue_health_core(session)
+
+
+@api.get("/models", response_model=ConfiguredModelsResponse)
+async def configured_models() -> ConfiguredModelsResponse:
+    """Configured models with concurrency limits and live load."""
+    snapshot = await get_cached_load_snapshot()
+    async with get_read_session() as session:
+        return await get_configured_models_core(session, snapshot=snapshot)
 
 
 def run_server(

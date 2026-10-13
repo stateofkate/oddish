@@ -50,10 +50,18 @@ it exits 0 on a successful fetch, regardless of QA outcome. Finalized deliveries
 show frozen results and cannot be rerun. Use `delivery ready` for shipping gates.
 Both commands accept `--api` and `--json`.
 
-Current top-level commands are `run`, `upload`, `preflight`, `ls`, `status`,
-`skill`, `version`, `update`, `logs`, `cancel`, `backfill-analysis`, `combine`,
-`costs`, `cost-exclusions`, `collect`, `delete`, `admin`, `experiment`, `link`,
-`pull`, `publish`, `unpublish`, `delivery`, `assign`, and `qa`.
+Current top-level commands are `run`, `upload`, `preflight`, `ls`, `models`,
+`status`, `skill`, `version`, `update`, `logs`, `cancel`, `backfill-analysis`,
+`combine`, `costs`, `cost-exclusions`, `collect`, `delete`, `admin`,
+`experiment`, `link`, `pull`, `publish`, `unpublish`, `delivery`, `assign`, and
+`qa`.
+
+`oddish models [--json]` reads `GET /models`: the configured models, each with
+`model` (the `-m` value), `provider`, concurrency `limit`, current `running`
+and `queued` counts, and endpoint-monitor `health` (`healthy`, `failing`, or
+`unchecked` when the probe is stale, broken, or absent). Any key scope works,
+but only in the Abundant organization; other organizations get 403. A model
+missing from the list is not rejected at submission.
 
 `publish` keeps the experiment's saved QA sharing choice. QA is hidden by
 default; an org admin can enable **Show QA** in the dashboard's share dialog.

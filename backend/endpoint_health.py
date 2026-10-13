@@ -14,7 +14,7 @@ import os
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from time import monotonic
-from typing import Annotated, Literal
+from typing import Annotated, Literal, NamedTuple
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -35,6 +35,7 @@ BATCH_SIZE = 10
 CONCURRENCY = 5
 EnvName = Annotated[str, Field(pattern=r"^[A-Z][A-Z0-9_]*$")]
 Outcome = Literal["success", "failure", "monitor_error"]
+Health = Literal["healthy", "failing", "unchecked"]
 
 
 class EndpointTarget(BaseModel):
@@ -93,6 +94,23 @@ def configured_targets() -> list[EndpointTarget]:
 
 async def platform_targets(session: AsyncSession) -> list[EndpointTarget]:
     """Reuse configured model queues and platform credentials, never customer keys."""
+    targets, _ = await platform_target_index(session)
+    if len(targets) > 100:
+        raise ValueError(
+            "At most 100 endpoint monitors are supported; set ODDISH_ENDPOINT_MONITORS explicitly"
+        )
+    return targets
+
+
+async def platform_target_index(
+    session: AsyncSession,
+) -> tuple[list[EndpointTarget], dict[str, str]]:
+    """Platform targets, plus the target id each configured queue key probes.
+
+    Queue keys that share one connection (``google/`` and ``gemini/`` aliases)
+    collapse into a single target named after one of them, so several keys
+    can map to the same id.
+    """
     from oddish.config import (
         ANALYSIS_PIPELINE_QUEUE_KEY,
         DEEPSEEK_DEFAULT_BASE_URL,
@@ -124,6 +142,7 @@ async def platform_targets(session: AsyncSession) -> list[EndpointTarget]:
         }
     )
     targets: dict[str, EndpointTarget] = {}
+    queue_target_ids: dict[str, str] = {}
     anthropic_routes = {
         "zai": ("ZAI_API_KEY", "ZAI_BASE_URL", ZAI_DEFAULT_BASE_URL),
         "minimax": ("MINIMAX_API_KEY", "MINIMAX_BASE_URL", MINIMAX_DEFAULT_BASE_URL),
@@ -255,11 +274,8 @@ async def platform_targets(session: AsyncSession) -> list[EndpointTarget]:
                 configuration_error="This queue key is not a valid monitor target; configure ODDISH_ENDPOINT_MONITORS explicitly.",
             )
         targets[target.id] = target
-    if len(targets) > 100:
-        raise ValueError(
-            "At most 100 endpoint monitors are supported; set ODDISH_ENDPOINT_MONITORS explicitly"
-        )
-    return list(targets.values())
+        queue_target_ids[queue_key] = target.id
+    return list(targets.values()), queue_target_ids
 
 
 def monitoring_enabled() -> bool:
@@ -270,6 +286,37 @@ def monitoring_enabled() -> bool:
         ).lower()
         == "true"
     )
+
+
+class MonitorHealth(NamedTuple):
+    name: str
+    health: Health
+    last_checked_at: datetime | None
+
+
+async def monitor_health(session: AsyncSession) -> dict[str, MonitorHealth]:
+    """Each enabled monitor's health and last check time, by monitor id.
+
+    healthy: the latest check passed within the stale window; failing: it
+    failed; unchecked: no recent check, or the check itself broke.
+    """
+    now = utcnow()
+    rows = (
+        await session.execute(
+            text(
+                "SELECT id, name, last_outcome, last_checked_at "
+                "FROM endpoint_monitors WHERE enabled"
+            )
+        )
+    ).all()
+    health: dict[str, MonitorHealth] = {}
+    for monitor_id, name, outcome, checked_at in rows:
+        fresh = checked_at is not None and now - checked_at <= STALE_AFTER
+        state: Health = "unchecked"
+        if fresh and outcome in ("success", "failure"):
+            state = "healthy" if outcome == "success" else "failing"
+        health[monitor_id] = MonitorHealth(name, state, checked_at)
+    return health
 
 
 @dataclass(frozen=True)

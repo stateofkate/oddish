@@ -267,11 +267,11 @@ async def test_a_run_is_returned_with_its_cases(monkeypatch):
 async def test_models_rank_monitored_models_by_health(monkeypatch):
     now = utcnow()
     rows = [
-        ("xai/grok-4.6", "failure", now),
-        ("openai/gpt-6-luna", "success", now - timedelta(hours=2)),
-        ("deepseek/deepseek-v4-flash", "monitor_error", now),
-        ("anthropic/claude-sonnet-5-5", "success", now),
-        ("google/gemini-3.7-flash", None, None),
+        ("m1", "xai/grok-4.6", "failure", now),
+        ("m2", "openai/gpt-6-luna", "success", now - timedelta(hours=2)),
+        ("m3", "deepseek/deepseek-v4-flash", "monitor_error", now),
+        ("m4", "anthropic/claude-sonnet-5-5", "success", now),
+        ("m5", "google/gemini-3.7-flash", None, None),
     ]
 
     class _Monitors(_EmptySession):

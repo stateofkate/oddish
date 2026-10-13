@@ -835,6 +835,14 @@ controls for other orgs.
 `GET /admin/concurrency` reports the deploy, database override,
 deprecated-controller advisory, and actual effective limit for one canonical
 queue key; `PUT /admin/concurrency` sets or clears the database override.
+`GET /models` lists the configured models: queue keys with a positive deploy
+or database limit, minus the `nop_oracle`, `analysis`, `verdict`, and
+`task_expand` queues. Each row carries its limit, `running` and `queued` from
+the cached `/load` snapshot, and endpoint-monitor health (`healthy`, `failing`,
+or `unchecked` when stale, broken, or unmonitored). It accepts any key scope
+but only in the operator org, because the list names vendors' private models.
+For the same reason `GET /load` returns `queues` only to the operator org;
+other orgs get the pacing fields and totals.
 
 Admin cost exclusions (`oddish/core/cost_exclusions.py`) name spend that was
 never really paid for, along three axes: a **model** (`cost_excluded_models`,
@@ -1545,6 +1553,7 @@ see `backend/README.md`.
 | Trials | `GET /tasks/{task_id}/trials/{index}`, `POST /trials/{trial_id}/retry` (optional `registry_auth` body), `GET /trials/{trial_id}/live` ((attempt, seq)-cursor live transcript), `GET /trials/{trial_id}/logs[/structured]`, `GET /trials/{trial_id}/trajectory`, `GET /trials/{trial_id}/result` |
 | Files | `GET /tasks/{task_id}/files[/{path}]` (`inline=false` omits listing bodies; `presign=false` omits URLs; `max_bytes=N` caps archive-backed file reads), `GET /trials/{trial_id}/files[/{path}]`, `GET /trials/{trial_id}/debug-files` |
 | Admin diagnostics | `GET /admin/slots`, `GET /admin/queue-status`, `GET /admin/orphaned-state`, `GET /admin/queue-health` |
+| Models | `GET /models` (configured models with concurrency limits and live load; no monitor health) |
 | Public sharing | `/public/experiments...` router from `oddish.core.sharing.public` |
 
 The core server has **no DELETE routes**. Deletion endpoints

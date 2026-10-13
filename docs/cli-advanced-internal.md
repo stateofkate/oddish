@@ -20,6 +20,7 @@ Repository-only reference migrated from DOCS.md. Contains operator and advanced 
 - `oddish assign` - assign QA review ownership for a batch of task IDs
 - `oddish costs` - view billable-spend accounting (org-wide, per user, or per task split into solver and QA)
 - `oddish admin concurrency` - inspect, set, or clear operator queue-key limits
+- `oddish models` - list configured models with their concurrency limits, live load, and endpoint-monitor health (Abundant organization keys only)
 - `oddish cost-exclusions` - hide spend for models and experiments that were never really paid for
 - `oddish pull` - download logs and artifacts
 - `oddish combine` - merge several experiments into a new one
@@ -632,6 +633,29 @@ Queue keys are canonicalized by the same model-aware helper as the dispatcher.
 queue. Both mutation commands read the setting back and fail if the stored
 override does not match. These hosted endpoints require an admin key in the
 configured operator organization. Use `--api-url`/`-u` to target another API.
+
+## Choose a model
+
+`oddish models` lists the models this deployment has configured: each queue key
+with a positive deploy or database concurrency limit. Pass a row's model to
+`oddish run -m` or to a sweep's `model_name`.
+
+```bash
+oddish models
+oddish models --json
+```
+
+| Column | Meaning |
+| --- | --- |
+| Limit | Most trials of the model that run at once |
+| Running, Queued | Current trials, from the cached load snapshot |
+| Health | `healthy`: the endpoint monitor's latest probe (every 15 minutes) passed. `failing`: it failed. `unchecked`: the result is stale, the check broke, or nothing monitors the model |
+
+Prefer healthy models. A failing probe can also mean the monitor's request does
+not suit that route, so check a recent trial before ruling a model out. A model
+missing from the list is not rejected; it runs at the default limit if its
+provider accepts it. Any key scope works, but only in the Abundant
+organization; other organizations get 403.
 
 ## Claude provider selection
 

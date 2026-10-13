@@ -5,7 +5,6 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Header
 from pydantic import BaseModel
-from sqlalchemy import text
 
 from auth import AuthContext, require_admin
 from auth.permissions import require_operator_org
@@ -19,7 +18,7 @@ from oddish.core.qa_eval_scores import (
     qa_eval_status_core,
 )
 from oddish.config import settings
-from oddish.db import get_read_session, get_session, utcnow
+from oddish.db import get_read_session, get_session
 from oddish.schemas import (
     QAEvalCreateRequest,
     QAEvalCreateResponse,
@@ -77,28 +76,19 @@ async def create_qa_eval(
 @router.get("/qa-evals/models", response_model=QAEvalModels)
 async def get_qa_eval_models(auth: Admin) -> QAEvalModels:
     """The models the endpoint monitor checks, for choosing what a run uses."""
-    from endpoint_health import STALE_AFTER
+    from endpoint_health import monitor_health
 
     require_operator_org(auth)
-    now = utcnow()
     async with get_read_session() as session:
-        rows = (
-            await session.execute(
-                text(
-                    "SELECT name, last_outcome, last_checked_at "
-                    "FROM endpoint_monitors WHERE enabled"
-                )
-            )
-        ).all()
-    options = []
-    for name, outcome, checked_at in rows:
-        fresh = checked_at is not None and now - checked_at <= STALE_AFTER
-        health = "unchecked"
-        if fresh and outcome in ("success", "failure"):
-            health = "healthy" if outcome == "success" else "failing"
-        options.append(
-            QAEvalModelOption(model=name, health=health, last_checked_at=checked_at)
+        health = await monitor_health(session)
+    options = [
+        QAEvalModelOption(
+            model=monitor.name,
+            health=monitor.health,
+            last_checked_at=monitor.last_checked_at,
         )
+        for monitor in health.values()
+    ]
     order = {"healthy": 0, "unchecked": 1, "failing": 2}
     options.sort(key=lambda option: (order[option.health], option.model))
     return QAEvalModels(production_model=settings.qa_model, models=options)
