@@ -4,11 +4,20 @@ from collections.abc import Collection
 
 from fastapi import HTTPException
 from harbor.models.environment_type import EnvironmentType
+from harbor.models.trial.config import AgentConfig
 
 from oddish.config import (
     curated_model_error,
     is_geometric_model,
     is_hunyuan_model,
+    is_xai_public_model,
+    model_family_key,
+    infer_model_provider_prefix,
+    claude_model_provider,
+    is_vertex_ai_claude_model,
+    is_zai_model,
+    is_minimax_model,
+    is_moonshot_model,
     is_nop_oracle_agent,
     require_geometric_served_model_id,
     require_hunyuan_served_model_id,
@@ -31,6 +40,79 @@ def validate_sweep_submission(submission: TaskSweepSubmission) -> None:
         error = curated_model_error(config.model)
         if error:
             raise HTTPException(status_code=422, detail=error)
+
+
+def resolve_trial_model(spec: TrialSpec) -> str | None:
+    """Provider/model admission shared by every trial launch path."""
+    if spec.agent == "auto":
+        family = model_family_key(spec.model)
+        provider = infer_model_provider_prefix(spec.model)
+        if not family:
+            raise HTTPException(422, "Automatic harness selection requires a model")
+        if (
+            claude_model_provider(spec.model)
+            or is_vertex_ai_claude_model(spec.model)
+            or family.startswith("claude-")
+            or is_zai_model(spec.model)
+            or is_minimax_model(spec.model)
+            or is_moonshot_model(spec.model)
+        ):
+            spec.agent = "claude-code"
+        elif family.startswith("gemini-") and provider in (None, "gemini", "vertex_ai"):
+            spec.agent = "gemini-cli"
+        elif family.startswith(("gpt-", "o1", "o3", "o4")) and provider in (
+            None, "openai", "azure"
+        ):
+            spec.agent = "codex"
+        elif is_xai_public_model(spec.model):
+            spec.agent = "grok-build"
+        else:
+            spec.agent = "mini-swe-agent"
+    version = settings.harness_versions.get(spec.agent)
+    if version and spec.agent_config is None:
+        spec.agent_config = AgentConfig(kwargs={"version": version})
+    elif version and spec.agent_config and spec.agent_config.import_path is None:
+        spec.agent_config.kwargs.setdefault("version", version)
+    # Geometric is a single-model endpoint. Reject an id it does not serve
+    # at submit, before a trial row, queue slot, worker, and sandbox are
+    # spent failing on it -- and before a foreign id could reach litellm as
+    # ``openai/<id>``, whose default route is public OpenAI. This is the
+    # chokepoint both the single and batch submit paths share.
+    if is_geometric_model(spec.model):
+        try:
+            require_geometric_served_model_id(spec.model or "")
+        except ValueError as exc:
+            # Surface as a 400 with the message, matching this module's
+            # convention.
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Unsupported model for agent "
+                    f"{spec.agent!r} / model {spec.model!r}: {exc}"
+                ),
+            ) from exc
+
+    # Hunyuan: same served-model check, and only mini-swe-agent receives
+    # the Hunyuan key and base URL, so any other harness would run unrouted.
+    if is_hunyuan_model(spec.model):
+        try:
+            require_hunyuan_served_model_id(spec.model or "")
+            if (spec.agent or "").strip().lower() != "mini-swe-agent":
+                raise ValueError("Hunyuan models run only on mini-swe-agent")
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Unsupported model for agent "
+                    f"{spec.agent!r} / model {spec.model!r}: {exc}"
+                ),
+            ) from exc
+
+    try:
+        return settings.normalize_trial_model(spec.agent, spec.model)
+    except ValueError as exc:
+        # Preserve create_task's client error when validating before creation.
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 def _validate_allowed_environment(
@@ -81,46 +163,7 @@ def build_trial_specs_from_sweep(
                 allowed_environments=allowed_environments,
             )
 
-        # Geometric is a single-model endpoint. Reject an id it does not serve
-        # at submit, before a trial row, queue slot, worker, and sandbox are
-        # spent failing on it -- and before a foreign id could reach litellm as
-        # ``openai/<id>``, whose default route is public OpenAI. This is the
-        # chokepoint both the single and batch submit paths share.
-        if is_geometric_model(config.model):
-            try:
-                require_geometric_served_model_id(config.model or "")
-            except ValueError as exc:
-                # Surface as a 400 with the message, matching this module's
-                # convention.
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        f"Unsupported model for agent "
-                        f"{config.agent!r} / model {config.model!r}: {exc}"
-                    ),
-                ) from exc
-
-        # Hunyuan: same served-model check, and only mini-swe-agent receives
-        # the Hunyuan key and base URL, so any other harness would run unrouted.
-        if is_hunyuan_model(config.model):
-            try:
-                require_hunyuan_served_model_id(config.model or "")
-                if (config.agent or "").strip().lower() != "mini-swe-agent":
-                    raise ValueError("Hunyuan models run only on mini-swe-agent")
-            except ValueError as exc:
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        f"Unsupported model for agent "
-                        f"{config.agent!r} / model {config.model!r}: {exc}"
-                    ),
-                ) from exc
-
-        try:
-            norm_model = settings.normalize_trial_model(config.agent, config.model)
-        except ValueError as exc:
-            # Preserve create_task's client error when validating before creation.
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        norm_model = resolve_trial_model(config)
         n = config.n_trials
         if existing_counts is not None:
             existing = existing_counts.get(

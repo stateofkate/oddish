@@ -134,7 +134,7 @@ class TrialSpec(BaseModel):
 
     agent: str = Field(
         ...,
-        description="Agent name (e.g., 'claude-code', 'codex', 'gemini-cli', 'antigravity-cli')",
+        description="Harness name, or 'auto' to select a compatible harness for the model.",
     )
     model: str | None = Field(
         None, description="Model name (e.g., 'claude-sonnet-4-20250514')"

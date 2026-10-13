@@ -568,6 +568,9 @@ _FIREWORKS_PROVIDER_PREFIXES: frozenset[str] = frozenset({"fireworks", "fw"})
 _FIREWORKS_SHORT_MODEL_IDS: dict[str, str] = {
     "glm-5.2": "glm-5p2",
     "glm-5p2": "glm-5p2",
+    "glm5.3": "glm-5p3",
+    "glm-5.3": "glm-5p3",
+    "glm-5p3": "glm-5p3",
     "minimax-m3": "minimax-m3",
     "kimi-k2.7": "kimi-k2p7-code",
     "kimi-k2.7-code": "kimi-k2p7-code",
@@ -2032,6 +2035,13 @@ class Settings(BaseSettings):
     provider_rate_limits: dict[str, dict] = Field(default_factory=dict)
     queue_key_buckets: dict[str, str] = Field(default_factory=dict)
     analysis_model: str = ANALYSIS_MODEL
+    # Defaults for bundled harnesses. Explicit per-trial versions still win.
+    harness_versions: dict[str, str] = Field(default_factory=lambda: {
+        "codex": "0.159.2",
+        "claude-code": "2.1.285",
+        "gemini-cli": "0.62.0",
+        "mini-swe-agent": "2.4.6",
+    })
     qa_model: str = Field(
         default="openai/gpt-6-luna",
         validation_alias=AliasChoices("ODDISH_QA_MODEL", "ODDISH_ANALYSIS_MODEL", "qa_model"),

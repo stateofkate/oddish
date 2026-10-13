@@ -36,8 +36,13 @@ class ProxiedClaudeCode(ClaudeCode):
             command=(
                 "set -eu; command -v python3 >/dev/null || "
                 "(apt-get update && apt-get install -y python3 python3-venv); "
-                "python3 -m venv /installed-agent/claude-proxy; "
-                "/installed-agent/claude-proxy/bin/pip install --quiet litellm==1.83.14"
+                "if ! /installed-agent/claude-proxy/bin/python -c "
+                "\"import importlib.metadata; assert importlib.metadata.version('litellm') == '1.83.14'\" "
+                ">/dev/null 2>&1; then "
+                "python3 -m venv /installed-agent/claude-proxy || "
+                "(apt-get update && apt-get install -y python3-venv && "
+                "python3 -m venv /installed-agent/claude-proxy); "
+                "/installed-agent/claude-proxy/bin/pip install --quiet litellm==1.83.14; fi"
             ),
         )
         if result.return_code:

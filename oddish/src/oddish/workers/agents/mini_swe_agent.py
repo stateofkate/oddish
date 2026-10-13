@@ -124,6 +124,26 @@ def _slugify_session_part(value: str) -> str:
     return slug or "oddish-eval"
 
 
+def openrouter_billed_cost(model_name: str | None, raw: dict) -> float | None:
+    """Sum OpenRouter's per-response ``usage.cost`` (what OpenRouter bills).
+
+    mini-swe-agent's ``instance_cost`` prices tokens from the container's
+    LiteLLM table, which can disagree with the provider OpenRouter routed to
+    (rtp-rtcp-0b00c5f0-149: $3.82 recorded, $1.59 billed). None unless every
+    model response carries a cost, so a partial sum never undercounts.
+    """
+    if not (model_name or "").lower().startswith("openrouter/"):
+        return None
+    costs = [
+        (((m.get("extra") or {}).get("response") or {}).get("usage") or {}).get("cost")
+        for m in raw.get("messages") or []
+        if isinstance(m, dict) and m.get("role") == "assistant"
+    ]
+    if not costs or not all(isinstance(c, (int, float)) for c in costs):
+        return None
+    return float(sum(costs))
+
+
 class OddishMiniSweAgent(MiniSweAgent):
     _oddish_config_path = _CONFIG_PATH
 
@@ -153,6 +173,9 @@ class OddishMiniSweAgent(MiniSweAgent):
             raw = json.loads(raw_path.read_text())
             if not isinstance(trajectory, dict) or not isinstance(raw, dict):
                 return
+            billed = openrouter_billed_cost(self.model_name, raw)
+            if billed is not None:
+                context.cost_usd = billed
             restored = restore_mini_swe_reasoning(trajectory, raw)
             if restored is not trajectory:
                 trajectory_path.write_text(json.dumps(restored, indent=2))

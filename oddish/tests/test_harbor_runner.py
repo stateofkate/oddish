@@ -1551,7 +1551,7 @@ def test_restricted_cursor_does_not_allow_underlying_model_provider(tmp_path):
     ("environment_type", "environment_mode", "agent_mode", "compose"),
     [
         (EnvironmentType.DAYTONA, "public", "public", False),
-        (EnvironmentType.DAYTONA, "no-network", "no-network", False),
+        (EnvironmentType.DAYTONA, "no-network", "public", False),
         (EnvironmentType.DAYTONA, "public", "no-network", True),
         (EnvironmentType.MODAL, "public", "no-network", True),
         # A restricted baseline blocks the agent's install, on any provider.
@@ -1597,6 +1597,28 @@ def test_inject_restricted_agent_model_hosts_skips_unsupported_shapes(
 
     assert host_calls == 0
     assert agent_config.extra_allowed_hosts == []
+
+
+@pytest.mark.parametrize("environment_type", [EnvironmentType.MODAL, EnvironmentType.DAYTONA])
+def test_closed_task_with_explicit_no_network_agent_gets_model_host(
+    monkeypatch, tmp_path, environment_type
+):
+    # rtp-rtcp v18: [environment] closed and [agent] network_mode = "no-network".
+    # Harbor runs the agent under the [agent] policy, not the baseline, so the
+    # model host must ride the agent's own allowlist.
+    task_path = _write_network_policy_task(
+        tmp_path, environment_mode="no-network", agent_mode="no-network"
+    )
+    agent_config = HarborAgentConfig(name="mini-swe-agent", model_name="openrouter/z-ai/glm-5.3")
+    monkeypatch.setattr(harbor_runner, "outbound_hosts_for_model", lambda *a, **k: ["openrouter.ai"])
+
+    harbor_runner._inject_restricted_agent_model_hosts(
+        task_path=task_path,
+        environment_config=HarborEnvironmentConfig(type=environment_type),
+        agent_config=agent_config,
+    )
+
+    assert agent_config.extra_allowed_hosts == ["openrouter.ai"]
 
 
 @pytest.mark.parametrize("overlay", [False, True])
@@ -6216,6 +6238,35 @@ def test_is_grok_build_agent_matches_name_and_import_path():
     )
     assert harbor_runner._is_grok_build_agent(agent=None, agent_config=config)
     assert not harbor_runner._is_grok_build_agent(agent="codex", agent_config=None)
+
+
+@pytest.mark.parametrize(
+    ("model_name", "transport_host"),
+    [
+        ("openrouter/z-ai/glm-5.3", "openrouter.ai"),
+        ("fireworks/glm-5p3", "api.fireworks.ai"),
+    ],
+)
+def test_mini_swe_agent_environment_hosts_reach_the_model(model_name, transport_host):
+    """A legacy closed task (allow_internet=false) otherwise resets the first
+    model call: rtp-rtcp attacks on both routes ended with 0 tokens."""
+    hosts = harbor_runner._mini_swe_agent_environment_hosts(
+        HarborAgentConfig(name="mini-swe-agent", model_name=model_name)
+    )
+    assert hosts == [transport_host]
+
+
+def test_is_mini_swe_agent_matches_name_and_import_path():
+    assert harbor_runner._is_mini_swe_agent(
+        agent="mini-swe-agent", agent_config=HarborAgentConfig()
+    )
+    config = HarborAgentConfig(
+        import_path="oddish.workers.agents.mini_swe_agent:OddishMiniSweAgent"
+    )
+    assert harbor_runner._is_mini_swe_agent(agent=None, agent_config=config)
+    assert not harbor_runner._is_mini_swe_agent(
+        agent="codex", agent_config=HarborAgentConfig()
+    )
 
 
 @pytest.mark.parametrize("gpu_type", ["A6000", "A100-NOT-A-GPU"])

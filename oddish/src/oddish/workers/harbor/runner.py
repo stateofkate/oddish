@@ -982,12 +982,17 @@ def _effective_task_build_timeout_sec(task_path: Path) -> float:
     return base if base > 0 else _ENV_BUILD_TIMEOUT_BASE_SEC
 
 
-def _task_has_dynamic_restricted_agent_phase(task_path: Path) -> bool:
-    """True when env starts public but the agent phase is restricted.
+def _task_has_dynamic_restricted_agent_phase(
+    task_path: Path, *, closed_baseline_ok: bool = True
+) -> bool:
+    """True when the agent phase is restricted by its own policy, not the baseline.
 
     That is the swe-marathon closed-internet shape (public setup → allowlist /
-    no-network agent → no-network verifier) that needs run-specific model hosts
-    and web-tool disable applied transparently.
+    no-network agent → no-network verifier), and a closed task whose [agent]
+    also sets a restricted policy. Both need run-specific model hosts and
+    web-tool disable applied transparently: Harbor's agent phase uses the
+    explicit policy instead of the baseline, so model hosts merged into the
+    baseline never reach agent.run().
     """
     try:
         task_config = HarborTaskConfig.model_validate_toml(
@@ -997,17 +1002,18 @@ def _task_has_dynamic_restricted_agent_phase(task_path: Path) -> bool:
         return False
 
     baseline = task_config.environment.resolve_baseline()
-    if baseline.network_mode != NetworkMode.PUBLIC:
+    if baseline.network_mode != NetworkMode.PUBLIC and not closed_baseline_ok:
         return False
-
     task_policy = task_config.agent.explicit_phase_policy()
-    effective_policies = []
     for step in task_config.steps or [None]:
         step_policy = step.agent.explicit_phase_policy() if step is not None else None
-        effective_policies.append(step_policy or task_policy or baseline)
-    return any(
-        policy.network_mode != NetworkMode.PUBLIC for policy in effective_policies
-    )
+        explicit = step_policy or task_policy
+        policy = explicit or baseline
+        if policy.network_mode != NetworkMode.PUBLIC and (
+            explicit is not None or baseline.network_mode == NetworkMode.PUBLIC
+        ):
+            return True
+    return False
 
 
 # Oddish's restricted-Compose classification MUST mirror Harbor's own Compose
@@ -1105,7 +1111,11 @@ def _supports_auto_restricted_agent_network(
         return False
 
     if environment_config.type in _VM_EGRESS_ENVIRONMENTS:
-        return _task_has_dynamic_restricted_agent_phase(task_path)
+        # VM egress cannot open the network for the harness install alone, so
+        # a closed baseline still blocks the install there.
+        return _task_has_dynamic_restricted_agent_phase(
+            task_path, closed_baseline_ok=False
+        )
 
     environment_dir = task_path / "environment"
     # Docker routes Compose services through Harbor's filtered namespace. The
@@ -1700,6 +1710,23 @@ def _grok_build_environment_hosts(agent_config: HarborAgentConfig) -> list[str]:
             ]
         )
     )
+
+
+def _is_mini_swe_agent(*, agent: str | None, agent_config: HarborAgentConfig) -> bool:
+    import_path = (getattr(agent_config, "import_path", None) or "").strip().lower()
+    return (agent or "").strip().lower() == "mini-swe-agent" or (
+        "mini_swe_agent:" in import_path
+    )
+
+
+def _mini_swe_agent_environment_hosts(agent_config: HarborAgentConfig) -> list[str]:
+    """The model host mini-swe-agent's litellm client dials during agent.run().
+
+    Its install already succeeds on a closed task, so only the model transport
+    is added. Without it a legacy closed task (allow_internet=false) dies on
+    ECONNRESET at the first model call with zero tokens.
+    """
+    return outbound_hosts_for_model(agent_config.model_name, agent_env=agent_config.env)
 
 
 def _vendor_harness_environment_hosts(
@@ -2624,6 +2651,19 @@ async def _run_harbor_trial_async_impl(
             )
         ):
             hosts = _grok_build_environment_hosts(agent_config)
+            env_config.extra_allowed_hosts = [
+                *env_config.extra_allowed_hosts,
+                *[h for h in hosts if h not in env_config.extra_allowed_hosts],
+            ]
+
+        # mini-swe-agent: same lifecycle problem as the arms above, model host only.
+        if _is_mini_swe_agent(agent=agent, agent_config=agent_config) and not (
+            _supports_daytona_compose_restricted_agent_network(
+                task_path=effective_task_path,
+                environment_config=env_config,
+            )
+        ):
+            hosts = _mini_swe_agent_environment_hosts(agent_config)
             env_config.extra_allowed_hosts = [
                 *env_config.extra_allowed_hosts,
                 *[h for h in hosts if h not in env_config.extra_allowed_hosts],

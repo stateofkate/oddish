@@ -75,6 +75,7 @@ def apply_harbor_patches(
     """Install Harbor patches once."""
     global _PATCHED
     if not _PATCHED:
+        _patch_installed_agent_setup()
         _patch_restricted_network_runtime_fields()
         _patch_provider_error_classifiers()
         _patch_daytona_dind()
@@ -82,6 +83,67 @@ def apply_harbor_patches(
         _PATCHED = True
     _patch_ec2_lifecycle(require_ec2=require_ec2)
     _patch_thunder_exception_metadata(require_thunder=require_thunder)
+
+
+def _patch_installed_agent_setup() -> None:
+    """Supply network access only while the trusted harness installs.
+
+    Task setup hooks execute outside BaseInstalledAgent.setup. Their policy,
+    agent execution, and verification retain the task's original restrictions.
+    Backends without dynamic policy need a preinstalled harness image.
+    """
+    from harbor.agents.installed.base import BaseInstalledAgent
+    from harbor.environments.factory import EnvironmentFactory
+    from harbor.models.task.config import NetworkPolicy, NetworkMode
+    from harbor.trial.trial import Trial
+
+    original = BaseInstalledAgent.setup
+    if getattr(original, "_oddish_setup_network", False):
+        return
+
+    # Modal chooses its network transport before start. Announce the trusted
+    # install phase during construction so a no-network task can switch for
+    # installation, then return to its original policy before task hooks.
+    installing = ContextVar("oddish_installed_agent_environment", default=False)
+    original_init = Trial._init_agent_environment
+    original_factory = EnvironmentFactory.create_environment_from_config
+
+    def init_agent_environment(self):
+        token = installing.set(isinstance(self.agent, BaseInstalledAgent))
+        try:
+            return original_init(self)
+        finally:
+            installing.reset(token)
+
+    def create_environment_from_config(cls, *args, **kwargs):
+        if installing.get():
+            kwargs["phase_network_policies"] = [
+                *kwargs.get("phase_network_policies", []),
+                NetworkPolicy(network_mode=NetworkMode.PUBLIC),
+            ]
+        return original_factory(*args, **kwargs)
+
+    async def setup(self, environment):
+        baseline = environment.network_policy
+        if (
+            baseline.network_mode == NetworkMode.PUBLIC
+            or not environment.capabilities.dynamic_network_policy
+        ):
+            return await original(self, environment)
+        await environment.set_network_policy(
+            NetworkPolicy(network_mode=NetworkMode.PUBLIC)
+        )
+        try:
+            return await original(self, environment)
+        finally:
+            await environment.set_network_policy(baseline)
+
+    setup._oddish_setup_network = True
+    BaseInstalledAgent.setup = setup
+    Trial._init_agent_environment = init_agent_environment
+    EnvironmentFactory.create_environment_from_config = classmethod(
+        create_environment_from_config
+    )
 
 
 def _patch_provider_error_classifiers() -> None:

@@ -913,6 +913,9 @@ def _build_routed_agent_config(
     if model is not None:
         agent_config.model_name = model
 
+    if agent_config.import_path is None and agent in settings.harness_versions:
+        agent_config.kwargs.setdefault("version", settings.harness_versions[agent])
+
     # Before provider canonicalization: moonshot-prefix the model + vendor kwargs.
     _prepare_kimi_claude_code_agent(agent_config)
     # Before the mini-swe-agent defaults and the extra agent env are layered on.

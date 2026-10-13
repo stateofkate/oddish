@@ -588,7 +588,11 @@ def test_mini_swe_meta_agent_config_preserves_explicit_env(monkeypatch) -> None:
     assert "OPENAI_API_BASE" not in agent_config.env
     # reasoning_effort is preserved so callers can request a specific effort;
     # it is forwarded to the model by the mini-swe-agent harness.
-    assert agent_config.kwargs == {"reasoning_effort": "high", "cost_limit": "0"}
+    assert agent_config.kwargs == {
+        "reasoning_effort": "high",
+        "cost_limit": "0",
+        "version": harbor_runner.settings.harness_versions["mini-swe-agent"],
+    }
 
 
 def test_mini_swe_geometric_agent_config_sets_geometric_route(monkeypatch) -> None:
@@ -651,7 +655,10 @@ def test_mini_swe_geometric_agent_config_preserves_explicit_env(monkeypatch) -> 
 
     assert agent_config.env["MSWEA_API_KEY"] == "${CUSTOM_GEOMETRIC_KEY}"
     assert agent_config.env["OPENAI_BASE_URL"] == "https://custom.geometric/v1"
-    assert agent_config.kwargs == {"reasoning_effort": "high"}
+    assert agent_config.kwargs == {
+        "reasoning_effort": "high",
+        "version": harbor_runner.settings.harness_versions["mini-swe-agent"],
+    }
 
 
 def test_claude_code_geometric_uses_the_anthropic_surface(monkeypatch) -> None:
