@@ -6701,3 +6701,24 @@ def test_qa_keeps_terminal_provider_error_when_result_is_missing(monkeypatch, ex
     assert trial.error_message.splitlines() == [
         f"{exception}: model is unavailable", "the agent did not write /logs/qa_result.json",
     ]
+
+
+def test_runner_imports_on_a_harbor_without_thunder():
+    """The gke variant image bakes a Harbor fork with no THUNDER member, and
+    every function on that image imports this module at startup."""
+    import subprocess
+
+    script = """
+import enum
+import importlib
+import harbor.models.environment_type as env_module
+import oddish.workers.harbor.runner as runner
+members = {m.name: m.value for m in env_module.EnvironmentType if m.name != "THUNDER"}
+env_module.EnvironmentType = enum.Enum("EnvironmentType", members, type=str)
+runner = importlib.reload(runner)
+assert "thunder" not in {e.value for e in runner._VM_EGRESS_ENVIRONMENTS}
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True
+    )
+    assert result.returncode == 0, result.stderr

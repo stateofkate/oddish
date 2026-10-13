@@ -1083,11 +1083,13 @@ def _daytona_compose_restriction_kind(
 
 
 # These providers enforce egress on the VM, including Compose sidecars.
+# Looked up by name: this runs at import, and the gke variant's Harbor fork
+# has no THUNDER member.
 _VM_EGRESS_ENVIRONMENTS: tuple[EnvironmentType, ...] = tuple(
     environment
     for environment in (
-        EnvironmentType.THUNDER,
-        EnvironmentType.ARCHIL,
+        getattr(EnvironmentType, "THUNDER", None),
+        getattr(EnvironmentType, "ARCHIL", None),
         UNIKRAFT_ENVIRONMENT,
     )
     if environment is not None
