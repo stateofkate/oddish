@@ -1507,6 +1507,24 @@ async def _record_failure_outcome(
                     failure.error_message,
                     retry_at,
                 )
+            if is_trial:
+                # Settlement can move a retry to another model (an adversarial
+                # attack's Relace -> OpenRouter fallback); the retry is claimed
+                # from the queue of the model it will call.
+                await connection.execute(
+                    """
+                    UPDATE worker_jobs wj
+                    SET    queue_key = t.queue_key
+                    FROM   trials t
+                    WHERE  wj.id = $1
+                      AND  t.id = $2
+                      AND  wj.status = 'RETRYING'::worker_job_status
+                      AND  t.queue_key IS NOT NULL
+                      AND  wj.queue_key IS DISTINCT FROM t.queue_key
+                    """,
+                    job_id,
+                    subject_id,
+                )
         elif is_trial:
             # Ordinary settlement may have left the trial RETRYING (it still had
             # trial-level budget) while the job's own budget just ran out, or a

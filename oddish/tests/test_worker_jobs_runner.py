@@ -969,7 +969,7 @@ async def test_record_outcome_requeues_trial_with_backoff_and_mirrors_next_retry
 
     assert status == WorkerJobStatus.RETRYING
     assert connection.closed is True
-    assert len(connection.calls) == 2
+    assert len(connection.calls) == 3
 
     worker_sql, worker_args = connection.calls[0]
     assert "UPDATE worker_jobs" in worker_sql
@@ -997,6 +997,11 @@ async def test_record_outcome_requeues_trial_with_backoff_and_mirrors_next_retry
     assert "current_worker_id = NULL" in trial_sql
     assert "current_queue_slot = NULL" in trial_sql
     assert trial_args == ("trial-1", "HTTP 503 from agent", retry_at)
+
+    # The retry is claimed from the queue of the trial's (possibly new) model.
+    queue_sql, queue_args = connection.calls[2]
+    assert "SET queue_key = t.queue_key" in " ".join(queue_sql.split())
+    assert queue_args == ("wj-1", "trial-1")
 
 
 @pytest.mark.asyncio
@@ -1101,7 +1106,7 @@ async def test_retry_transition_emits_structured_usage_limit_warning(monkeypatch
         return connection
 
     def capture_warning(message, **attributes):
-        assert len(connection.calls) == 2
+        assert len(connection.calls) == 3
         warnings.append((message, attributes))
 
     monkeypatch.setattr(worker_job_single_job, "_open_connection", fake_open_connection)

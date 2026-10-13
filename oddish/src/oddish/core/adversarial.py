@@ -33,13 +33,20 @@ from oddish.db.storage import is_missing_object
 
 # Retain the stored/API kind; this executes the real task, not a QA overlay.
 ADVERSARIAL_TRIAL_KIND = "adversarial"
-# GLM-5.3 through OpenRouter; the Fireworks route was unreliable.
-ADVERSARIAL_MODEL = "openrouter/z-ai/glm-5.3"
+# GLM-5.3 on Relace. Its attacks get one extra attempt, and a retry runs the
+# same model through OpenRouter (the Fireworks route was unreliable).
+ADVERSARIAL_MODEL = "relace/glm-5.3"
+ADVERSARIAL_FALLBACK_MODEL = "openrouter/z-ai/glm-5.3"
 # Descriptive label; each trial stores and verifies the actual prompt bytes.
 ATTACK_PROMPT_VERSION = "adversarial-v5"
 # The attacker finds different things on different runs; one click runs several.
 # Every second attack is white box: it also gets the grader's code.
 ATTACKS_PER_LAUNCH = 4
+# Attacks and their replays run on Archil unless the launch names an
+# environment. A source run on hardware Archil lacks (GPU on Thunder, TPU on
+# GKE, Kubernetes on EC2) or on a non-default Harbor keeps its environment.
+ADVERSARIAL_ENVIRONMENT = "archil"
+_HARDWARE_ENVIRONMENTS = frozenset({"thunder", "gke", "ec2"})
 # Code files only. A data file can hold the expected answers, and an exploit
 # that pastes them in would pass without showing anything a solver could do.
 GRADER_CODE_SUFFIXES = frozenset(
@@ -410,6 +417,49 @@ FINDINGS_RECORDED = "findings_recorded"
 HOOK_DEADLINE = timedelta(hours=1)
 # The sweep gives up on a claimed launch that keeps failing after this long.
 LAUNCH_DEADLINE = timedelta(hours=1)
+
+
+def adversarial_environment(
+    source_environment: str | None,
+    source_config: dict[str, Any],
+    enabled: set[str] | frozenset[str],
+) -> str | None:
+    """The environment an attack runs in when the launch names none."""
+    requested = source_config.get("environment") or {}
+    if (
+        ADVERSARIAL_ENVIRONMENT not in enabled
+        or (source_environment or "").lower() in _HARDWARE_ENVIRONMENTS
+        or source_config.get("variant_id", "default") != "default"
+        or requested.get("override_gpus")
+        or requested.get("override_tpu")
+    ):
+        return source_environment
+    return ADVERSARIAL_ENVIRONMENT
+
+
+def attack_attempts(model: str, requested: int) -> int:
+    """Attempts for an attack: one more on Relace, reserved for the fallback."""
+    return requested + 1 if model == ADVERSARIAL_MODEL else requested
+
+
+def fall_back_attack_model(trial: TrialModel) -> bool:
+    """Point a Relace attack's retry at OpenRouter; True when it moved.
+
+    Called as a failed attempt settles RETRYING. The worker job follows the
+    trial's queue key when the retry is recorded.
+    """
+    if (
+        trial.kind != ADVERSARIAL_TRIAL_KIND
+        or trial.agent == REPLAY_AGENT
+        or trial.model != ADVERSARIAL_MODEL
+    ):
+        return False
+    from oddish.config import settings
+
+    trial.model = ADVERSARIAL_FALLBACK_MODEL
+    trial.provider = settings.get_provider_for_trial(trial.agent, trial.model)
+    trial.queue_key = settings.get_queue_key_for_trial(trial.agent, trial.model)
+    return True
 
 
 def mark_adversarial(trial: TrialModel, **values: Any) -> None:

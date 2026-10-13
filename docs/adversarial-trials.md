@@ -27,17 +27,21 @@ remain supported for existing programmatic callers.
 
 The request uses the existing `TrialSpec` execution settings and the same provider
 validation and model normalization as ordinary trials. Omitted execution, or
-an omitted model, uses the code constant `ADVERSARIAL_MODEL` (`openrouter/z-ai/glm-5.3`).
+an omitted model, uses the code constant `ADVERSARIAL_MODEL` (`relace/glm-5.3`).
 `agent: "auto"` selects the harness from the model family and protocol, then
 records a concrete agent/model pair. The default uses `mini-swe-agent` with
-GLM-5.3 through OpenRouter (OpenRouter id `z-ai/glm-5.3`); the Fireworks route
-was unreliable. Workers use the existing `OPENROUTER_API_KEY` credential route.
+GLM-5.3 on Relace (`RELACE_API_KEY`). A `relace/glm-5.3` attack gets one extra
+attempt: when an attempt fails and the attack retries, the retry runs
+`openrouter/z-ai/glm-5.3` (`OPENROUTER_API_KEY`) instead, and stays there. The
+Fireworks route was unreliable.
 Explicit harness and model overrides remain
-available. The latest ordinary model run on this version supplies the backend
-and environment overrides; a baseline is used if no model run exists. Neither
-its model, agent flags nor agent credentials are inherited. An explicit backend
-override wins; otherwise a version with no recorded backend uses the worker
-default. The task's `task.toml` controls
+available. The latest ordinary model run on this version supplies the
+environment overrides; a baseline is used if no model run exists. Neither
+its model, agent flags nor agent credentials are inherited. Attacks and their
+replays run on Archil when it is enabled. A source run on Thunder, GKE or EC2,
+one that requested GPUs or a TPU, or one on a non-default Harbor keeps its own
+backend, and a task.toml GPU request still moves the trial to Modal at launch.
+An explicit backend override wins. The task's `task.toml` controls
 timeouts. Attempts default to one, with a maximum of three. Attacks are stored
 in the requested experiment and use the ordinary worker queue. Older requests
 may still supply the top-level `environment` field. If both environment fields

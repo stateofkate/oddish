@@ -93,6 +93,7 @@ from oddish.core.adversarial import (
     FINDINGS_RECORDED,
     REPLAY_AGENT,
     REPLAY_CHECKED,
+    fall_back_attack_model,
     mark_adversarial,
     settle_adversarial_version,
     queue_exploit_replay,
@@ -963,6 +964,10 @@ async def _store_trial_results(
                         f"[yellow]Trial {trial_id} re-queued for retry "
                         f"({trial.attempts}/{trial.max_attempts})[/yellow]"
                     )
+                    if fall_back_attack_model(trial):
+                        console.print(
+                            f"[yellow]Trial {trial_id} retries on {trial.model}[/yellow]"
+                        )
                 else:
                     trial.status = TrialStatus.FAILED
                     trial.finished_at = utcnow()
@@ -994,6 +999,10 @@ async def _store_trial_results(
                     f"[yellow]Trial {trial_id} re-queued after execution exception "
                     f"({trial.attempts}/{trial.max_attempts})[/yellow]"
                 )
+                if fall_back_attack_model(trial):
+                    console.print(
+                        f"[yellow]Trial {trial_id} retries on {trial.model}[/yellow]"
+                    )
             else:
                 trial.status = TrialStatus.FAILED
                 trial.finished_at = utcnow()

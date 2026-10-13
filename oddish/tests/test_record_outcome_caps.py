@@ -143,19 +143,20 @@ async def test_outcome_observes_concurrent_database_update(
                 next_retry_at timestamptz, available_after timestamptz,
                 finished_at timestamptz, payload jsonb,
                 current_worker_id text, current_queue_slot int,
-                modal_function_call_id text, external_id text, provider text
+                modal_function_call_id text, external_id text, provider text,
+                queue_key text
             );
             CREATE TABLE trials (
                 id text PRIMARY KEY, status text, error_message text,
                 next_retry_at timestamptz, current_worker_id text,
                 current_queue_slot int, heartbeat_at timestamptz,
                 finished_at timestamptz, deleted_at timestamptz,
-                superseded_by_trial_id text
+                superseded_by_trial_id text, queue_key text
             );
             INSERT INTO worker_jobs VALUES (
                 'job', 'RUNNING', 1, 6, NULL, NULL, NOW(), NULL,
                 '{"registry_auth_enc":"test-only"}', 'worker', 1, 'call',
-                'sandbox', 'modal'
+                'sandbox', 'modal', 'queue'
             );
             INSERT INTO trials (id, status, current_worker_id)
                 VALUES ('trial', 'RETRYING', 'worker');

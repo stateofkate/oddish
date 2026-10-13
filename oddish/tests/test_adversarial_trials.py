@@ -904,23 +904,41 @@ async def test_attack_uses_shared_trial_model_routing(attack_task, agent, model)
         assert row.harbor_config["agent_config"]["kwargs"]["reasoning_effort"] == "high"
 
 
-def test_default_audit_routes_to_openrouter_glm_with_supported_harness():
+@pytest.mark.parametrize(
+    ("model", "provider", "import_path", "hosts"),
+    [
+        (
+            "relace/glm-5.3",
+            "relace",
+            "oddish.workers.agents.mini_swe_agent:OddishRelaceMiniSweAgent",
+            ["models.relace.ai"],
+        ),
+        (
+            "openrouter/z-ai/glm-5.3",
+            "openrouter",
+            "oddish.workers.agents.mini_swe_agent:OddishMiniSweAgent",
+            ["openrouter.ai"],
+        ),
+    ],
+)
+def test_default_audit_and_its_fallback_route_glm_with_supported_harness(
+    model, provider, import_path, hosts
+):
     from oddish.config import settings
-    from oddish.core.adversarial import ADVERSARIAL_MODEL
+    from oddish.core.adversarial import ADVERSARIAL_FALLBACK_MODEL, ADVERSARIAL_MODEL
     from oddish.core.sweeps import resolve_trial_model
 
-    execution = TrialSpec(agent="auto", model=ADVERSARIAL_MODEL)
-    model = resolve_trial_model(execution)
-    assert model == "openrouter/z-ai/glm-5.3"
+    assert model in (ADVERSARIAL_MODEL, ADVERSARIAL_FALLBACK_MODEL)
+    execution = TrialSpec(agent="auto", model=model)
+    assert resolve_trial_model(execution) == model
     assert execution.agent == "mini-swe-agent"
-    assert settings.get_provider_for_trial(execution.agent, model) == "openrouter"
+    assert settings.get_provider_for_trial(execution.agent, model) == provider
     assert settings.get_queue_key_for_trial(execution.agent, model) == model
     from oddish.workers.harbor.agent_config import _build_agent_config
     from oddish.workers.harbor.model_hosts import outbound_hosts_for_model
     routed = _build_agent_config(agent=execution.agent, model=model, raw_harbor_config={"agent_config": execution.agent_overrides()})
-    assert routed.model_name == model
-    assert routed.import_path == "oddish.workers.agents.mini_swe_agent:OddishMiniSweAgent"
-    assert outbound_hosts_for_model(model) == ["openrouter.ai"]
+    assert routed.import_path == import_path
+    assert outbound_hosts_for_model(model) == hosts
 
 
 @pytest.mark.asyncio
@@ -939,9 +957,9 @@ async def test_default_audit_model_is_independent_of_expensive_source_and_inheri
     async with get_session() as session:
         row = await session.get(TrialModel, result["trial_id"])
         assert row.agent == "mini-swe-agent"
-        assert row.model == "openrouter/z-ai/glm-5.3"
-        assert row.provider == "openrouter"
-        assert row.queue_key == "openrouter/z-ai/glm-5.3"
+        assert row.model == "relace/glm-5.3"
+        assert row.provider == "relace"
+        assert row.queue_key == "relace/glm-5.3"
         assert row.environment == "archil"
         assert row.harbor_config["docker_image"] == "registry/task@sha256:abc"
         assert row.harbor_config["environment"] == {"override_cpus": 4}
@@ -958,9 +976,9 @@ async def test_default_audit_queues_without_model_history(attack_task):
     async with get_session() as session:
         row = await session.get(TrialModel, result["trial_id"])
         assert row.agent == "mini-swe-agent"
-        assert row.model == "openrouter/z-ai/glm-5.3"
-        assert row.provider == "openrouter"
-        assert row.queue_key == "openrouter/z-ai/glm-5.3"
+        assert row.model == "relace/glm-5.3"
+        assert row.provider == "relace"
+        assert row.queue_key == "relace/glm-5.3"
 
 
 @pytest.mark.asyncio
@@ -1813,3 +1831,108 @@ async def test_task_status_views_leave_out_attacks_and_replays(attack_task):
         loaded = await _load_task_status_trials(session, task)
     assert all(t.kind != "adversarial" for t in status_trials)
     assert all(t.kind != "adversarial" for t in loaded)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("source_environment", "source_config", "expected"),
+    [
+        ("modal", {"variant_id": "default"}, "archil"),
+        ("daytona", {}, "archil"),
+        ("thunder", {}, "thunder"),
+        ("gke", {"variant_id": "gke"}, "gke"),
+        ("ec2", {}, "ec2"),
+        ("modal", {"environment": {"override_gpus": 1}}, "modal"),
+        ("modal", {"variant_id": "ephemeral"}, "modal"),
+    ],
+)
+async def test_attacks_run_on_archil_unless_the_source_needs_its_environment(
+    attack_task, source_environment, source_config, expected
+):
+    task_id, version_id, _ = attack_task
+    async with get_session() as session:
+        solver = await session.get(TrialModel, f"{task_id}-solver")
+        solver.environment = source_environment
+        solver.harbor_config = source_config
+    result = await launch(task_id, version_id)
+    for attack in await attack_trials(task_id):
+        assert attack.environment == expected, attack.id
+    assert result["status"] == "queued"
+
+
+def test_attack_environment_follows_the_source_when_archil_is_off():
+    from oddish.core.adversarial import adversarial_environment
+
+    assert adversarial_environment("modal", {}, {"modal", "archil"}) == "archil"
+    assert adversarial_environment("modal", {}, {"modal"}) == "modal"
+    assert adversarial_environment(None, {}, {"modal"}) is None
+
+
+@pytest.mark.asyncio
+async def test_a_failed_relace_attack_retries_on_openrouter(attack_task):
+    from oddish.core.adversarial import fall_back_attack_model
+    from oddish.db import WorkerJobKind, WorkerJobStatus
+    from oddish.workers.jobs.registry import JobOutcome
+    from oddish.workers.queue import worker_job_single_job
+
+    task_id, version_id, _ = attack_task
+    result = await launch(task_id, version_id, execution=None)
+    attack_id = result["trial_id"]
+    async with get_session() as session:
+        job_id, job_max = (
+            await session.execute(
+                text(
+                    "SELECT id, max_attempts FROM worker_jobs "
+                    "WHERE subject_table = 'trials' AND subject_id = :id"
+                ),
+                {"id": attack_id},
+            )
+        ).one()
+        attack = await session.get(TrialModel, attack_id)
+        # One extra attempt, reserved for the fallback.
+        assert (attack.max_attempts, job_max) == (2, 2)
+        # The first attempt runs and fails; settlement leaves it RETRYING.
+        await session.execute(
+            text(
+                "UPDATE worker_jobs SET status = 'RUNNING', attempts = 1, "
+                "current_worker_id = 'w-1' WHERE id = :id"
+            ),
+            {"id": job_id},
+        )
+        attack.attempts = 1
+        attack.status = TrialStatus.RETRYING
+        assert fall_back_attack_model(attack) is True
+        assert fall_back_attack_model(attack) is False  # already on OpenRouter
+    status = await worker_job_single_job.record_outcome(
+        job_id=job_id,
+        worker_id="w-1",
+        outcome=JobOutcome.fail("HTTP 503 from Relace", retryable=True),
+        attempts=1,
+        max_attempts=2,
+        kind=WorkerJobKind.TRIAL,
+        subject_table="trials",
+        subject_id=attack_id,
+    )
+    assert status == WorkerJobStatus.RETRYING
+    async with get_session() as session:
+        attack = await session.get(TrialModel, attack_id)
+        queue_key = await session.scalar(
+            text("SELECT queue_key FROM worker_jobs WHERE id = :id"), {"id": job_id}
+        )
+    assert attack.model == attack.queue_key == "openrouter/z-ai/glm-5.3"
+    assert attack.provider == "openrouter"
+    assert queue_key == "openrouter/z-ai/glm-5.3"
+
+
+def test_only_relace_attacks_fall_back():
+    from oddish.core.adversarial import ADVERSARIAL_TRIAL_KIND, fall_back_attack_model
+
+    def trial(**fields):
+        return TrialModel(
+            **{"kind": ADVERSARIAL_TRIAL_KIND, "agent": "mini-swe-agent",
+               "model": "relace/glm-5.3", **fields}
+        )
+
+    assert fall_back_attack_model(trial(agent=REPLAY_AGENT)) is False
+    assert fall_back_attack_model(trial(kind="agent")) is False
+    assert fall_back_attack_model(trial(model="openai/gpt-6-luna")) is False

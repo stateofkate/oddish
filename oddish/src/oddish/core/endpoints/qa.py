@@ -22,7 +22,9 @@ from oddish.core.adversarial import (
     ATTACK_PROMPT_VERSION,
     ATTACKS_PER_LAUNCH,
     adversarial_conditions,
+    adversarial_environment,
     adversarial_unsettled,
+    attack_attempts,
     attack_prompt,
     replay_target,
 )
@@ -785,10 +787,16 @@ async def launch_adversarial_trial_core(
             )
             if key in source_config
         }
+        from oddish.runtime.routing import allowed_cloud_environments
+
         backend = (
             execution.environment
             or environment
-            or (source_run.environment if source_run else None)
+            or adversarial_environment(
+                source_run.environment if source_run else None,
+                source_config,
+                {env.value for env in allowed_cloud_environments()},
+            )
             or settings.harbor_environment
         )
         try:
@@ -796,6 +804,7 @@ async def launch_adversarial_trial_core(
             require_enabled_environment(backend)
         except (DisabledEnvironmentError, ValueError) as exc:
             raise HTTPException(422, str(exc)) from exc
+        attempts = attack_attempts(model, max_trial_attempts)
         from oddish.core.quota_admission import admit_organization_qa_trials
 
         await admit_organization_qa_trials(
@@ -835,7 +844,7 @@ async def launch_adversarial_trial_core(
                     environment=backend,
                     kind=ADVERSARIAL_TRIAL_KIND,
                     status=TrialStatus.QUEUED,
-                    max_attempts=max_trial_attempts,
+                    max_attempts=attempts,
                     harbor_config={
                         **environment_config,
                         "task_artifact": artifact,
@@ -857,7 +866,7 @@ async def launch_adversarial_trial_core(
                                 "source_trial_id": source_run.id
                                 if source_run
                                 else None,
-                                "max_attempts": max_trial_attempts,
+                                "max_attempts": attempts,
                             },
                         },
                     },
@@ -871,7 +880,7 @@ async def launch_adversarial_trial_core(
                 trial_id=trial.id,
                 queue_key=trial.queue_key,
                 org_id=task.org_id,
-                max_attempts=max_trial_attempts,
+                max_attempts=attempts,
             )
         # QA admission waits for these attacks and their replays.
         version.adversarial_status = VerdictStatus.RUNNING
