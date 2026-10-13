@@ -2856,7 +2856,10 @@ async def _load_task_status_trials(
     query = select(TrialModel).where(
         TrialModel.task_id == task.id,
         TrialModel.superseded_by_trial_id.is_(None),
-        or_(TrialModel.kind.is_(None), TrialModel.kind != "qa_eval"),
+        or_(
+            TrialModel.kind.is_(None),
+            TrialModel.kind.not_in(("qa_eval", "adversarial")),
+        ),
     )
     if task.current_version_id is not None:
         query = query.where(TrialModel.task_version_id == task.current_version_id)

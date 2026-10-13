@@ -22,6 +22,7 @@ from oddish.core.endpoints import (
     browse_tasks_core,
     build_task_sweep_response,
     cancel_task_qa_core,
+    launch_adversarial_trial_core,
     rerun_pre_trial_audit_core,
     rerun_trial_analysis_core,
     combine_experiments_core,
@@ -102,6 +103,7 @@ from oddish.schemas import (
     RunCoverage,
     BackfillQARequest,
     QARunRequest,
+    AdversarialRunRequest,
     FullQARunRequest,
     ExperimentOptionsResponse,
     TaskBatchCancelRequest,
@@ -852,6 +854,26 @@ async def rerun_pre_trial_audit(task_id: str, body: QARunRequest | None = None) 
             session,
             task_id=task_id,
             environment=body.environment if body is not None else None,
+        )
+
+
+@api.post("/tasks/{task_id}/qa/adversarial")
+async def launch_adversarial_trial(task_id: str, body: AdversarialRunRequest) -> dict:
+    """Queue an adversarial attack on the task's grader for the expected version.
+
+    Repeating a ``request_id`` returns the same trial; a new one is a rerun.
+    QA waits for the attack, then reviews its recorded actions.
+    """
+    async with get_session() as session:
+        return await launch_adversarial_trial_core(
+            session,
+            task_id=task_id,
+            expected_version_id=body.expected_version_id,
+            request_id=body.request_id,
+            environment=body.environment,
+            experiment_id=body.experiment_id,
+            execution=body.execution,
+            max_trial_attempts=body.max_trial_attempts,
         )
 
 

@@ -239,13 +239,15 @@ async def list_task_trials(
         None,
         description="Scope to trials of one task version; omitted=all versions.",
     ),
+    include_adversarial: bool = False,
 ) -> list[TrialResponse]:
     """List all trials for a task (org-scoped)."""
     auth.require_scope(APIKeyScope.READ)
 
     async with get_read_session() as session:
         trials = await list_task_trials_for_task(
-            session, task_id, version=version, org_id=auth.org_id
+            session, task_id, version=version, org_id=auth.org_id,
+            include_adversarial=include_adversarial,
         )
         if not trials:
             # Only an empty result needs the existence check: it separates "no

@@ -33,6 +33,7 @@ from oddish.config import (
     ORPHANED_ANALYSIS_ERROR_PREFIX,
     settings,
 )
+from oddish.core.adversarial import ADVERSARIAL_TRIAL_KIND, REPLAY_AGENT
 from oddish.core.tags.ownership_transfer import sweep_orphaned_tag_owners
 from oddish.core.task_browse_summary import refresh_task_browse_summaries
 from oddish.core.verdict_state import fail_verdict, queue_verdict
@@ -793,6 +794,8 @@ async def _reconcile_orphaned_queue_state(
             if not reimport_deadline.expired():
                 raise
 
+    adversarial_hooks_rerun = await _rerun_adversarial_hooks()
+
     # Re-run after the ledger transaction commits only when it closed rows. They
     # no longer protect their capacity leases, so the same reconciliation cycle
     # restores dispatch capacity instead of waiting for another scheduled pass.
@@ -888,6 +891,7 @@ async def _reconcile_orphaned_queue_state(
         "stale_analysis_imports_deferred": len(analysis_reimport_trial_ids)
         - stale_analysis_imports_healed - stale_analysis_import_errors,
         "stale_summarize_imports_queued": len(summarize_reimport_trial_ids),
+        "adversarial_hooks_rerun": adversarial_hooks_rerun,
         "stuck_analyzing_advanced": stuck_analyzing_advanced,
         "stuck_analyzing_finalized": stuck_analyzing_finalized,
         "stuck_analysis_nulls_failed": stuck_analysis_nulls_failed,
@@ -2286,6 +2290,53 @@ async def _heal_stale_audit_imports(session) -> list[str]:
             trial_id,
         )
     return [str(trial_id) for (trial_id,) in stale]
+
+
+async def _rerun_adversarial_hooks() -> int:
+    """Re-run the settle hooks of attacks and replays that finished in the last hour.
+
+    The settle path logs and drops a hook failure, which would leave an attack
+    with no replay or a replay with no findings. Both hooks are idempotent: one
+    replay per attack attempt, one finding per id.
+    """
+    # ponytail: re-reads exploit.sh / leak_check.txt for every adversarial
+    # trial settled in the last hour on every sweep; add a hooks-done marker
+    # if that volume ever matters.
+    from oddish.workers.queue.trial_handler import (
+        _queue_attack_replay,
+        _record_replay_findings,
+    )
+
+    async with get_session() as session:
+        rows = (
+            await session.execute(
+                text(
+                    """
+                    SELECT id, agent = :replay_agent
+                    FROM trials
+                    WHERE kind = :kind
+                      AND deleted_at IS NULL
+                      AND status::text IN ('SUCCESS', 'FAILED')
+                      AND COALESCE(harbor_stage, '') != 'cancelled'
+                      AND finished_at > NOW() - INTERVAL '1 hour'
+                    ORDER BY finished_at
+                    LIMIT 200
+                    """
+                ),
+                {"replay_agent": REPLAY_AGENT, "kind": ADVERSARIAL_TRIAL_KIND},
+            )
+        ).all()
+    rerun = 0
+    for trial_id, is_replay in rows:
+        try:
+            if is_replay:
+                await _record_replay_findings(trial_id)
+            else:
+                await _queue_attack_replay(trial_id)
+            rerun += 1
+        except Exception:  # noqa: BLE001 -- next sweep retries
+            logger.exception("healer: adversarial hook for trial %s failed", trial_id)
+    return rerun
 
 
 async def _heal_stale_summarize_imports(session) -> list[str]:

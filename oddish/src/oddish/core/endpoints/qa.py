@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+from importlib import resources
 from collections.abc import Collection
+from pathlib import Path
 
 from fastapi import HTTPException
+from harbor.models.environment_type import EnvironmentType
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -12,7 +16,27 @@ from oddish.core.endpoints._common import (
     _ACTIVE_WORKER_JOB_STATUSES_SQL,
     USER_CANCELLED_MESSAGE,
 )
+from oddish.core.adversarial import (
+    ADVERSARIAL_TRIAL_KIND,
+    ADVERSARIAL_MODEL,
+    ATTACK_PROMPT_VERSION,
+    ATTACKS_PER_LAUNCH,
+    adversarial_conditions,
+    attack_prompt,
+    replay_target,
+)
 from oddish.core.verdict_state import cancel_verdict, queue_verdict, reset_verdict
+from oddish.config import (
+    DisabledEnvironmentError,
+    is_nop_oracle_agent,
+    require_enabled_environment,
+    settings,
+)
+from oddish.core.baseline_gate import baseline_agent_clause
+from oddish.core.task_files import resolve_task_file_source
+from oddish.db.storage import get_storage_client, resolve_s3_key, task_directory_sha256
+from oddish.schemas import TrialSpec
+from oddish.core.sweeps import resolve_trial_model
 from oddish.core.trial_io import qa_source_evidence_errors
 from oddish.db import (
     ACTIVE_TRIAL_STATUSES,
@@ -139,9 +163,9 @@ async def cancel_task_qa_core(
     task_id: str,
     org_id: str | None = None,
 ) -> dict[str, str | int | list[str]]:
-    """Cancel a task's live qa-kind and audit-kind analysis trials.
+    """Cancel a task's live qa-kind, audit-kind and adversarial trials.
 
-    A qa-kind trial classifies the eligible agent trials and may synthesize a
+    A cancelled adversarial run is an incomplete check, not a passed one. A qa-kind trial classifies the eligible agent trials and may synthesize a
     verdict. Cancelling this endpoint also stops the task's live pre-trial
     audit and finalizes any classification left RUNNING by a killed worker.
     """
@@ -167,7 +191,7 @@ async def cancel_task_qa_core(
         trial
         for trial in task.trials or []
         if trial.superseded_by_trial_id is None
-        and (trial.kind or "agent") in ("qa", "audit")
+        and (trial.kind or "agent") in ("qa", "audit", ADVERSARIAL_TRIAL_KIND)
         and trial.status
         not in (TrialStatus.SUCCESS, TrialStatus.FAILED, TrialStatus.SKIPPED)
     ]
@@ -190,7 +214,9 @@ async def cancel_task_qa_core(
         session, task_id=task.id, task_version_id=task.current_version_id
     )
     if (
-        analysis_trials
+        # Stopping attacks alone is not cancelling QA: the verdict and the
+        # task's status are left alone.
+        any(trial.kind != ADVERSARIAL_TRIAL_KIND for trial in analysis_trials)
         or _has_active_verdict(task)
         or task.status == TaskStatus.VERDICT_PENDING
         or await task_audit_pending(session, task)
@@ -339,7 +365,9 @@ async def backfill_task_analysis_core(
     live_trials = [
         trial
         for trial in task.trials
-        if trial.superseded_by_trial_id is None and (trial.kind or "agent") == "agent"
+        if trial.deleted_at is None
+        and trial.superseded_by_trial_id is None
+        and (trial.kind or "agent") == AGENT_TRIAL_KIND
     ]
     if task.current_version_id is not None:
         live_trials = [
@@ -542,3 +570,409 @@ async def rerun_pre_trial_audit_core(
     )
     await session.commit()
     return {"status": "queued", "task_id": task_id}
+
+
+async def launch_adversarial_trial_core(
+    session: AsyncSession,
+    *,
+    task_id: str,
+    expected_version_id: str,
+    request_id: str,
+    org_id: str | None = None,
+    environment: str | None = None,
+    experiment_id: str | None = None,
+    execution: TrialSpec | None = None,
+    max_trial_attempts: int = 1,
+    requested_by_user_id: str | None = None,
+) -> dict:
+    """Queue organization-funded adversarial QA on the task's current version.
+
+    Check access and capture source identity under the task row lock. Release
+    locks during archive transfer, then recheck identity and admission before
+    atomically publishing ``ATTACKS_PER_LAUNCH`` trials and their worker jobs.
+    The published verdict is left alone; each attack's exploit is replayed when
+    it settles, and only a passing replay reaches QA.
+    """
+    from oddish.queue import (
+        enqueue_trial_worker_job,
+        reserve_next_trial_index,
+    )
+
+    task = await session.get(TaskModel, task_id, with_for_update=True)
+    if (
+        not task
+        or task.deleted_at is not None
+        or (org_id is not None and task.org_id != org_id)
+    ):
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    version_id = task.current_version_id
+    if version_id is None:
+        raise HTTPException(status_code=400, detail="Task has no version to attack")
+    if version_id != expected_version_id:
+        raise HTTPException(
+            status_code=409,
+            detail="Task version changed; refresh the task and retry",
+        )
+
+    existing = await _existing_adversarial_result(
+        session, task_id=task_id, version_id=version_id, request_id=request_id
+    )
+    if existing is not None:
+        return existing
+
+    version = await session.get(TaskVersionModel, version_id, with_for_update=True)
+
+    if version is None:
+        raise HTTPException(409, "Selected task version no longer exists")
+    source = await resolve_task_file_source(
+        session,
+        task_id=task_id,
+        version=version.version,
+        org_id=org_id,
+    )
+    source_identity = (
+        task.org_id,
+        version.content_hash,
+        version.task_path,
+        version.task_s3_key,
+        source.task_s3_prefix,
+    )
+    task_path = version.task_path
+    prefix = (
+        source.task_s3_prefix
+        if version.task_s3_key
+        else resolve_s3_key(None, task_path)
+    )
+    await session.commit()
+
+    # No database transaction or row lock spans hashing, downloads or uploads.
+    storage = None
+    created_snapshot_key = None
+    try:
+        if not prefix and task_path and Path(task_path).is_dir():
+            artifact = {
+                "sha256": await asyncio.to_thread(
+                    task_directory_sha256, Path(task_path)
+                )
+            }
+        else:
+            storage = get_storage_client()
+            pinned = await storage.pin_task_archive(prefix or source.task_s3_prefix)
+            artifact = pinned.artifact
+            created_snapshot_key = pinned.created_snapshot_key
+    except Exception as exc:
+        raise HTTPException(409, f"Cannot pin selected task version: {exc}") from exc
+
+    retain_snapshot = False
+    try:
+        task = await session.get(
+            TaskModel, task_id, with_for_update=True, populate_existing=True
+        )
+        if (
+            not task
+            or task.deleted_at is not None
+            or task.org_id != source_identity[0]
+            or task.current_version_id != version_id
+        ):
+            raise HTTPException(409, "Task source changed; refresh the task and retry")
+        version = await session.get(
+            TaskVersionModel, version_id, with_for_update=True, populate_existing=True
+        )
+        if version is None:
+            raise HTTPException(409, "Task source changed; refresh the task and retry")
+        existing = await _existing_adversarial_result(
+            session, task_id=task_id, version_id=version_id, request_id=request_id
+        )
+        if existing is not None:
+            return existing
+        current_source = await resolve_task_file_source(
+            session,
+            task_id=task_id,
+            version=version.version,
+            org_id=org_id,
+        )
+        if source_identity != (
+            task.org_id,
+            version.content_hash,
+            version.task_path,
+            version.task_s3_key,
+            current_source.task_s3_prefix,
+        ):
+            raise HTTPException(409, "Task source changed; refresh the task and retry")
+        # An explicit association needs only an existence check. Implicit selection
+        # keeps the most recently used experiment for this version.
+        experiment_query = """
+            SELECT e.id FROM task_experiments te
+            JOIN experiments e ON e.id = te.experiment_id
+            WHERE te.task_id = :task_id AND te.deleted_at IS NULL
+              AND e.deleted_at IS NULL AND e.shadow_of IS NULL
+        """
+        if experiment_id is not None:
+            experiment_query += " AND e.id = :experiment_id"
+        else:
+            experiment_query += """
+            ORDER BY (
+              SELECT max(tr.created_at) FROM trials tr
+              WHERE tr.task_id = te.task_id AND tr.experiment_id = e.id
+                AND tr.task_version_id = :version_id AND tr.deleted_at IS NULL
+                AND tr.kind IN ('agent', 'adversarial')
+            ) DESC NULLS LAST, te.created_at DESC, e.id
+            """
+        selected_experiment_id = await session.scalar(
+            text(experiment_query + " LIMIT 1"),
+            {
+                "task_id": task_id,
+                "version_id": version_id,
+                "experiment_id": experiment_id,
+            },
+        )
+        if selected_experiment_id is None:
+            if experiment_id is not None:
+                raise HTTPException(404, "Experiment is not linked to this task")
+            raise HTTPException(
+                409, "This task has no active experiment for an adversarial run"
+            )
+        experiment_id = selected_experiment_id
+        # Model choice and environment provenance have different owners. A costly
+        # source solver must never silently become the default audit model.
+        execution = execution or TrialSpec(agent="auto", model=ADVERSARIAL_MODEL)
+        if not execution.model:
+            execution.model = ADVERSARIAL_MODEL
+        if is_nop_oracle_agent(execution.agent):
+            raise HTTPException(422, "An adversarial run requires a model agent")
+        model = resolve_trial_model(execution)
+        if not model:
+            raise HTTPException(422, "An adversarial run requires an explicit model")
+        source_query = (
+            select(
+                TrialModel.id,
+                TrialModel.environment,
+                TrialModel.harbor_config,
+            )
+            .where(
+                TrialModel.task_id == task.id,
+                TrialModel.task_version_id == version_id,
+                TrialModel.kind == AGENT_TRIAL_KIND,
+                TrialModel.deleted_at.is_(None),
+                TrialModel.superseded_by_trial_id.is_(None),
+            )
+            .order_by(TrialModel.created_at.desc(), TrialModel.id.desc())
+            .limit(1)
+        )
+        source_run = (
+            await session.execute(
+                source_query.where(~baseline_agent_clause(TrialModel.agent))
+            )
+        ).one_or_none()
+        if source_run is None:
+            source_run = (await session.execute(source_query)).one_or_none()
+        source_config = (source_run.harbor_config or {}) if source_run else {}
+        environment_config = {
+            key: source_config[key]
+            for key in (
+                "environment",
+                "docker_image",
+                "mcp_servers",
+                "verifier",
+                "artifacts",
+                "source",
+                "ref",
+                "resolved_sha",
+                "variant_id",
+                "environment_build_timeout_multiplier",
+                "verifier_timeout_multiplier",
+            )
+            if key in source_config
+        }
+        backend = (
+            execution.environment
+            or environment
+            or (source_run.environment if source_run else None)
+            or settings.harbor_environment
+        )
+        try:
+            backend = EnvironmentType(backend).value
+            require_enabled_environment(backend)
+        except (DisabledEnvironmentError, ValueError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+        from oddish.core.quota_admission import admit_organization_qa_trials
+
+        await admit_organization_qa_trials(
+            session, task.org_id, count=ATTACKS_PER_LAUNCH
+        )
+        # Black box: the attacker gets no audit findings or other knowledge of
+        # the grader beyond what any solver of the task has. White-box attacks
+        # also get the grader's code, added by the worker from the pinned copy.
+        template = (
+            resources.files("oddish.analyze")
+            .joinpath("adversarial_prompt.txt")
+            .read_bytes()
+            .decode("utf-8")
+        )
+        if created_snapshot_key is not None:
+            version.task_s3_key = created_snapshot_key.rsplit("/", 1)[0] + "/"
+        # One reservation under the task lock: rows added below are not
+        # flushed yet, so a second reservation would return the same index.
+        first_index = await reserve_next_trial_index(session, task_id=task.id)
+        trials: list[TrialModel] = []
+        for offset in range(ATTACKS_PER_LAUNCH):
+            next_index = first_index + offset
+            prompt_text, white_box = attack_prompt(template, offset)
+            trials.append(
+                TrialModel(
+                    id=f"{task.id}-{next_index}",
+                    name=f"{task.name}-adversarial-qa-{next_index}",
+                    task_id=task.id,
+                    task_version_id=version_id,
+                    experiment_id=experiment_id,
+                    org_id=task.org_id,
+                    billed_user_id=None,
+                    agent=execution.agent,
+                    model=model,
+                    provider=settings.get_provider_for_trial(execution.agent, model),
+                    queue_key=settings.get_queue_key_for_trial(execution.agent, model),
+                    environment=backend,
+                    kind=ADVERSARIAL_TRIAL_KIND,
+                    status=TrialStatus.QUEUED,
+                    max_attempts=max_trial_attempts,
+                    harbor_config={
+                        **environment_config,
+                        "task_artifact": artifact,
+                        "agent_config": execution.agent_overrides(),
+                        ADVERSARIAL_TRIAL_KIND: {
+                            "request_id": request_id,
+                            "requested_by_user_id": requested_by_user_id,
+                            "task_content_hash": version.content_hash,
+                            "prompt_version": ATTACK_PROMPT_VERSION,
+                            "prompt_text": prompt_text,
+                            "prompt_sha256": hashlib.sha256(
+                                prompt_text.encode("utf-8")
+                            ).hexdigest(),
+                            "white_box": white_box,
+                            "execution": {
+                                **execution.model_dump(mode="json", exclude_none=True),
+                                "model": model,
+                                "environment": backend,
+                                "source_trial_id": source_run.id
+                                if source_run
+                                else None,
+                                "max_attempts": max_trial_attempts,
+                            },
+                        },
+                    },
+                )
+            )
+        session.add_all(trials)
+        await session.flush()
+        for trial in trials:
+            await enqueue_trial_worker_job(
+                session,
+                trial_id=trial.id,
+                queue_key=trial.queue_key,
+                org_id=task.org_id,
+                max_attempts=max_trial_attempts,
+            )
+        # The published verdict stays: QA never reads attacks.
+        # Keep the snapshot on an ambiguous commit outcome; deleting committed
+        # execution evidence would be worse than leaving an unreferenced object.
+        retain_snapshot = True
+        await session.commit()
+        return {
+            "status": "queued",
+            "trial_id": trials[0].id,
+            "trial_ids": [trial.id for trial in trials],
+            "task_id": task_id,
+            "task_version_id": version_id,
+        }
+    finally:
+        if not retain_snapshot:
+            await session.rollback()
+            if created_snapshot_key is not None:
+                await storage.delete_object(created_snapshot_key)
+
+
+async def _existing_adversarial_result(
+    session: AsyncSession,
+    *,
+    task_id: str,
+    version_id: str,
+    request_id: str,
+) -> dict | None:
+    """Resolve idempotency under the task lock, before and after source transfer.
+
+    Both answers name the whole batch, in launch order, so a retry gets the
+    same ``trial_id`` and ``trial_ids`` the original launch returned.
+    """
+    request_id_column = TrialModel.harbor_config["adversarial"]["request_id"].astext
+    status = "existing"
+    batch_request_id: str | None = request_id
+    live = None
+    if not (
+        await session.execute(
+            select(TrialModel.id).where(
+                *adversarial_conditions(task_id, None),
+                request_id_column == request_id,
+            )
+        )
+    ).first():
+        # A batch runs until its replays settle too; a replay names its attack.
+        live = (
+            await session.execute(
+                select(TrialModel.id, TrialModel.harbor_config)
+                .where(
+                    *adversarial_conditions(task_id, version_id, replays=None),
+                    TrialModel.status.in_(ACTIVE_TRIAL_STATUSES),
+                )
+                .order_by(TrialModel.created_at.desc(), TrialModel.id.desc())
+                .limit(1)
+            )
+        ).one_or_none()
+        if live is None:
+            return None
+        target = replay_target(live.harbor_config)
+        attack_config = (
+            live.harbor_config
+            if target is None
+            else await session.scalar(
+                select(TrialModel.harbor_config).where(TrialModel.id == target[0])
+            )
+        )
+        batch_request_id = ((attack_config or {}).get("adversarial") or {}).get(
+            "request_id"
+        )
+        status = "already_running"
+    rows = (
+        await session.execute(
+            select(TrialModel.id, TrialModel.task_version_id).where(
+                *adversarial_conditions(task_id, None),
+                request_id_column == batch_request_id,
+            )
+        )
+    ).all()
+    if not rows:
+        if live is None:
+            return None
+        # The replay's attack is gone (deleted or superseded); the live replay
+        # alone still keeps the batch running.
+        return {
+            "status": status,
+            "trial_id": live.id,
+            "trial_ids": [live.id],
+            "task_id": task_id,
+            "task_version_id": str(version_id),
+        }
+    if status == "existing" and rows[0].task_version_id != version_id:
+        raise HTTPException(
+            409, "request_id was already used for a different task version"
+        )
+    # Ids end in the launch's reserved trial index; sort numerically.
+    trial_ids = sorted(
+        (row.id for row in rows), key=lambda trial_id: int(trial_id.rsplit("-", 1)[1])
+    )
+    return {
+        "status": status,
+        "trial_id": trial_ids[0],
+        "trial_ids": trial_ids,
+        "task_id": task_id,
+        "task_version_id": str(rows[0].task_version_id),
+    }

@@ -459,6 +459,7 @@ async def list_task_trials_for_task(
     *,
     version: int | None = None,
     org_id: str | None = None,
+    include_adversarial: bool = False,
 ) -> list[TrialResponse]:
     """List all trials for a task with their responses.
 
@@ -467,7 +468,10 @@ async def list_task_trials_for_task(
     org-scoped caller needs no separate task lookup on the common path.
 
 
-    Superseded trials (rows replaced by a user-driven retry) are
+    The optional adversarial evidence includes superseded attacks so their
+    findings keep working source links. The default response is unchanged.
+
+    Superseded solver trials (rows replaced by a user-driven retry) are
     hidden by default so the public trial list collapses the rerun
     chain down to the live attempt -- matching what
     ``get_task_status_trials`` returns for the dashboard.
@@ -481,8 +485,9 @@ async def list_task_trials_for_task(
     """
     conditions = [
         TrialModel.task_id == task_id,
-        TrialModel.superseded_by_trial_id.is_(None),
-        TrialModel.kind == "agent",
+        (
+            (TrialModel.kind == "agent") & TrialModel.superseded_by_trial_id.is_(None)
+        ) | (TrialModel.kind == "adversarial" if include_adversarial else False),
     ]
     if org_id is not None:
         conditions.append(TaskModel.org_id == org_id)

@@ -644,6 +644,38 @@ class FullQARunRequest(BaseModel):
     expected_version_id: str = Field(min_length=1)
 
 
+class AdversarialRunRequest(BaseModel):
+    """Launch an adversarial attack on the grader of one task version.
+
+    ``request_id`` is the caller's durable identity for the launch: repeating
+    it returns the same trial, and a new value is an explicit rerun.
+    """
+
+    expected_version_id: str = Field(min_length=1)
+    request_id: str = Field(min_length=1, max_length=128)
+    experiment_id: str | None = None
+    execution: TrialSpec | None = None
+    max_trial_attempts: int = Field(1, ge=1, le=3)
+    environment: Literal["modal", "daytona"] | None = Field(
+        None,
+        description="Sandbox override. Null inherits the selected version's latest ordinary run, then the worker default.",
+    )
+
+    @model_validator(mode="after")
+    def reject_disabled_environment(self) -> "AdversarialRunRequest":
+        require_enabled_environment(self.environment)
+        if self.execution and is_nop_oracle_agent(self.execution.agent):
+            raise ValueError("An adversarial run requires a model agent")
+        if (
+            self.environment
+            and self.execution
+            and self.execution.environment
+            and self.environment != self.execution.environment
+        ):
+            raise ValueError("environment and execution.environment must agree")
+        return self
+
+
 class QAEvalCreateRequest(TrialSpec):
     """Replay one QA prompt version over exact historical solver trials:
     picked ones (a subset run) or every counted golden's."""

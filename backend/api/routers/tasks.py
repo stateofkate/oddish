@@ -37,6 +37,7 @@ from oddish.core.endpoints import (
     browse_experiment_options_core,
     browse_task_facets_core,
     browse_tasks_core,
+    launch_adversarial_trial_core,
     rerun_pre_trial_audit_core,
     build_task_sweep_response,
     cancel_task_qa_core,
@@ -151,6 +152,7 @@ from oddish.schemas import (
     ExperimentTrialPageResponse,
     ExperimentOptionsResponse,
     QARunRequest,
+    AdversarialRunRequest,
     FullQARunRequest,
     TaskBrowseFacets,
     TaskBrowseCountResponse,
@@ -1830,6 +1832,29 @@ async def rerun_pre_trial_audit(
             task_id=task_id,
             org_id=auth.org_id,
             environment=body.environment if body is not None else None,
+        )
+
+
+@router.post("/tasks/{task_id}/qa/adversarial")
+async def launch_adversarial_trial(
+    task_id: str,
+    body: AdversarialRunRequest,
+    auth: Annotated[AuthContext, Depends(require_auth)],
+) -> dict:
+    """Queue an adversarial attack on the task's grader for the expected version."""
+    auth.require_scope(APIKeyScope.TASKS, allow_member_created_task_key=False)
+    async with get_session() as session:
+        return await launch_adversarial_trial_core(
+            session,
+            task_id=task_id,
+            org_id=auth.org_id,
+            expected_version_id=body.expected_version_id,
+            request_id=body.request_id,
+            environment=body.environment,
+            experiment_id=body.experiment_id,
+            execution=body.execution,
+            max_trial_attempts=body.max_trial_attempts,
+            requested_by_user_id=auth.user_id,
         )
 
 

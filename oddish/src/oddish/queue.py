@@ -11,6 +11,7 @@ from sqlalchemy import and_, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from oddish.core.sweeps import resolve_trial_model
 from oddish.config import (
     ANALYSIS_PIPELINE_QUEUE_KEY,
     NOP_ORACLE_QUEUE_KEY,
@@ -917,7 +918,7 @@ async def create_task(
     trial_rows: list[dict[str, Any]] = []
     worker_job_requests: list[EnqueueRequest] = []
     for i, spec in enumerate(submission.trials):
-        model = settings.normalize_trial_model(spec.agent, spec.model)
+        model = resolve_trial_model(spec)
         provider = settings.get_provider_for_trial(spec.agent, model)
         queue_key = settings.get_queue_key_for_trial(spec.agent, model)
         trial_id = f"{task_id}-{i}"
@@ -1193,7 +1194,7 @@ async def append_trials_to_task(
     for spec, superseded_ids in zip(
         submission.trials, supersede_failed_trial_ids, strict=True
     ):
-        model = settings.normalize_trial_model(spec.agent, spec.model)
+        model = resolve_trial_model(spec)
         provider = settings.get_provider_for_trial(spec.agent, model)
         queue_key = settings.get_queue_key_for_trial(spec.agent, model)
         trial_id = f"{task.id}-{next_index}"

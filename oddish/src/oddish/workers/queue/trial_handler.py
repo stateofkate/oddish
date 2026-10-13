@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 import asyncio
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import partial
@@ -86,6 +87,15 @@ from oddish.worker.probe_staging import (
     PROBE_HARNESS_DIR,
     apply_analysis_overlay,
     stage_cli_mount,
+)
+from oddish.core.adversarial import (
+    ADVERSARIAL_TRIAL_KIND,
+    REPLAY_AGENT,
+    queue_exploit_replay,
+    replay_target,
+    read_exploit_script,
+    read_leak_check,
+    record_replay_findings,
 )
 from oddish.workers.analysis_trials import ANALYSIS_ARTIFACTS, is_analysis_kind
 from oddish.workers.harbor.ephemeral import HarborOverrideImportError
@@ -1005,12 +1015,58 @@ async def _store_trial_results(
         return terminal, terminal, event
 
 
+async def _queue_attack_replay(trial_id: str) -> None:
+    """Replay a settled attack's exploit.sh.
+
+    The script is downloaded without holding the task lock.
+    """
+    async with get_session() as session:
+        attack = await session.get(TrialModel, trial_id)
+        script = (
+            await read_exploit_script(get_storage_client(), attack)
+            if attack is not None
+            else None
+        )
+    async with get_session() as session:
+        task_id = await session.scalar(
+            select(TrialModel.task_id).where(TrialModel.id == trial_id)
+        )
+        task = await session.get(TaskModel, task_id, with_for_update=True)
+        attack = await session.get(TrialModel, trial_id, with_for_update=True)
+        if (
+            script is not None
+            and task is not None
+            and attack is not None
+            and attack.status in (TrialStatus.SUCCESS, TrialStatus.FAILED)
+            and attack.harbor_stage != "cancelled"
+        ):
+            await queue_exploit_replay(
+                session, task=task, attack=attack, script=script
+            )
+
+
+async def _record_replay_findings(trial_id: str) -> None:
+    """Record what a settled replay demonstrated; the leak list is read unlocked."""
+    async with get_session() as session:
+        replay = await session.get(TrialModel, trial_id)
+        leaked = (
+            await read_leak_check(get_storage_client(), replay)
+            if replay is not None
+            else []
+        )
+    async with get_session() as session:
+        replay = await session.get(TrialModel, trial_id)
+        if replay is not None and replay.harbor_stage != "cancelled":
+            await record_replay_findings(session, replay, leaked)
+
+
 async def _run_post_trial_hooks(trial_id: str) -> None:
     from oddish.core.verdict_state import reset_verdict
     from oddish.queue import maybe_start_qa_stage
     from oddish.workers.analysis_trials import handle_analysis_trial_settled
 
     trial_kind = "agent"
+    settled_attack = settled_replay = False
     try:
         async with get_session() as session:
             if (
@@ -1028,7 +1084,15 @@ async def _run_post_trial_hooks(trial_id: str) -> None:
             ):
                 return
             trial_kind = trial.kind or "agent"
-            if trial_kind == "agent":
+            if trial_kind == ADVERSARIAL_TRIAL_KIND:
+                # QA never reads attacks. An attack queues its replay below,
+                # after this lock is released, because that reads storage.
+                # A FAILED task still replays: findings do not change its status.
+                if trial.agent == REPLAY_AGENT:
+                    settled_replay = True
+                elif task is not None:
+                    settled_attack = True
+            elif trial_kind == "agent":
                 if task is None or task.status == TaskStatus.FAILED:
                     return
                 # A retried trial's classification describes an earlier attempt
@@ -1082,12 +1146,16 @@ async def _run_post_trial_hooks(trial_id: str) -> None:
                     console.print(
                         f"[blue]Task {trial.task_id} transitioned to next stage[/blue]"
                     )
+        if settled_attack:
+            await _queue_attack_replay(trial_id)
+        if settled_replay:
+            await _record_replay_findings(trial_id)
     except Exception:  # noqa: BLE001 — the trial is already terminal;
         # a hook failure must not fail the settled job. The cleanup sweep
-        # re-runs stage advancement.
+        # re-runs stage advancement and the adversarial hooks.
         logger.exception("post-trial hooks failed for trial %s", trial_id)
 
-    if trial_kind != "agent":
+    if trial_kind not in ("agent", ADVERSARIAL_TRIAL_KIND):
         try:
             await handle_analysis_trial_settled(trial_id)
         except Exception:  # noqa: BLE001 — the cleanup sweep re-runs importers
@@ -1665,6 +1733,68 @@ async def settle_compute_costs(
         )
 
 
+def _stage_exploit_replay(task_dir: Path, *, pins: dict) -> None:
+    """Make the attacker's exploit the copy's only solution, for Harbor's oracle agent.
+
+    The real solution's files leave the copy; only their hashes stay, for
+    ``write_leak_check``.
+
+    Multi-step tasks are refused: the oracle would run each step's own
+    solution, so a pass would not show the exploit worked.
+    """
+    from harbor.models.task.task import Task
+
+    script = pins.get("exploit_text")
+    if (
+        not isinstance(script, str)
+        or hashlib.sha256(script.encode("utf-8")).hexdigest()
+        != pins.get("exploit_sha256")
+    ):
+        raise ValueError("Exploit replay script is missing or does not match its hash")
+    if Task(task_dir).config.steps:
+        raise ValueError("Exploit replay supports single-step tasks only")
+    from oddish.core.adversarial import REPLAY_SOLVE_SH, protected_hashes
+
+    protected = protected_hashes(task_dir)
+    solution = task_dir / "solution"
+    if solution.is_symlink() or solution.is_file():
+        solution.unlink()
+    elif solution.exists():
+        shutil.rmtree(solution)
+    solution.mkdir()
+    (solution / "exploit.sh").write_text(script)
+    (solution / "protected.sha256").write_text(protected)
+    (solution / "solve.sh").write_text(REPLAY_SOLVE_SH)
+    for name in ("exploit.sh", "solve.sh"):
+        (solution / name).chmod(0o755)
+
+
+def _stage_adversarial_task(
+    task_dir: Path, *, prompt_text: str, white_box: bool = False
+) -> None:
+    """Add the attack to the disposable copy verified by the shared downloader.
+
+    ``task_dir`` must be a disposable copy. Only ``instruction.md`` changes, so
+    the requirements, environment, permissions and grader stay as uploaded.
+    A white-box attack also gets the grader's code after the instruction.
+    """
+    import tomllib
+
+    from oddish.core.adversarial import grader_code_section
+
+    # Replays run single-step tasks only; fail before any sandbox or model spend.
+    config = task_dir / "task.toml"
+    if config.is_file() and tomllib.loads(config.read_text()).get("steps"):
+        raise ValueError("Adversarial QA supports single-step tasks only")
+    instruction = task_dir / "instruction.md"
+    content = prompt_text + instruction.read_text()
+    if white_box:
+        content += grader_code_section(task_dir)
+    if instruction.is_symlink():
+        instruction.unlink()
+    instruction.write_text(content)
+
+
 async def _prepare_trial_task(
     *, trial_id: str, prepared_trial: PreparedTrialRun
 ) -> PreparedTrialTask:
@@ -1686,6 +1816,7 @@ async def _prepare_trial_task(
             task_id=prepared_trial.task_id,
             task_s3_key=prepared_trial.task_s3_key,
             task_path=prepared_trial.task_path,
+            artifact=(prepared_trial.trial_harbor_config or {}).get("task_artifact"),
         )
         if temp_task_dir:
             console.print(f"[dim]Downloaded task from S3: {resolved_task_s3_key}[/dim]")
@@ -1697,7 +1828,44 @@ async def _prepare_trial_task(
         trial_kind = prepared_trial.trial_kind
         probe_agent_env: dict[str, str] | None = None
 
-        if is_analysis_kind(trial_kind):
+        if trial_kind == ADVERSARIAL_TRIAL_KIND:
+            # Not an analysis kind: the attacker runs the task's own
+            # environment and grader, so only the instruction changes. The
+            # canonical task is never written; the change lands on a copy.
+            if temp_task_dir is None:
+                temp_task_dir = Path(tempfile.mkdtemp(prefix=f"attack-{trial_id}-"))
+                copy_dir = temp_task_dir / task_path_to_run.name
+                shutil.copytree(task_path_to_run, copy_dir, symlinks=True)
+                task_path_to_run = copy_dir
+            artifact = harbor_config.get("task_artifact")
+            if artifact and "sha256" in artifact:
+                from oddish.db.storage import task_directory_sha256
+                if task_directory_sha256(task_path_to_run) != artifact["sha256"]:
+                    raise ValueError("Local task contents changed after this run was queued")
+            prompt = harbor_config.get(ADVERSARIAL_TRIAL_KIND)
+            if replay_target(harbor_config) is not None:
+                _stage_exploit_replay(task_path_to_run, pins=prompt)
+            else:
+                if (
+                    not isinstance(prompt, dict)
+                    or not isinstance(prompt.get("prompt_text"), str)
+                    or not prompt["prompt_text"]
+                    or not isinstance(prompt.get("prompt_sha256"), str)
+                ):
+                    raise ValueError(
+                        "Adversarial prompt snapshot is missing; submit a new adversarial run"
+                    )
+                if (
+                    hashlib.sha256(prompt["prompt_text"].encode("utf-8")).hexdigest()
+                    != prompt["prompt_sha256"]
+                ):
+                    raise ValueError("Adversarial prompt snapshot hash mismatch")
+                _stage_adversarial_task(
+                    task_path_to_run,
+                    prompt_text=prompt["prompt_text"],
+                    white_box=prompt.get("white_box") is True,
+                )
+        elif is_analysis_kind(trial_kind):
             # Every overlay mutates the task, so a mounted/canonical local path
             # gets the same disposable copy as an S3-backed task.
             if temp_task_dir is None:
@@ -2249,6 +2417,12 @@ async def run_trial_job(
             if trial_kind in ("qa", "qa_eval")
             else None
         )
+
+        protected = task_path_to_run / "solution" / "protected.sha256"
+        if execution.outcome and execution.outcome.job_dir and protected.is_file():
+            from oddish.core.adversarial import write_leak_check
+
+            write_leak_check(execution.outcome.job_dir, protected.read_text())
 
         # Upload trial results to S3.
         trial_s3_key = None

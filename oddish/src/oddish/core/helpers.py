@@ -890,7 +890,10 @@ def get_task_status_trials(
         trial
         for trial in task.trials
         if trial.superseded_by_trial_id is None
-        and (getattr(trial, "kind", "agent") or "agent") != "qa_eval"
+        # Attacks and their replays are QA evidence, not solver attempts; the
+        # task page lists them through ``include_adversarial`` instead.
+        and (getattr(trial, "kind", "agent") or "agent")
+        not in ("qa_eval", "adversarial")
         and not (exclude_combine_copies and is_combine_copy(trial))
     ]
     if effective is None:

@@ -16,6 +16,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
+from oddish.core.adversarial import execution_agent
 from oddish.config import HARBOR_DEFAULT_SHA, HARBOR_DEFAULT_SOURCE, settings
 from oddish.core.task_browse_summary import refresh_task_browse_summaries
 from oddish.db import (
@@ -278,7 +279,7 @@ async def start_trial_attempt(
         task.status = TaskStatus.RUNNING
         task.started_at = utcnow()
 
-    trial_agent = trial.agent
+    trial_agent = execution_agent(trial.agent)
     # Historical bare rows retain their identity and queue. Their persisted
     # provider selects only the execution spelling in load_trial_context.
     if not (trial.model or "").strip().lower().startswith("claude-"):
@@ -340,9 +341,9 @@ async def load_trial_context(
         task_path=task_path,
         task_s3_key=task_s3_key,
         task_id=task_id,
-        trial_agent=trial.agent,
+        trial_agent=execution_agent(trial.agent),
         trial_model=settings.model_for_stored_trial(
-            trial.agent, trial.model, getattr(trial, "provider", None)
+            execution_agent(trial.agent), trial.model, getattr(trial, "provider", None)
         ),
         trial_environment=trial.environment,
         trial_harbor_config=trial.harbor_config,
