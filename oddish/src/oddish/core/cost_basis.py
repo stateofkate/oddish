@@ -76,20 +76,16 @@ def not_combine_copy_filter(trial=TrialModel):
     )
 
 
-def first_party_spend_filter():
+def first_party_spend_filter(*, kinds: tuple[str, ...] = (AGENT_TRIAL_KIND,)):
     """Select actual Oddish executions, excluding non-spend materializations.
 
-    execution twice. Spend on a cost-excluded model, or homed in a
-    cost-excluded experiment, was never really paid for and admins have said
-    so (``core.cost_exclusions``). Platform analysis runs (``kind != 'agent'``)
-    are the platform's own spend, not the user's -- they are reported separately
-    via :func:`analysis_spend_filter`, never mixed into agent spend. Keep this
-    eligibility rule shared by quota accounting and cost reporting so both
-    surfaces count the same execution population.
+    Reporting and personal quotas default to ordinary solver spend. Organization
+    quotas include adversarial QA when QA cost inclusion is enabled. Both retain
+    the same imported/copy and administrator cost exclusions.
     """
     return and_(
         TrialModel.origin == TrialOrigin.ODDISH,
-        TrialModel.kind == AGENT_TRIAL_KIND,
+        TrialModel.kind.in_(kinds),
         not_combine_copy_filter(),
         not_excluded_llm_key_filter(),
         not_excluded_model_filter(),

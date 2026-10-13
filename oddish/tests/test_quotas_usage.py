@@ -70,8 +70,10 @@ def test_quota_window_start_is_a_rolling_24h_boundary():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["agent", "adversarial"])
 async def test_sum_cost_usd_excludes_inflight_before_window_and_null_billed(
     cleanup_task_ids,
+    kind,
 ):
     task_id = f"quota-sum-{_RUN}"
     cleanup_task_ids.append(task_id)
@@ -90,6 +92,9 @@ async def test_sum_cost_usd_excludes_inflight_before_window_and_null_billed(
             billed_user_id=billed_user,
         )
         await session.flush()
+
+        for index in range(8):
+            (await session.get(TrialModel, f"{task_id}-{index}")).kind = kind
 
         counted_in_window_one = await session.get(TrialModel, f"{task_id}-0")
         counted_in_window_one.finished_at = now
@@ -134,8 +139,8 @@ async def test_sum_cost_usd_excludes_inflight_before_window_and_null_billed(
         )
         grouped = await sum_cost_usd_by_user(session, org_id, quota_window_start(now))
 
-    assert settled_in_window == Decimal("9.30")
-    assert grouped[billed_user] == Decimal("9.30")
+    assert settled_in_window == (Decimal("9.30") if kind == "agent" else 0)
+    assert grouped.get(billed_user, 0) == settled_in_window
 
 
 @pytest.mark.asyncio

@@ -508,9 +508,7 @@ async def test_effective_limits_propagates_non_missing_table_sql_errors(monkeypa
     async def _boom(_session):
         raise ProgrammingError("SELECT bad", {}, Exception("syntax error"))
 
-    monkeypatch.setattr(
-        quotas_mod, "_bump_aware_limits_by_org_user_all_orgs", _boom
-    )
+    monkeypatch.setattr(quotas_mod, "_bump_aware_limits_by_org_user_all_orgs", _boom)
     async with get_session() as session:
         with pytest.raises(ProgrammingError):
             await quotas_mod.effective_limits_by_org_user_all_orgs(session)
@@ -528,11 +526,120 @@ async def test_effective_limits_degrades_only_on_missing_table(monkeypatch):
     async def _missing(_session):
         raise ProgrammingError("SELECT x", {}, _UndefinedTableError("no such table"))
 
-    monkeypatch.setattr(
-        quotas_mod, "_bump_aware_limits_by_org_user_all_orgs", _missing
-    )
+    monkeypatch.setattr(quotas_mod, "_bump_aware_limits_by_org_user_all_orgs", _missing)
     async with get_session() as session:
         # Falls back to the base-only read rather than raising.
         assert isinstance(
             await quotas_mod.effective_limits_by_org_user_all_orgs(session), dict
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("include_analysis", [False, True])
+@pytest.mark.parametrize("status", ["success", "failed", "cancelled"])
+async def test_adversarial_cost_counts_only_in_organization_qa_budget(
+    session, monkeypatch, include_analysis, status
+):
+    from oddish.db import ExperimentModel, TrialStatus, utcnow
+    from oddish.core.quotas import (
+        inflight_reserved_usd,
+        inflight_trial_count_by_org_user_all_orgs,
+        org_inflight_reserved_usd,
+    )
+
+    monkeypatch.setattr(settings, "quota_counts_analysis_and_compute", include_analysis)
+    monkeypatch.setattr(settings, "pending_trial_reservation_usd", Decimal("0.25"))
+    key = "attack-cost-" + uuid.uuid4().hex[:12]
+    session.add(ExperimentModel(id=key, name=key))
+    session.add(TaskModel(id=key, name=key, user="test", task_path="p", org_id=key))
+    await session.flush()
+    trial = TrialModel(
+        id=key + "-1",
+        name=key,
+        task_id=key,
+        experiment_id=key,
+        org_id=key,
+        billed_user_id=key,
+        agent="codex",
+        model="gpt-5",
+        provider="openai",
+        queue_key="test",
+        kind="adversarial",
+        status=TrialStatus.QUEUED,
+    )
+    session.add(trial)
+    await session.flush()
+    assert await inflight_reserved_usd(session, key, key) == 0
+    assert (key, key) not in await inflight_trial_count_by_org_user_all_orgs(session)
+    assert await org_inflight_reserved_usd(session, key) == (
+        Decimal("0.25") if include_analysis else 0
+    )
+    trial.cost_usd = 0.1
+    await session.flush()
+    start = utcnow() - timedelta(hours=1)
+    assert await sum_org_cost_usd(session, key, start) == 0
+    assert await org_inflight_reserved_usd(session, key) == (
+        Decimal("0.25") if include_analysis else 0
+    )
+    trial.status = TrialStatus.FAILED if status == "cancelled" else TrialStatus(status)
+    if status == "cancelled":
+        trial.harbor_stage = "cancelled"
+    trial.finished_at = utcnow()
+    trial.cost_usd = 0.5
+    await session.flush()
+    start = utcnow() - timedelta(hours=1)
+    assert await sum_cost_usd(session, key, key, start) == 0
+    assert await sum_org_cost_usd(session, key, start) == (
+        Decimal("0.5") if include_analysis else 0
+    )
+    assert key not in await sum_cost_usd_by_user(session, key, start)
+    assert (key, key) not in await sum_cost_usd_by_org_user_all_orgs(session, start)
+    assert await inflight_reserved_usd(session, key, key) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("include_qa", [False, True])
+async def test_organization_qa_compute_has_no_personal_payer(
+    session, monkeypatch, include_qa
+):
+    from oddish.db import ExperimentModel, TrialStatus, utcnow
+
+    monkeypatch.setattr(settings, "quota_counts_analysis_and_compute", include_qa)
+    key = "qa-compute-" + uuid.uuid4().hex[:12]
+    now = utcnow()
+    session.add(ExperimentModel(id=key, name=key))
+    session.add(TaskModel(id=key, name=key, user="test", task_path="p", org_id=key))
+    await session.flush()
+    trial = TrialModel(
+        id=key + "-attack",
+        name=key,
+        task_id=key,
+        experiment_id=key,
+        org_id=key,
+        billed_user_id=None,
+        agent="codex",
+        provider="openai",
+        queue_key="test",
+        kind="adversarial",
+        status=TrialStatus.SUCCESS,
+        cost_usd=0.5,
+        finished_at=now,
+    )
+    compute = _modal(org_id=key, billed_user_id=None, cost_usd="0.20", finished_at=now)
+    compute.trial_id = trial.id
+    # A payer copied onto the attack's compute still must not reach a person.
+    paid = _modal(
+        org_id=key, billed_user_id="requester", cost_usd="0.30", finished_at=now
+    )
+    paid.trial_id = trial.id
+    session.add_all([trial, compute, paid])
+    await session.flush()
+    start = now - timedelta(hours=1)
+    assert await sum_org_cost_usd(session, key, start) == (
+        Decimal("1.00") if include_qa else 0
+    )
+    assert await sum_cost_usd(session, key, "requester", start) == 0
+    assert "requester" not in await sum_cost_usd_by_user(session, key, start)
+    assert (key, "requester") not in await sum_cost_usd_by_org_user_all_orgs(
+        session, start
+    )

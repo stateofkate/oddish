@@ -115,7 +115,11 @@ def _active_trial_predicates(
 ) -> list:
     predicates = [
         TrialModel.org_id == org_id,
-        TrialModel.kind == "agent",
+        TrialModel.kind.in_(
+            ("agent", "adversarial")
+            if scope == "org" and settings.quota_counts_analysis_and_compute
+            else ("agent",)
+        ),
         TrialModel.finished_at.is_(None),
         TrialModel.deleted_at.is_(None),
         TrialModel.superseded_by_trial_id.is_(None),
@@ -350,6 +354,14 @@ async def _reconcile_cancelled_tasks(
                 and trial.billed_user_id != billed_user_id
             )
         )
+    }
+    # A cancelled attack must not settle its task: solver work may be finished.
+    # Such tasks stay preserved so QA admission is re-entered below.
+    cancelled_ids = set(result["cancelled_trial_ids"])
+    preserved_task_ids |= set(task_ids) - {
+        trial.task_id
+        for trial in trials
+        if trial.id in cancelled_ids and trial.kind != "adversarial"
     }
     exhausted_task_ids = [
         task_id for task_id in task_ids if task_id not in preserved_task_ids

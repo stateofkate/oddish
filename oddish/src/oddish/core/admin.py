@@ -1817,7 +1817,12 @@ async def _qa_cost_time_series(
             per_bucket=type_per_bucket,
             totals=type_totals,
             trials_per_bucket=jobs_per_bucket,
-            labels={key: key.replace("_", " ").title() for key in type_totals},
+            labels={
+                key: "Adversarial QA"
+                if key == "adversarial"
+                else key.replace("_", " ").title()
+                for key in type_totals
+            },
         ),
     )
 

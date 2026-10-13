@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from unittest.mock import AsyncMock
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -344,7 +345,10 @@ async def test_user_quota_cancels_payer_trials_and_advances_preserved_tasks(
     assert mixed_task.verdict_status == VerdictStatus.RUNNING
     advance_task = await session.get(TaskModel, advance_task_id)
     assert advance_task.status == TaskStatus.COMPLETED
-    assert advance_task.verdict_status is None
+    # The existing baseline rule publishes rejection when the cancelled nop
+    # leaves no valid baseline evidence. Completion means the decision was saved.
+    assert advance_task.verdict_status == VerdictStatus.SUCCESS
+    assert advance_task.verdict["is_good"] is False
     qa_jobs = (
         await session.scalars(
             select(WorkerJobModel).where(
@@ -763,3 +767,86 @@ async def test_settlement_retry_skips_when_quota_is_not_enforced(monkeypatch):
         == 0
     )
     assert check_finished
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scope", ["user", "org"])
+@pytest.mark.parametrize("include_qa", [False, True])
+async def test_budget_cancels_adversarial_run_and_preserves_cost(
+    session, monkeypatch, scope, include_qa
+):
+    monkeypatch.setattr(settings, "quota_counts_analysis_and_compute", include_qa)
+    key = "attack-budget-" + uuid.uuid4().hex[:8]
+    monkeypatch.setattr(
+        quota_enforcement,
+        "get_effective_org_limit",
+        AsyncMock(return_value=Decimal("0.5") if scope == "org" else None),
+    )
+    monkeypatch.setattr(
+        quota_enforcement, "get_effective_limit", AsyncMock(return_value=Decimal("0.5"))
+    )
+    session.add(ExperimentModel(id=key, name=key, org_id=key))
+    session.add(
+        TaskModel(
+            id=key,
+            name=key,
+            user="test",
+            task_path="p",
+            org_id=key,
+            status=TaskStatus.RUNNING,
+        )
+    )
+    await session.flush()
+    trial = _trial(
+        trial_id=key + "-1",
+        task_id=key,
+        experiment_id=key,
+        org_id=key,
+        billed_user_id=key,
+        status=TrialStatus.RUNNING,
+        cost_usd=0.5,
+    )
+    trial.kind = "adversarial"
+    job = _job(
+        subject_table="trials",
+        subject_id=trial.id,
+        kind=WorkerJobKind.TRIAL,
+        modal_id=None,
+    )
+    settled_solver = _trial(
+        trial_id=key + "-solver",
+        task_id=key,
+        experiment_id=key,
+        org_id=key,
+        billed_user_id=key,
+        status=TrialStatus.SUCCESS,
+        cost_usd=0.5,
+        finished_at=datetime.now(timezone.utc),
+    )
+    qa_job = _job(
+        subject_table="tasks", subject_id=key, kind=WorkerJobKind.QA, modal_id=None
+    )
+    session.add_all([trial, job, settled_solver, qa_job])
+    await session.flush()
+    result = await cancel_trials_if_quota_reached(
+        session, org_id=key, billed_user_id=key, caller_trial_id=trial.id
+    )
+    assert result["scope"] == scope
+    cancelled = scope == "org" and include_qa
+    assert result["trials_cancelled"] == int(cancelled)
+    await session.refresh(trial)
+    await session.refresh(job)
+    assert trial.status == (TrialStatus.FAILED if cancelled else TrialStatus.RUNNING)
+    assert trial.harbor_stage == ("cancelled" if cancelled else None)
+    assert trial.cost_usd == 0.5
+    assert job.status == (
+        WorkerJobStatus.CANCELLED if cancelled else WorkerJobStatus.RUNNING
+    )
+    # The attack was the task's last live trial; cancelling it must not fail
+    # the task or cancel its QA after the solver already finished.
+    task = await session.get(TaskModel, key)
+    await session.refresh(task)
+    await session.refresh(qa_job)
+    assert result["tasks_cancelled"] == 0
+    assert task.status != TaskStatus.FAILED
+    assert qa_job.status == WorkerJobStatus.RUNNING

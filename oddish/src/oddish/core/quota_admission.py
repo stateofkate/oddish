@@ -299,3 +299,26 @@ async def admit_trials(
         await _check_user_quota(session, org_id, billed_user_id, count, enforce=enforce)
 
     await _check_org_quota(session, org_id, billed_user_id, count, enforce=enforce)
+
+
+async def admit_organization_qa_trials(
+    session: AsyncSession,
+    org_id: str | None,
+    *,
+    count: int,
+) -> None:
+    """Apply the organization's QA cost policy without a personal payer check."""
+    if (
+        settings.quota_mode == QuotaMode.OFF
+        or org_id is None
+        or count <= 0
+        or not settings.quota_counts_analysis_and_compute
+    ):
+        return
+    await _check_org_quota(
+        session,
+        org_id,
+        None,
+        count,
+        enforce=settings.quota_mode == QuotaMode.ENFORCE,
+    )

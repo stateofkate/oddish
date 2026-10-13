@@ -4,7 +4,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from sqlalchemy import func, select, text, true
+from sqlalchemy import exists, func, or_, select, text, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -91,7 +91,11 @@ def start_of_today_utc(now: datetime | None = None) -> datetime:
 
 
 def _settled_cost_predicates(
-    org_id: str | None, period_start: datetime, *, inclusive_start: bool = False
+    org_id: str | None,
+    period_start: datetime,
+    *,
+    inclusive_start: bool = False,
+    kinds: tuple[str, ...] = ("agent",),
 ) -> list:
     boundary = (
         TrialModel.finished_at >= period_start
@@ -100,9 +104,8 @@ def _settled_cost_predicates(
     )
     return [
         TrialModel.org_id == org_id,
-        TrialModel.kind == "agent",
         boundary,
-        first_party_spend_filter(),
+        first_party_spend_filter(kinds=kinds),
     ]
 
 
@@ -126,6 +129,14 @@ def _quota_counts_analysis_and_compute() -> bool:
     return settings.quota_counts_analysis_and_compute
 
 
+def _not_adversarial_compute():
+    """Attack compute belongs to the org budget, never to whoever clicked."""
+    trials = TrialModel.__table__
+    return ~exists().where(
+        trials.c.id == ModalCostSpanModel.trial_id, trials.c.kind == "adversarial"
+    )
+
+
 def _inflight_trial_kind_filter():
     return (
         true() if _quota_counts_analysis_and_compute() else TrialModel.kind == "agent"
@@ -145,7 +156,13 @@ async def _sum_analysis_and_compute_cost_usd(
     # so new analysis runs keep counting toward caps after the cutover. New
     # trial rows carry billed_user_id NULL: analysis spend is org-level, not
     # any individual's.
+    # Adversarial QA is counted by sum_org_cost_usd's settled-trial query.
+    # Excluding it here avoids counting live spend and reservations together.
     analysis_predicates = [
+        or_(
+            analysis_spend_view.c.source != "trials",
+            analysis_spend_view.c.kind != "adversarial",
+        ),
         analysis_spend_view.c.org_id == org_id,
         _timestamp_in_period(
             analysis_spend_view.c.occurred_at,
@@ -168,7 +185,12 @@ async def _sum_analysis_and_compute_cost_usd(
         analysis_predicates.append(
             analysis_spend_view.c.billed_user_id == billed_user_id
         )
-        compute_predicates.append(ModalCostSpanModel.billed_user_id == billed_user_id)
+        compute_predicates.extend(
+            [
+                ModalCostSpanModel.billed_user_id == billed_user_id,
+                _not_adversarial_compute(),
+            ]
+        )
     analysis = await session.scalar(
         select(func.coalesce(func.sum(analysis_spend_view.c.cost_usd), 0)).where(
             *analysis_predicates
@@ -197,6 +219,10 @@ async def _analysis_and_compute_cost_by_user(
         )
         .where(
             analysis_spend_view.c.org_id == org_id,
+            or_(
+                analysis_spend_view.c.source != "trials",
+                analysis_spend_view.c.kind != "adversarial",
+            ),
             analysis_spend_view.c.billed_user_id.is_not(None),
             _timestamp_in_period(
                 analysis_spend_view.c.occurred_at,
@@ -216,6 +242,7 @@ async def _analysis_and_compute_cost_by_user(
         .where(
             ModalCostSpanModel.org_id == org_id,
             ModalCostSpanModel.billed_user_id.is_not(None),
+            _not_adversarial_compute(),
             ModalCostSpanModel.deleted_at.is_(None),
             ModalCostSpanModel.finished_at.is_not(None),
             ModalCostSpanModel.cost_usd.is_not(None),
@@ -246,6 +273,10 @@ async def _analysis_and_compute_cost_by_org_user(
             func.coalesce(func.sum(analysis_spend_view.c.cost_usd), 0.0),
         )
         .where(
+            or_(
+                analysis_spend_view.c.source != "trials",
+                analysis_spend_view.c.kind != "adversarial",
+            ),
             analysis_spend_view.c.billed_user_id.is_not(None),
             _timestamp_in_period(
                 analysis_spend_view.c.occurred_at,
@@ -266,6 +297,7 @@ async def _analysis_and_compute_cost_by_org_user(
         )
         .where(
             ModalCostSpanModel.billed_user_id.is_not(None),
+            _not_adversarial_compute(),
             ModalCostSpanModel.deleted_at.is_(None),
             ModalCostSpanModel.finished_at.is_not(None),
             ModalCostSpanModel.cost_usd.is_not(None),
@@ -314,7 +346,15 @@ async def sum_org_cost_usd(
     period_start: datetime,
 ) -> Decimal:
     total = await _sum_settled_cost_usd(
-        session, _settled_cost_predicates(org_id, period_start, inclusive_start=True)
+        session,
+        _settled_cost_predicates(
+            org_id,
+            period_start,
+            inclusive_start=True,
+            kinds=("agent", "adversarial")
+            if _quota_counts_analysis_and_compute()
+            else ("agent",),
+        ),
     )
     if _quota_counts_analysis_and_compute():
         total += await _sum_analysis_and_compute_cost_usd(
@@ -456,6 +496,7 @@ def _inflight_predicates(org_id: str | None, billed_user_id: str) -> list:
     return [
         TrialModel.org_id == org_id,
         TrialModel.billed_user_id == billed_user_id,
+        TrialModel.kind != "adversarial",
         _inflight_trial_kind_filter(),
         TrialModel.finished_at.is_(None),
         TrialModel.deleted_at.is_(None),
@@ -511,6 +552,7 @@ async def inflight_trial_count_by_org_user_all_orgs(
         select(TrialModel.org_id, TrialModel.billed_user_id, func.count(TrialModel.id))
         .where(
             TrialModel.billed_user_id.is_not(None),
+            TrialModel.kind != "adversarial",
             _inflight_trial_kind_filter(),
             TrialModel.finished_at.is_(None),
             TrialModel.deleted_at.is_(None),
