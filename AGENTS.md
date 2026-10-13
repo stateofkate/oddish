@@ -649,7 +649,8 @@ withdraws the old verdict and returns the task to RUNNING; admission waits for
 all solver and existing QA jobs, plus audit execution and result publication,
 then creates one replacement QA. `task_audit_pending` checks both live audit jobs
 and the current version's PENDING/QUEUED/RUNNING audit status; automatic admission,
-manual QA, and cleanup share this gate. A terminal audit job alone cannot
+manual QA, and cleanup share this gate. `task_adversarial_pending` follows it the
+same way for the version's adversarial QA (see `docs/adversarial-trials.md`). A terminal audit job alone cannot
 complete the task. Both
 audit and QA settlement re-enter admission. Cleanup requeues QA whose saved
 audit no longer matches instead of repeatedly importing it. Audit writes also
@@ -3651,6 +3652,116 @@ still exposes their execution counts. No request or response fields changed.
 
 The website lives in the separate `abundant-ai/abundant-docs` repository. It imports only approved `docs/customer/` pages and assets. Update these source guides alongside customer-visible changes or explain why no update is needed. Docs importing and publishing must never be required by Oddish CI or merge rules. Internal operations notes stay outside `docs/customer/`.
 
+
+### Adversarial execution and evidence review
+
+`POST /tasks/{task_id}/qa/adversarial` accepts an existing `TrialSpec` as
+`execution`, an optional `experiment_id`, and `max_trial_attempts` (1–3,
+default 1). Omitted execution/model uses the code constant ADVERSARIAL_MODEL
+(openrouter/z-ai/glm-5.3), independently of source solver cost. agent=auto resolves a
+concrete harness/model through shared admission; explicit harnesses still win.
+The latest ordinary model run on the selected version supplies the backend and
+environment overrides, with baselines as fallback. Agent flags and credentials
+are not copied. No recorded backend uses the deployment default. Model
+admission shares `resolve_trial_model` with ordinary trial sweeps. Missing experiment
+uses a normal experiment associated with this version. The legacy
+`environment` field remains accepted. The launch uses ordinary worker enqueueing,
+not analysis-job defaults, and task-defined timeouts. The task lock protects
+version checks and duplicate launches. Automatic attacks run per
+version as described in `docs/adversarial-trials.md`.
+
+Adversarial QA is organization-funded. Launch calls
+`admit_organization_qa_trials`; it checks only the organization cap when
+`ODDISH_QUOTA_COUNTS_ANALYSIS_AND_COMPUTE` is enabled. Personal budgets never
+block or pay for attacks. Trial `billed_user_id` is null; the authenticated
+requester is retained in `harbor_config.adversarial.requested_by_user_id`.
+Reservations, settled model costs and budget cancellation include attacks only
+in the organization's QA quota policy. Personal and unattributed-pool accounting
+exclude them. Organization totals count attack model costs once; QA cost reports
+retain the `adversarial` category with label `Adversarial QA`. Compute costs
+remain separately recorded with no personal payer.
+
+Migration `adversarial_qa_billing_001` moves historical attack and compute
+attribution to the organization without changing costs, preserving the requester
+in trial metadata. Run it before deploying. Downgrade does not restore personal
+charges. The API/storage kind remains `adversarial`; do not add it to
+`ANALYSIS_TRIAL_KINDS`, which would replace the real task with a review sandbox.
+
+Launch releases task/version locks before source hashing or archive transfer,
+then rechecks identity and duplicate requests under fresh locks. Storage returns
+explicit ownership of a newly uploaded snapshot; losing requests delete only
+their upload. Each trial saves exact UTF-8 `prompt_text` and `prompt_sha256` in
+`harbor_config.adversarial`. Workers verify the hash and reuse that text on every
+attempt. Missing snapshots fail with a new-submission instruction; no historical
+prompt is reconstructed from the installed resource. Completed rows remain readable.
+
+Manual QA waits for current-version active attacks, checks their artifacts and
+resets selected attack analyses on forced review. Incomplete attacks require
+`HARNESS_ERROR` regardless of reward; reward equality and demonstrated-disclosure
+finding requirements still apply.
+
+QA reviews ordinary solver and adversarial evidence. Attack-only evidence creates
+a review with `with_verdict=false`: it stores findings and can reject a defective
+task, but cannot accept a task without solver evidence. Reviewer prompts evaluate
+protected-data disclosure separately from grader success. Evidence snapshots,
+validation, and delivery freshness include attacks; missing trajectories and
+execution errors mark their checks incomplete.
+
+The task-trial listing accepts `include_adversarial=true`; the default keeps its
+solver-only contract. The frontend proxy forwards the opt-in query, which also
+retains superseded attacks for finding provenance.
+
+The overview uses `isFindingEvidenceTrial` for source chips and findings, while
+`isReviewableTrial` still owns ordinary solver coverage. Adversarial status is
+derived from trial rows. The signed-in frontend proxy forwards version-pinned
+launches to the same backend route; public read-only views expose no launch action.
+
+
+Adversarial launch pins the selected archive key and ETag in
+harbor_config.task_artifact. Shared download requires If-Match, bypasses
+unverified mounts, and forbids local fallback for a pinned archive. Historical
+loose-file sources are snapshotted with conditional reads plus a second listing;
+the version then points to the snapshot. Missing/ambiguous sources fail admission.
+Local self-hosted sources use a raw file SHA-256 fingerprint. The semantic upload
+hash remains version bookkeeping; no Harbor parser is involved in execution
+identity, and the empty-hook compatibility workaround is removed.
+
+Shared admission/worker routing pin default harness versions from
+ODDISH_HARNESS_VERSIONS; explicit kwargs.version and custom import_path keep their
+choices. The installed-agent setup patch announces a public installation phase
+when constructing the agent environment and restores its original network policy
+before task hooks. Backends without dynamic network policy require preinstalled
+harnesses. The Claude protocol adapter checks its installed LiteLLM version before
+reusing it. No finished solver/oracle container is reused.
+
+### Adversarial review findings
+
+The shared QA result validator requires an adversarial BAD_SUCCESS/BAD_FAILURE
+(or HARNESS_ERROR hidden_file_leak) to include a must_fix action item or cite an
+exploited pre-trial must_fix with evidence. Import rejects the entire inconsistent
+artifact; validated findings force task rejection even if the model says accept.
+Task panel reads derive running review from the selected version's live QA trial;
+the stored verdict queue state is unchanged. Adversarial cards show the review
+explanation and evidence, refresh when QA settles, and show only the latest attack
+for the selected version. The card displays its recorded task version; older
+findings and run links remain available.
+Human feedback applies to findings, not Good/Bad classification labels.
+
+Task-page adversarial launches omit experiment_id. The server resolves the most
+recent non-shadow experiment that ran the pinned version, falling back to the
+newest active task association. Explicit experiment callers retain membership
+validation. The drawer no longer mounts the golden-label editor or its keyboard
+shortcuts; labeling helpers remain used by the dedicated QA evaluation queue.
+
+Manual adversarial launches queue immediately regardless of missing, pending,
+failed, or incorrectly scored oracle/nop baselines. The adversarial endpoint
+adds no bypass flag: all its launches are explicit requests. Ordinary solver
+baseline gates and final QA admission/acceptance rules remain unchanged.
+
+The Adversarial QA Run/Rerun button submits the selected version directly, without
+a settings dialog or execution overrides. Its default is code-owned Fireworks GLM-5.3 through mini-swe-agent;
+ODDISH_ADVERSARIAL_MODEL no longer changes it. Explicit API execution settings
+remain accepted for existing programmatic callers.
 
 ## Execution startup and release identity
 

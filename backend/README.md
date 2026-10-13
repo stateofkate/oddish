@@ -18,6 +18,31 @@ organization. It queues both QA stages through the shared core; no client
 polling is needed to start the second stage. `delivery qa status NAME` uses
 the delivery board's source-check status and existing QA evidence result.
 
+`POST /tasks/{task_id}/qa/adversarial` queues an adversarial attack on the
+task's grader for the version named by `expected_version_id` (409 if the
+version changed). It has the same scope and
+organization rules as `qa/full`; a repeated `request_id` returns the same trial.
+Launch records `auth.user_id` as `requested_by_user_id` in the adversarial
+metadata and leaves `billed_user_id` null. Adversarial QA uses organization QA
+spending; personal budgets cannot block or charge it. When
+`ODDISH_QUOTA_COUNTS_ANALYSIS_AND_COMPUTE` is enabled, admission checks the
+organization's monthly cap and active attacks reserve organization budget.
+Recorded model costs count once, including failed and cancelled attacks.
+Organization-budget cancellation includes attacks under that policy;
+personal-budget cancellation excludes them. Model and compute costs remain
+recorded when quota inclusion is disabled.
+
+Requester identity is retained in each trial's adversarial metadata.
+The UI and QA cost charts label these runs `Adversarial QA`; their stored/API
+kind remains `adversarial`.
+
+Each queued attack stores prompt text and its SHA-256 digest. Workers execute
+that saved text on retries and reject missing or mismatched snapshots before
+sandbox execution. Historical completed rows remain readable; an old queued row
+without a snapshot requires a new submission. Manual QA waits for active attacks
+and checks their evidence before withdrawing the current verdict.
+See [Adversarial trials](../docs/adversarial-trials.md).
+
 ## System Architecture
 
 ### Data flow
@@ -1130,6 +1155,14 @@ deferred, failed, and cancelled cycles; only completed cycles advance
 defers work to the next scheduled invocation. External cancellation propagates.
 These changes do not repair slow GKE queries or alter Slack/endpoint schedules.
 
+
+Adversarial QA uses the existing task trial and review pipeline. The launch API
+accepts explicit execution and experiment settings; attack-only runs are reviewed
+without granting task acceptance. See [Adversarial trials](../docs/adversarial-trials.md)
+for the request and evidence rules. The dashboard displays attack status and
+source links in the task overview. Every new task version is attacked
+automatically and QA waits for the attacks; `ODDISH_ADVERSARIAL_AUTO_PERCENT`
+(default 100, 0 disables) sets the share of versions.
 
 ### Execution provenance
 

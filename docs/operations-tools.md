@@ -183,6 +183,15 @@ are recoverable there too, but its default sandbox does not reproduce a task's
 image and network policy. Obsolete UI routes/components and uncalled internal
 helpers are outside this operational restoration.
 
+## Adversarial fixture replay
+
+Run `python oddish/scripts/adversarial_replay.py replay <task> --exploit <script>
+--output-dir <new-directory>` to retain full replay evidence. Run
+`python oddish/scripts/adversarial_eval.py <runs.jsonl>` to count independently
+reproduced disclosures and grading bypasses, and recorded run costs. See
+[Adversarial trials](adversarial-trials.md#validating-detection) for the input
+format, required evidence, fixture baselines and counter definitions.
+
 ## Exact token count repair
 
 `oddish.core.backfill_token_counts` fills the new 64-bit token columns without

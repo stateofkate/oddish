@@ -5,6 +5,7 @@ from typing import Annotated
 import typer
 from oddish.cli.admin import admin_app
 from oddish.cli.assign import assign
+from oddish.cli.adversarial import adversarial
 from oddish.cli.backfill_analysis import backfill_analysis
 from oddish.cli.cancel import cancel
 from oddish.cli.collect import collect
@@ -60,6 +61,7 @@ qa_app.add_typer(evals_app, name="evals")
 qa_app.add_typer(goldens_app, name="goldens")
 app.add_typer(qa_app, name="qa")
 app.command(name="backfill-analysis")(backfill_analysis)
+app.command()(adversarial)
 app.command()(upload)
 app.command()(preflight)
 app.command(name="ls")(ls)

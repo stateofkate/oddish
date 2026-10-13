@@ -61,6 +61,18 @@ changing trajectory summaries, which retain Sonnet 5. Existing
 `ODDISH_ANALYSIS_MODEL` overrides still apply to QA as well as summaries unless
 `ODDISH_QA_MODEL` is set. Explicit QA eval model selections take precedence.
 
+Adversarial attacks default to `openrouter/z-ai/glm-5.3` through OpenRouter,
+using `OPENROUTER_API_KEY` and the mini-swe-agent harness. The default is fixed by the
+`ADVERSARIAL_MODEL` constant in `core/adversarial.py`. Their automatic harness selection uses the existing model
+provider routing and credentials. `ODDISH_HARNESS_VERSIONS` accepts a JSON object
+mapping harness names to exact versions. Defaults pin Codex 0.159.2, Claude Code
+2.1.285, Gemini CLI 0.62.0 and mini-swe-agent 2.4.6. A submitted
+`agent_config.kwargs.version` overrides that harness's default. On backends with
+dynamic network policy, trusted installation runs before the task's original
+network restrictions resume. Other backends need the selected harness
+preinstalled in the task's clean starting image.
+
+
 For a traced controller that invokes the CLI, optional `ODDISH_TRACE_CONTEXT`
 JSON carries W3C `traceparent` and `tracestate` to API requests. With tracing
 configured on both API and workers, new queue rows retain that parent through
@@ -441,3 +453,14 @@ Alembic downgrade drops the table and irreversibly removes retained setup histor
 Hosted task review DMs reuse the existing Slack sender and
 `ODDISH_ENABLE_SLACK_EXPENSE_NOTIFICATIONS` switch; `task_review_alert_001` adds
 the per-user `task_review_enabled` preference. No new Slack token or schedule is required.
+
+### Adversarial QA billing
+
+Adversarial QA records model and compute costs against the organization, with no
+personal payer. `ODDISH_QUOTA_COUNTS_ANALYSIS_AND_COMPUTE` controls whether those
+costs and pending reservations count toward the organization monthly cap. There
+is no separate QA-only cap. Apply the core migration `adversarial_qa_billing_001`
+with `uv run alembic upgrade head` from `oddish/` before deploying; it preserves
+recorded amounts and requester identity while clearing historical personal payer
+attribution. A standalone task without an organization retains normal quota-off
+behavior. See [Adversarial QA](docs/adversarial-trials.md).
