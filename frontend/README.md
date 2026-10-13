@@ -369,6 +369,15 @@ Run `DELIVERY_TEST_PORT=3219 pnpm exec playwright test -c playwright.delivery.co
 for the fixture-backed browser checks. The corresponding PostgreSQL checks are
 `oddish/tests/test_task_run_coverage.py`; run against a disposable local database.
 
+Adversarial QA uses the existing task trial and review pipeline. The launch API
+accepts explicit execution and experiment settings; task QA never reads attacks,
+and a passing exploit replay shows as Must fix on the attack's card. See [Adversarial trials](../docs/adversarial-trials.md)
+for the request and evidence rules. The dashboard displays attack status and
+source links in the task overview. Ordinary and adversarial launch dialogs share
+`TrialModelFields`: agent, explicit model ID with history suggestions, and the
+existing model-specific effort options. The adversarial dialog sends `TrialSpec`
+settings and pins the displayed version. Automatic launch is not enabled.
+
 Internal task reviews use `/api/tasks/{task_id}/versions/{version}/reviews` and
 its rating/comment routes. These authenticated proxies forward to the hosted API;
 direct API mode uses the same route contract. Public share pages do not use them.

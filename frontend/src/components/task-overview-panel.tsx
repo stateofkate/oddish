@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import useSWR from "swr";
@@ -10,11 +10,16 @@ import {
   EXECUTION_LABELS,
   findingHref,
   isReviewableTrial,
+  adversarialOutcome,
+  adversarialUnsettled,
+  attackReplay,
+  REPLAY_AGENT,
+  isAttackTrial,
   runReviewSummary,
   taskReviewStatus,
 } from "@/lib/review";
 import { cn, encodeExperimentRouteParam } from "@/lib/utils";
-import { fetcher } from "@/lib/api";
+import { apiFetch, fetcher } from "@/lib/api";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AnalysisProse } from "@/components/analysis-prose";
 import { FindingList } from "@/components/qa-report/action-items";
@@ -24,9 +29,9 @@ import {
   feedbackRequestInit,
   type FeedbackRecord,
 } from "@/components/qa-report/types";
-import { FALLBACK_TOKEN, VERDICT_TOKENS } from "@/components/qa-report/tokens";
+import { FALLBACK_TOKEN, VERDICT_TOKENS, TIER_BADGE } from "@/components/qa-report/tokens";
 import { TaskVerdictBadge } from "@/components/task-verdict-badge";
-import { isActivePipelineStatus } from "@/lib/job-status";
+import { isActivePipelineStatus, isActiveTrialStatus } from "@/lib/job-status";
 import { expandTrialParam } from "@/lib/trial-url";
 import type {
   AnalysisClassification,
@@ -34,6 +39,14 @@ import type {
   Task,
   Trial,
 } from "@/lib/types";
+
+// Matches ATTACKS_PER_LAUNCH in oddish/core/adversarial.py.
+const ATTACKS_PER_LAUNCH = 4;
+
+/** Harbor prefixes the full shell command, which embeds the whole prompt. */
+function errorOutput(message: string) {
+  return message.replace(/^(Command failed \(exit \d+\)): [\s\S]*?\nstdout: /, "$1\n");
+}
 
 export type StaticCheckState =
   | "unaudited"
@@ -89,9 +102,38 @@ function classificationRank(trial: Trial): number {
   return rank >= 0 ? rank : CLASSIFICATION_ORDER.length;
 }
 
+/** The attacker's /logs/agent/adversarial_report.md: what the hole is. */
+function AttackReport({ trialId, apiBaseUrl }: { trialId: string; apiBaseUrl: string }) {
+  const { data, error } = useSWR(
+    `${apiBaseUrl}/trials/${encodeURIComponent(trialId)}/files/agent/adversarial_report.md`,
+    async (url: string) => {
+      const res = await apiFetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.text();
+    },
+    { revalidateOnFocus: false }
+  );
+  if (error) return <p className="text-muted-foreground text-xs">No report saved. Open the run.</p>;
+  if (data == null) return <p className="text-muted-foreground text-xs">Loading…</p>;
+  // The attack prompt asks for a "Summary: " first line; older reports lack it.
+  const summary = data.match(/^\s*\**summary\**:\**\s*(.+)$/im)?.[1];
+  return (
+    <div className="space-y-1 text-xs">
+      {summary && <p className="text-foreground text-sm">{summary}</p>}
+      <details>
+        <summary className="text-muted-foreground cursor-pointer">Attacker&apos;s full report</summary>
+        <div className="mt-1 max-h-64 overflow-auto">
+          <AnalysisProse text={data} />
+        </div>
+      </details>
+    </div>
+  );
+}
+
 function trialLabel(trial: Trial): string {
   const model = trial.model?.split("/").pop();
-  return model ? `${trial.agent} · ${model}` : trial.agent;
+  const label = trial.kind === "adversarial" ? "Adversarial QA" : trial.agent;
+  return model ? `${label} · ${model}` : label;
 }
 
 /**
@@ -102,6 +144,8 @@ function trialLabel(trial: Trial): string {
  */
 export function TaskOverviewPanel({
   taskId,
+  taskVersionId,
+  experimentId,
   apiBaseUrl = "/api",
   readOnly = false,
   version,
@@ -114,6 +158,7 @@ export function TaskOverviewPanel({
   checksStatus,
   checksError,
   onRerunChecks,
+  onAdversarialFindings,
   checksDisabledReason,
   checksRerunning,
   checksQueueError,
@@ -131,6 +176,8 @@ export function TaskOverviewPanel({
   executionReviewError?: string | null;
   experiments?: { id: string; name: string }[];
   taskId: string | null;
+  taskVersionId?: string | null;
+  experimentId?: string | null;
   apiBaseUrl?: string;
   readOnly?: boolean;
   /** Version the pane is scoped to: a number pins, null deliberately
@@ -155,6 +202,8 @@ export function TaskOverviewPanel({
   checksStatus?: string | null;
   checksError?: string | null;
   onRerunChecks?: () => void;
+  /** A replay recorded its findings; the host refetches `checksFindings`. */
+  onAdversarialFindings?: () => void;
   /** Why the audit rerun is unavailable for the shown version. */
   checksDisabledReason?: string | null;
   checksRerunning: boolean;
@@ -175,6 +224,9 @@ export function TaskOverviewPanel({
   className?: string;
 }) {
   const router = useRouter();
+  const [attackQueuing, setAttackQueuing] = useState(false);
+  const [attackError, setAttackError] = useState<string | null>(null);
+  const [attackConfirming, setAttackConfirming] = useState(false);
   const searchParams = useSearchParams();
   const selectedFinding = searchParams.get("finding");
   const selectedTrialId = expandTrialParam(searchParams.get("trial"), taskId);
@@ -184,23 +236,34 @@ export function TaskOverviewPanel({
   // ships its whole analysis payload.
   const trialsKey =
     taskId && versionKnown && !readOnly
-      ? `${apiBaseUrl}/tasks/${taskId}/trials${
-          version !== null ? `?version=${version}` : ""
+      ? `${apiBaseUrl}/tasks/${taskId}/trials?include_adversarial=true${
+          version !== null ? `&version=${version}` : ""
         }`
       : null;
-  const { data: trials, error: trialsError } = useSWR<Trial[]>(
+  const { data: trials, error: trialsError, mutate: refreshTrials } = useSWR<Trial[]>(
     trialsKey,
     fetcher,
     {
       revalidateOnFocus: false,
       refreshInterval: (data) => {
         const anyAnalysisLive = (data ?? []).some((trial) =>
-          isActivePipelineStatus(trial.analysis_status)
+          isActivePipelineStatus(trial.analysis_status) ||
+          (trial.kind === "adversarial" && isActiveTrialStatus(trial.status))
         );
-        return anyAnalysisLive || qaActive ? 15000 : 0;
+        // A replay is queued, and its findings recorded, by hooks that run
+        // after the trial settles; keep polling until both have run.
+        return anyAnalysisLive || adversarialUnsettled(data ?? []) || qaActive
+          ? 15000
+          : 0;
       },
     }
   );
+
+  // Import publishes findings after execution. Fetch once more when task QA
+  // settles so stopping the polling timer cannot leave the last pending result.
+  useEffect(() => {
+    if (qaActive === false) void refreshTrials();
+  }, [qaActive, refreshTrials]);
 
   // Host rows can include superseded and non-agent trials; filter them here too.
   const scoped = useMemo(() => {
@@ -256,7 +319,7 @@ export function TaskOverviewPanel({
         byKey.set(key, {
           ...item,
           id: key,
-          fromAudit: item.source !== "post_trial",
+          fromAudit: item.source !== "post_trial" && item.source !== "adversarial",
           trials: [],
         });
       }
@@ -387,6 +450,16 @@ export function TaskOverviewPanel({
   const renderFindingSources = (item: PreTrialFinding) => {
     const sourced = findingSourcesById.get(item.id ?? "");
     if (!sourced) return null;
+    if (sourced.source === "adversarial") {
+      return (
+        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+          <span className="text-muted-foreground shrink-0 font-mono text-[10px] tracking-widest">
+            SEEN IN
+          </span>
+          {analysisTrialLink(sourced.replay_trial_id, "Exploit replay")}
+        </div>
+      );
+    }
     if (!sourced.fromAudit && !(sourced.trials?.length > 0)) return null;
     return (
       <div className="mt-1 flex flex-wrap items-center gap-1.5">
@@ -401,24 +474,39 @@ export function TaskOverviewPanel({
         ) : null}
         {(sourced.trials ?? []).map((trial) => {
           const foreign = foreignIds?.has(trial.id) ?? false;
+          const evidence =
+            trial.analysis?.exploitation?.find(
+              (assessment) =>
+                assessment.exploited && assessment.links_to === item.id
+            )?.exploit_evidence ??
+            trial.analysis?.action_items?.find(
+              (finding) =>
+                finding.id === item.id || finding.links_to === item.id
+            )?.exploit_evidence;
           return (
-            <button
-              key={trial.id}
-              type="button"
-              onClick={() => openTrial(trial)}
-              className={cn(
-                "border-border text-muted-foreground hover:text-foreground hover:border-foreground/40 inline-flex max-w-full min-w-0 items-center gap-1 rounded border px-1.5 py-0.5 font-mono text-[10px] transition-colors",
-                foreign && "border-dashed"
+            <div key={trial.id} className="min-w-0">
+              <button
+                type="button"
+                onClick={() => openTrial(trial)}
+                className={cn(
+                  "border-border text-muted-foreground hover:text-foreground hover:border-foreground/40 inline-flex max-w-full min-w-0 items-center gap-1 rounded border px-1.5 py-0.5 font-mono text-[10px] transition-colors",
+                  foreign && "border-dashed"
+                )}
+                title={
+                  foreign
+                    ? `Open trial ${trial.name} — ran outside this experiment`
+                    : `Open trial ${trial.name}`
+                }
+              >
+                <span className="min-w-0 truncate">{trialLabel(trial)}</span>
+                <ArrowUpRight className="h-3 w-3 shrink-0" aria-hidden="true" />
+              </button>
+              {evidence && (
+                <p className="text-muted-foreground mt-1 text-xs break-words whitespace-pre-wrap">
+                  {evidence}
+                </p>
               )}
-              title={
-                foreign
-                  ? `Open trial ${trial.name} — ran outside this experiment`
-                  : `Open trial ${trial.name}`
-              }
-            >
-              <span className="min-w-0 truncate">{trialLabel(trial)}</span>
-              <ArrowUpRight className="h-3 w-3 shrink-0" aria-hidden="true" />
-            </button>
+            </div>
           );
         })}
       </div>
@@ -675,6 +763,102 @@ export function TaskOverviewPanel({
     );
   };
 
+  // Attacks never feed findings or the verdict, so they come straight from the fetch.
+  const adversarialRows = (trials ?? []).filter(
+    (trial) =>
+      trial.kind === "adversarial" &&
+      (version == null || trial.task_version === version)
+  );
+  const attacks = adversarialRows
+    .filter(isAttackTrial)
+    .sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? "") || b.id.localeCompare(a.id, undefined, { numeric: true }));
+  const attackOutcomes = attacks.map((trial) => {
+    const replay = attackReplay(trial, trials ?? []);
+    const outcome = adversarialOutcome(
+      trial,
+      replay,
+      mergedFindings.some(
+        (f) => replay != null && f.source === "adversarial" && f.replay_trial_id === replay.id
+      )
+    );
+    return { trial, replay, outcome };
+  });
+  // The newest launch, plus any older attack that proved a defect: a rerun
+  // that finds nothing must not hide an earlier must-fix.
+  const shownAttacks = attackOutcomes.filter(
+    (row, index) => index < ATTACKS_PER_LAUNCH || row.outcome.tone === "defect"
+  );
+  const mustFixAttacks = attackOutcomes.filter((row) => row.outcome.tone === "defect").length;
+  const incompleteAttacks = attackOutcomes.filter((row) => row.outcome.tone === "incomplete").length;
+  // Replays run after their attack, so the batch is running until they and
+  // their settle hooks finish; a launch before then is the same batch.
+  const attackRunning = adversarialUnsettled(adversarialRows);
+  // Leak findings arrive with the panel, not the trial list: refetch it when
+  // a replay records its findings so the card does not wait for its timer.
+  const recordedReplays = adversarialRows
+    .filter(
+      (trial) =>
+        trial.agent === REPLAY_AGENT &&
+        trial.harbor_config?.adversarial?.findings_recorded
+    )
+    .map((trial) => trial.id)
+    .sort()
+    .join(",");
+  const seenRecordedReplays = useRef<{ key: string; ids: string } | null>(null);
+  useEffect(() => {
+    if (trials === undefined || trialsKey === null) return;
+    const seen = seenRecordedReplays.current;
+    if (seen?.key === trialsKey && seen.ids !== recordedReplays)
+      onAdversarialFindings?.();
+    seenRecordedReplays.current = { key: trialsKey, ids: recordedReplays };
+  }, [trials, trialsKey, recordedReplays, onAdversarialFindings]);
+  // The launch API only attacks the task's current version, so an older
+  // version on screen would always get a 409.
+  const currentVersion = verdictTask?.current_version;
+  const attackDisabledReason =
+    checksDisabledReason ||
+    (currentVersion != null && version != null && version !== currentVersion
+      ? `Adversarial QA runs on the current version, v${currentVersion}`
+      : null);
+  async function runAttack() {
+    if (!taskId || !taskVersionId || attackQueuing || attackDisabledReason)
+      return;
+    if (!attackConfirming) {
+      setAttackConfirming(true);
+      return;
+    }
+    setAttackConfirming(false);
+    setAttackQueuing(true);
+    setAttackError(null);
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/tasks/${taskId}/qa/adversarial`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            expected_version_id: taskVersionId,
+            ...(experimentId ? { experiment_id: experimentId } : {}),
+            request_id: crypto.randomUUID(),
+            max_trial_attempts: 1,
+          }),
+        }
+      );
+      const result = await response.json();
+      if (!response.ok)
+        throw new Error(
+          result.detail || result.error || "Unable to queue attack"
+        );
+      await refreshTrials();
+    } catch (error) {
+      setAttackError(
+        error instanceof Error ? error.message : "Unable to queue attack"
+      );
+    } finally {
+      setAttackQueuing(false);
+    }
+  }
+
   const auditButton = (
     <button
       type="button"
@@ -735,6 +919,170 @@ export function TaskOverviewPanel({
         </div>
       ) : null}
 
+      {/* Shared views have no attack rows to show. */}
+      {!readOnly && (
+      <section
+        aria-label="Adversarial QA"
+        className="border-border flex flex-col gap-2 border-b p-4"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="font-mono text-[11px] font-semibold">
+            Adversarial QA
+            {attacks.length > 0 && (
+              <span className="text-muted-foreground ml-2 font-normal">
+                {attacks.length} attacks · {mustFixAttacks} must fix · {incompleteAttacks} incomplete
+              </span>
+            )}
+          </h2>
+          {!readOnly && taskVersionId && (
+            <button
+              type="button"
+              onClick={() => void runAttack()}
+              onBlur={() => setAttackConfirming(false)}
+              disabled={
+                attackQueuing ||
+                attackRunning ||
+                Boolean(attackDisabledReason) ||
+                !trials ||
+                Boolean(trialsError)
+              }
+              title={
+                attackDisabledReason ||
+                "Run adversarial QA on this task version"
+              }
+              className="border-border rounded border px-2 py-0.5 font-mono text-[10px] disabled:opacity-50"
+            >
+              {attackQueuing
+                ? "Queuing…"
+                : attackRunning
+                  ? "Running"
+                  : attackConfirming
+                    ? `Confirm: run ${ATTACKS_PER_LAUNCH} attacks`
+                    : attacks.length
+                    ? `Rerun adversarial QA${version != null ? ` v${version}` : ""}`
+                    : `Run adversarial QA${version != null ? ` v${version}` : ""}`}
+            </button>
+          )}
+        </div>
+        {trialsError ? (
+          <p role="alert" className="text-xs text-red-500">
+            Unable to load adversarial runs.
+          </p>
+        ) : !trials ? (
+          <p className="text-muted-foreground text-xs">
+            Loading adversarial runs…
+          </p>
+        ) : attacks.length === 0 ? (
+          <p className="text-muted-foreground text-xs">
+            Not requested for this version.
+          </p>
+        ) : (
+          shownAttacks.map(({ trial, replay, outcome }) => {
+            const canOpen = Boolean(onOpenTrial || taskTrialHref(trial));
+            const token =
+              outcome.tone === "defect"
+                ? VERDICT_TOKENS.BAD_FAILURE
+                : outcome.tone === "incomplete"
+                  ? VERDICT_TOKENS.HARNESS_ERROR
+                  : FALLBACK_TOKEN;
+            return (
+              <article
+                key={trial.id}
+                aria-label={`${trial.name}: ${outcome.label}`}
+                className={cn("space-y-2 rounded-lg border p-3", token.card)}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span
+                    className={cn(
+                      "rounded px-2 py-0.5 text-xs font-medium",
+                      outcome.tone === "defect"
+                        ? TIER_BADGE.must_fix
+                        : `border ${token.chip} ${token.accent}`
+                    )}
+                  >
+                    {outcome.label}
+                  </span>
+                  {canOpen && (
+                    <button
+                      type="button"
+                      onClick={() => openTrial(trial)}
+                      title={trial.id}
+                      className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-xs"
+                    >
+                      View run{" "}
+                      <ArrowUpRight className="h-3 w-3" aria-hidden="true" />
+                    </button>
+                  )}
+                </div>
+                <p className="text-muted-foreground font-mono text-xs" title={trial.task_version_id ?? undefined}>
+                  Task version: {trial.task_version != null ? `v${trial.task_version}` : "Unknown"}
+                  {trial.harbor_config?.adversarial?.white_box ? " · White box" : " · Black box"}
+                </p>
+                <AnalysisProse
+                  text={outcome.detail}
+                  className="text-foreground/90"
+                />
+                {outcome.tone === "defect" && (
+                  <AttackReport trialId={trial.id} apiBaseUrl={apiBaseUrl} />
+                )}
+                <dl className="grid grid-cols-2 gap-3 text-xs">
+                  <div>
+                    <dt className="text-muted-foreground">Execution</dt>
+                    <dd className="mt-0.5">{outcome.execution}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Replay</dt>
+                    <dd className="mt-0.5">
+                      {replay && canOpen ? (
+                        <button
+                          type="button"
+                          onClick={() => openTrial(replay)}
+                          title={replay.id}
+                          className="inline-flex items-center gap-1 underline-offset-2 hover:underline"
+                        >
+                          {outcome.replay}
+                          <ArrowUpRight className="h-3 w-3" aria-hidden="true" />
+                        </button>
+                      ) : (
+                        outcome.replay
+                      )}
+                    </dd>
+                  </div>
+                </dl>
+                <div className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[10px]">
+                  <span>
+                    {trial.agent} ·{" "}
+                    {trial.model?.split("/").pop() ?? "Model unavailable"}
+                  </span>
+                  {trial.reward != null && (
+                    <span>Grader reward {trial.reward}</span>
+                  )}
+                  {trial.cost_usd != null && (
+                    <span>${trial.cost_usd.toFixed(2)}</span>
+                  )}
+                </div>
+                {trial.error_message && (
+                  <details className="border-border border-t pt-2">
+                    <summary className="text-muted-foreground cursor-pointer text-xs">
+                      Technical details
+                    </summary>
+                    <pre className="text-muted-foreground mt-2 max-h-48 overflow-auto text-[11px] break-words whitespace-pre-wrap">
+                      {errorOutput(trial.error_message)}
+                    </pre>
+                  </details>
+                )}
+              </article>
+            );
+          })
+        )}
+        {attackError && (
+          <p role="alert" className="text-xs text-red-500">
+            {attackError}
+          </p>
+        )}
+      </section>
+      )}
+
       <div className="border-border flex flex-col gap-3 border-b p-4">
         {selectedFinding &&
         !checksLoading &&
@@ -753,9 +1101,11 @@ export function TaskOverviewPanel({
             {findingItems.length > 0 ? "Findings" : "Pre-trial audit"}
           </h2>
           {!auditPassed && !(verdictTask && mustFixCount > 0) && (
-            <span className="text-muted-foreground font-mono text-[11px]">
-              {findingsSummary}
-            </span>
+            mustFixCount > 0 ? (
+              <span className={cn("rounded px-2 py-0.5 text-xs font-medium", TIER_BADGE.must_fix)}>{mustFixCount} Must fix</span>
+            ) : (
+              <span className="text-muted-foreground font-mono text-[11px]">{findingsSummary}</span>
+            )
           )}
           {analysisTrialLink(checksTrialId, "View audit")}
           <div className="ml-auto flex items-center gap-2">

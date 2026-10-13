@@ -282,3 +282,18 @@ async def test_experiment_summary_excludes_failed_and_outdated_acceptance(sessio
         _experiment_task_rows(experiment_id=solver.experiment_id, org_id=task.org_id)
     )
     assert rows.mappings().one()["review_version_matches"] is False
+
+
+@pytest.mark.asyncio
+async def test_panel_reports_running_qa_for_selected_version(session):
+    from oddish.db.models import VerdictStatus
+    task, versions, run = await seed(session)
+    task.verdict_status = VerdictStatus.QUEUED
+    run.kind = "qa"
+    run.status = TrialStatus.RUNNING
+    await session.flush()
+    panel = await get_task_panel_core(session, task_id=task.id, org_id="panel-org")
+    assert panel.task.verdict_status == VerdictStatus.RUNNING
+    assert task.verdict_status == VerdictStatus.QUEUED
+    old = await get_task_panel_core(session, task_id=task.id, version=2, org_id="panel-org")
+    assert old.task.verdict_status != VerdictStatus.RUNNING

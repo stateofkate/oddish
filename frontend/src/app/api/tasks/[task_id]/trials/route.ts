@@ -20,6 +20,8 @@ export async function GET(
     const version = incoming.get("version");
     const queryParams: Record<string, string> = {};
     if (version !== null) queryParams.version = version;
+    const includeAdversarial = incoming.get("include_adversarial");
+    if (includeAdversarial !== null) queryParams.include_adversarial = includeAdversarial;
     const url = getBackendUrl(
       "tasks",
       `/${task_id}/trials`,

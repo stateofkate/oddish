@@ -153,3 +153,14 @@ test("grouping efforts keeps different agents, models, and internal groups separ
   assert.equal(getExperimentAgentKey(trials[5], true), "oracle");
   assert.equal(getExperimentAgentKey(trials[6], true), "qa");
 });
+
+test("adversarial runs have their own label and never use the source-audit label", () => {
+  const summaries = buildExperimentAgentSummaries([{ trials: [
+    { ...trial(null), kind: "adversarial" },
+    { ...trial(null), kind: "audit" },
+    { ...trial(null), kind: "qa" },
+  ] } as Task]);
+  assert.equal(summaries.find(s => s.key === "adversarial")?.label, "Adversarial QA");
+  assert.equal(summaries.find(s => s.key === "audit")?.label, "Pre-trial audit");
+  assert.equal(summaries.find(s => s.key === "qa")?.label, "QA run");
+});

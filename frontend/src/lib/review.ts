@@ -5,7 +5,7 @@ import type {
   Trial,
 } from "@/lib/types";
 import { formatLineRange } from "@/lib/line-range";
-import { taskHasActiveVerdict, taskHasActiveAnalysis } from "@/lib/job-status";
+import { taskHasActiveVerdict, taskHasActiveAnalysis, isActiveTrialStatus } from "@/lib/job-status";
 import { isBaselineAgentName } from "@/lib/experiment-agent-grouping";
 import { defaultVersionElsewhere } from "@/lib/experiment-task-version";
 import {
@@ -29,6 +29,137 @@ export function isReviewableTrial(trial: Trial): boolean {
     !trial.superseded_by_trial_id &&
     !isBaselineAgentName(trial.agent)
   );
+}
+
+/** The stored agent of a run that replays an attack's exploit.sh alone. */
+export const REPLAY_AGENT = "exploit-replay";
+
+/** A current attack: superseded attacks stay listed only so finding links resolve. */
+export function isAttackTrial(trial: Trial): boolean {
+  return (
+    trial.kind === "adversarial" &&
+    trial.agent !== REPLAY_AGENT &&
+    !trial.superseded_by_trial_id
+  );
+}
+
+/** The replay of the attack's current attempt, if one was queued. */
+export function attackReplay(attack: Trial, trials: Trial[]): Trial | null {
+  return (
+    trials.find((trial) => {
+      const pins = trial.harbor_config?.adversarial;
+      return (
+        trial.agent === REPLAY_AGENT &&
+        !trial.superseded_by_trial_id &&
+        pins?.replay_of === attack.id &&
+        pins.attack_attempt === attack.attempts
+      );
+    }) ?? null
+  );
+}
+
+// Matches HOOK_DEADLINE in oddish/core/adversarial.py.
+const HOOK_DEADLINE_MS = 60 * 60 * 1000;
+
+/**
+ * True while an attack, its replay, or either's settle hook is outstanding,
+ * as adversarial_unsettled decides it on the server. A replay is queued, and
+ * its findings recorded, a few seconds after the trial row settles.
+ */
+export function adversarialUnsettled(trials: Trial[], now = Date.now()): boolean {
+  const pending = (
+    trial: Trial,
+    marker: "replay_checked_attempt" | "findings_recorded",
+    value: number | boolean
+  ) => {
+    if (isActiveTrialStatus(trial.status)) return true;
+    if (
+      (trial.status !== "success" && trial.status !== "failed") ||
+      trial.harbor_stage === "cancelled"
+    )
+      return false;
+    // Without a finish time there is no deadline to wait out; never hold the
+    // section on it.
+    if (!trial.finished_at) return false;
+    return (
+      trial.harbor_config?.adversarial?.[marker] !== value &&
+      now - Date.parse(trial.finished_at) <= HOOK_DEADLINE_MS
+    );
+  };
+  return trials.some((attack) => {
+    if (!isAttackTrial(attack)) return false;
+    if (pending(attack, "replay_checked_attempt", attack.attempts)) return true;
+    const replay = attackReplay(attack, trials);
+    return replay != null && pending(replay, "findings_recorded", true);
+  });
+}
+
+/** An attack's result comes from its run and its replay; QA never reviews it. */
+export function adversarialOutcome(
+  trial: Trial,
+  replay?: Trial | null,
+  /** The replay recorded a must-fix finding, e.g. it copied out a protected file. */
+  replayFinding = false,
+): {
+  label: string;
+  tone: "defect" | "incomplete" | "neutral";
+  detail: string;
+  execution: string;
+  replay: string;
+} {
+  const active = isActiveTrialStatus(trial.status);
+  // The trajectory upload can land after the attack settles and polling
+  // stops, so it does not decide completeness (the CLI uses the same rule).
+  const incomplete = trial.status !== "success" || trial.reward == null ||
+    Boolean(trial.error_message);
+  const facts = {
+    execution: active ? trial.status.charAt(0).toUpperCase() + trial.status.slice(1)
+      : trial.harbor_stage === "cancelled" ? "Cancelled"
+      : trial.status === "failed" ? "Failed"
+      : trial.status === "skipped" ? "Skipped"
+      : incomplete ? "Incomplete" : "Completed",
+    replay: !replay ? "No exploit.sh"
+      : isActiveTrialStatus(replay.status) ? "Running"
+      : replay.status === "success" && replay.reward === 1 ? "Passed"
+      : replay.reward != null ? `Failed (reward ${replay.reward})` : "Failed",
+  };
+  if (active) return {
+    ...facts, label: facts.execution, tone: "neutral",
+    detail: "The attack has not finished.",
+  };
+  // A replay runs exploit.sh alone on a fresh copy, so a pass is the defect.
+  if (facts.replay === "Passed") return {
+    ...facts, label: "Must fix", tone: "defect",
+    detail: "Its exploit.sh, run alone in a fresh copy of the task, passed the grader.",
+  };
+  if (replayFinding) return {
+    ...facts, label: "Must fix", tone: "defect",
+    detail: "Its exploit.sh, run alone in a fresh copy of the task, read a file the solver should not see.",
+  };
+  if (facts.replay === "Running") return {
+    ...facts, label: "Replaying exploit", tone: "neutral",
+    detail: "The attacker's exploit.sh is running alone in a fresh copy of the task.",
+  };
+  if (trial.harbor_stage === "cancelled") return {
+    ...facts, label: "Cancelled", tone: "incomplete",
+    detail: "This check was cancelled.",
+  };
+  if (trial.reward === 1) return {
+    ...facts, label: "Needs a human", tone: "incomplete",
+    detail: replay
+      ? "The attack passed the grader, but its exploit.sh failed when replayed alone."
+      : "The attack passed the grader but left no exploit.sh to replay.",
+  };
+  if (incomplete) return {
+    ...facts, label: "Check incomplete", tone: "incomplete",
+    detail: "The attack did not finish cleanly, so it cannot show the task is secure.",
+  };
+  return {
+    ...facts, label: "No defect demonstrated", tone: "neutral",
+    detail: replay
+      ? "The attack did not pass the grader, and its replayed exploit did not either."
+      : "The attack did not pass the grader.",
+  };
 }
 
 /** Analysis completion is independent of whether the run produced a valid grade. */

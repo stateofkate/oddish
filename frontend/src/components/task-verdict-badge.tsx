@@ -39,7 +39,9 @@ function presentVerdict(
 
   // Required findings add a count; they never stand in for a rejection QA
   // has not published.
-  const title = verdictMustFixLabel(review, mustFixCount);
+  const title = pending && (task.active_qa_trial?.status === "running" || task.verdict_status === "running")
+    ? `Review running${mustFixCount > 0 ? ` · ${mustFixCount} Must fix` : ""}`
+    : verdictMustFixLabel(review, mustFixCount);
   let icon: ReactNode;
   let toneCard: string;
   let toneInline: string;

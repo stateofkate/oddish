@@ -36,8 +36,12 @@ const mocks: Record<string, unknown> = {
     },
   },
   "@/components/task-verdict-badge": {
-    TaskVerdictBadge: () =>
-      React.createElement("span", null, "Overall verdict"),
+    TaskVerdictBadge: ({ mustFixCount }: { mustFixCount?: number }) =>
+      React.createElement(
+        "span",
+        null,
+        `Overall verdict${mustFixCount ? `${mustFixCount} Must fix` : ""}`
+      ),
   },
 };
 const cache: Record<string, unknown> = {};
@@ -155,7 +159,9 @@ for (const [description, fields, required] of [
         ),
         text
       );
-      assert.equal(text.includes("Overall verdict"), !required, text);
+      assert.ok(text.includes("Overall verdict"), text);
+      assert.equal((text.match(/1 Must fix/g) ?? []).length, required ? 1 : 0, text);
+      assert.doesNotMatch(html, /<details\b/);
     });
   }
 }

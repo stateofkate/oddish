@@ -18,11 +18,17 @@ type TrialStatus =
   | "retrying"
   | "skipped";
 
-// trials.kind: "agent" is a normal evaluation run; "qa" and "audit" are the
-// platform's analysis agents (arriving with the analysis-trial pipeline).
+// trials.kind: "agent" is a solver run; "qa" and "audit" review its evidence.
+// "adversarial" is organization-funded QA that executes in the real task.
 // The union is open (`| (string & {})`) because the column is a plain
 // VARCHAR and historical rows may carry retired kinds.
-export type TrialKind = "agent" | "qa" | "audit" | (string & {});
+export type TrialKind = "agent" | "qa" | "audit" | "adversarial" | (string & {});
+
+export const QA_TRIAL_KIND_LABELS: Record<string, string> = {
+  qa: "QA run",
+  audit: "Pre-trial audit",
+  adversarial: "Adversarial QA",
+};
 
 export function isAgentTrial(t: { kind?: TrialKind }): boolean {
   return (t.kind ?? "agent") === "agent";
@@ -204,6 +210,17 @@ export interface Trial {
   playback?: TrialPlaybackDescriptor | null;
   has_trajectory?: boolean;
   kind?: TrialKind;
+  /** Adversarial pins: which attack attempt a replay re-ran, and the settle
+   * hooks' markers (replay queued or skipped; replay findings recorded). */
+  harbor_config?: {
+    adversarial?: {
+      replay_of?: string;
+      attack_attempt?: number;
+      white_box?: boolean;
+      replay_checked_attempt?: number;
+      findings_recorded?: boolean;
+    };
+  } | null;
   created_at: string;
   started_at?: string | null;
   finished_at?: string | null;
@@ -724,7 +741,10 @@ export interface TaskOpenResponse {
 
 /** One defect the pre-trial source audit found in a task version. */
 export interface PreTrialFinding {
-  source?: "pre_trial" | "post_trial";
+  exploit_evidence?: string | null;
+  source?: "pre_trial" | "post_trial" | "adversarial";
+  /** On adversarial findings: the exploit replay that demonstrated it. */
+  replay_trial_id?: string | null;
   id?: string | null;
   tier?: string | null;
   /** Historical findings stored their tier under this field. */

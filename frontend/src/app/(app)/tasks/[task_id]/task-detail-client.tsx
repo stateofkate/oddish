@@ -1,5 +1,6 @@
 "use client";
 
+import { QA_TRIAL_KIND_LABELS } from "@/lib/types";
 import { CostMetricSelect } from "@/components/cost-metric-select";
 import { CostEffortCell } from "@/components/cost-effort-cell";
 import { selectedCostMetric, setCostMetric } from "@/lib/cost-metrics";
@@ -112,13 +113,6 @@ const TrialDetailPanel = dynamic(
   }
 );
 
-// Human labels for non-agent trial kinds. Raw kind strings ("qa",
-// "audit") read as jargon next to a section header; unknown kinds fall
-// back to the raw string so new kinds are never hidden.
-const QA_TRIAL_KIND_LABELS: Record<string, string> = {
-  qa: "QA run",
-  audit: "Pre-trial audit",
-};
 
 function DrawerContentLoading({ label }: { label: string }) {
   return (

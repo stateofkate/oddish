@@ -1,4 +1,4 @@
-import { isAgentTrial, type Task, type Trial } from "@/lib/types";
+import { isAgentTrial, QA_TRIAL_KIND_LABELS, type Task, type Trial } from "@/lib/types";
 
 const DEFAULT_EXPERIMENT_MODEL_KEY = "default";
 const GEMINI_35_DISPLAY_AGENT = "gemini-cli";
@@ -108,7 +108,7 @@ export function buildExperimentAgentSummaries(
       if (!isAgentTrial(trial)) {
         summaries.set(key, {
           key,
-          label: trial.kind === "qa" ? "QA run" : "Pre-trial audit",
+          label: QA_TRIAL_KIND_LABELS[trial.kind ?? ""] ?? trial.kind ?? "Run",
           agent: trial.agent,
           model: trial.model ?? null,
           queueKey: trial.provider ?? null,

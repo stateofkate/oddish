@@ -89,6 +89,8 @@ async def get_task_panel_core(
           count(*) FILTER (WHERE kind = 'agent' AND status IN ('SUCCESS', 'FAILED')) > 0 AS can_retry,
           COALESCE(bool_or(kind = 'qa' AND status IN
             ('PENDING', 'QUEUED', 'RUNNING', 'PAUSED', 'RETRYING')), false) AS qa_active,
+          COALESCE(bool_or(kind = 'qa' AND status = 'RUNNING'
+            AND task_version_id = :version_id), false) AS qa_running,
           COALESCE(bool_or(kind IN ('qa', 'audit') AND status IN
             ('PENDING', 'QUEUED', 'RUNNING', 'PAUSED', 'RETRYING')), false) AS analysis_trial_active,
           COALESCE(bool_or(analysis_status IN ('PENDING', 'QUEUED', 'RUNNING')), false) AS analysis_active,
@@ -135,6 +137,10 @@ async def get_task_panel_core(
         started_at=None,
         finished_at=None,
     )
+    # The stored verdict stays queued until publication; expose actual review
+    # execution in the panel without persisting another lifecycle state.
+    if counts["qa_running"] and row["version_id"] == row["current_version_id"]:
+        task.verdict_status = "running"
     selected = (
         None
         if row["version_id"] is None

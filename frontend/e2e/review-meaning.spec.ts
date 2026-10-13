@@ -6,6 +6,7 @@ import {
 } from "../src/lib/review";
 import { deliveryVerdictState } from "../src/lib/verdict-state";
 import { board, tasks, records } from "./review-app/records";
+import { adversarialTrials } from "./review-app/adversarial";
 import { pageFixture } from "./delivery-page-fixtures";
 import type { DeliveryQAStatus, Task } from "../src/lib/types";
 
@@ -1646,6 +1647,107 @@ test("overview links the audit and QA runs stored outside the experiment", async
     await page.screenshot({ path: process.env.SCREENSHOT_PATH });
 });
 
+
+test("adversarial cards show replay outcomes and a rerun queues a new attack", async ({ page }) => {
+  test.skip(process.env.E2E_REVIEW_FIXTURES !== "1");
+  const runs = structuredClone(adversarialTrials);
+  await page.route("**/api/adversarial-demo/tasks/task-a/trials*", route => route.fulfill({ json: runs }));
+  await page.goto("/adversarial");
+  const audits = page.getByRole("region", { name: "Adversarial QA" });
+  await expect(audits.getByRole("article")).toHaveCount(3);
+  // The replay failed the grader, but it recorded a leak finding.
+  const leak = audits.getByRole("article", { name: "Attack 1: Must fix" });
+  await expect(leak.getByText(/read a file the solver should not see/)).toBeVisible();
+  await expect(audits.getByRole("article", { name: "Attack 3: No defect demonstrated" })).toBeVisible();
+  await expect(audits.getByRole("article", { name: "Attack 2: Check incomplete" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Exploit replay", exact: true }))
+    .toHaveAttribute("href", "/tasks/task-a?trial=replay-leak");
+  await leak.getByRole("button", { name: "View run" }).click();
+  await expect(page.getByLabel("Opened trial")).toHaveText("attack-leak");
+  await page.route("**/api/adversarial-demo/tasks/task-a/qa/adversarial", async route => {
+    const body = route.request().postDataJSON();
+    expect(body.expected_version_id).toBe("task-a-v7");
+    expect(body).not.toHaveProperty("execution");
+    runs.push({ ...runs.find(run => run.id === "attack-blocked")!, id: "new-attack", name: "New attack",
+      created_at: "2026-09-30T01:00:00Z", status: "queued", reward: null, has_trajectory: false });
+    await route.fulfill({ status: 200, json: { status: "queued", trial_id: "new-attack" } });
+  });
+  await page.getByRole("button", { name: "Rerun adversarial QA v7", exact: true }).click();
+  await page.getByRole("button", { name: "Confirm: run 4 attacks", exact: true }).click();
+  const queued = audits.getByRole("article", { name: "New attack: Queued" });
+  await expect(queued).toBeVisible();
+  await expect(queued.getByText(/^Task version: v7/)).toBeVisible();
+  await expect(audits.getByRole("article")).toHaveCount(4);
+});
+
+test("adversarial QA card opens the attack trajectory", async ({ page }) => {
+  test.skip(process.env.E2E_REVIEW_FIXTURES !== "1");
+  const attack = { ...structuredClone(adversarialTrials.find(run => run.id === "attack-leak")!), task_id: "task-a" };
+  await page.route("**/api/tasks/task-a/trials*", async route => {
+    const response = await route.fetch();
+    await route.fulfill({ json: [...await response.json(), attack] });
+  });
+  await page.route("**/api/trials/attack-leak", route => route.fulfill({ json: attack }));
+  await page.goto("/tasks/task-a?version=7&drawer=task&taskPane=overview");
+  const audits = page.getByRole("region", { name: "Adversarial QA" });
+  await audits.getByRole("button", { name: "View run" }).click();
+  await expect(page).toHaveURL(/trial=attack-leak/);
+  const trajectory = page.waitForRequest(request => request.url().endsWith("/api/trials/attack-leak/trajectory"));
+  await page.getByRole("tab", { name: "Trajectory" }).click();
+  await trajectory;
+});
+
+
+test("ordinary trial drawer does not expose golden label editing", async ({ page }) => {
+  test.skip(process.env.E2E_REVIEW_FIXTURES !== "1");
+  await page.goto(`/tasks/task-a?trial=${tasks[0].trials![0].id}&tab=summary`);
+  await expect(page.getByRole("tab", { name: "Summary", exact: true })).toBeVisible();
+  await expect(page.getByText("Correct label", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("textbox", { name: "Label note" })).toHaveCount(0);
+});
+
+
+test("latest adversarial card belongs to the selected task version", async ({ page }) => {
+  test.skip(process.env.E2E_REVIEW_FIXTURES !== "1");
+  await page.goto("/adversarial");
+  const audits = page.getByRole("region", { name: "Adversarial QA" });
+  await expect(audits.getByRole("article")).toHaveCount(3);
+  await expect(audits.getByText(/^Task version: v7/)).toHaveCount(3);
+  await page.getByLabel("Task version", { exact: true }).selectOption("6");
+  // The launch API only attacks the current version (v7).
+  await expect(page.getByRole("button", { name: "Rerun adversarial QA v6", exact: true })).toBeDisabled();
+  const failed = audits.getByRole("article", { name: "Version 6 attack: Check incomplete" });
+  await expect(failed).toBeVisible();
+  await expect(audits.getByRole("article")).toHaveCount(1);
+  await expect(failed.getByText(/^Task version: v6/)).toBeVisible();
+  await expect(failed.locator("pre")).toBeHidden();
+  await failed.getByText("Technical details", { exact: true }).click();
+  await expect(failed.locator("pre")).toContainText("ConnectionResetError");
+  await failed.getByRole("button", { name: "View run" }).click();
+  await expect(page.getByLabel("Opened trial")).toHaveText("attack-v6");
+  await page.getByLabel("Task version", { exact: true }).selectOption("7");
+  await expect(audits.getByText(/^Task version: v7/)).toHaveCount(3);
+  await expect(audits.getByRole("article")).toHaveCount(3);
+  await expect(page.getByRole("button", { name: "Rerun adversarial QA v7", exact: true })).toBeEnabled();
+});
+
+
+test("default adversarial QA uses server model and automatic harness", async ({ page }) => {
+  test.skip(process.env.E2E_REVIEW_FIXTURES !== "1");
+  let request: Record<string, unknown> | undefined;
+  await page.route("**/api/adversarial-demo/tasks/task-a/qa/adversarial", async route => {
+    request = route.request().postDataJSON();
+    await route.fulfill({ json: { status: "queued", trial_id: "default-attack" } });
+  });
+  await page.goto("/adversarial");
+  await page.getByRole("button", { name: "Rerun adversarial QA v7", exact: true }).click();
+  expect(request).toBeUndefined();
+  await page.getByRole("button", { name: "Confirm: run 4 attacks", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Run adversarial QA" })).toHaveCount(0);
+  await expect.poll(() => request).toBeDefined();
+  expect(request?.expected_version_id).toBe("task-a-v7");
+  expect(request).not.toHaveProperty("execution");
+});
 for (const trialPane of [false, true]) {
   test(`experiment review opens the represented task version (${trialPane ? "trial" : "task"} pane)`, async ({ page }, testInfo) => {
     test.skip(process.env.E2E_REVIEW_FIXTURES !== "1");

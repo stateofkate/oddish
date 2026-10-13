@@ -939,15 +939,26 @@ export function TaskFilesPanel({
   // Without a run id the two verdicts cannot be matched, so the host's wins.
   const sharesPanelReport =
     panelReportId != null && panelReportId === sharedReportId;
-  const panelTask = useMemo(
-    () =>
-      verdictTask
-        ? sharesPanelReport
-          ? { ...verdictTask, verdict: panelVerdict }
-          : verdictTask
-        : (panel?.task ?? task),
-    [verdictTask, sharesPanelReport, panelVerdict, panel?.task, task]
-  );
+  const panelVerdictStatus = panel?.task.verdict_status;
+  const panelTask = useMemo(() => {
+    const shown = verdictTask
+      ? sharesPanelReport
+        ? { ...verdictTask, verdict: panelVerdict }
+        : verdictTask
+      : (panel?.task ?? task);
+    // The stored verdict stays queued while QA executes; only the panel
+    // reports that the review is running.
+    return shown && panelVerdictStatus === "running"
+      ? { ...shown, verdict_status: panelVerdictStatus }
+      : shown;
+  }, [
+    verdictTask,
+    sharesPanelReport,
+    panelVerdict,
+    panel?.task,
+    task,
+    panelVerdictStatus,
+  ]);
   // The host's compact verdict is not refreshed once the task is finished, so
   // a different QA run here (rerun by another reviewer or the CLI) means one
   // side is stale. Refreshing the host refetches both.
@@ -2219,6 +2230,8 @@ export function TaskFilesPanel({
               {activePane === "overview" && overviewAvailable ? (
                 <TaskOverviewPanel
                   taskId={effectiveChecksTaskId}
+                  taskVersionId={checksVersion?.id}
+                  experimentId={cancelExperimentId}
                   apiBaseUrl={baseUrl}
                   readOnly={readOnly}
                   version={overviewVersion}
@@ -2243,6 +2256,7 @@ export function TaskFilesPanel({
                   checksStatus={sourceChecks?.pre_trial_status}
                   checksError={sourceChecks?.pre_trial_error}
                   onRerunChecks={readOnly ? undefined : handleRerunChecks}
+                  onAdversarialFindings={() => void mutateChecks()}
                   checksDisabledReason={versionActionHint}
                   checksRerunning={checksRerunning}
                   checksQueueError={checksQueueError}

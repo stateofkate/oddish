@@ -1,3 +1,4 @@
+import { adversarialTrials } from "../../../adversarial";
 import { requirementExamples } from "../../../requirement-examples";
 import { liveEvents, trajectory } from "../../../trajectory";
 import {
@@ -37,6 +38,9 @@ export async function GET(request: NextRequest) {
     .slice(5)
     .split("/")
     .map(decodeURIComponent);
+  if (parts[0] === "adversarial-demo" && parts.at(-1) === "trials") {
+    return NextResponse.json(adversarialTrials);
+  }
   if (parts[0] === "trials" && parts[1] === "trajectory-fixture") {
     if (parts[2] === "live") {
       const after = Number(request.nextUrl.searchParams.get("after_seq") ?? 0);

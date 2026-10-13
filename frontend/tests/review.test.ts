@@ -179,7 +179,7 @@ for (const [label, is_good, expected] of [
       [{ verdict_status: "running" }, "queued"],
     ] as const) {
       const inactive = badge.present!({ ...reviewed, ...override }, "");
-      assert.equal(inactive.title, LABELS[state]);
+      assert.equal(inactive.title, "verdict_status" in override && override.verdict_status === "running" ? "Review running" : LABELS[state]);
       assert.equal(inactive.isGood, null);
       assert.equal(review.taskReviewStatus({ ...reviewed, ...override }), state);
     }
@@ -760,6 +760,101 @@ test("the new version badge names both versions and links to the default", () =>
     );
   }
 });
+
+test("attacks never count as solver or finding evidence", () => {
+  const attack = { id: "attack", kind: "adversarial", agent: "codex", status: "success", analysis_status: "success" } as Trial;
+  assert.equal(review.isReviewableTrial(attack), false);
+});
+
+const attack = {
+  id: "attack", name: "attack", kind: "adversarial", agent: "codex",
+  status: "success", reward: 0, has_trajectory: true, attempts: 1,
+} as Trial;
+
+const passedReplay = {
+  id: "replay", name: "replay", kind: "adversarial", agent: review.REPLAY_AGENT,
+  status: "success", reward: 1,
+  harbor_config: { adversarial: { replay_of: "attack", attack_attempt: 1 } },
+} as Trial;
+const failedReplay = { ...passedReplay, reward: 0 } as Trial;
+
+for (const [name, patch, replay, headline] of [
+  ["queued", { status: "queued" }, null, "Queued"],
+  ["running", { status: "running" }, null, "Running"],
+  ["retrying", { status: "retrying" }, null, "Retrying"],
+  ["exploit replay running", { reward: 1 }, { ...passedReplay, status: "running", reward: null }, "Replaying exploit"],
+  ["replay passed", { reward: 1 }, passedReplay, "Must fix"],
+  ["replay passed after an interrupted attack", { status: "failed", reward: null }, passedReplay, "Must fix"],
+  ["cancelled", { status: "failed", harbor_stage: "cancelled", reward: null }, null, "Cancelled"],
+  ["passed but the replay failed", { reward: 1 }, failedReplay, "Needs a human"],
+  ["passed without exploit.sh", { reward: 1 }, null, "Needs a human"],
+  ["timed out", { error_message: "Agent timed out" }, null, "Check incomplete"],
+  ["scoreless", { reward: null }, null, "Check incomplete"],
+  ["failed and its replay failed", {}, failedReplay, "No defect demonstrated"],
+  ["failed without exploit.sh", {}, null, "No defect demonstrated"],
+] as const) {
+  test(`adversarial headline: ${name}`, () => {
+    const outcome = review.adversarialOutcome({ ...attack, ...patch } as Trial, replay as Trial | null);
+    assert.equal(outcome.label, headline);
+    assert.equal(outcome.tone === "defect", headline === "Must fix");
+  });
+}
+
+test("a replay that leaked a protected file is a must fix", () => {
+  const outcome = review.adversarialOutcome(attack as Trial, failedReplay as Trial, true);
+  assert.equal(outcome.label, "Must fix");
+  assert.equal(outcome.tone, "defect");
+});
+
+test("a replay belongs to the attack attempt it re-ran", () => {
+  const retried = { ...attack, attempts: 2 } as Trial;
+  const replayOf = (attempt: number) => ({
+    ...passedReplay, id: `replay-${attempt}`,
+    harbor_config: { adversarial: { replay_of: "attack", attack_attempt: attempt } },
+  } as Trial);
+  assert.equal(review.attackReplay(retried, [replayOf(1)]), null);
+  assert.equal(review.attackReplay(retried, [replayOf(1), replayOf(2)])?.id, "replay-2");
+  assert.equal(review.isAttackTrial(replayOf(2)), false);
+  assert.equal(review.isAttackTrial(retried), true);
+});
+
+test("a graded attack without a trajectory yet shows no defect", () => {
+  const outcome = review.adversarialOutcome({ ...attack, has_trajectory: false } as Trial, failedReplay);
+  assert.equal(outcome.label, "No defect demonstrated");
+  assert.equal(outcome.execution, "Completed");
+});
+
+test("superseded attacks are not current attacks", () => {
+  assert.equal(review.isAttackTrial({ ...attack, superseded_by_trial_id: "next" } as Trial), false);
+});
+
+test("an attack stays unsettled until its replay is queued and its findings recorded", () => {
+  const now = Date.parse("2026-10-13T12:00:00Z");
+  const finished = { ...attack, finished_at: "2026-10-13T11:59:30Z" } as Trial;
+  const checked = {
+    ...finished,
+    harbor_config: { adversarial: { replay_checked_attempt: 1 } },
+  } as Trial;
+  const recorded = {
+    ...passedReplay, finished_at: finished.finished_at,
+    harbor_config: { adversarial: { replay_of: "attack", attack_attempt: 1, findings_recorded: true } },
+  } as Trial;
+  // Settled, but the hook has not queued the replay yet.
+  assert.equal(review.adversarialUnsettled([finished], now), true);
+  // Replay queued and finished; its findings are not recorded yet.
+  assert.equal(review.adversarialUnsettled([checked, { ...recorded, harbor_config: passedReplay.harbor_config }], now), true);
+  assert.equal(review.adversarialUnsettled([checked, recorded], now), false);
+  // No exploit.sh: the hook checks the attack and queues nothing.
+  assert.equal(review.adversarialUnsettled([checked], now), false);
+  // A cancelled attack, or a hook past its deadline, holds nothing back.
+  assert.equal(review.adversarialUnsettled([{ ...finished, harbor_stage: "cancelled" } as Trial], now), false);
+  assert.equal(review.adversarialUnsettled([finished], now + 2 * 60 * 60 * 1000), false);
+});
+
+test("running task review does not display a queued verdict", () => {
+  assert.equal(badge.present!({ ...task, verdict_status: "running" }, "h-4", 2).title, "Review running · 2 Must fix");
+});
+
 test("an ongoing source audit preserves the published verdict in both displays", () => {
   const reviewed = {
     ...task,
