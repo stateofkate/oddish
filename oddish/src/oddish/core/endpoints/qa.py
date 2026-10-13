@@ -257,6 +257,9 @@ async def cancel_task_qa_core(
             version.pre_trial_status = VerdictStatus.FAILED
             version.pre_trial_error = USER_CANCELLED_MESSAGE
             version.pre_trial_finished_at = now_value
+        if version is not None and version.adversarial_status == VerdictStatus.QUEUED:
+            version.adversarial_status = VerdictStatus.FAILED
+            version.adversarial_error = USER_CANCELLED_MESSAGE
 
     await session.commit()
     return {
@@ -587,6 +590,7 @@ async def launch_adversarial_trial_core(
     execution: TrialSpec | None = None,
     max_trial_attempts: int = 1,
     requested_by_user_id: str | None = None,
+    claimed: bool = False,
 ) -> dict:
     """Queue organization-funded adversarial QA on the task's current version.
 
@@ -663,7 +667,8 @@ async def launch_adversarial_trial_core(
             pinned = await storage.pin_task_archive(prefix or source.task_s3_prefix)
             artifact = pinned.artifact
             created_snapshot_key = pinned.created_snapshot_key
-    except Exception as exc:
+    except ValueError as exc:
+        # Storage outages propagate so the cleanup sweep retries them.
         raise HTTPException(409, f"Cannot pin selected task version: {exc}") from exc
 
     retain_snapshot = False
@@ -683,6 +688,10 @@ async def launch_adversarial_trial_core(
         )
         if version is None:
             raise HTTPException(409, "Task source changed; refresh the task and retry")
+        # A claimed launch publishes only while the claim stands: cancel may
+        # have closed it since the sweep read it.
+        if claimed and version.adversarial_status != VerdictStatus.QUEUED:
+            raise HTTPException(409, "Adversarial QA claim was cancelled")
         existing = await _existing_adversarial_result(
             session, task_id=task_id, version_id=version_id, request_id=request_id
         )

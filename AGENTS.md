@@ -3690,10 +3690,7 @@ exclude them. Organization totals count attack model costs once; QA cost reports
 retain the `adversarial` category with label `Adversarial QA`. Compute costs
 remain separately recorded with no personal payer.
 
-Migration `adversarial_qa_billing_001` moves historical attack and compute
-attribution to the organization without changing costs, preserving the requester
-in trial metadata. Run it before deploying. Downgrade does not restore personal
-charges. The API/storage kind remains `adversarial`; do not add it to
+The API/storage kind remains `adversarial`; do not add it to
 `ANALYSIS_TRIAL_KINDS`, which would replace the real task with a review sandbox.
 
 Launch releases task/version locks before source hashing or archive transfer,

@@ -627,6 +627,59 @@ async def test_a_rejected_launch_fails_the_claim_and_releases_qa(
 
 
 @pytest.mark.asyncio
+async def test_a_storage_outage_keeps_the_claim_for_the_next_sweep(
+    attack_task, monkeypatch
+):
+    from types import SimpleNamespace
+
+    from oddish.config import settings
+    from oddish.core.endpoints import qa
+    from oddish.workers.queue import cleanup
+
+    monkeypatch.setattr(settings, "adversarial_auto_percent", 100)
+    task_id, version_id, _ = attack_task
+    async with get_session() as session:
+        (await session.get(TaskVersionModel, version_id)).task_s3_key = "tasks/x/"
+    await claim(task_id, version_id)
+    storage = SimpleNamespace(
+        pin_task_archive=AsyncMock(side_effect=ConnectionError("storage down"))
+    )
+    monkeypatch.setattr(qa, "get_storage_client", lambda: storage)
+    await cleanup._launch_claimed_adversarial()
+    assert (await version_row(version_id)).adversarial_status == VerdictStatus.QUEUED
+
+
+@pytest.mark.asyncio
+async def test_cancelling_task_qa_during_a_claimed_launch_queues_no_attack(
+    attack_task, monkeypatch
+):
+    from types import SimpleNamespace
+
+    from oddish.config import settings
+    from oddish.core.endpoints import qa
+    from oddish.db.storage import PinnedTaskArchive
+    from oddish.workers.queue import cleanup
+
+    monkeypatch.setattr(settings, "adversarial_auto_percent", 100)
+    task_id, version_id, _ = attack_task
+    async with get_session() as session:
+        (await session.get(TaskVersionModel, version_id)).task_s3_key = "tasks/x/"
+    await claim(task_id, version_id)
+
+    async def pin(_):
+        # Cancel lands while the sweep transfers the archive with no lock held.
+        async with get_session() as session:
+            await qa.cancel_task_qa_core(session, task_id=task_id)
+        return PinnedTaskArchive({"archive_key": "tasks/x/archive", "etag": "e"})
+
+    storage = SimpleNamespace(pin_task_archive=pin, delete_object=AsyncMock())
+    monkeypatch.setattr(qa, "get_storage_client", lambda: storage)
+    await cleanup._launch_claimed_adversarial()
+    assert await attack_trials(task_id) == []
+    assert (await version_row(version_id)).adversarial_status == VerdictStatus.FAILED
+
+
+@pytest.mark.asyncio
 async def test_a_cancelled_attack_leaves_the_verdict_and_starts_no_qa(attack_task):
     task_id, version_id, _ = attack_task
     attack_id = (await launch(task_id, version_id))["trial_id"]

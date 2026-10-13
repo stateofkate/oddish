@@ -186,7 +186,7 @@ async def test_snapshot_refuses_files_added_during_download(monkeypatch):
         return data
 
     monkeypatch.setattr(storage, "download_bytes", download)
-    with pytest.raises(ValueError, match="changed while creating"):
+    with pytest.raises(RuntimeError, match="changed while creating"):
         await storage.pin_task_archive(prefix)
     assert not any(".oddish-snapshots" in key for key in storage._client.files)
 

@@ -459,8 +459,5 @@ the per-user `task_review_enabled` preference. No new Slack token or schedule is
 Adversarial QA records model and compute costs against the organization, with no
 personal payer. `ODDISH_QUOTA_COUNTS_ANALYSIS_AND_COMPUTE` controls whether those
 costs and pending reservations count toward the organization monthly cap. There
-is no separate QA-only cap. Apply the core migration `adversarial_qa_billing_001`
-with `uv run alembic upgrade head` from `oddish/` before deploying; it preserves
-recorded amounts and requester identity while clearing historical personal payer
-attribution. A standalone task without an organization retains normal quota-off
+is no separate QA-only cap. A standalone task without an organization retains normal quota-off
 behavior. See [Adversarial QA](docs/adversarial-trials.md).

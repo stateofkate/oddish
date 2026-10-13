@@ -2341,6 +2341,7 @@ async def _launch_claimed_adversarial() -> int:
                     expected_version_id=version_id,
                     request_id=f"auto:{version_id}",
                     org_id=org_id,
+                    claimed=True,
                 )
             launched += result["status"] == "queued"
         except HTTPException as exc:

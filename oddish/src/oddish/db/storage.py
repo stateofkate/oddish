@@ -763,7 +763,8 @@ class StorageClient:
                         member.mode = 0o644
                         tar.addfile(member, io.BytesIO(contents))
                 if await source_objects() != objects:
-                    raise ValueError(
+                    # Not a ValueError: callers treat those as permanent.
+                    raise RuntimeError(
                         "Task version source changed while creating its snapshot; retry"
                     )
                 archive_key = f"{prefix}{self.TASK_SNAPSHOT_DIR}{uuid.uuid4().hex}/{self.TASK_ARCHIVE_OBJECT_NAME}"
