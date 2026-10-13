@@ -70,7 +70,9 @@ class _FakeStorage:
         self.list_keys_calls.append(prefix)
         return self.list_keys_result
 
-    async def download_task_directory(self, s3_prefix: str, local_path: Path) -> None:
+    async def download_task_directory(
+        self, s3_prefix: str, local_path: Path, *, artifact=None
+    ) -> None:
         self.download_task_directory_calls.append((s3_prefix, local_path))
         local_path.mkdir(parents=True, exist_ok=True)
         (local_path / "task.toml").write_text("name = 'demo'\n")
@@ -236,7 +238,9 @@ async def test_resolve_task_directory_cleans_temp_dir_before_local_fallback(
     storage = _FakeStorage(exists=True)
     failed_download_dirs: list[Path] = []
 
-    async def _fail_download(s3_prefix: str, local_path: Path) -> None:
+    async def _fail_download(
+        s3_prefix: str, local_path: Path, *, artifact=None
+    ) -> None:
         failed_download_dirs.append(local_path)
         local_path.mkdir(parents=True, exist_ok=True)
         (local_path / "partial.txt").write_text("partial\n")
@@ -367,7 +371,7 @@ async def test_download_task_directory_extracts_archive_object(monkeypatch, tmp_
         assert s3_key == "tasks/task-123/.oddish-task.tar.gz"
         return {"ETag": s3_key} if (True) else None
 
-    async def fake_download_bytes(s3_key: str) -> bytes:
+    async def fake_download_bytes(s3_key: str, *, if_match=None) -> bytes:
         assert s3_key == "tasks/task-123/.oddish-task.tar.gz"
         return archive_bytes
 
@@ -440,7 +444,7 @@ async def test_download_task_directory_finds_versioned_archive(monkeypatch, tmp_
 
     download_bytes_calls: list[str] = []
 
-    async def fake_download_bytes(s3_key: str) -> bytes:
+    async def fake_download_bytes(s3_key: str, *, if_match=None) -> bytes:
         download_bytes_calls.append(s3_key)
         return archive_bytes
 

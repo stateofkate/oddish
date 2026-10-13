@@ -9,12 +9,14 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import gzip
+import hashlib
 import io
 import json
 import posixpath
 import shutil
 import tarfile
 import tempfile
+import uuid
 from pathlib import Path, PurePosixPath
 
 import aioboto3
@@ -25,6 +27,12 @@ from oddish.config import settings
 from oddish.timing import current_request_timing, timed_phase
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class PinnedTaskArchive:
+    artifact: dict[str, str]
+    created_snapshot_key: str | None = None
 
 
 def is_missing_object(exc: ClientError) -> bool:
@@ -84,6 +92,19 @@ def record_file_source(source: str, size: int | None = None) -> None:
 
 WORKER_TASK_MOUNT_PATH = Path("/mnt/oddish-tasks")
 WORKER_TASK_KEY_PREFIX = "tasks/"
+
+
+def task_directory_sha256(path: Path) -> str:
+    """Fingerprint local execution bytes without parsing Harbor configuration."""
+    digest = hashlib.sha256()
+    for file in sorted(path.rglob("*")):
+        if file.is_file():
+            body = file.read_bytes()
+            # Length-prefixed header: no file body can mimic another file's framing.
+            header = [file.relative_to(path).as_posix(), file.stat().st_mode, len(body)]
+            digest.update(json.dumps(header).encode() + b"\n")
+            digest.update(body)
+    return digest.hexdigest()
 
 
 def _task_archive_download_name(task_id: str) -> str:
@@ -338,6 +359,7 @@ class StorageClient:
 
     _MAX_CONCURRENT_UPLOADS = 8
     TASK_ARCHIVE_OBJECT_NAME = ".oddish-task.tar.gz"
+    TASK_SNAPSHOT_DIR = ".oddish-snapshots/"
     _EXPANDED_MANIFEST_OBJECT_NAME = ".oddish-manifest.json"
     # Staging archive written by ``oddish import`` clients via a presigned
     # PUT; the complete endpoint extracts it into the trial prefix and
@@ -676,7 +698,95 @@ class StorageClient:
             return False
         return manifest.get("archive_key") == archive_key
 
-    async def download_task_directory(self, s3_prefix: str, local_path: Path) -> None:
+    async def pin_task_archive(self, s3_prefix: str) -> PinnedTaskArchive:
+        """Pin exact stored bytes; snapshot old loose-file layouts once selected.
+
+        Never choose between multiple historical archives. Every loose-file
+        read is conditional, and a second listing detects additions/deletions.
+        The published snapshot has a fresh key and never overwrites the source.
+        """
+        await self._ensure_client()
+        prefix = normalize_s3_prefix(s3_prefix)
+        if not prefix:
+            raise ValueError("Task version has no valid storage prefix")
+        archive_key = self.task_archive_key_from_prefix(prefix)
+        created_snapshot_key = None
+        head = await self.head_object(archive_key)
+        if head is None:
+
+            async def source_objects():
+                objects = {}
+                paginator = self._s3.get_paginator("list_objects_v2")
+                async for page in paginator.paginate(
+                    Bucket=settings.s3_bucket, Prefix=prefix
+                ):
+                    for obj in page.get("Contents", []):
+                        relative = obj["Key"][len(prefix) :]
+                        if (
+                            relative
+                            and not relative.endswith("/")
+                            and not relative.startswith(
+                                (self.TASK_SNAPSHOT_DIR, "trials/")
+                            )
+                            and relative != self._EXPANDED_MANIFEST_OBJECT_NAME
+                        ):
+                            objects[obj["Key"]] = obj["ETag"]
+                return objects
+
+            objects = await source_objects()
+            archives = [
+                key
+                for key in objects
+                if key.endswith("/" + self.TASK_ARCHIVE_OBJECT_NAME)
+            ]
+            if archives:
+                if len(archives) != 1:
+                    raise ValueError(
+                        "Task version source is ambiguous: multiple historical archives"
+                    )
+                archive_key = archives[0]
+                head = await self.head_object(archive_key)
+            else:
+                if (
+                    prefix + "task.toml" not in objects
+                    or prefix + "instruction.md" not in objects
+                ):
+                    raise ValueError(
+                        "Task version source is missing: no archive or complete loose-file task"
+                    )
+                archive = io.BytesIO()
+                with tarfile.open(fileobj=archive, mode="w:gz") as tar:
+                    for key, etag in sorted(objects.items()):
+                        contents = await self.download_bytes(key, if_match=etag)
+                        member = tarfile.TarInfo(key[len(prefix) :])
+                        member.size = len(contents)
+                        member.mode = 0o644
+                        tar.addfile(member, io.BytesIO(contents))
+                if await source_objects() != objects:
+                    raise ValueError(
+                        "Task version source changed while creating its snapshot; retry"
+                    )
+                archive_key = f"{prefix}{self.TASK_SNAPSHOT_DIR}{uuid.uuid4().hex}/{self.TASK_ARCHIVE_OBJECT_NAME}"
+                await self.upload_bytes(
+                    archive.getvalue(), archive_key, content_type="application/gzip"
+                )
+                created_snapshot_key = archive_key
+                try:
+                    head = await self.head_object(archive_key)
+                except BaseException:
+                    await self.delete_object(archive_key)
+                    raise
+        if not head or not head.get("ETag"):
+            if created_snapshot_key is not None:
+                await self.delete_object(created_snapshot_key)
+            raise ValueError(
+                "Task archive is missing or storage did not return an ETag"
+            )
+        return PinnedTaskArchive(
+            {"archive_key": archive_key, "etag": head["ETag"]}, created_snapshot_key
+        )
+
+    async def download_task_directory(self, s3_prefix: str, local_path: Path, *, artifact: dict[str, str] | None = None) -> None:
         """
         Download a task directory from S3.
 
@@ -686,6 +796,10 @@ class StorageClient:
         """
         await self._ensure_client()
         local_path.mkdir(parents=True, exist_ok=True)
+
+        if artifact is not None:
+            await self._download_and_extract_task_archive(artifact["archive_key"], local_path, if_match=artifact["etag"])
+            return
 
         archive_key = self.task_archive_key_from_prefix(s3_prefix)
         if await self.object_exists(archive_key):
@@ -704,6 +818,9 @@ class StorageClient:
         ):
             for obj in page.get("Contents", []):
                 s3_key = obj["Key"]
+                # Pin snapshots are frozen copies for pinned runs, not the live task.
+                if s3_key[len(s3_prefix) :].startswith(self.TASK_SNAPSHOT_DIR):
+                    continue
                 if s3_key.endswith(f"/{self.TASK_ARCHIVE_OBJECT_NAME}"):
                     if nested_archive_key is None or s3_key > nested_archive_key:
                         nested_archive_key = s3_key
@@ -1898,10 +2015,12 @@ class StorageClient:
             with open(local_path, "wb") as f:
                 f.write(content)
 
-    async def download_bytes(self, s3_key: str, max_bytes: int | None = None) -> bytes:
+    async def download_bytes(self, s3_key: str, max_bytes: int | None = None, *, if_match: str | None = None) -> bytes:
         """Download binary content from S3."""
         await self._ensure_client()
         options = {"Range": f"bytes=0-{max_bytes - 1}"} if max_bytes else {}
+        if if_match is not None:
+            options["IfMatch"] = if_match
         with storage_operation("get", s3_key):
             response = await self._s3.get_object(
                 Bucket=settings.s3_bucket, Key=s3_key, **options
@@ -2082,9 +2201,11 @@ class StorageClient:
         return objects
 
     async def _download_and_extract_task_archive(
-        self, archive_key: str, local_path: Path
+        self, archive_key: str, local_path: Path, *, if_match: str | None = None
     ) -> None:
-        archive_bytes = await self.download_bytes(archive_key)
+        archive_bytes = await self.download_bytes(
+            archive_key, if_match=if_match or None
+        )
         with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as tar:
             extract_task_tarfile(tar, local_path)
 
@@ -2305,6 +2426,7 @@ async def resolve_task_directory(
     *,
     task_s3_key: str | None,
     task_path: str | None,
+    artifact: dict[str, str] | None = None,
 ) -> tuple[Path, Path | None, str | None]:
     """
     Resolve a task directory from S3 or local storage.
@@ -2313,18 +2435,20 @@ async def resolve_task_directory(
     """
     resolved_s3_key = resolve_s3_key(task_s3_key, task_path)
     if resolved_s3_key:
-        mounted_task_path = resolve_mounted_task_directory(resolved_s3_key)
+        mounted_task_path = resolve_mounted_task_directory(resolved_s3_key) if artifact is None else None
         if mounted_task_path is not None:
             return mounted_task_path, None, resolved_s3_key
 
         storage = get_storage_client()
         temp_dir = Path(tempfile.mkdtemp(prefix=f"task-{task_id}-"))
         try:
-            await storage.download_task_directory(resolved_s3_key, temp_dir)
+            await storage.download_task_directory(
+                resolved_s3_key, temp_dir, artifact=artifact
+            )
             return temp_dir, temp_dir, resolved_s3_key
         except Exception as exc:
             _cleanup_temp_directory(temp_dir)
-            if task_path:
+            if artifact is None and task_path:
                 local_task_path = Path(task_path)
                 if local_task_path.exists():
                     return local_task_path, None, resolved_s3_key
@@ -2340,6 +2464,8 @@ async def resolve_task_directory(
     local_task_path = Path(task_path)
     if not local_task_path.exists():
         raise ValueError(f"Task path does not exist: {task_path}")
+    if artifact is not None and task_directory_sha256(local_task_path) != artifact["sha256"]:
+        raise ValueError("Local task contents changed after this run was queued")
     return local_task_path, None, None
 
 
