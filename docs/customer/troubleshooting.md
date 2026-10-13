@@ -12,6 +12,10 @@ Docs and task access are separate. Ask your Oddish contact for access to your ow
 
 "Could not get the CLI release" means the API did not accept `ODDISH_API_KEY`. Check that it is exported in the same shell, has not expired, and was not revoked under **Settings → API keys**. "Checksum mismatch" means the download was altered or cut short; run the command again.
 
+## `oddish update` fails
+
+"Set ODDISH_API_KEY to update" means the key is not exported in this shell. "Oddish API answered 401" means the key was rejected; check it as described above. "currently supports PyPI installs" means your CLI is older than this command; run the install command from [Installation](getting-started.md) once.
+
 ## Homebrew cannot find or download Oddish
 
 Confirm that your GitHub account has read access to `abundant-ai/homebrew-tap`. Run `gh auth status` to inspect the selected GitHub account. Follow [Installation](getting-started.md) after access is granted.

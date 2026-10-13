@@ -246,24 +246,72 @@ def test_homebrew_upgrade_command_refuses_to_modify_managed_environment():
         upgrade_command(_info(source='homebrew', manager='brew'))
 
 
-def test_script_install_update_says_rerun_the_script(monkeypatch):
-    import importlib
-    module = importlib.import_module('oddish.cli.update')
-    monkeypatch.setattr(module, 'inspect_install', lambda: _info(source='script', manager='script'))
-    monkeypatch.setattr(module, 'fetch_pypi_latest', lambda: pytest.fail('script installs must not query PyPI'))
-    result = runner.invoke(app, ['update', '--dry-run', '--json'])
+def _patch_script_install(monkeypatch, latest: str = "0.1.20") -> list[tuple[str, str]]:
+    calls: list[tuple[str, str]] = []
+
+    def _latest(api_url: str, api_key: str) -> str:
+        calls.append((api_url, api_key))
+        return latest
+
+    monkeypatch.setattr(
+        "oddish.cli.update.inspect_install", lambda: _info(source="script", manager="script")
+    )
+    monkeypatch.setattr(
+        "oddish.cli.update.fetch_pypi_latest",
+        lambda: pytest.fail("script installs must not query PyPI"),
+    )
+    monkeypatch.setattr("oddish.cli.update.fetch_api_latest", _latest)
+    monkeypatch.setenv("ODDISH_API_URL", "https://api.example.test")
+    return calls
+
+
+def test_script_install_update_needs_api_key(monkeypatch):
+    _patch_script_install(monkeypatch)
+    monkeypatch.delenv("ODDISH_API_KEY", raising=False)
+    result = runner.invoke(app, ["update", "--json"])
     assert result.exit_code == 1
-    assert '/cli/install.sh' in result.stdout
-    with pytest.raises(PackageError, match='install script'):
-        upgrade_command(_info(source='script', manager='script'))
+    assert "ODDISH_API_KEY" in result.stdout
+    with pytest.raises(PackageError, match="Oddish API"):
+        upgrade_command(_info(source="script", manager="script"))
 
 
-def test_inspect_install_reads_the_install_script_marker():
-    from oddish.cli._package import inspect_install
+def test_script_install_update_checks_and_reruns_install_script(monkeypatch):
+    calls = _patch_script_install(monkeypatch)
+    monkeypatch.setenv("ODDISH_API_KEY", "ok_test")
+    check = runner.invoke(app, ["update", "--check", "--json"])
+    assert check.exit_code == 1 and '"update_available": true' in check.stdout
+    assert calls == [("https://api.example.test", "ok_test")]
 
-    class _ScriptDist:
-        def read_text(self, name):
-            return 'script\n' if name == 'ODDISH_INSTALL' else None
+    ran: list[tuple[list[str], dict[str, str]]] = []
 
-    info = inspect_install(distribution=_ScriptDist())
-    assert (info.source, info.manager, info.source_label) == ('script', 'script', 'install script')
+    class _Result:
+        returncode = 0
+
+    def _run(command, check=False, env=None, **_kwargs):
+        ran.append((command, env))
+        return _Result()
+
+    monkeypatch.setattr("oddish.cli.update.subprocess.run", _run)
+    monkeypatch.setattr("oddish.cli.update.query_installed_version", lambda _exe: "0.1.20")
+    result = runner.invoke(app, ["update"])
+    assert result.exit_code == 0, result.output
+    assert "via install.sh" in result.output and "0.1.20" in result.output
+    [(command, env)] = ran
+    assert command == [
+        "sh",
+        "-c",
+        "curl -fsSL https://api.example.test/cli/install.sh | sh",
+    ]
+    assert env["ODDISH_API_KEY"] == "ok_test"
+    assert env["ODDISH_API_URL"] == "https://api.example.test"
+
+
+def test_script_install_already_latest_skips_install(monkeypatch):
+    _patch_script_install(monkeypatch, latest="0.1.13")
+    monkeypatch.setenv("ODDISH_API_KEY", "ok_test")
+    monkeypatch.setattr(
+        "oddish.cli.update.subprocess.run",
+        lambda *_a, **_k: pytest.fail("already-latest must not reinstall"),
+    )
+    result = runner.invoke(app, ["update"])
+    assert result.exit_code == 0 and "already up to date" in result.stdout

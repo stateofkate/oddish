@@ -20,7 +20,8 @@ oddish status --json
 ```
 
 API-backed commands require `ODDISH_API_KEY`. Never print, log, commit, or
-return its value. `oddish version` and `oddish update` are local. The API
+return its value. `oddish version` is local; `oddish update` needs the key only
+for installs made with the install script. The API
 target resolves in this order: `ODDISH_API_URL`, `ODDISH_PREVIEW_PR`, then
 hosted Oddish.
 
@@ -170,6 +171,13 @@ predicate, response schema, endpoint, or Typer command definition over prose
 documentation. `AGENTS.md` is the architecture guide; `DOCS.md` is the end-user
 CLI guide. Plans and handoff notes describe proposed or historical work, not
 the running contract.
+
+### Install-script installation
+
+Customer workspaces install with
+`curl -fsSL https://api.oddish.app/cli/install.sh | sh` and `ODDISH_API_KEY`
+set. `oddish update` updates these installs: it asks the API for the newest
+release and re-runs that script. `oddish update --check` only compares versions.
 
 ### Homebrew installation
 

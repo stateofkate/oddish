@@ -28,6 +28,12 @@ People with GitHub read access to `abundant-ai/homebrew-tap` can instead run `br
 
 ## Update
 
-Re-run the install command. `oddish update` prints the same instruction. Homebrew installs update with `brew upgrade abundant-ai/tap/oddish`.
+```bash
+oddish update
+```
+
+With `ODDISH_API_KEY` set, this asks Oddish for the newest release and, if yours is older, reinstalls with the install command above. Success ends with `Updated to oddish VERSION`. `oddish update --check` only reports whether a newer release exists, without installing.
+
+If `oddish update` answers that it only supports PyPI installs, your CLI predates this command: run the install command once more, and later updates work through `oddish update`. Homebrew installs update with `brew upgrade abundant-ai/tap/oddish`.
 
 Next: [Learn the terms](concepts.md) or [Run a task](guides/first-run.md).

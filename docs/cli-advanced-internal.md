@@ -32,13 +32,14 @@ Repository-only reference migrated from DOCS.md. Contains operator and advanced 
 - `oddish publish` / `oddish unpublish` - toggle public read-only sharing for an experiment
 - `oddish link` - print the dashboard URL for a task or trial (built locally; needs no API key)
 - `oddish version` - print the installed CLI version; `--check` prints Homebrew check instructions for Homebrew installs or compares legacy installs with PyPI
-- `oddish update` - print Homebrew upgrade instructions for Homebrew installs; legacy PyPI installs can only upgrade to previously published PyPI versions
+- `oddish update` - reinstall the newest release for install-script installs (uses `ODDISH_API_KEY`); print Homebrew upgrade instructions for Homebrew installs; legacy PyPI installs can only upgrade to previously published PyPI versions
 - `oddish skill` - print or install the packaged SKILL.md agent guide
 
 Most commands accept `--json` for machine-readable output (CI / scripts /
 agents). The exceptions are `oddish logs`, `oddish link`, and `oddish skill`,
 which print human-readable output only.
-`oddish version` and `oddish update` are local and do not require an API key.
+`oddish version` is local and does not require an API key. `oddish update` needs
+one only for install-script installs.
 
 ### Lifecycle
 

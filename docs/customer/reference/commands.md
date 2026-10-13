@@ -5,6 +5,7 @@ A command-line tool runs typed commands in a terminal. Run `oddish --help` to li
 | Command                                      | What it does                                 | Changes stored work?   |
 | -------------------------------------------- | -------------------------------------------- | ---------------------- |
 | `oddish version`                             | Prints the installed version.                | No                     |
+| `oddish update`                              | Installs the newest CLI release.             | Replaces the CLI       |
 | `oddish preflight PATH`                      | Checks local task files.                     | No                     |
 | `oddish upload PATH`                         | Registers files or imports existing results. | Yes                    |
 | `oddish run PATH`                            | Submits new trials.                          | Yes; can incur charges |

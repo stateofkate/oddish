@@ -1,8 +1,9 @@
-"""Upgrade a PyPI Oddish CLI install with ``uv pip install --upgrade oddish``."""
+"""Upgrade an Oddish CLI install: install.sh via the Oddish API, or PyPI via uv/pip."""
 
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from typing import Annotated, NoReturn
@@ -10,16 +11,17 @@ from typing import Annotated, NoReturn
 import typer
 
 from oddish.cli._package import (
-    RERUN_INSTALL_SCRIPT,
     InstallInfo,
     PackageError,
+    fetch_api_latest,
     fetch_pypi_latest,
+    install_script_command,
     inspect_install,
     is_outdated,
     query_installed_version,
     upgrade_command,
 )
-from oddish.cli.config import console, error_console
+from oddish.cli.config import console, error_console, get_api_key, get_api_url
 
 
 def update_cmd(
@@ -35,31 +37,44 @@ def update_cmd(
         bool, typer.Option("--force", help="Reinstall even when the PyPI version already matches.")
     ] = False,
 ) -> None:
-    """Upgrade PyPI installs; Homebrew installs use `brew upgrade`. No API key required."""
+    """Upgrade the CLI. Script installs need ODDISH_API_KEY; Homebrew uses `brew upgrade`."""
     info = inspect_install()
+    env: dict[str, str] | None = None
     if info.source == "homebrew":
         _fail("This install is managed by Homebrew. Run `brew upgrade abundant-ai/tap/oddish`.", json_output=json_output, info=info)
     if info.source == "script":
-        _fail(RERUN_INSTALL_SCRIPT, json_output=json_output, info=info)
-    try:
-        latest = fetch_pypi_latest()
-        pypi_error = None
-    except PackageError as exc:
-        latest = None
-        pypi_error = exc
-    already_latest = latest is not None and not is_outdated(info.version, latest)
-    # Pin the installed version for same-version --force reinstalls. When
-    # PyPI metadata is unavailable, also pin so --force rebuilds the current
-    # release instead of emitting a bare unpinned upgrade.
-    pin_version = (
-        info.version if force and (already_latest or latest is None) else None
-    )
-    try:
-        command = upgrade_command(info, force=force, pin_version=pin_version)
-    except PackageError as exc:
-        _fail(str(exc), json_output=json_output, info=info)
-    if pypi_error is not None and not force:
-        _fail(str(pypi_error), json_output=json_output, info=info, command=command)
+        # The install script always fetches the newest release, so there is
+        # nothing to pin; it reads the key and API URL from its environment.
+        api_url, api_key = get_api_url(), get_api_key()
+        command = install_script_command(api_url)
+        if not api_key:
+            _fail("Set ODDISH_API_KEY to update (Oddish Settings > API keys).", json_output=json_output, info=info, command=command)
+        env = {**os.environ, "ODDISH_API_KEY": api_key, "ODDISH_API_URL": api_url}
+        try:
+            latest = fetch_api_latest(api_url, api_key)
+        except PackageError as exc:
+            _fail(str(exc), json_output=json_output, info=info, command=command)
+        already_latest = not is_outdated(info.version, latest)
+    else:
+        try:
+            latest = fetch_pypi_latest()
+            pypi_error = None
+        except PackageError as exc:
+            latest = None
+            pypi_error = exc
+        already_latest = latest is not None and not is_outdated(info.version, latest)
+        # Pin the installed version for same-version --force reinstalls. When
+        # PyPI metadata is unavailable, also pin so --force rebuilds the current
+        # release instead of emitting a bare unpinned upgrade.
+        pin_version = (
+            info.version if force and (already_latest or latest is None) else None
+        )
+        try:
+            command = upgrade_command(info, force=force, pin_version=pin_version)
+        except PackageError as exc:
+            _fail(str(exc), json_output=json_output, info=info)
+        if pypi_error is not None and not force:
+            _fail(str(pypi_error), json_output=json_output, info=info, command=command)
 
     payload = {
         **info.as_dict(),
@@ -96,7 +111,7 @@ def update_cmd(
             console.print(f"Updating oddish {info.version} via {via}")
 
     completed = subprocess.run(
-        command, check=False, stdout=sys.stderr if json_output else None
+        command, check=False, stdout=sys.stderr if json_output else None, env=env
     )
     if completed.returncode != 0:
         _fail(

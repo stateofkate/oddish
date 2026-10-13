@@ -19,10 +19,8 @@ PYPI_JSON_URL = "https://pypi.org/pypi/oddish/json"
 
 Source = Literal["pypi", "editable", "other", "homebrew", "script"]
 Manager = Literal["uv-pip", "pip", "brew", "script"]
-INSTALL_SCRIPT_URL = "https://api.oddish.app/cli/install.sh"
 RERUN_INSTALL_SCRIPT = (
-    "This install came from the Oddish install script. Re-run it to update: "
-    f"curl -fsSL {INSTALL_SCRIPT_URL} | sh"
+    "This install came from the Oddish install script. Run `oddish update` to update."
 )
 
 
@@ -122,7 +120,7 @@ def upgrade_command(
     if info.source == "homebrew":
         raise PackageError("This install is managed by Homebrew. Run `brew upgrade abundant-ai/tap/oddish`.")
     if info.source == "script":
-        raise PackageError(RERUN_INSTALL_SCRIPT)
+        raise PackageError("Script installs update through the Oddish API, not PyPI.")
     if info.source == "editable":
         location = info.editable_path or "this checkout"
         raise PackageError(
@@ -166,6 +164,31 @@ def fetch_pypi_latest() -> str:
     if not isinstance(version, str) or not version.strip():
         raise PackageError("PyPI did not return a package version.")
     return version.strip()
+
+
+def fetch_api_latest(api_url: str, api_key: str) -> str:
+    """Newest CLI release the Oddish API serves to this key (``GET /cli/latest``)."""
+    try:
+        response = httpx.get(
+            f"{api_url.rstrip('/')}/cli/latest",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=30.0,
+        )
+    except httpx.HTTPError as exc:
+        raise PackageError(f"Could not reach the Oddish API: {exc}") from exc
+    if response.status_code != 200:
+        raise PackageError(
+            f"Oddish API answered {response.status_code} for /cli/latest. Check ODDISH_API_KEY."
+        )
+    version = response.json().get("version")
+    if not isinstance(version, str) or not version.strip():
+        raise PackageError("The Oddish API did not return a CLI version.")
+    return version.strip()
+
+
+def install_script_command(api_url: str) -> list[str]:
+    """Re-run install.sh, which reads ODDISH_API_KEY and ODDISH_API_URL from the env."""
+    return ["sh", "-c", f"curl -fsSL {api_url.rstrip('/')}/cli/install.sh | sh"]
 
 
 def is_outdated(current: str, latest: str) -> bool:
